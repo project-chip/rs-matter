@@ -260,7 +260,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         request: KeySetWriteRequest<'_>,
     ) -> Result<(), Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let key_set = request.group_key_set()?;
 
         let group_key_set_id = key_set.group_key_set_id()?;
@@ -426,7 +426,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         request: KeySetReadRequest<'_>,
         response: KeySetReadResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_key_set_id = request.group_key_set_id()?;
 
         ctx.exchange().with_state(|state| {
@@ -503,7 +503,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         request: KeySetRemoveRequest<'_>,
     ) -> Result<(), Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_key_set_id = request.group_key_set_id()?;
 
         // KeySetRemove of ID 0 (IPK) is not allowed
@@ -540,7 +540,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
 
         ctx.exchange().with_state(|state| {
             let fabric = state.fabrics.fabric(fab_idx)?;

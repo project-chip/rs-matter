@@ -834,7 +834,13 @@ mod test {
         expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
     ) {
         let matter = test_matter();
-        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &matter);
+        let accessor = Accessor::new(
+            0,
+            false,
+            AccessorSubjects::new(0),
+            Some(AuthMode::Pase),
+            &matter,
+        );
 
         let expander = PathExpanderIterator::new(
             node,
@@ -1247,7 +1253,13 @@ mod test {
         expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
     ) {
         let matter = test_matter();
-        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &matter);
+        let accessor = Accessor::new(
+            0,
+            false,
+            AccessorSubjects::new(0),
+            Some(AuthMode::Pase),
+            &matter,
+        );
 
         let metadata = SwappableMetadata::new(initial);
 

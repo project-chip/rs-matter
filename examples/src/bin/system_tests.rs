@@ -55,6 +55,7 @@ use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
+use rs_matter::dm::clusters::groupcast::{self, ClusterHandler as _, GroupcastHandler};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::icd_mgmt::{ClusterHandler as _, Icd, IcdMgmtHandler, IcdModeConfig};
@@ -99,8 +100,8 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node,
-    SemanticTag,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, DeviceType, Endpoint, EpClMatcher,
+    Node, SemanticTag,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -315,7 +316,14 @@ fn main() -> Result<(), Error> {
     let dlog_buffers: &MatterBuffers<2> = DLOG_BUFFERS.uninit().init_with(MatterBuffers::init());
 
     let app_pipe = parse_app_pipe_override();
-    let node: &'static Node<'static> = if app_pipe.is_some() {
+
+    // `--groupcast` (mirroring upstream's dedicated groupcast app variants)
+    // selects the Groupcast-enabled composition - see `NODE_GROUPCAST`.
+    let groupcast = std::env::args().any(|arg| arg == "--groupcast");
+
+    let node: &'static Node<'static> = if groupcast {
+        &NODE_GROUPCAST
+    } else if app_pipe.is_some() {
         &NODE_BINFO_PROVISIONAL
     } else {
         &NODE
@@ -652,108 +660,151 @@ const DESC_CLUSTER_TAGS_AND_UNIQUE_ID: Cluster<'static> =
         desc::AttributeId::TagList | desc::AttributeId::EndpointUniqueID
     ));
 
+/// The device types of EP0: Root Node + the OTA roles + Power Source.
+///
+/// EP0 hosts the OTA Provider (0x0029) and Requestor (0x002A) clusters for
+/// the `OTA_*` itests. Declaring the matching device types alongside the
+/// Root Node makes them part of this endpoint's composition rather than
+/// "extra" clusters, which `TC_IDM_10_5` (device-type conformance) rejects.
+/// `DEV_TYPE_POWER_SOURCE` is declared alongside Root Node per Device
+/// Library 2.1.4 for the same reason.
+const EP0_DEVICE_TYPES: &[DeviceType] = devices!(
+    DEV_TYPE_ROOT_NODE,
+    DEV_TYPE_OTA_REQUESTOR,
+    DEV_TYPE_OTA_PROVIDER,
+    DEV_TYPE_POWER_SOURCE
+);
+
+/// The EP0 cluster set of the default [`NODE`]:
+/// - `TimeSynchronization` claims `TIME_SYNC_CLIENT` so the device advertises
+///   `TrustedTimeSource` + `SetTrustedTimeSource` — exercised by
+///   `TC_TIMESYNC_2_13`, consumed by [`time_sync::client::TimeSyncClient`];
+/// - `Groups` is re-added because `TestGroupMessaging` exercises
+///   group-addressed writes against root-endpoint attributes;
+/// - OTA Provider/Requestor are always present, inert unless the OTA harness
+///   passes `--filepath` / `--otaDownloadPath`;
+/// - Diagnostic Logs serves logs only when started with the log-file flags;
+/// - ICD Management (Check-In Protocol only) for the `TC_ICDM_*` itests;
+/// - PowerSource (featureless/wired) for `TC_PS_2_3` and
+///   `is_battery_powered()`-style probes.
+const EP0_CLUSTERS: &[Cluster<'static>] = clusters!(
+    eth,
+    time_sync(time_zone, time_sync_client);
+    groups::GroupsHandler::CLUSTER,
+    user_label::CLUSTER,
+    binding::CLUSTER,
+    OTA_PROVIDER_CLUSTER,
+    OTA_REQUESTOR_CLUSTER,
+    DIAGNOSTIC_LOGS_CLUSTER,
+    ICD_MGMT_CLUSTER,
+    power_source::CLUSTER
+);
+
+/// The EP0 cluster set of [`NODE_GROUPCAST`] (selected via the `--groupcast`
+/// flag, mirroring upstream's dedicated groupcast-enabled app variants):
+/// [`EP0_CLUSTERS`] plus
+/// - the Groupcast cluster (0x0065, provisional) with all three features
+///   (Listener + Sender + PerGroup), for the `TC_GC_*` itests;
+/// - `acl(aux)`: the Access Control cluster advertises the provisional
+///   `AUXILIARY` feature + `AuxiliaryACL` attribute, which the Groupcast
+///   cluster synthesizes entries into (`TC_GC_2_2/2_4/2_5` read them;
+///   `TC_ACE_1_6` relies on the access they grant).
+///
+/// This is deliberately NOT the default composition: with `AUXILIARY`
+/// advertised, wildcard-target Group-auth ACL entries no longer cover the
+/// root endpoint (Matter Core spec), which would break `TestGroupMessaging`'s
+/// legacy group-addressed writes to EP0 attributes - upstream likewise runs
+/// that suite against a non-groupcast app.
+const EP0_CLUSTERS_GROUPCAST: &[Cluster<'static>] = clusters!(
+    eth,
+    acl(aux),
+    time_sync(time_zone, time_sync_client);
+    groups::GroupsHandler::CLUSTER,
+    groupcast::GroupcastHandler::CLUSTER,
+    user_label::CLUSTER,
+    binding::CLUSTER,
+    OTA_PROVIDER_CLUSTER,
+    OTA_REQUESTOR_CLUSTER,
+    DIAGNOSTIC_LOGS_CLUSTER,
+    ICD_MGMT_CLUSTER,
+    power_source::CLUSTER
+);
+
+/// Build the EP0 endpoint for the given cluster set.
+///
+/// `Binding` (cluster ID 0x001E) is wired on EP0 too because `TestBinding`
+/// exercises writes against both endpoints and asserts per-endpoint
+/// isolation. Pairing Binding-server with a client cluster declaration in
+/// `client_clusters` is the rs-matter way to advertise "this endpoint will
+/// initiate `OnOff` interactions" via `Descriptor::ClientList`.
+const fn ep0(clusters: &'static [Cluster<'static>]) -> Endpoint<'static> {
+    Endpoint::new_with_clients(
+        ROOT_ENDPOINT_ID,
+        EP0_DEVICE_TYPES,
+        clusters,
+        &[on_off::FULL_CLUSTER.id],
+    )
+}
+
 const NODE: Node<'static> = Node {
-    endpoints: &[
-        // `Binding` (cluster ID 0x001E) is wired on EP0 too because
-        // `TestBinding` exercises writes against both endpoints
-        // (see step "Write binding table (endpoint 0)" in the
-        // YAML) and asserts per-endpoint isolation. Pairing
-        // Binding-server with a client cluster declaration in
-        // `client_clusters` is the rs-matter way to advertise
-        // "this endpoint will initiate `OnOff` interactions" via
-        // `Descriptor::ClientList`.
-        Endpoint::new_with_clients(
-            ROOT_ENDPOINT_ID,
-            // EP0 hosts the OTA Provider (0x0029) and Requestor (0x002A) clusters for
-            // the `OTA_*` itests. Declaring the matching device types alongside the
-            // Root Node makes them part of this endpoint's composition rather than
-            // "extra" clusters, which `TC_IDM_10_5` (device-type conformance) rejects.
-            devices!(
-                DEV_TYPE_ROOT_NODE,
-                DEV_TYPE_OTA_REQUESTOR,
-                DEV_TYPE_OTA_PROVIDER,
-                // Declared alongside Root Node per Device Library 2.1.4; makes
-                // the `PowerSource` cluster below part of the endpoint's
-                // composition rather than an undeclared extra (`TC_IDM_10_5`).
-                DEV_TYPE_POWER_SOURCE
-            ),
-            clusters!(
-                eth,
-                // Claim `TimeSynchronization.TIME_SYNC_CLIENT`
-                // (Matter Core Spec) so the device advertises the
-                // `TrustedTimeSource` attribute + `SetTrustedTimeSource`
-                // command — exercised by `TC_TIMESYNC_2_13` and
-                // consumed by [`time_sync::client::TimeSyncClient`].
-                time_sync(time_zone, time_sync_client);
-                groups::GroupsHandler::CLUSTER,
-                user_label::CLUSTER,
-                binding::CLUSTER,
-                // OTA Software Update Provider (0x0029) + Requestor (0x002A) for
-                // the `OTA_*` itests. Always present (matter permits extra
-                // clusters on an endpoint); inert unless the OTA harness drives
-                // them via `--filepath` / `--otaDownloadPath`. The OTA test's
-                // `AnnounceOTAProvider` targets endpoint 0, so they live here.
-                OTA_PROVIDER_CLUSTER,
-                OTA_REQUESTOR_CLUSTER,
-                // Diagnostic Logs (0x0032) for the `TestDiagnosticLogs` itest.
-                // Always present; serves logs only when started with the log-file
-                // flags, otherwise answers `NoLogs`.
-                DIAGNOSTIC_LOGS_CLUSTER,
-                // ICD Management (0x0046), Check-In Protocol only, for the
-                // `TC_ICDM_*` itests.
-                ICD_MGMT_CLUSTER,
-                // PowerSource (0x002F), featureless/wired, for `TC_PS_2_3` and
-                // for `is_battery_powered()`-style probes by test helpers.
-                power_source::CLUSTER
-            ),
-            &[on_off::FULL_CLUSTER.id],
-        ),
-        // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
-        // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
-        // via `has_attribute(FixedLabel.LabelList)` when the cluster
-        // is absent; adding it here turns the skip into an actual
-        // content + read-only-write check.
-        //
-        // `Binding` is wired on EP1 to satisfy `TestBinding`, which
-        // writes/reads its primary table here. Paired with a
-        // client-cluster declaration so `Descriptor::ClientList`
-        // truthfully advertises the intent to control OnOff bulbs.
-        Endpoint::new_with_clients(
-            1,
-            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
-            clusters!(
-                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
-                identify::CLUSTER,
-                groups::GroupsHandler::CLUSTER,
-                fixed_label::CLUSTER,
-                binding::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER,
-                // Mandatory for the On/Off Light device type
-                SCENES_FULL_CLUSTER,
-                UnitTestingHandler::CLUSTER,
-                // Second PowerSource instance (see `POWER_SOURCE_EP1`).
-                power_source::CLUSTER
-            ),
-            &[on_off::FULL_CLUSTER.id],
-        )
-        .with_tags(TAGS_EP1)
-        .with_unique_id(UNIQUE_ID_EP1),
-        Endpoint::new(
-            2,
-            devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters!(
-                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
-                identify::CLUSTER,
-                groups::GroupsHandler::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER,
-                // Mandatory for the On/Off Light device type
-                SCENES_FULL_CLUSTER
-            ),
-        )
-        .with_tags(TAGS_EP2)
-        .with_unique_id(UNIQUE_ID_EP2),
-    ],
+    endpoints: &[ep0(EP0_CLUSTERS), EP1, EP2],
 };
+
+/// Like [`NODE`], but with the Groupcast cluster (and the aux-ACL-enabled
+/// Access Control metadata) on EP0 - see [`EP0_CLUSTERS_GROUPCAST`].
+/// Selected via the `--groupcast` flag, which only the `TC_GC_*` (and,
+/// later, `TC_ACE_1_6`) itests pass.
+const NODE_GROUPCAST: Node<'static> = Node {
+    endpoints: &[ep0(EP0_CLUSTERS_GROUPCAST), EP1, EP2],
+};
+
+/// EP1 of all node variants.
+///
+/// `FixedLabel` (cluster ID 0x0040) is wired on EP1 because `TC_FLABEL_2_1`
+/// runs with `--endpoint 1` and skips cleanly via
+/// `has_attribute(FixedLabel.LabelList)` when the cluster is absent; adding
+/// it here turns the skip into an actual content + read-only-write check.
+///
+/// `Binding` is wired on EP1 to satisfy `TestBinding`, which writes/reads its
+/// primary table here. Paired with a client-cluster declaration so
+/// `Descriptor::ClientList` truthfully advertises the intent to control OnOff
+/// bulbs.
+const EP1: Endpoint<'static> = Endpoint::new_with_clients(
+    1,
+    devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
+    clusters!(
+        DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
+        identify::CLUSTER,
+        groups::GroupsHandler::CLUSTER,
+        fixed_label::CLUSTER,
+        binding::CLUSTER,
+        TestOnOffDeviceLogic::CLUSTER,
+        // Mandatory for the On/Off Light device type
+        SCENES_FULL_CLUSTER,
+        UnitTestingHandler::CLUSTER,
+        // Second PowerSource instance (see `POWER_SOURCE_EP1`).
+        power_source::CLUSTER
+    ),
+    &[on_off::FULL_CLUSTER.id],
+)
+.with_tags(TAGS_EP1)
+.with_unique_id(UNIQUE_ID_EP1);
+
+/// EP2 of all node variants.
+const EP2: Endpoint<'static> = Endpoint::new(
+    2,
+    devices!(DEV_TYPE_ON_OFF_LIGHT),
+    clusters!(
+        DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
+        identify::CLUSTER,
+        groups::GroupsHandler::CLUSTER,
+        TestOnOffDeviceLogic::CLUSTER,
+        // Mandatory for the On/Off Light device type
+        SCENES_FULL_CLUSTER
+    ),
+)
+.with_tags(TAGS_EP2)
+.with_unique_id(UNIQUE_ID_EP2);
 
 /// The OTA Software Update Provider cluster metadata, exactly as served by
 /// [`OtaProviderHandler`] (so `NODE`'s declaration matches the handler).
@@ -857,50 +908,8 @@ const NODE_BINFO_PROVISIONAL: Node<'static> = Node {
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
-        // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
-        // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
-        // via `has_attribute(FixedLabel.LabelList)` when the cluster
-        // is absent; adding it here turns the skip into an actual
-        // content + read-only-write check.
-        //
-        // `Binding` is wired on EP1 to satisfy `TestBinding`, which
-        // writes/reads its primary table here. Paired with a
-        // client-cluster declaration so `Descriptor::ClientList`
-        // truthfully advertises the intent to control OnOff bulbs.
-        Endpoint::new_with_clients(
-            1,
-            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
-            clusters!(
-                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
-                identify::CLUSTER,
-                groups::GroupsHandler::CLUSTER,
-                fixed_label::CLUSTER,
-                binding::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER,
-                // Mandatory for the On/Off Light device type
-                SCENES_FULL_CLUSTER,
-                UnitTestingHandler::CLUSTER,
-                // Second PowerSource instance (see `POWER_SOURCE_EP1`).
-                power_source::CLUSTER
-            ),
-            &[on_off::FULL_CLUSTER.id],
-        )
-        .with_tags(TAGS_EP1)
-        .with_unique_id(UNIQUE_ID_EP1),
-        Endpoint::new(
-            2,
-            devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters!(
-                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
-                identify::CLUSTER,
-                groups::GroupsHandler::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER,
-                // Mandatory for the On/Off Light device type
-                SCENES_FULL_CLUSTER
-            ),
-        )
-        .with_tags(TAGS_EP2)
-        .with_unique_id(UNIQUE_ID_EP2),
+        EP1,
+        EP2,
     ],
 };
 
@@ -963,6 +972,18 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     Some(groups::GroupsHandler::CLUSTER.id),
                 ),
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            // Groupcast at the root endpoint - the unified group-management
+            // interface over the same per-fabric group table Groups uses.
+            .chain(
+                EpClMatcher::new(
+                    Some(ROOT_ENDPOINT_ID),
+                    Some(groupcast::GroupcastHandler::CLUSTER.id),
+                ),
+                Async(
+                    GroupcastHandler::new(Dataver::new_rand(&mut rand), groupcast::Feature::all())
+                        .adapt(),
+                ),
             )
             // UserLabel handler at the root endpoint. Wired here for
             // the same per-fixture-exception reason as Groups above:

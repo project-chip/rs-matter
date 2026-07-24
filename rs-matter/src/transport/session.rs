@@ -1050,9 +1050,11 @@ impl Sessions {
         // Anything else is malformed.
         let dst_group_id = packet.header.plain.get_dst_groupcast_nodeid();
         let dst_unicast_nodeid = packet.header.plain.get_dst_unicast_nodeid();
+
         if dst_group_id.is_none() && dst_unicast_nodeid.is_none() {
             return Err(ErrorCode::InvalidData.into());
         }
+
         let expected_sess_id = packet.header.plain.sess_id;
         let msg_ctr = packet.header.plain.ctr;
         let is_control = packet.header.plain.is_control_msg();
@@ -1076,9 +1078,11 @@ impl Sessions {
         let encrypted_offset = pb.read_off();
         let encrypted_len = pb.as_slice().len();
         let mut saved_encrypted = [0u8; 1280];
+
         if encrypted_len > saved_encrypted.len() {
             return Err(ErrorCode::BufferTooSmall.into());
         }
+
         saved_encrypted[..encrypted_len].copy_from_slice(pb.as_slice());
 
         // Derive keys on-the-fly and try each one. When a key decrypts,
@@ -1099,7 +1103,13 @@ impl Sessions {
             op_key: CanonAeadKey,
             payload_range: (usize, usize),
         }
+
         let mut group_key_found: Option<GroupKeyFound> = None;
+        // Whether at least one candidate key matched the message's group
+        // session ID (and was therefore actually tried for decryption) -
+        // distinguishes "authentication failed" from "no key available"
+        // for Groupcast testing-mode diagnostics.
+        let mut key_attempted = false;
 
         'outer: for fabric in fabrics.iter() {
             // For unicast (MCSP) messages the destination Node ID must
@@ -1133,6 +1143,7 @@ impl Sessions {
 
                 for epoch_key_entry in key_set_entry.epoch_keys.iter() {
                     let mut temp_key_set = KeySet::new();
+
                     if temp_key_set
                         .update(
                             &crypto,
@@ -1145,6 +1156,7 @@ impl Sessions {
                     }
 
                     let op_key_ref = temp_key_set.op_key();
+
                     let Ok(session_id) = derive_group_session_id(&crypto, op_key_ref) else {
                         continue;
                     };
@@ -1152,6 +1164,8 @@ impl Sessions {
                     if session_id != expected_sess_id {
                         continue;
                     }
+
+                    key_attempted = true;
 
                     if let Some(payload_range) = Self::try_group_decrypt(
                         &crypto,
@@ -1172,6 +1186,7 @@ impl Sessions {
                             op_key: op_key_owned,
                             payload_range,
                         });
+
                         break 'outer;
                     }
                 }
@@ -1185,13 +1200,22 @@ impl Sessions {
             );
         }
 
+        // `NoSession` = no candidate key was available for this message;
+        // `InvalidSignature` = candidate key(s) matched the group session ID
+        // but none authenticated the message. The distinction feeds the
+        // `GroupcastTesting` event's result field (`NoAvailableKey` vs
+        // `FailedAuth`).
         let GroupKeyFound {
             fab_idx,
             group_id,
             fabric_node_id,
             op_key,
             payload_range,
-        } = group_key_found.ok_or(ErrorCode::NoSession)?;
+        } = group_key_found.ok_or(if key_attempted {
+            ErrorCode::InvalidSignature
+        } else {
+            ErrorCode::NoSession
+        })?;
 
         // Only data messages participate in this dedup: control
         // messages (`C = 1`) live on a separate control-counter space
@@ -1205,12 +1229,14 @@ impl Sessions {
                 "Group: Duplicate message counter {} from node 0x{:016x} fab_idx={}",
                 msg_ctr, src_nodeid, fab_idx
             );
+
             return Err(ErrorCode::Duplicate.into());
         }
 
         // Create ephemeral group session
         let peer = packet.peer;
         let mut rand = crypto.weak_rand()?;
+
         let session = match self.add(rand.next_u32(), false, peer, Some(src_nodeid), dev_det) {
             Ok(session) => session,
             Err(_) => {
@@ -1224,6 +1250,7 @@ impl Sessions {
                 }
             }
         };
+
         session.set_session_mode(SessionMode::Group { fab_idx, group_id });
         session.local_sess_id = expected_sess_id;
         // Mirror the group session id onto the peer side so `pre_send`

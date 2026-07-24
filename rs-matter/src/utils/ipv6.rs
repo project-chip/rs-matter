@@ -34,6 +34,11 @@ pub fn create_link_local_ipv6(mac: &[u8; 6]) -> Ipv6Addr {
     )
 }
 
+/// The IANA-assigned IPv6 multicast address (`ff05::fa`) shared by all
+/// Groupcast groups using the `IanaAddr` multicast-address policy
+/// (Matter Core spec).
+pub const IANA_GROUPCAST_MULTICAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 0x00fa);
+
 /// Compute the Matter IPv6 multicast address for a given fabric and group.
 ///
 /// Per Matter Core Specification Section 4.3.1 and RFC 3306:

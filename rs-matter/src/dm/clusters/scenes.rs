@@ -682,7 +682,7 @@ where
     }
 
     fn fab_idx<C: InvokeContext>(ctx: &C) -> Result<NonZeroU8, Error> {
-        ctx.exchange().accessor()?.fab_idx()
+        ctx.accessor()?.fab_idx()
     }
 
     /// Per-fabric `RemainingCapacity` for `GetSceneMembership` and
@@ -920,7 +920,7 @@ where
         builder: ArrayAttributeRead<SceneInfoStructArrayBuilder<P>, SceneInfoStructBuilder<P>>,
     ) -> Result<P, Error> {
         let endpoint_id = ctx.attr().endpoint_id;
-        let accessor_fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let accessor_fab_idx = ctx.accessor()?.fab_idx()?;
 
         // Snapshot the relevant scalars under a single lock, then
         // build the response outside the lock. A fabric gets a row

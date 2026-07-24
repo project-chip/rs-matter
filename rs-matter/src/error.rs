@@ -31,6 +31,7 @@ use alloc::{boxed::Box, string::ToString};
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ErrorCode {
+    AlreadyExists,
     AttributeNotFound,
     AttributeIsCustom,
     BufferTooSmall,

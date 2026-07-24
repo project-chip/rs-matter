@@ -20,9 +20,10 @@
 use core::num::NonZeroU8;
 
 use crate::acl::{self, AclEntry, AuthMode, MAX_ACL_ENTRIES_PER_FABRIC};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, InvokeContext,
-    ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, HandlerContext,
+    InvokeContext, NodeId, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
@@ -133,6 +134,57 @@ impl AclHandler {
 
         Ok(())
     }
+
+    /// Serialize one synthesized `AuxiliaryACL` entry, applying the same
+    /// fabric-sensitive redaction as the writable-`ACL` read: entries of
+    /// other fabrics expose only their fabric index.
+    #[cfg(feature = "groups")]
+    fn build_auxiliary_entry<P: TLVBuilderParent>(
+        accessing_fab_idx: u8,
+        fab_idx: NonZeroU8,
+        group_id: u16,
+        endpoints: &[crate::dm::EndptId],
+        builder: AccessControlEntryStructBuilder<P>,
+    ) -> Result<P, Error> {
+        use crate::tlv::Nullable;
+
+        let same_fab_idx = accessing_fab_idx == fab_idx.get();
+
+        builder
+            .privilege(same_fab_idx.then_some(AccessControlEntryPrivilegeEnum::Operate))?
+            .auth_mode(same_fab_idx.then_some(AccessControlEntryAuthModeEnum::Group))?
+            .subjects()?
+            .with_some_if(same_fab_idx, |builder| {
+                builder.with_non_null(
+                    Nullable::some([group_id as u64]),
+                    |subjects, mut builder| {
+                        for subject in subjects {
+                            builder = builder.push(subject)?;
+                        }
+
+                        builder.end()
+                    },
+                )
+            })?
+            .targets()?
+            .with_some_if(same_fab_idx, |builder| {
+                builder.with_non_null(Nullable::some(endpoints), |endpoints, mut builder| {
+                    for endpoint in *endpoints {
+                        builder = builder
+                            .push()?
+                            .cluster(Nullable::none())?
+                            .endpoint(Nullable::some(*endpoint))?
+                            .device_type(Nullable::none())?
+                            .end()?;
+                    }
+
+                    builder.end()
+                })
+            })?
+            .auxiliary_type(same_fab_idx.then_some(AccessControlAuxiliaryTypeEnum::Groupcast))?
+            .fabric_index(Some(fab_idx.get()))?
+            .end()
+    }
 }
 
 impl ClusterHandler for AclHandler {
@@ -158,6 +210,87 @@ impl ClusterHandler for AclHandler {
             .with_state(|state| self.acl(&state.fabrics, ctx.attr(), builder))
     }
 
+    fn auxiliary_acl<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            AccessControlEntryStructArrayBuilder<P>,
+            AccessControlEntryStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        // The entries are *derived* on the fly from the producing feature's
+        // state - the Groupcast group table - never stored (see the note on
+        // [`CLUSTER_AUX`]). Without the `groups` feature no producer exists,
+        // and the attribute is an empty list.
+        #[cfg(feature = "groups")]
+        {
+            ctx.exchange().with_state(|state| {
+                let attr = ctx.attr();
+
+                // One synthesized entry per (fabric, aux-flagged group,
+                // targets-capacity chunk of its endpoints)
+                let mut entries = state
+                    .fabrics
+                    .iter()
+                    .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
+                    .flat_map(|fabric| {
+                        fabric
+                            .groups()
+                            .iter()
+                            .filter(|entry| entry.has_aux_acl() && !entry.endpoints.is_empty())
+                            .flat_map(move |entry| {
+                                entry
+                                    .endpoints
+                                    .chunks(acl::MAX_TARGETS_PER_ACL_ENTRY)
+                                    .map(move |endpoints| (fabric, entry.group_id, endpoints))
+                            })
+                    });
+
+                match builder {
+                    ArrayAttributeRead::ReadAll(mut builder) => {
+                        for (fabric, group_id, endpoints) in entries {
+                            builder = Self::build_auxiliary_entry(
+                                attr.fab_idx,
+                                fabric.fab_idx(),
+                                group_id,
+                                endpoints,
+                                builder.push()?,
+                            )?;
+                        }
+
+                        builder.end()
+                    }
+                    ArrayAttributeRead::ReadOne(index, builder) => {
+                        let Some((fabric, group_id, endpoints)) = entries.nth(index as usize)
+                        else {
+                            return Err(ErrorCode::ConstraintError.into());
+                        };
+
+                        Self::build_auxiliary_entry(
+                            attr.fab_idx,
+                            fabric.fab_idx(),
+                            group_id,
+                            endpoints,
+                            builder,
+                        )
+                    }
+                    ArrayAttributeRead::ReadNone(builder) => builder.end(),
+                }
+            })
+        }
+
+        #[cfg(not(feature = "groups"))]
+        {
+            let _ = ctx;
+
+            match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            }
+        }
+    }
+
     fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _)
     }
@@ -180,7 +313,7 @@ impl ClusterHandler for AclHandler {
     ) -> Result<(), Error> {
         let mut persist = FabricPersist::new(ctx.kv());
 
-        let accessor = ctx.exchange().accessor()?;
+        let accessor = ctx.accessor()?;
         let admin_node_id: Nullable<u64> = match accessor.peer_node_id() {
             Some(id) => Nullable::some(id),
             None => Nullable::none(),
@@ -317,18 +450,45 @@ impl ClusterHandler for AclHandler {
     }
 }
 
+/// `AccessControl` cluster metadata that additionally advertises the
+/// provisional `AUXILIARY` feature and the `AuxiliaryACL` attribute.
+///
+/// Use this in place of [`AclHandler::CLUSTER`] on nodes where features (e.g.
+/// a Groupcast cluster) synthesize auxiliary ACL entries.
+///
+/// At startup, `AclHandler` inspects the node metadata and - when this
+/// feature is advertised - switches the access-control evaluation of
+/// wildcard-target Group-auth entries to exclude the root endpoint, as the
+/// Matter Core spec mandates for nodes with the feature.
+pub const CLUSTER_AUX: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(with!(required; AttributeId::AuxiliaryACL))
+    .with_cmds(with!())
+    .with_features(Feature::AUXILIARY.bits());
+
+/// Notify the data model that the `AuxiliaryACL` attribute changed, and emit
+/// the `AuxiliaryAccessUpdated` event.
+pub fn notify_auxiliary_access_updated(
+    ctx: &impl HandlerContext,
+    admin_node_id: Option<NodeId>,
+    fab_idx: NonZeroU8,
+) -> Result<(), Error> {
+    ctx.notify_attr_changed(
+        ROOT_ENDPOINT_ID,
+        FULL_CLUSTER.id,
+        AttributeId::AuxiliaryACL as _,
+    );
+
+    AuxiliaryAccessUpdated::emit_for(ctx, ROOT_ENDPOINT_ID, |event| {
+        event
+            .admin_node_id(Nullable::new(admin_node_id))?
+            .fabric_index(Some(fab_idx.get()))?
+            .end()
+    })
+    .map(|_event_number| ())
+}
+
 /// Emit one `AccessControlEntryChanged` event with the given change type and
 /// the entry's contents serialized into `LatestValue`.
-///
-/// Callers pass in the `admin_node_id` / `admin_passcode_id` derived from the
-/// requesting accessor (CASE → node id, PASE → passcode id 0). For changes
-/// originating from internal flows that do not have a requester (e.g. the
-/// auto-created admin entry on AddNOC, which runs over PASE), pass null/0.
-///
-/// The event is emitted on endpoint 0 (the AccessControl cluster always lives
-/// there), via `emit_for` so the helper can be used from cluster handlers
-/// other than ACL itself (e.g. from the OperationalCredentials handler when
-/// AddNOC seeds the initial admin entry).
 pub(crate) fn emit_acl_entry_changed<E>(
     emitter: E,
     admin_node_id: Nullable<u64>,

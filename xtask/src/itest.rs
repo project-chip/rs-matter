@@ -134,6 +134,13 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_ACE_1_3",
     "TC_ACE_1_4",
     "TC_ACE_1_5",
+    // Group-auth access enforcement over REAL multicast: the TH sends
+    // group-addressed invokes at the DUT and asserts the
+    // `Groupcast.GroupcastTesting` events the (armed) DUT emits about them
+    // — including access grants coming solely from the Groupcast-synthesized
+    // `AuxiliaryACL`. Runs against the `NODE_GROUPCAST` app composition
+    // (see `app_args_override`).
+    "TC_ACE_1_6",
     "TC_ACL_2_2",
     // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
     "TC_ACL_2_4",
@@ -280,6 +287,22 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Groups (system cluster)
     //
     "TC_G_2_2",
+    //
+    // Python tests — Groupcast (system cluster, provisional in Matter 1.6)
+    //
+    // The whole `TC_GC_2_x` suite is driven over unicast IM (JoinGroup /
+    // LeaveGroup / UpdateGroupKey / ConfigureAuxiliaryACL /
+    // GroupcastTesting commands plus attribute and event subscriptions);
+    // no real multicast traffic is involved. `TC_GC_2_6` and `TC_GC_2_7`
+    // commission (and later remove) a second test fabric.
+    "TC_GC_2_1",
+    "TC_GC_2_2",
+    "TC_GC_2_3",
+    "TC_GC_2_4",
+    "TC_GC_2_5",
+    "TC_GC_2_6",
+    "TC_GC_2_7",
+    "TC_GC_2_8",
     //
     // Python tests — Network Commissioning (system cluster)
     //
@@ -1549,6 +1572,9 @@ impl ITests {
             // so this whole-process ceiling must cover both, each with the
             // per-method budget in `per_test_framework_timeout_secs`.
             "TC_CADMIN_1_3_4" => Some(600),
+            // Sends several real multicast group commands with fixed 3s
+            // settling sleeps in between, plus event-report awaits.
+            "TC_ACE_1_6" => Some(360),
             "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11" | "TC_CADMIN_1_15"
             | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(360),
             // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
@@ -1754,6 +1780,17 @@ impl ITests {
             // is fixed upstream, the steps skip here too, and the attribute
             // is covered by rs-matter's own e2e test instead.
             "TC_BINFO_3_2" => Some("--app-pipe /tmp/rs_matter_bin_info_3_2_fifo"),
+            // The `TC_GC_*` suite runs against the Groupcast-enabled app
+            // composition (`NODE_GROUPCAST` in `system_tests`): the
+            // Groupcast cluster on EP0 plus the aux-ACL-enabled Access
+            // Control metadata. Deliberately NOT the default composition:
+            // with `AUXILIARY` advertised, wildcard-target Group-auth ACL
+            // entries no longer cover EP0 (Matter Core spec), which would
+            // break `TestGroupMessaging`'s legacy group-addressed writes to
+            // root-endpoint attributes - upstream likewise runs that suite
+            // against a non-groupcast app variant.
+            "TC_GC_2_1" | "TC_GC_2_2" | "TC_GC_2_3" | "TC_GC_2_4" | "TC_GC_2_5" | "TC_GC_2_6"
+            | "TC_GC_2_7" | "TC_GC_2_8" | "TC_ACE_1_6" => Some("--groupcast"),
             // TC_TestEventTrigger validates `GeneralDiagnostics::TestEventTrigger`
             // key/trigger handling — needs the canonical CHIP enable-key
             // 000102030405060708090a0b0c0d0e0f plumbed through to the device's
@@ -1841,6 +1878,9 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => "--endpoint 0",
+            // Gates on `MCORE.ROLE.COMMISSIONEE` + `G.S`; `--endpoint 1` is
+            // `PIXIT.G.ENDPOINT` (the default script args already carry it).
+            "TC_ACE_1_6" => "--PICS src/app/tests/suites/certification/ci-pics-values",
             // TC_CGEN_2_5..2_11 verify the General Commissioning
             // *Terms-and-Conditions* (TC, Matter 1.4+, `CGEN.S.F00`)
             // feature. rs-matter does not implement TC, and each test body
@@ -1975,6 +2015,9 @@ impl ITests {
             // `system_tests.rs`); Groups now lives on EP1/EP2 under the
             // On/Off Light device type, so target EP1.
             "TC_G_2_2" => "--endpoint 1",
+            // The Groupcast cluster lives on the root endpoint.
+            "TC_GC_2_1" | "TC_GC_2_2" | "TC_GC_2_3" | "TC_GC_2_4" | "TC_GC_2_5" | "TC_GC_2_6"
+            | "TC_GC_2_7" | "TC_GC_2_8" => "--endpoint 0",
             // TC_DA_1_7 ("device attestation: distinct keys per DUT") normally
             // requires two distinct DUTs with different DAC keys. The test
             // also supports a single-DUT mode for CI when `allow_sdk_dac:true`

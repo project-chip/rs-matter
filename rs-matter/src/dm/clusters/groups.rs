@@ -19,6 +19,7 @@
 
 use core::num::NonZeroU8;
 
+use crate::dm::clusters::acl::notify_auxiliary_access_updated;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
@@ -68,6 +69,56 @@ impl GroupsHandler {
     }
 }
 
+impl GroupsHandler {
+    /// Whether the given (aux-flagged) group's auxiliary ACL coverage of
+    /// `endpoint_id` would change by adding/removing that endpoint - i.e.
+    /// whether an `AuxiliaryAccessUpdated` notification is due.
+    ///
+    /// `group_id` of `None` means "any group" (the `RemoveAllGroups` case).
+    fn aux_coverage_touched(
+        state: &crate::MatterState,
+        fab_idx: core::num::NonZeroU8,
+        endpoint_id: u16,
+        group_id: Option<u16>,
+        member: bool,
+    ) -> bool {
+        let Some(fabric) = state.fabrics.get(fab_idx) else {
+            return false;
+        };
+
+        fabric.groups().iter().any(|entry| {
+            group_id.is_none_or(|id| id == entry.group_id)
+                && entry.has_aux_acl()
+                && entry.endpoints.contains(&endpoint_id) == member
+        })
+    }
+
+    /// The node ID of the invoking peer (for the `AuxiliaryAccessUpdated`
+    /// event's `AdminNodeID` field).
+    fn peer_node_id(ctx: &impl InvokeContext) -> Option<u64> {
+        ctx.exchange()
+            .with_state(|state| {
+                Ok::<_, Error>(
+                    ctx.exchange()
+                        .id()
+                        .session(&mut state.sessions)
+                        .get_peer_node_id(),
+                )
+            })
+            .unwrap_or(None)
+    }
+
+    /// Emit the auxiliary-ACL change notification, best-effort (the group
+    /// mutation has already been committed).
+    fn notify_aux(ctx: &impl InvokeContext, fab_idx: core::num::NonZeroU8) {
+        let peer_node_id = Self::peer_node_id(ctx);
+
+        if let Err(e) = notify_auxiliary_access_updated(ctx, peer_node_id, fab_idx) {
+            warn!("Failed to notify the auxiliary ACL change: {:?}", e);
+        }
+    }
+}
+
 impl ClusterHandler for GroupsHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_features(Feature::GROUP_NAMES.bits())
@@ -92,7 +143,7 @@ impl ClusterHandler for GroupsHandler {
         request: AddGroupRequest<'_>,
         response: AddGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_id = request.group_id()?;
         let group_name: &str = request.group_name()?;
 
@@ -109,11 +160,18 @@ impl ClusterHandler for GroupsHandler {
         let status = ctx.exchange().with_state(|state| {
             // Check if group security material is available
             if !Self::has_group_material(state, fab_idx, group_id)? {
-                return Ok(IMStatusCode::UnsupportedAccess);
+                return Ok((IMStatusCode::UnsupportedAccess, false));
             }
 
             // Add or update group membership
             let endpoint_id = ctx.cmd().endpoint_id;
+
+            // Joining an endpoint to a group with auxiliary ACL generation
+            // enabled (via the Groupcast cluster) extends the synthesized
+            // `AuxiliaryACL` coverage - which must be notified
+            let aux_touched =
+                Self::aux_coverage_touched(state, fab_idx, endpoint_id, Some(group_id), false);
+
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
 
             match fabric.groups_mut().add(endpoint_id, group_id, group_name) {
@@ -127,16 +185,21 @@ impl ClusterHandler for GroupsHandler {
 
                     ctx.exchange().matter().transport().notify_groups_changed();
 
-                    Ok(IMStatusCode::Success)
+                    Ok((IMStatusCode::Success, aux_touched))
                 }
                 Err(e) if e.code() == ErrorCode::ResourceExhausted => {
-                    Ok(IMStatusCode::ResourceExhausted)
+                    Ok((IMStatusCode::ResourceExhausted, false))
                 }
                 Err(e) => Err(e)?,
             }
         })?;
 
         persist.run()?;
+
+        let (status, aux_touched) = status;
+        if aux_touched && matches!(status, IMStatusCode::Success) {
+            Self::notify_aux(&ctx, fab_idx);
+        }
 
         response.status(status as u8)?.group_id(group_id)?.end()
     }
@@ -147,7 +210,7 @@ impl ClusterHandler for GroupsHandler {
         request: ViewGroupRequest<'_>,
         response: ViewGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_id = request.group_id()?;
 
         // Validate constraints
@@ -188,7 +251,7 @@ impl ClusterHandler for GroupsHandler {
         request: GetGroupMembershipRequest<'_>,
         response: GetGroupMembershipResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let request_group_list = request.group_list()?;
 
         ctx.exchange().with_state(|state| {
@@ -228,7 +291,7 @@ impl ClusterHandler for GroupsHandler {
         request: RemoveGroupRequest<'_>,
         response: RemoveGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_id = request.group_id()?;
         let endpoint_id = ctx.cmd().endpoint_id;
 
@@ -237,8 +300,14 @@ impl ClusterHandler for GroupsHandler {
         let status = ctx.exchange().with_state(|state| {
             // Step 1: Validate constraints
             if group_id == 0 {
-                return Ok(IMStatusCode::ConstraintError);
+                return Ok((IMStatusCode::ConstraintError, false));
             }
+
+            // Removing an endpoint from a group with auxiliary ACL
+            // generation enabled shrinks the synthesized `AuxiliaryACL`
+            // coverage - which must be notified
+            let aux_touched =
+                Self::aux_coverage_touched(state, fab_idx, endpoint_id, Some(group_id), true);
 
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
 
@@ -253,24 +322,31 @@ impl ClusterHandler for GroupsHandler {
 
                 ctx.exchange().matter().transport().notify_groups_changed();
 
-                Ok(IMStatusCode::Success)
+                Ok((IMStatusCode::Success, aux_touched))
             } else {
-                Ok(IMStatusCode::NotFound)
+                Ok((IMStatusCode::NotFound, false))
             }
         })?;
 
         persist.run()?;
 
+        let (status, aux_touched) = status;
+        if aux_touched && matches!(status, IMStatusCode::Success) {
+            Self::notify_aux(&ctx, fab_idx);
+        }
+
         response.status(status as u8)?.group_id(group_id)?.end()
     }
 
     fn handle_remove_all_groups(&self, ctx: impl InvokeContext) -> Result<(), Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let endpoint_id = ctx.cmd().endpoint_id;
 
         let mut persist = FabricPersist::new(ctx.kv());
 
-        ctx.exchange().with_state(|state| {
+        let aux_touched = ctx.exchange().with_state(|state| {
+            let aux_touched = Self::aux_coverage_touched(state, fab_idx, endpoint_id, None, true);
+
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
 
             fabric.groups_mut().remove(endpoint_id, None);
@@ -284,10 +360,14 @@ impl ClusterHandler for GroupsHandler {
 
             ctx.exchange().matter().transport().notify_groups_changed();
 
-            Ok(())
+            Ok(aux_touched)
         })?;
 
         persist.run()?;
+
+        if aux_touched {
+            Self::notify_aux(&ctx, fab_idx);
+        }
 
         Ok(())
     }

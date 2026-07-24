@@ -84,7 +84,7 @@ pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, 0));
 
 #[cfg(feature = "groups")]
-const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
+const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC + 1; // +1 for the IANA-assigned Groupcast address
 /// Without multicast group support no group addresses are ever joined, so the
 /// join-list is zero-capacity. Keeping the field (rather than gating it) avoids
 /// splitting the in-place `Transport` initializer, and a `Vec<_, 0>` costs no
@@ -1155,6 +1155,64 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         }
     }
 
+    /// Record a `GroupcastTesting` observation for a multicast group data
+    /// message that failed decode/decryption, when the Groupcast listener
+    /// testing mode is armed. See the Matter Core spec's `GroupcastTesting`
+    /// command for the result classification.
+    #[cfg(feature = "groups")]
+    fn observe_group_rx_failure<const N: usize>(
+        &self,
+        packet: &Packet<N>,
+        fabrics: &crate::fabric::Fabrics,
+        e: &Error,
+    ) {
+        use crate::dm::clusters::groupcast;
+
+        // Only multicast group *data* messages participate (not unicast
+        // group-encrypted MCSP control messages)
+        let Some(group_id) = packet.header.plain.get_dst_groupcast_nodeid() else {
+            return;
+        };
+
+        let Some(mode) = self
+            .matter
+            .groupcast_testing()
+            .armed(groupcast::GroupcastTestingEnum::EnableListenerTesting)
+        else {
+            return;
+        };
+
+        let (result, authenticated) = match e.code() {
+            // No candidate key was available to even attempt decryption
+            ErrorCode::NoSession => (groupcast::GroupcastTestResultEnum::NoAvailableKey, false),
+            // Candidate key(s) were tried, none authenticated the message
+            ErrorCode::InvalidSignature => (groupcast::GroupcastTestResultEnum::FailedAuth, false),
+            // Authenticated, but a duplicate of an already-received message
+            ErrorCode::Duplicate => (groupcast::GroupcastTestResultEnum::MessageReplay, true),
+            _ => (groupcast::GroupcastTestResultEnum::GeneralError, false),
+        };
+
+        self.matter
+            .groupcast_testing()
+            .observe(groupcast::TestingObservation {
+                src_ip: groupcast::TestingObservation::addr_ip(&packet.peer),
+                dst_ip: Some(groupcast::TestingObservation::group_dst_ip(
+                    fabrics,
+                    mode.fab_idx,
+                    group_id,
+                )),
+                // Per the Matter Core spec, the `GroupID` field is filled
+                // from the request only when the message was properly
+                // authenticated for the fabric under test
+                group_id: authenticated.then_some(group_id),
+                endpoint_id: None,
+                cluster_id: None,
+                element_id: None,
+                access_allowed: None,
+                result,
+            });
+    }
+
     #[cfg(feature = "groups")]
     async fn process_groups<M>(
         &self,
@@ -1171,7 +1229,23 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 let group_addrs = || {
                     state.fabrics.iter().flat_map(|fabric| {
                         fabric.groups().iter().map(|group| {
-                            compute_group_multicast_addr(fabric.fabric_id(), group.group_id)
+                            // Groups with the `IanaAddr` Groupcast policy all
+                            // share the IANA-assigned address; `PerGroup` ones
+                            // (and legacy Groups-cluster entries, which behave
+                            // as `PerGroup`) each use a fabric+group-scoped
+                            // address. Duplicate enumeration of the shared
+                            // address is fine - the join/leave reconciliation
+                            // below is idempotent per address.
+                            use crate::dm::clusters::decl::groupcast::MulticastAddrPolicyEnum;
+
+                            match group.effective_mcast_policy() {
+                                MulticastAddrPolicyEnum::IanaAddr => {
+                                    crate::utils::ipv6::IANA_GROUPCAST_MULTICAST_ADDR
+                                }
+                                MulticastAddrPolicyEnum::PerGroup => {
+                                    compute_group_multicast_addr(fabric.fabric_id(), group.group_id)
+                                }
+                            }
                         })
                     })
                 };
@@ -1831,12 +1905,26 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 #[cfg(feature = "groups")]
                 if packet.header.plain.is_group_session() {
                     // Group (multicast) message — derive keys on-the-fly and decrypt
-                    let (session, payload_range) = state.sessions.get_or_create_for_group_rx(
+                    let result = state.sessions.get_or_create_for_group_rx(
                         &self.crypto,
                         &state.fabrics,
                         packet,
                         self.matter.dev_det(),
-                    )?;
+                    );
+
+                    let (session, payload_range) = match result {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            // When the Groupcast listener testing mode is
+                            // armed, report failed multicast group messages
+                            // as `GroupcastTesting` observations (turned
+                            // into events by the Groupcast handler)
+                            self.observe_group_rx_failure(packet, &state.fabrics, &e);
+
+                            return Err(e);
+                        }
+                    };
+
                     set_payload(packet, payload_range);
 
                     return session.post_recv(&packet.header);

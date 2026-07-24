@@ -26,7 +26,7 @@ use embassy_time::{Duration, Instant, Timer};
 use crate::acl::Accessor;
 use crate::bdx::{self, PROTO_ID_BDX};
 use crate::crypto::Crypto;
-use crate::dm::NodeId;
+use crate::dm::{AuxAclCheck, Metadata, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
@@ -249,11 +249,15 @@ impl ExchangeId {
         }
     }
 
-    fn accessor<'a>(&self, matter: &'a Matter<'a>) -> Result<Accessor<'a>, Error> {
+    fn accessor<'a>(
+        &self,
+        matter: &'a Matter<'a>,
+        aux_acl_enabled: bool,
+    ) -> Result<Accessor<'a>, Error> {
         self.with_state(matter, |state| {
             let sess = self.session(&mut state.sessions);
 
-            Ok(Accessor::for_session(sess, matter))
+            Ok(Accessor::for_session(sess, matter, aux_acl_enabled))
         })
     }
 
@@ -1485,8 +1489,11 @@ impl<'a> Exchange<'a> {
         .await
     }
 
-    pub(crate) fn accessor(&self) -> Result<Accessor<'a>, Error> {
-        self.id.accessor(self.matter)
+    pub(crate) fn accessor<M>(&self, metadata: M) -> Result<Accessor<'a>, Error>
+    where
+        M: Metadata,
+    {
+        self.id.accessor(self.matter, metadata.aux_acl_enabled())
     }
 
     pub fn is_groupcast(&self) -> Result<bool, Error> {
