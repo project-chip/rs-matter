@@ -416,11 +416,15 @@ pub struct BasicInfoSettings {
     pub configuration_version: u32,
     /// `BasicInformation::DeviceLocation` (provisional in the Matter 1.6
     /// IDL): where the device is installed, admin-writable.
+    pub device_location: Option<Nullable<DeviceLocation>>,
+    /// `GeneralCommissioning::RecoveryIdentifier` (provisional in Matter 1.6):
+    /// a random 64-bit value that identifies this node during the
+    /// Network Recovery flow without revealing its Node ID.
     ///
     /// NOTE: keep this field *last* - the persisted-blob TLV tags are
     /// positional, and appending preserves compatibility with blobs written
     /// before the field existed.
-    pub device_location: Option<Nullable<DeviceLocation>>,
+    pub recovery_identifier: Option<u64>,
 }
 
 impl BasicInfoSettings {
@@ -435,6 +439,7 @@ impl BasicInfoSettings {
             // Core Spec).
             configuration_version: 1,
             device_location: None,
+            recovery_identifier: None,
         }
     }
 
@@ -447,6 +452,7 @@ impl BasicInfoSettings {
             local_config_disabled: false,
             configuration_version: 1,
             device_location: None,
+            recovery_identifier: None,
         })
     }
 
@@ -461,6 +467,7 @@ impl BasicInfoSettings {
         self.local_config_disabled = false;
         self.configuration_version = 1;
         self.device_location = None;
+        self.recovery_identifier = None;
     }
 
     /// Bump `ConfigurationVersion` by one and return the new value.
@@ -512,6 +519,7 @@ impl BasicInfoSettings {
         self.local_config_disabled = info.local_config_disabled;
         self.configuration_version = info.configuration_version;
         self.device_location = info.device_location;
+        self.recovery_identifier = info.recovery_identifier;
 
         Ok(())
     }
@@ -1032,6 +1040,29 @@ mod tests {
         assert!(settings.location.is_none());
         assert!(settings.location_type.is_none());
         assert!(settings.device_location.is_none());
+    }
+
+    /// The `GeneralCommissioning::RecoveryIdentifier` value must survive the
+    /// persisted-blob round-trip (stable across reboots, per Matter Core Spec
+    /// 11.10.6.11), load as "never minted" from a blob that predates the field,
+    /// and be cleared by `reset()` so a factory reset regenerates it.
+    #[test]
+    fn recovery_identifier_survives_persistence_and_resets() {
+        // Factory-fresh (and blobs predating the field) load as "never minted".
+        let mut settings = BasicInfoSettings::new();
+        assert!(settings.recovery_identifier.is_none());
+        assert!(round_trip(&settings).recovery_identifier.is_none());
+
+        // A minted value round-trips verbatim.
+        settings.recovery_identifier = Some(0x1122_3344_5566_7788);
+        assert_eq!(
+            round_trip(&settings).recovery_identifier,
+            Some(0x1122_3344_5566_7788)
+        );
+
+        // Factory reset clears it so the next read mints a fresh one.
+        settings.reset();
+        assert!(settings.recovery_identifier.is_none());
     }
 
     // Silence unused-import lint on no-test builds

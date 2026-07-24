@@ -30,6 +30,15 @@ const AD_TYPE_SERVICE_DATA_UUID16: u8 = 0x16;
 const MATTER_SERVICE_DATA_PAYLOAD_LEN: usize = 8;
 /// The Matter BLE advertisement OpCode designating a commissionable device.
 const MATTER_ADV_OPCODE_COMMISSIONABLE: u8 = 0x00;
+/// The Matter BLE advertisement OpCode designating a node in Network Recovery mode.
+const MATTER_ADV_OPCODE_NETWORK_RECOVERY: u8 = 0x01;
+/// The length, in bytes, of the Matter Network-Recovery service-data payload
+/// (the bytes _following_ the 2-byte service UUID16 in the AD2 record), as per
+/// the Matter Core spec.
+const MATTER_RECOVERY_SERVICE_DATA_PAYLOAD_LEN: usize = 11;
+/// The length, in bytes, of the Recovery ID carried in a Network-Recovery
+/// advertisement / stored as `GeneralCommissioning::RecoveryIdentifier`.
+pub const RECOVERY_ID_LEN: usize = 8;
 
 #[cfg(all(feature = "os", feature = "bluer", target_os = "linux"))]
 pub mod bluer;
@@ -187,25 +196,7 @@ impl AdvData {
     /// you (as BlueZ and `bluer` do), use [`AdvData::parse_service_data`] with
     /// the `0xFFF6` service-data value directly.
     pub fn parse_adv(adv: &[u8]) -> Option<Self> {
-        for (ad_type, ad_payload) in AdStructures::new(adv) {
-            if ad_type != AD_TYPE_SERVICE_DATA_UUID16 {
-                continue;
-            }
-
-            // The service-data payload starts with the 2-byte (LE) UUID16. A
-            // structure too short to hold one is malformed - skip it and keep
-            // looking, rather than giving up on the whole advertisement: the Matter
-            // record may well be further along.
-            let Some((uuid16, service_data)) = ad_payload.split_first_chunk::<2>() else {
-                continue;
-            };
-
-            if u16::from_le_bytes(*uuid16) == MATTER_BLE_SERVICE_UUID16 {
-                return Self::parse_service_data(service_data);
-            }
-        }
-
-        None
+        matter_service_data(adv).and_then(Self::parse_service_data)
     }
 
     /// Parse the advertising data out of the Matter service-data payload - i.e.
@@ -300,6 +291,197 @@ impl AdvData {
     }
 }
 
+/// Advertising data for a node in Matter Network Recovery mode (BLE Device
+/// OpCode `0x01`), per the Matter 1.6 Core spec.
+///
+/// The Recovery ID is the 8-byte `GeneralCommissioning::RecoveryIdentifier`
+/// attribute value; it lets an Administrator identify the node without learning
+/// its Node ID. Unlike the commissionable advertisement, a Network Recovery
+/// advertisement carries no VID / PID / discriminator.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct RecoveryAdvData {
+    /// The 8-byte Recovery ID (`GeneralCommissioning::RecoveryIdentifier`).
+    recovery_id: [u8; RECOVERY_ID_LEN],
+    /// Whether the device signals that it carries additional (BLE) advertising
+    /// data (bit 0 of the last byte of the service-data payload).
+    ///
+    /// Always `false` for advertisements produced by this stack; decoded from
+    /// the wire when parsing a peer's advertisement.
+    additional_data: bool,
+}
+
+impl RecoveryAdvData {
+    /// Create a new instance carrying the given 8-byte Recovery ID.
+    ///
+    /// The bytes are the `GeneralCommissioning::RecoveryIdentifier` attribute
+    /// value, copied verbatim onto the wire (Matter 1.6 Core spec, Table 75).
+    pub const fn new(recovery_id: [u8; RECOVERY_ID_LEN]) -> Self {
+        Self {
+            recovery_id,
+            additional_data: false,
+        }
+    }
+
+    /// The 8-byte Recovery ID carried by this advertising data.
+    pub const fn recovery_id(&self) -> [u8; RECOVERY_ID_LEN] {
+        self.recovery_id
+    }
+
+    /// Whether the advertised device signals that it carries additional (BLE)
+    /// advertising data. See the field of the same name.
+    pub const fn additional_data(&self) -> bool {
+        self.additional_data
+    }
+
+    /// Return an iterator over the binary representation of the advertising data
+    /// (the AD1 Flags record followed by the AD2 UUID16+Service Data record).
+    pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
+        self.flags_iter().chain(self.service_iter())
+    }
+
+    /// Return an iterator over the binary representation of the AD1 advertising
+    /// data (Flags). Useful with GATT stacks that require the advertising data
+    /// to be reported as separate AD records.
+    pub fn flags_iter(&self) -> impl Iterator<Item = u8> + '_ {
+        empty()
+            .chain(once(self.flags_payload_iter().count() as u8 + 1)) // 1-byte type
+            .chain(once(self.flags_adv_type()))
+            .chain(self.flags_payload_iter())
+    }
+
+    /// The AD1 advertising data type (Flags).
+    pub const fn flags_adv_type(&self) -> u8 {
+        0x01
+    }
+
+    /// Return an iterator over the binary representation of the AD1 advertising
+    /// data _payload_.
+    ///
+    /// Per the Matter 1.6 Core spec (Table 75) a Recovery Node advertises
+    /// `0x05`: LE Limited Discoverable Mode (bit 0) set, LE General Discoverable
+    /// Mode (bit 1) clear, BR/EDR Not Supported (bit 2) set. (A commissionable
+    /// device instead advertises `0x06` - General, not Limited.)
+    pub fn flags_payload_iter(&self) -> impl Iterator<Item = u8> + '_ {
+        once(0x05)
+    }
+
+    /// Return an iterator over the binary representation of the AD2 advertising
+    /// data (UUID16+Service Data).
+    pub fn service_iter(&self) -> impl Iterator<Item = u8> + '_ {
+        empty()
+            .chain(once(self.service_payload_iter().count() as u8 + 3)) // + 1-byte type and 2-bytes Matter UUID16 Service
+            .chain(once(self.service_adv_type()))
+            .chain(MATTER_BLE_SERVICE_UUID16.to_le_bytes())
+            .chain(self.service_payload_iter())
+    }
+
+    /// The AD2 advertising data type (UUID16+Service Data).
+    pub const fn service_adv_type(&self) -> u8 {
+        0x16
+    }
+
+    /// Return an iterator over the binary representation of the AD2 advertising
+    /// data _payload_ (the Matter Network-Recovery service-data payload).
+    pub fn service_payload_iter(&self) -> impl Iterator<Item = u8> + '_ {
+        empty()
+            .chain(once(MATTER_ADV_OPCODE_NETWORK_RECOVERY))
+            .chain(once(0x00)) // Bits[7:4] advertisement version == 0, Bits[3:0] reserved == 0
+            .chain(self.recovery_id) // Recovery ID, copied verbatim
+            .chain(once(self.additional_data as u8)) // Additional-data flag (bit 0)
+    }
+
+    /// Parse a Network-Recovery advertisement out of a full, raw BLE
+    /// advertising-data blob (a sequence of `length`-prefixed AD structures).
+    ///
+    /// Walks the AD structures, finds the Matter service-data structure
+    /// (`0xFFF6`) and decodes it as a Network-Recovery payload. Returns `None`
+    /// if the blob carries no (valid) Matter Network-Recovery service data.
+    ///
+    /// Use this when the OS/GATT stack hands you the raw advertising bytes; if
+    /// it instead de-multiplexes service data by UUID, use
+    /// [`RecoveryAdvData::parse_service_data`] with the `0xFFF6` value directly.
+    pub fn parse_adv(adv: &[u8]) -> Option<Self> {
+        matter_service_data(adv).and_then(Self::parse_service_data)
+    }
+
+    /// Parse a Network-Recovery advertisement out of the Matter service-data
+    /// payload - i.e. the bytes of the `0xFFF6` service-data structure that
+    /// _follow_ the 2-byte service UUID.
+    ///
+    /// This is the layout produced by [`RecoveryAdvData::service_payload_iter`].
+    /// Returns `None` if the payload is not a valid Matter Network-Recovery
+    /// service-data payload (e.g. it is a commissionable payload instead).
+    pub fn parse_service_data(payload: &[u8]) -> Option<Self> {
+        // As per spec the payload is exactly 11 bytes. Be lenient and accept a
+        // longer payload (future extensions), but never a shorter one.
+        if payload.len() < MATTER_RECOVERY_SERVICE_DATA_PAYLOAD_LEN {
+            return None;
+        }
+
+        // Byte 0 is the Matter BLE OpCode; only "Network Recovery" (1) applies.
+        if payload[0] != MATTER_ADV_OPCODE_NETWORK_RECOVERY {
+            return None;
+        }
+
+        // Byte 1 high nibble is the advertisement version (currently 0); the low
+        // nibble is reserved. We do not reject a non-zero version so that a
+        // future minor revision keeps parsing, mirroring the commissionable path
+        // which tolerates the version bits.
+
+        // Bytes 2..=9 are the Recovery ID, copied verbatim. The slice is
+        // exactly `RECOVERY_ID_LEN` long (guaranteed by the length check above),
+        // so the `try_into` never fails.
+        let recovery_id: [u8; RECOVERY_ID_LEN] =
+            payload[2..2 + RECOVERY_ID_LEN].try_into().unwrap();
+        let additional_data = payload[2 + RECOVERY_ID_LEN] & 0x01 != 0;
+
+        Some(Self {
+            recovery_id,
+            additional_data,
+        })
+    }
+
+    /// Whether this advertised Recovery Node carries the given Recovery ID.
+    ///
+    /// This is the Network-Recovery analogue of [`AdvData::matches`]: an
+    /// Administrator that retrieved the `RecoveryIdentifier` before the node
+    /// lost connectivity uses it to pick out that specific node among any
+    /// Recovery Nodes it scans.
+    pub fn matches(&self, recovery_id: &[u8; RECOVERY_ID_LEN]) -> bool {
+        self.recovery_id == *recovery_id
+    }
+}
+
+/// Walk the AD structures of a raw BLE advertising-data blob and return the
+/// Matter service-data payload - the bytes of the `0xFFF6` "Service Data -
+/// 16-bit UUID" structure that _follow_ the 2-byte service UUID - or `None` if
+/// there is no such structure.
+///
+/// Shared by [`AdvData::parse_adv`] and [`RecoveryAdvData::parse_adv`], which
+/// differ only in how they interpret the returned payload (by its OpCode byte).
+fn matter_service_data(adv: &[u8]) -> Option<&[u8]> {
+    for (ad_type, ad_payload) in AdStructures::new(adv) {
+        if ad_type != AD_TYPE_SERVICE_DATA_UUID16 {
+            continue;
+        }
+
+        // The service-data payload starts with the 2-byte (LE) UUID16. A
+        // structure too short to hold one is malformed - skip it and keep
+        // looking, rather than giving up on the whole advertisement: the Matter
+        // record may well be further along.
+        let Some((uuid16, service_data)) = ad_payload.split_first_chunk::<2>() else {
+            continue;
+        };
+
+        if u16::from_le_bytes(*uuid16) == MATTER_BLE_SERVICE_UUID16 {
+            return Some(service_data);
+        }
+    }
+
+    None
+}
+
 /// An iterator over the individual AD structures of a raw BLE advertising-data
 /// blob, yielding `(ad_type, ad_payload)` for each well-formed
 /// `[length, type, ..payload..]` structure and stopping at the first malformed
@@ -343,7 +525,7 @@ impl<'a> Iterator for AdStructures<'a> {
 mod test {
     use crate::transport::network::mdns::CommissionableFilter;
 
-    use super::AdvData;
+    use super::{AdvData, RecoveryAdvData};
 
     /// A sample `AdvData` with a 12-bit discriminator that exercises the
     /// version-nibble masking on parse.
@@ -462,6 +644,102 @@ mod test {
 
         // The Matter record precedes the malformed one, so it's still found.
         assert!(AdvData::parse_adv(&blob).is_some());
+    }
+
+    // ---- Network Recovery advertisement (BLE Device OpCode 0x01) -----------
+
+    /// The exemplary Recovery ID from Matter 1.6 Core spec Table 75.
+    const SPEC_RECOVERY_ID: [u8; 8] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+
+    /// The full advertising PDU payload from Matter 1.6 Core spec Table 75
+    /// ("Advertising PDU payload when CHIP BLE OpCode indicates Node is in
+    /// Network Recovery mode"), for `SPEC_RECOVERY_ID` with the additional-data
+    /// flag clear.
+    const SPEC_RECOVERY_ADV: [u8; 18] = [
+        0x02, 0x01, 0x05, // AD1: Flags (Limited Discoverable + BR/EDR not supported)
+        0x0E, 0x16, 0xF6, 0xFF, // AD2: len 14, Service Data - UUID16 == 0xFFF6
+        0x01, // OpCode == Network Recovery
+        0x00, // advertisement version 0 / reserved
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // Recovery ID
+        0x00, // additional-data flag clear
+    ];
+
+    #[test]
+    fn recovery_serialize_matches_spec_example() {
+        let adv = RecoveryAdvData::new(SPEC_RECOVERY_ID);
+        let blob: heapless::Vec<u8, 32> = adv.iter().collect();
+
+        assert_eq!(&blob[..], &SPEC_RECOVERY_ADV[..]);
+    }
+
+    #[test]
+    fn recovery_parse_service_data_round_trips() {
+        let adv = RecoveryAdvData::new(SPEC_RECOVERY_ID);
+        let payload: heapless::Vec<u8, 16> = adv.service_payload_iter().collect();
+
+        let parsed = RecoveryAdvData::parse_service_data(&payload).unwrap();
+
+        assert_eq!(parsed, adv);
+        assert_eq!(parsed.recovery_id(), SPEC_RECOVERY_ID);
+        assert!(!parsed.additional_data());
+    }
+
+    #[test]
+    fn recovery_parse_full_spec_adv() {
+        let parsed = RecoveryAdvData::parse_adv(&SPEC_RECOVERY_ADV).unwrap();
+
+        assert_eq!(parsed.recovery_id(), SPEC_RECOVERY_ID);
+        assert!(!parsed.additional_data());
+    }
+
+    #[test]
+    fn recovery_additional_data_flag_round_trips() {
+        let adv = RecoveryAdvData {
+            additional_data: true,
+            ..RecoveryAdvData::new(SPEC_RECOVERY_ID)
+        };
+        let payload: heapless::Vec<u8, 16> = adv.service_payload_iter().collect();
+
+        let parsed = RecoveryAdvData::parse_service_data(&payload).unwrap();
+
+        assert!(parsed.additional_data());
+        assert_eq!(parsed, adv);
+    }
+
+    #[test]
+    fn recovery_matches_only_its_own_id() {
+        let adv = RecoveryAdvData::new(SPEC_RECOVERY_ID);
+
+        assert!(adv.matches(&SPEC_RECOVERY_ID));
+
+        let mut other = SPEC_RECOVERY_ID;
+        other[0] ^= 0xFF;
+        assert!(!adv.matches(&other));
+    }
+
+    #[test]
+    fn recovery_parse_rejects_short_payload() {
+        // 10 bytes: one short of the 11-byte minimum.
+        assert!(RecoveryAdvData::parse_service_data(&[1, 0, 1, 2, 3, 4, 5, 6, 7, 8]).is_none());
+    }
+
+    #[test]
+    fn recovery_and_commissionable_payloads_are_disjoint() {
+        // A commissionable payload (OpCode 0) is not a Recovery advertisement...
+        let comm: heapless::Vec<u8, 16> = sample().service_payload_iter().collect();
+        assert!(RecoveryAdvData::parse_service_data(&comm).is_none());
+
+        // ...and a Recovery payload (OpCode 1) is not a commissionable one.
+        let recovery: heapless::Vec<u8, 16> = RecoveryAdvData::new(SPEC_RECOVERY_ID)
+            .service_payload_iter()
+            .collect();
+        assert!(AdvData::parse_service_data(&recovery).is_none());
+    }
+
+    #[test]
+    fn recovery_parse_adv_returns_none_without_matter_service_data() {
+        // Just a Flags record - no Matter service data.
+        assert!(RecoveryAdvData::parse_adv(&[0x02, 0x01, 0x05]).is_none());
     }
 
     #[test]

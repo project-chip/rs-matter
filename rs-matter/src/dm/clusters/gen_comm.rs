@@ -21,13 +21,16 @@ use core::fmt::Debug;
 
 use either::Either;
 
+use rand_core::RngCore;
+
+use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::{Cluster, Dataver, InvokeContext, OperationContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
 use crate::persist::{Persist, NETWORKS_KEY};
 use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use crate::tlv::TLVBuilderParent;
+use crate::tlv::{Nullable, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::transport::session::SessionMode;
 use crate::utils::sync::DynBase;
 use crate::{except, with, MatterState};
@@ -203,7 +206,60 @@ impl<'a> GenCommHandler<'a> {
             f(state, &mut notify_mdns)
         })
     }
+
+    /// Return the node's `RecoveryIdentifier`, minting and persisting a stable
+    /// random 64-bit value on first access.
+    fn recovery_identifier_value(ctx: &impl ReadContext) -> Result<u64, Error> {
+        // Fast path: the value has already been minted (this read, a prior
+        // read, or a reload from persistence).
+        if let Some(id) = ctx
+            .exchange()
+            .with_state(|state| Ok(state.basic_info_settings.recovery_identifier))?
+        {
+            return Ok(id);
+        }
+
+        // Mint a fresh 64-bit value from the CSPRNG.
+        let fresh = ctx.crypto().rand()?.next_u64();
+
+        let mut persist = Persist::new(ctx.kv());
+
+        let id = ctx.exchange().with_state(|state| {
+            // Re-check under the state borrow: a concurrent read may have
+            // minted the value first, in which case we keep the stored one.
+            let id = *state
+                .basic_info_settings
+                .recovery_identifier
+                .get_or_insert(fresh);
+
+            state.basic_info_settings.store_persist(&mut persist)?;
+
+            Ok(id)
+        })?;
+
+        persist.run()?;
+
+        Ok(id)
+    }
 }
+
+/// Opt-in General Commissioning metadata that additionally advertises the
+/// **Network Recovery** feature (Matter 1.6, provisional): the `NR` FeatureMap
+/// bit plus the `RecoveryIdentifier` and `NetworkRecoveryReason` attributes.
+///
+/// This mirrors [`GenCommHandler::CLUSTER`] but exposes those two provisional
+/// attributes and sets the feature bit. The runtime [`GenCommHandler`] always
+/// implements both reads, so - exactly like
+/// [`basic_info::CLUSTER_DEVICE_LOCATION`](crate::dm::clusters::basic_info::CLUSTER_DEVICE_LOCATION) -
+/// an application opts in purely by substituting this metadata for
+/// [`GenCommHandler::CLUSTER`] in its endpoint's cluster list; nothing else in
+/// the wiring changes.
+pub const CLUSTER_NETWORK_RECOVERY: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(
+        with!(required; AttributeId::RecoveryIdentifier | AttributeId::NetworkRecoveryReason),
+    )
+    .with_cmds(except!(CommandId::SetTCAcknowledgements))
+    .with_features(Feature::NETWORK_RECOVERY.bits());
 
 impl ClusterHandler for GenCommHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
@@ -266,6 +322,30 @@ impl ClusterHandler for GenCommHandler<'_> {
 
     fn supports_concurrent_connection(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.commissioning_policy.concurrent_connection_supported())
+    }
+
+    fn recovery_identifier<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: OctetsBuilder<P>,
+    ) -> Result<P, Error> {
+        // The 8-byte, big-endian encoding of the stable random identifier.
+        // The same byte sequence is what a Recovery Node would carry in its
+        // BLE Network-Recovery advertisement (see `RecoveryAdvData`).
+        let id = Self::recovery_identifier_value(&ctx)?;
+
+        builder.set(Octets::new(&id.to_be_bytes()))
+    }
+
+    fn network_recovery_reason(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<Nullable<NetworkRecoveryReasonEnum>, Error> {
+        // Matter Core Spec 11.10.6.12: this attribute is null whenever the
+        // node is not undergoing a Network Recovery flow. rs-matter core never
+        // autonomously enters recovery mode (the flow is a platform-layer
+        // concern), so the reason is always null.
+        Ok(Nullable::none())
     }
 
     fn handle_arm_fail_safe<P: TLVBuilderParent>(
