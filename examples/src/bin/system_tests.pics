@@ -1151,23 +1151,27 @@ MCORE.DD.COMMISSIONING_SUBTYPE_T=1
 
 
 # Ethernet Network Diagnostics Cluster
+# `eth_diag::EthDiagHandler` declares `with_attrs(with!(required))` and
+# `with_cmds(with!())`. Every attribute of this cluster is optional and
+# `ResetCounts` is the only command, so the handler serves the global
+# attributes and nothing else - hence the zeros below.
 DGETH.S=1
-DGETH.S.C00.Rsp=1
+DGETH.S.C00.Rsp=0
 
 
 
 DGETH.C=1
 DGETH.C.C00.Tx=1
 # Server
-DGETH.S.A0000=1
-DGETH.S.A0001=1
-DGETH.S.A0002=1
-DGETH.S.A0003=1
-DGETH.S.A0004=1
-DGETH.S.A0005=1
-DGETH.S.A0006=1
-DGETH.S.A0007=1
-DGETH.S.A0008=1
+DGETH.S.A0000=0
+DGETH.S.A0001=0
+DGETH.S.A0002=0
+DGETH.S.A0003=0
+DGETH.S.A0004=0
+DGETH.S.A0005=0
+DGETH.S.A0006=0
+DGETH.S.A0007=0
+DGETH.S.A0008=0
 # Client
 DGETH.C.A0000=1
 DGETH.C.A0001=1
@@ -1180,7 +1184,7 @@ DGETH.C.A0007=1
 DGETH.C.A0008=1
 # Features
 DGETH.S.F00=0
-DGETH.S.F01=1
+DGETH.S.F01=0
 
 # Wi-Fi Network Diagnostics Cluster
 DGWIFI.S=1
@@ -1776,11 +1780,16 @@ BINFO.C.E03=1
 # NetworkCommissioning Cluster
 
 # Server Attributes
+# `system_tests` serves the Ethernet flavour of the cluster
+# (`net_comm::NetworkType::Ethernet`), which is `with_attrs(with!(required))`
+# plus `with_cmds(with!())`: ScanMaxTimeSeconds (A0002) and
+# ConnectMaxTimeSeconds (A0003) are optional and the network-provisioning
+# commands belong to the Wi-Fi / Thread flavours, so none of them are served.
 CNET.S=1
 CNET.S.A0000=1
 CNET.S.A0001=1
-CNET.S.A0002=1
-CNET.S.A0003=1
+CNET.S.A0002=0
+CNET.S.A0003=0
 CNET.S.A0004=1
 CNET.S.A0005=1
 CNET.S.A0006=1
@@ -1795,15 +1804,15 @@ CNET.S.F01=0
 CNET.S.F02=1
 
 # Server Commands
-CNET.S.C00.Rsp=1
-CNET.S.C01.Tx=1
-CNET.S.C02.Rsp=1
-CNET.S.C03.Rsp=1
-CNET.S.C04.Rsp=1
-CNET.S.C05.Tx=1
-CNET.S.C06.Rsp=1
-CNET.S.C07.Tx=1
-CNET.S.C08.Rsp=1
+CNET.S.C00.Rsp=0
+CNET.S.C01.Tx=0
+CNET.S.C02.Rsp=0
+CNET.S.C03.Rsp=0
+CNET.S.C04.Rsp=0
+CNET.S.C05.Tx=0
+CNET.S.C06.Rsp=0
+CNET.S.C07.Tx=0
+CNET.S.C08.Rsp=0
 
 CNET.C=1
 

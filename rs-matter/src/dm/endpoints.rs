@@ -85,7 +85,8 @@ macro_rules! root_endpoint {
 }
 
 /// A type alias for the handler chain returned by `eth_sys_handler()`.
-pub type EthSysHandler<'a> = SysHandler<'a, EthNetCtl, eth_diag::HandlerAdaptor<EthDiagHandler>>;
+pub type EthSysHandler<'a> =
+    SysHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler>>;
 
 /// A type alias for the handler chain returned by `wifi_sys_handler()`.
 pub type WifiSysHandler<'a, T> = SysHandler<'a, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>;
@@ -138,7 +139,7 @@ pub fn eth_sys_handler<'a, R: RngCore>(
         gen_diag,
         netif_diag,
         sw_diag,
-        EthNetCtl,
+        EthNetCtl::new_default(),
         EthDiagHandler::CLUSTER.id,
         EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
         rand,

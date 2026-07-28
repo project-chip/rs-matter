@@ -61,6 +61,15 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestDelayCommands",
     // "TestDescriptorCluster", // Skipped: hardcodes upstream `all-clusters-app`'s exact EP0 shape. The Power Source device-type half is now satisfiable (DEV_TYPE_POWER_SOURCE + the PowerSource cluster exist), but it also requires `ServerList` to contain FaultInjection (0xFFF1FC06, a chip test cluster), `PartsList == [1,2,3,4]` (four child endpoints) and an exact EP0 `TagList` — mirroring all-clusters-app rather than testing conformance.
     "TestDiagnosticLogs",
+    // Skipped: every Ethernet Network Diagnostics attribute (PHYRate ..
+    // TimeSinceReset) is optional and `ResetCounts` is its only command, while
+    // `eth_diag::EthDiagHandler` declares `with_attrs(with!(required))` and
+    // `with_cmds(with!())` - so it serves the global attributes and nothing
+    // else. Both tests read the optional attributes under PICS gates, so
+    // enabling them requires the handler to source real interface counters;
+    // claiming them in the `.pics` without that just buys a vacuous pass.
+    // "Test_TC_DGETH_2_1",
+    // "Test_TC_DGETH_2_2",
     "TestDiscovery",
     "TestEqualities",
     "TestEvents",
@@ -310,16 +319,46 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Network Commissioning (system cluster)
     //
     "TC_CNET_1_4",
-    // "TC_CNET_4_1",  // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_2",  // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_3",  // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_4",  // TODO: Thread network provisioning.
-    // "TC_CNET_4_9",  // TODO: Thread network provisioning.
-    // "TC_CNET_4_10", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_12", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_15", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_16", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_22", // TODO: Thread network provisioning.
+    // The Ethernet variant of the attribute-check test, gated on
+    // `has_feature(kEthernetNetworkInterface)`. `system_tests` claims that
+    // feature (`net_comm::NetworkType::Ethernet` on EP0, `CNET.S.F02` in the
+    // `.pics`), so the test runs rather than skipping.
+    "TC_CNET_4_3",
+    //
+    // The remaining `TC_CNET_4_*` tests target the Wi-Fi (`CNET.S.F00`) and
+    // Thread (`CNET.S.F01`) features. `system_tests` claims neither, so their
+    // `has_feature(...)` decorators / FeatureMap gates skip them. Upstream
+    // lists all of them under `not_automated` in
+    // `src/python_testing/test_metadata.yaml` and runs none of them in CI.
+    //
+    // Most do not actually need a radio, only a DUT that claims the feature
+    // and a `NetCtl` that answers `scan`/`connect` locally — see
+    // `dm::networks::wireless::NoopWirelessNetCtl` for the shape:
+    //   4_1  Wi-Fi   attribute reads only
+    //   4_2  Thread  attribute reads only; needs the network entry to report
+    //                `connected: true`, else the body skips at step 3
+    //   4_4  Wi-Fi   ScanNetworks; the directed-scan SSID is read back from
+    //                the DUT's own `Networks` entry, not supplied as a PIXIT
+    //   4_9  Wi-Fi   RemoveNetwork/ConnectNetwork under an armed failsafe;
+    //                no reboot and no operator prompt anywhere in the body
+    //   4_10 Thread  as 4_9
+    //   4_15 Wi-Fi   NetworkIDNotFound for a bogus network ID; the ID is
+    //                hardcoded in the test, so no PIXIT is needed
+    //   4_16 Thread  as 4_15
+    //   4_22 Thread  ScanNetworks
+    // These need a wireless example binary to run against; they cannot run
+    // against `system_tests`, whose CNET cluster is Ethernet-only.
+    //
+    // `4_12` (Thread ConnectNetwork) is the exception: it moves the DUT
+    // between two live PANs and re-discovers it on each, so a local `NetCtl`
+    // would satisfy it only vacuously. It needs real Thread.
+    //
+    // On the YAML side, `Test_TC_CNET_4_5` / `_4_6` (Wi-Fi / Thread
+    // FAILSAFE_REQUIRED) are four executable commands each and equally
+    // radio-free, while `Test_TC_CNET_4_11` needs two live access points.
+    // `Test_TC_CNET_4_13`, `_4_14`, `_4_20` and `_4_21` carry no executable
+    // steps at all (every step is `disabled: true`) — they are operator
+    // procedures, not runnable tests, and are deliberately not tracked here.
 
     //
     // Python tests — General Diagnostics (system cluster)
@@ -845,7 +884,7 @@ impl ITests {
             return self.run_commissioner_suite(test_timeout_secs, profile, target);
         }
 
-        let chip_tool_path = chip_dir.join("out/host/chip-tool");
+        let chip_tool_path = self.chip_builder.chip_tool_path();
         if !chip_tool_path.exists() {
             anyhow::bail!("`chip-tool` not found. Run `cargo xtask itest-setup` first.");
         }
@@ -1054,8 +1093,7 @@ impl ITests {
         // 1. Build the upstream device binary lazily (cached).
         self.chip_builder.build_chip_all_clusters_app(None, false)?;
 
-        let chip_dir = self.chip_builder.chip_dir();
-        let app_path = chip_dir.join("out/host/chip-all-clusters-app");
+        let app_path = self.chip_builder.all_clusters_app_path();
         if !app_path.exists() {
             anyhow::bail!(
                 "`chip-all-clusters-app` not found at {}",
@@ -1240,7 +1278,7 @@ impl ITests {
     ) -> String {
         let chip_dir = self.chip_builder.chip_dir();
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
-        let chip_tool_path = chip_dir.join("out/host/chip-tool");
+        let chip_tool_path = self.chip_builder.chip_tool_path();
         let test_exe_path = self.test_exe_path(profile, target);
         let test_pics_path = self.test_pics_path(target);
 
@@ -1255,8 +1293,8 @@ impl ITests {
             None => (test_name, false),
         };
         let ota_app_clause = if real_name.starts_with("OTA_") {
-            let chip_requestor = chip_dir.join("out/host/chip-ota-requestor-app");
-            let chip_provider = chip_dir.join("out/host/chip-ota-provider-app");
+            let chip_requestor = self.chip_builder.ota_requestor_app_path();
+            let chip_provider = self.chip_builder.ota_provider_app_path();
             if rs_is_requestor {
                 format!(
                     " --app-path 'ota-requestor:{}' --app-path 'ota-provider:{}'",
@@ -1385,8 +1423,16 @@ impl ITests {
         // `chip-all-clusters-app` is the canonical implementation; its path
         // is plumbed in via the `th_server_app_path` string user-param.
         let th_server_arg = if Self::needs_th_server_app(test_name) {
-            let app = chip_dir.join("out/host/chip-all-clusters-app");
+            let app = self.chip_builder.all_clusters_app_path();
             format!(" --string-arg th_server_app_path:{}", app.display())
+        } else {
+            String::new()
+        };
+        // Tests that spawn `chip-all-clusters-app` themselves take its path via
+        // the `app_path` string user-param instead.
+        let app_path_arg = if Self::needs_all_clusters_app_arg(test_name) {
+            let app = self.chip_builder.all_clusters_app_path();
+            format!(" --string-arg app_path:{}", app.display())
         } else {
             String::new()
         };
@@ -1414,7 +1460,7 @@ impl ITests {
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{framework_timeout_clause}{extra_args_clause}{pics_clause}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{framework_timeout_clause}{extra_args_clause}{pics_clause}{th_server_arg}{app_path_arg}"
         );
 
         // Optional `--app-args` passed through to `system_tests`. Used by
@@ -1696,15 +1742,23 @@ impl ITests {
     /// framework as a TH_SERVER). Drives the lazy build in `run_tests`.
     fn needs_chip_all_clusters_app(test_name: &str) -> bool {
         // TC_SC_3_5 plumbs the path through `--string-arg th_server_app_path`
-        // (see `needs_th_server_app`). TC_DA_1_9 spawns the binary itself
-        // via `--string-arg app_path:out/host/chip-all-clusters-app` (see
-        // `extra_python_script_args`).
+        // (see `needs_th_server_app`). TC_DA_1_9 spawns the binary itself and
+        // takes it via `--string-arg app_path` (see
+        // `needs_all_clusters_app_arg`).
         matches!(test_name, "TC_SC_3_5" | "TC_DA_1_9")
     }
 
     /// Tests that need the CHIP `chip-all-clusters-app` binary path injected
     /// as the `th_server_app_path` string user-param (consumed by
     /// `matter.testing.apps.AppServerSubprocess`).
+    /// Tests that spawn `chip-all-clusters-app` themselves and take its path
+    /// via the `app_path` string user-param.
+    fn needs_all_clusters_app_arg(test_name: &str) -> bool {
+        // TC_DA_1_9 launches the binary repeatedly, each time with a different
+        // revoked DAC/PAI configuration.
+        matches!(test_name, "TC_DA_1_9")
+    }
+
     fn needs_th_server_app(test_name: &str) -> bool {
         // TC_SC_3_5 ("CASE Error Handling [DUT_Initiator]") spawns a TH_SERVER
         // and uses CHIP's `FaultInjection` cluster on it to corrupt Sigma2
@@ -1982,6 +2036,11 @@ impl ITests {
             // CADMIN_1_10 reads `SpecificationVersion` there.
             | "TC_IDM_2_3"
             | "TC_CADMIN_1_10"
+            // CNET (Network Commissioning) is served on the root endpoint;
+            // `TC_CNET_4_3`'s `@run_if_endpoint_matches(has_feature(...))`
+            // gate finds the Ethernet feature only there, and would otherwise
+            // skip (which `--fail-on-skipped` turns into a runner failure).
+            | "TC_CNET_4_3"
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_2_5"
@@ -2050,9 +2109,11 @@ impl ITests {
             // chip output from `cargo xtask itest-setup` and bump its
             // per-test timeout (default 90 s) past the seven 30-s commission
             // attempts the test performs.
+            // The `app_path` pointing at that binary is appended separately (see
+            // `needs_all_clusters_app_arg`), since only that path is resolved
+            // against the chip output tree rather than being a fixed literal.
             "TC_DA_1_9" => {
                 "--PICS src/app/tests/suites/certification/ci-pics-values \
-                 --string-arg app_path:out/host/chip-all-clusters-app \
                  --string-arg dac_provider_base_path:credentials/test/revoked-attestation-certificates/dac-provider-test-vectors \
                  --string-arg revocation_set_base_path:credentials/test/revoked-attestation-certificates/revocation-sets \
                  --timeout 300"

@@ -32,9 +32,12 @@ pub struct EthNetwork<'a> {
 }
 
 impl<'a> EthNetwork<'a> {
+    /// The network ID used by [`Self::new_default`] and [`EthNetCtl::new_default`].
+    pub const DEFAULT_ID: &'static str = "eth";
+
     /// Create a new `EthNetwork` instance with a default network ID.
     pub const fn new_default() -> Self {
-        Self::new("eth")
+        Self::new(Self::DEFAULT_ID)
     }
 
     /// Create a new `EthNetwork` instance.
@@ -54,7 +57,10 @@ impl net_comm::Networks for EthNetwork<'_> {
     ) -> Result<(), Error> {
         f(&net_comm::NetworkInfo {
             network_id: self.network_id.as_bytes(),
-            connected: false, // TODO
+            // A wired interface that cannot carry traffic also cannot carry the
+            // read of this very attribute, so the single Ethernet network is
+            // always reported as connected.
+            connected: true,
         })
     }
 
@@ -116,9 +122,28 @@ impl net_comm::Networks for EthNetwork<'_> {
 }
 
 /// A `net_comm::NetCtl` implementation for Ethernet that errors out on all methods.
-pub struct EthNetCtl;
+///
+/// The network ID it reports as `LastNetworkID` must match the one served by the
+/// [`EthNetwork`] paired with it, as the two together describe a single wired
+/// interface. Both default to [`EthNetwork::DEFAULT_ID`], so a custom ID has to
+/// be given to both.
+pub struct EthNetCtl<'a> {
+    network_id: &'a str,
+}
 
-impl NetCtl for EthNetCtl {
+impl<'a> EthNetCtl<'a> {
+    /// Create a new `EthNetCtl` instance with a default network ID.
+    pub const fn new_default() -> Self {
+        Self::new(EthNetwork::DEFAULT_ID)
+    }
+
+    /// Create a new `EthNetCtl` instance.
+    pub const fn new(network_id: &'a str) -> Self {
+        Self { network_id }
+    }
+}
+
+impl NetCtl for EthNetCtl<'_> {
     fn net_type(&self) -> NetworkType {
         NetworkType::Ethernet
     }
@@ -135,16 +160,18 @@ impl NetCtl for EthNetCtl {
     }
 }
 
-impl NetCtlStatus for EthNetCtl {
+impl NetCtlStatus for EthNetCtl<'_> {
     fn last_networking_status(&self) -> Result<Option<NetworkCommissioningStatusEnum>, Error> {
-        Ok(None)
+        // The wired interface is up whenever this can be read at all, so the
+        // last (implicit) network operation is always a successful one.
+        Ok(Some(NetworkCommissioningStatusEnum::Success))
     }
 
     fn last_network_id<F, R>(&self, f: F) -> Result<R, Error>
     where
         F: FnOnce(Option<&[u8]>) -> Result<R, Error>,
     {
-        f(None)
+        f(Some(self.network_id.as_bytes()))
     }
 
     fn last_connect_error_value(&self) -> Result<Option<i32>, Error> {
