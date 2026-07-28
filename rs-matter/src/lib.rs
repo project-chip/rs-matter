@@ -49,7 +49,7 @@ use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
-use crate::sc::pase::Pase;
+use crate::sc::pase::{CommWindowState, Pase};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
@@ -424,17 +424,10 @@ impl<'a> Matter<'a> {
         self.with_state(|state| state.fabrics.iter().next().is_some())
     }
 
-    /// Return `true` if a commissioning window (basic or enhanced) is currently open.
-    ///
-    /// This is the condition under which the device is discoverable as commissionable and will
-    /// accept PASE - and therefore also the condition under which a BLE (BTP) transport, if any,
-    /// should be advertising.
-    ///
-    /// A window that has lapsed by timeout rather than being closed explicitly is only reported
-    /// as closed once the expiry is swept, which [`crate::im::InteractionModel::run`] does every
-    /// second, so the answer can trail such a window by about that long.
-    pub fn is_comm_window_open(&self) -> bool {
-        self.with_state(|state| state.pase.comm_window().is_some())
+    /// Return the state of the commissioning window - whether one is open, and if so who
+    /// opened it. See [`CommWindowState`] for what the answer is good for.
+    pub fn comm_window_state(&self) -> CommWindowState {
+        self.with_state(|state| state.pase.comm_window_state())
     }
 
     /// Open a basic commissioning window

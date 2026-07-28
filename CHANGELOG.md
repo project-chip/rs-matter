@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 * (Breaking) `Matter::is_commissioned` renamed to `Matter::has_fabrics` (#525)
-* New `Matter::is_comm_window_open` method (#525)
+* New `Matter::comm_window_state` method (#525)
 * Network Recovery data-model support - provisional in Matter 1.6 (#523)
 * Groupcast cluster handler support (Matter 1.6) - available when the `groups` feature is enabled (#521)
 * Fix CASE Sigma2 retransmissions with randomized ECDSA (#520)
