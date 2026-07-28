@@ -140,7 +140,7 @@ fn main() -> Result<(), Error> {
     // its own CASE exchanges to the provider.
     let ota_job = pin!(run_ota(&matter, &crypto, &providers, &ota_state, &im));
 
-    if !matter.is_commissioned() {
+    if !matter.has_fabrics() {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 

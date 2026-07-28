@@ -412,19 +412,29 @@ impl<'a> Matter<'a> {
         Ok(payload)
     }
 
-    /// Return `true` if there is at least one commissioned fabric
-    //
-    // TODO:
-    // The implementation of this method needs to change in future,
-    // because the current implementation does not really track whether
-    // `CommissioningComplete` had been actually received for the fabric.
-    //
-    // The fabric is created once we receive `AddNoc`, but that's just
-    // not enough. The fabric should NOT be considered commissioned until
-    // after we receive `CommissioningComplete` on behalf of a Case session
-    // for the fabric in question.
-    pub fn is_commissioned(&self) -> bool {
+    /// Return `true` if there is at least one fabric.
+    ///
+    /// Note that this is emphatically *not* "the device is commissioned": a fabric is created
+    /// as soon as `AddNOC` is received, which is well before the commissioner has established a
+    /// CASE session over the operational network and sent `CommissioningComplete`. Code that
+    /// needs to know whether commissioning is still in progress should use
+    /// [`Matter::is_comm_window_open`] instead, as the commissioning window stays open for exactly
+    /// that long.
+    pub fn has_fabrics(&self) -> bool {
         self.with_state(|state| state.fabrics.iter().count() > 0)
+    }
+
+    /// Return `true` if a commissioning window (basic or enhanced) is currently open.
+    ///
+    /// This is the condition under which the device is discoverable as commissionable and will
+    /// accept PASE - and therefore also the condition under which a BLE (BTP) transport, if any,
+    /// should be advertising.
+    ///
+    /// A window that has lapsed by timeout rather than being closed explicitly is only reported
+    /// as closed once the expiry is swept, which [`crate::im::InteractionModel::run`] does every
+    /// second, so the answer can trail such a window by about that long.
+    pub fn is_comm_window_open(&self) -> bool {
+        self.with_state(|state| state.pase.comm_window().is_some())
     }
 
     /// Open a basic commissioning window

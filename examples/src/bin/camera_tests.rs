@@ -603,7 +603,7 @@ fn main() -> Result<(), Error> {
 
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
 
-    if !matter.is_commissioned() {
+    if !matter.has_fabrics() {
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }

@@ -146,7 +146,7 @@ fn main() -> Result<(), Error> {
     // even if the device is already commissioned
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
 
-    if !matter.is_commissioned() {
+    if !matter.has_fabrics() {
         // If the device is not commissioned yet, print the QR code to the console
         // and enable basic commissioning
 

@@ -6,12 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+* (Breaking) `Matter::is_commissioned` renamed to `Matter::has_fabrics` (#525)
+* New `Matter::is_comm_window_open` method (#525)
 * Network Recovery data-model support - provisional in Matter 1.6 (#523)
 * Groupcast cluster handler support (Matter 1.6) - available when the `groups` feature is enabled (#521)
 * Fix CASE Sigma2 retransmissions with randomized ECDSA (#520)
-* (Breaking) Optional Time Zones support in the Time Sync Cluster Handler, trait `TimeSync` split into `TimeZones`, `NtpClient` and `NtpServer`
-* (Breaking) Handler lifecycle hook - cluster handlers can now participate in the node's persistence lifecycle
-* (Breaking) The code-generated (sync) `ClusterHandler` trait now also carries a defaulted `run` method, mirroring `ClusterAsyncHandler`
+* (Breaking) Optional Time Zones support in the Time Sync Cluster Handler, trait `TimeSync` split into `TimeZones`, `NtpClient` and `NtpServer` (#517)
+* (Breaking) Handler lifecycle hook - cluster handlers can now participate in the node's persistence lifecycle (#516)
+* (Breaking) The code-generated (sync) `ClusterHandler` trait now also carries a defaulted `run` method, mirroring `ClusterAsyncHandler` (#517)
 * (Breaking) Supported Matter Spec Version is now 1.6.0 (#510)
 * Exchange initiators - use a random exchange ID (#509)
 * Support for commissioning over BTP (#507)
