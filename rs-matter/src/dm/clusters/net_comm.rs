@@ -1035,6 +1035,50 @@ impl<'a, T> NetCommHandler<'a, T> {
         }
     }
 
+    /// Apply the `Breadcrumb` field of a Network Commissioning command.
+    ///
+    /// The field is optional, and only a command that *succeeded* may touch the
+    /// `GeneralCommissioning::Breadcrumb` attribute - a failed command has to
+    /// leave it exactly as it was.
+    fn apply_breadcrumb(
+        ctx: &impl InvokeContext,
+        status: NetworkCommissioningStatusEnum,
+        breadcrumb: Option<u64>,
+    ) -> Result<(), Error> {
+        if !matches!(status, NetworkCommissioningStatusEnum::Success) {
+            return Ok(());
+        }
+
+        let Some(breadcrumb) = breadcrumb else {
+            return Ok(());
+        };
+
+        ctx.exchange().with_state(|state| {
+            state.failsafe.set_breadcrumb(breadcrumb);
+
+            Ok(())
+        })
+    }
+
+    /// Whether the `Networks` attribute currently has any entry.
+    ///
+    /// `LastNetworkingStatus`, `LastNetworkID` and `LastConnectErrorValue` all
+    /// read as null while no network configurations exist, regardless of what
+    /// happened before the last one was removed.
+    fn has_networks(ctx: &impl ReadContext) -> Result<bool, Error> {
+        ctx.networks().access(|networks| {
+            let mut any = false;
+
+            networks.networks(&mut |_| {
+                any = true;
+
+                Ok(())
+            })?;
+
+            Ok(any)
+        })
+    }
+
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
     pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
         HandlerAsyncAdaptor(self)
@@ -1205,30 +1249,48 @@ where
 
     fn last_networking_status(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<NetworkCommissioningStatusEnum>, Error>> {
-        ready(self.net_ctl.last_networking_status().map(Nullable::new))
+        ready((|| {
+            if !Self::has_networks(&ctx)? {
+                return Ok(Nullable::none());
+            }
+
+            self.net_ctl.last_networking_status().map(Nullable::new)
+        })())
     }
 
     fn last_network_id<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
     ) -> impl Future<Output = Result<P, Error>> {
-        ready(self.net_ctl.last_network_id(|network_id| {
-            if let Some(network_id) = network_id {
-                builder.non_null()?.set(Octets::new(network_id))
-            } else {
-                builder.null()
+        ready((|| {
+            if !Self::has_networks(&ctx)? {
+                return builder.null();
             }
-        }))
+
+            self.net_ctl.last_network_id(|network_id| {
+                if let Some(network_id) = network_id {
+                    builder.non_null()?.set(Octets::new(network_id))
+                } else {
+                    builder.null()
+                }
+            })
+        })())
     }
 
     fn last_connect_error_value(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<i32>, Error>> {
-        ready(self.net_ctl.last_connect_error_value().map(Nullable::new))
+        ready((|| {
+            if !Self::has_networks(&ctx)? {
+                return Ok(Nullable::none());
+            }
+
+            self.net_ctl.last_connect_error_value().map(Nullable::new)
+        })())
     }
 
     async fn set_interface_enabled(
@@ -1258,7 +1320,7 @@ where
 
     async fn handle_scan_networks<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: ScanNetworksRequest<'_>,
         response: ScanNetworksResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1296,6 +1358,8 @@ where
                         .await
                         .map(|_| 0),
                 )?;
+
+                Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
                 if let Some(builder) = builder {
                     builder
@@ -1342,6 +1406,8 @@ where
                         .map(|_| 0),
                 )?;
 
+                Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
+
                 if let Some(builder) = builder {
                     builder
                         .networking_status(status)?
@@ -1382,6 +1448,8 @@ where
             }),
         )?;
 
+        Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
+
         // Networks list mutated
         ctx.notify_own_cluster_changed();
 
@@ -1406,6 +1474,8 @@ where
             }),
         )?;
 
+        Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
+
         // Networks list mutated
         ctx.notify_own_cluster_changed();
 
@@ -1427,6 +1497,8 @@ where
                 })
             }),
         )?;
+
+        Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
         // Networks list mutated
         ctx.notify_own_cluster_changed();
@@ -1538,6 +1610,8 @@ where
             }
         };
 
+        Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
+
         // LastNetworkingStatus / LastNetworkID / LastConnectErrorValue mutated
         ctx.notify_own_cluster_changed();
 
@@ -1564,6 +1638,8 @@ where
                 })
             }),
         )?;
+
+        Self::apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
         // Networks order mutated
         ctx.notify_own_cluster_changed();

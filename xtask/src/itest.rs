@@ -1993,16 +1993,28 @@ impl ITests {
             }
             "TC_CGEN_2_4" => "--endpoint 0",
             // The wireless Network Commissioning tests read the network they
-            // expect the DUT to be provisioned with from the commissioning
-            // arguments, even when (as here) commissioning happened on-network.
-            // These have to match what `wireless_tests` seeds itself with - see
-            // `MOCK_WIFI_SSID` / `MOCK_THREAD_DATASET` in
+            // expect the DUT to be provisioned with out of the commissioning
+            // arguments, even when - as here - the node was commissioned
+            // on-network. The values have to match what `wireless_tests` seeds
+            // itself with; see `MOCK_WIFI_SSID` / `MOCK_THREAD_DATASET` in
             // `tests/src/common/mock_net_ctl.rs`.
-            "TC_CNET_4_9" => "--endpoint 0 --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword",
+            //
+            // `--in-test-commissioning-method` is what makes the framework keep
+            // them: it copies the Wi-Fi / Thread credentials into the test
+            // config only when the commissioning method is a wireless one
+            // (`runner.py`, `commissioning_method = args.in_test_commissioning_method
+            // or args.commissioning_method`), otherwise they are parsed and
+            // dropped. It does not change how the node is actually commissioned
+            // - `--commissioning-method on-network` still governs that.
+            "TC_CNET_4_9" => {
+                "--endpoint 0 --in-test-commissioning-method ble-wifi \
+                 --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword"
+            }
             // `0208` is the Extended PAN ID TLV header (type 2, length 8),
             // followed by the mock network's Extended PAN ID.
             "TC_CNET_4_10" | "TC_CNET_4_16" => {
-                "--endpoint 0 --thread-dataset-hex 02081111111122222222"
+                "--endpoint 0 --in-test-commissioning-method ble-thread \
+                 --thread-dataset-hex 0208123456789abcdef0"
             }
             // Gates on `MCORE.ROLE.COMMISSIONEE` + `G.S`; `--endpoint 1` is
             // `PIXIT.G.ENDPOINT` (the default script args already carry it).

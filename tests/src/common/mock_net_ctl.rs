@@ -82,7 +82,10 @@ pub const MOCK_WIFI_NETWORKS: &[MockWifiNetwork] = &[
 pub const MOCK_THREAD_NETWORKS: &[MockThreadNetwork] = &[
     MockThreadNetwork {
         pan_id: 0x1234,
-        ext_pan_id: 0x1111_1111_2222_2222,
+        // Deliberately not `1111111122222222`: `TC_CNET_4_16` hardcodes that
+        // value as the *second*, deliberately-unknown network it expects a
+        // `NetworkIDNotFound` for, so the provisioned one must differ.
+        ext_pan_id: 0x1234_5678_9ABC_DEF0,
         network_name: "MatterThread",
         channel: 15,
         ext_addr: b"\x00\x11\x22\x33\x44\x55\x66\x77",
