@@ -9,6 +9,15 @@ on:
     - cron: "50 6 * * *"
   workflow_dispatch:
 
+# Pushing a new commit to a pull request supersedes the run already in flight for it.
+#
+# The trade-off is that commits pushed in quick succession onto a pull request do not each get
+# a size report; only the newest one does. The report for the final state of the branch is the
+# one that matters for review, so that is accepted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Pinned (rather than floating `stable`) so that size reports stay
   # comparable across runs: a compiler upgrade can move codegen by whole
