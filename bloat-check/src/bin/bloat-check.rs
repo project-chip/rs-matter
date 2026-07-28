@@ -442,7 +442,7 @@ fn main() -> ! {
 
     info!("===================================================");
 
-    if !stack.matter.is_commissioned() {
+    if !stack.matter.has_fabrics() {
         // If the device is not commissioned yet, print the QR text and code to the console
         // and enable basic commissioning
 

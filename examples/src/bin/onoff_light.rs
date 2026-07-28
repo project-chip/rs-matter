@@ -118,7 +118,7 @@ fn main() -> Result<(), Error> {
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    if !matter.is_commissioned() {
+    if !matter.has_fabrics() {
         // If the device is not commissioned yet, print the QR text and code to the console
         // and enable basic commissioning
 

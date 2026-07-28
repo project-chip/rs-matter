@@ -19,6 +19,11 @@ on:
         required: false
         type: string
 
+# Pushing a new commit to a pull request supersedes the run already in flight for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_TOOLCHAIN: stable
   CARGO_TERM_COLOR: always

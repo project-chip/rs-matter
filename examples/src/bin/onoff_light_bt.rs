@@ -188,7 +188,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
 
-    if !matter.is_commissioned() {
+    if !matter.has_fabrics() {
         // Not commissioned yet, start commissioning first
 
         // Print the QR text and code to the console

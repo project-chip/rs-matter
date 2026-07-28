@@ -9,6 +9,11 @@ on:
     - cron: "50 6 * * *"
   workflow_dispatch:
 
+# Pushing a new commit to a pull request supersedes the run already in flight for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_TOOLCHAIN: stable
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -49,7 +49,7 @@ use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
-use crate::sc::pase::Pase;
+use crate::sc::pase::{CommWindowState, Pase};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
@@ -412,19 +412,22 @@ impl<'a> Matter<'a> {
         Ok(payload)
     }
 
-    /// Return `true` if there is at least one commissioned fabric
-    //
-    // TODO:
-    // The implementation of this method needs to change in future,
-    // because the current implementation does not really track whether
-    // `CommissioningComplete` had been actually received for the fabric.
-    //
-    // The fabric is created once we receive `AddNoc`, but that's just
-    // not enough. The fabric should NOT be considered commissioned until
-    // after we receive `CommissioningComplete` on behalf of a Case session
-    // for the fabric in question.
-    pub fn is_commissioned(&self) -> bool {
-        self.with_state(|state| state.fabrics.iter().count() > 0)
+    /// Return `true` if there is at least one fabric.
+    ///
+    /// Note that this is emphatically *not* "the device is commissioned": a fabric is created
+    /// as soon as `AddNOC` is received, which is well before the commissioner has established a
+    /// CASE session over the operational network and sent `CommissioningComplete`. Code that
+    /// needs to know whether commissioning is still in progress should use
+    /// [`Matter::is_comm_window_open`] instead, as the commissioning window stays open for exactly
+    /// that long.
+    pub fn has_fabrics(&self) -> bool {
+        self.with_state(|state| state.fabrics.iter().next().is_some())
+    }
+
+    /// Return the state of the commissioning window - whether one is open, and if so who
+    /// opened it. See [`CommWindowState`] for what the answer is good for.
+    pub fn comm_window_state(&self) -> CommWindowState {
+        self.with_state(|state| state.pase.comm_window_state())
     }
 
     /// Open a basic commissioning window

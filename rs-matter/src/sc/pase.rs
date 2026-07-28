@@ -84,6 +84,36 @@ pub struct CommWindowOpener {
     pub vendor_id: u16,
 }
 
+/// Whether a PASE commissioning window is open, and - if so - who opened it
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CommWindowState {
+    /// No commissioning window is open
+    Closed,
+    /// A commissioning window is open
+    Open {
+        /// The administrator that opened the window over a CASE session, or `None` when the
+        /// device opened it itself, which is the case for initial commissioning
+        opener: Option<CommWindowOpener>,
+    },
+}
+
+impl CommWindowState {
+    /// Return `true` if a commissioning window is open.
+    ///
+    /// This is the condition under which the device is discoverable as commissionable and will
+    /// accept PASE.
+    pub const fn is_open(&self) -> bool {
+        matches!(self, Self::Open { .. })
+    }
+
+    /// Return `true` if a commissioning window is open and should be advertised on every
+    /// supported transport, rather than on the operational IP network alone.
+    pub const fn is_open_on_all_transports(&self) -> bool {
+        matches!(self, Self::Open { opener: None })
+    }
+}
+
 /// A PASE commissioning window
 pub struct CommWindow {
     /// The mDNS identifier
@@ -249,6 +279,17 @@ impl Pase {
         }
 
         Ok(())
+    }
+
+    /// Return the state of the commissioning window - whether one is open, and if so who
+    /// opened it. See [`CommWindowState`] for what the answer is good for.
+    pub fn comm_window_state(&self) -> CommWindowState {
+        match self.comm_window() {
+            Some(comm_window) => CommWindowState::Open {
+                opener: comm_window.opener(),
+            },
+            None => CommWindowState::Closed,
+        }
     }
 
     /// Open a basic commissioning window using a passcode
