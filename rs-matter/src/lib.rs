@@ -421,7 +421,7 @@ impl<'a> Matter<'a> {
     /// [`Matter::is_comm_window_open`] instead, as the commissioning window stays open for exactly
     /// that long.
     pub fn has_fabrics(&self) -> bool {
-        self.with_state(|state| state.fabrics.iter().count() > 0)
+        self.with_state(|state| state.fabrics.iter().next().is_some())
     }
 
     /// Return `true` if a commissioning window (basic or enhanced) is currently open.
