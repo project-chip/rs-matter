@@ -655,6 +655,42 @@ pub(crate) const OTA_TESTS: &[&str] = &[
     "OTA_SuccessfulTransfer@requestor",
 ];
 
+/// Network Commissioning tests for the wireless network types — run against the
+/// `wireless_tests` binary, whose `NetCtl` answers `ScanNetworks` /
+/// `ConnectNetwork` from a canned table instead of a radio.
+///
+/// Upstream lists every one of these under `not_automated` in
+/// `src/python_testing/test_metadata.yaml` because `chip-all-clusters-app` binds
+/// the cluster straight to the platform's Wi-Fi / Thread stack, leaving nowhere
+/// to stand in for the radio. The `NetCtl` trait is that seam here.
+///
+/// The Thread entries drive the same binary in its Thread flavour — see
+/// `Self::app_args_override`.
+pub(crate) const WIRELESS_TESTS: &[&str] = &[
+    // Wi-Fi
+    "TC_CNET_4_1",
+    "TC_CNET_4_4",
+    "TC_CNET_4_9",
+    "TC_CNET_4_15",
+    // Thread
+    "TC_CNET_4_2",
+    "TC_CNET_4_10",
+    "TC_CNET_4_16",
+    "TC_CNET_4_22",
+    // "TC_CNET_4_12", // Skipped: moves the node between two live PANs and
+    //                 // re-discovers it on each. A canned `NetCtl` reports
+    //                 // success without the node ever moving, so this would go
+    //                 // green without testing anything. Needs real Thread.
+    //
+    // `Test_TC_CNET_4_5` (Wi-Fi) and `Test_TC_CNET_4_6` (Thread) are equally
+    // radio-free — four commands each, checking that the provisioning commands
+    // are rejected without an armed failsafe. They are YAML, so the runner
+    // always hands them `--pics-file <target>.pics`, and they gate on
+    // `CNET.S.F00` / `CNET.S.F01` respectively. One `.pics` per target cannot
+    // claim both, so enabling them needs the Wi-Fi and Thread flavours split
+    // into two `[[bin]]` targets sharing one source file.
+];
+
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
 /// and a per-test timeout suitable for that suite.
@@ -682,6 +718,9 @@ pub(crate) enum TestSuite {
     /// OTA Software Update — `system_tests` plays an rs-matter OTA role against a
     /// CHIP `chip-ota-{provider,requestor}-app` counterpart.
     Ota,
+    /// Network Commissioning for the wireless network types, against the
+    /// `wireless_tests` binary and its canned `NetCtl`. Needs no radio.
+    Wireless,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
@@ -713,6 +752,7 @@ impl TestSuite {
             Self::Light => LIGHT_TESTS.to_vec(),
             Self::Scenes => SCENES_TESTS.to_vec(),
             Self::Ota => OTA_TESTS.to_vec(),
+            Self::Wireless => WIRELESS_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
             // ignores the test list (there's nothing to parameterise yet).
@@ -729,6 +769,7 @@ impl TestSuite {
             Self::Scenes => "scenes_tests",
             // rs-matter plays its OTA role from the `system_tests` binary.
             Self::Ota => "system_tests",
+            Self::Wireless => "wireless_tests",
             Self::Commissioner => "commissioner_tests",
         }
     }
@@ -743,6 +784,7 @@ impl TestSuite {
             | Self::Light
             | Self::Scenes
             | Self::Ota
+            | Self::Wireless
             | Self::Commissioner => &[],
         }
     }
@@ -759,6 +801,7 @@ impl TestSuite {
             // A full OTA flow commissions two nodes and transfers an image over
             // BDX; give it headroom.
             Self::Ota => 300,
+            Self::Wireless => 120,
             Self::Commissioner => 120,
         }
     }
@@ -766,6 +809,10 @@ impl TestSuite {
 
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
+
+/// The workspace crate holding the device-under-test drivers (`*_tests`
+/// binaries) and their `.pics` files.
+const TEST_CRATE_DIR: &str = "tests";
 
 /// Synthetic test name surfaced for [`TestSuite::Commissioner`] — picked
 /// up by [`ITests::run_tests`] and routed to [`ITests::run_commissioner_suite`].
@@ -1862,6 +1909,11 @@ impl ITests {
             // wrapper around `()` that flips `TestEventTriggersEnabled` to
             // true and validates the key/trigger per spec §11.12.7.1.
             "TC_TestEventTrigger" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // The Thread half of the `wireless` suite drives the same
+            // `wireless_tests` binary in its Thread flavour; the Wi-Fi tests
+            // take the default. The two network stores are distinct types, so
+            // the binary picks one at startup rather than switching later.
+            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22" => Some("--thread"),
             // TC_DGSW_2_2 triggers a `SoftwareFault` event via
             // `GeneralDiagnostics::TestEventTrigger` (trigger code
             // 0x0034000000000000, Matter spec §11.13.7). The Python helper
@@ -1940,6 +1992,18 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => "--endpoint 0",
+            // The wireless Network Commissioning tests read the network they
+            // expect the DUT to be provisioned with from the commissioning
+            // arguments, even when (as here) commissioning happened on-network.
+            // These have to match what `wireless_tests` seeds itself with - see
+            // `MOCK_WIFI_SSID` / `MOCK_THREAD_DATASET` in
+            // `tests/src/common/mock_net_ctl.rs`.
+            "TC_CNET_4_9" => "--endpoint 0 --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword",
+            // `0208` is the Extended PAN ID TLV header (type 2, length 8),
+            // followed by the mock network's Extended PAN ID.
+            "TC_CNET_4_10" | "TC_CNET_4_16" => {
+                "--endpoint 0 --thread-dataset-hex 02081111111122222222"
+            }
             // Gates on `MCORE.ROLE.COMMISSIONEE` + `G.S`; `--endpoint 1` is
             // `PIXIT.G.ENDPOINT` (the default script args already carry it).
             "TC_ACE_1_6" => "--PICS src/app/tests/suites/certification/ci-pics-values",
@@ -2037,10 +2101,15 @@ impl ITests {
             | "TC_IDM_2_3"
             | "TC_CADMIN_1_10"
             // CNET (Network Commissioning) is served on the root endpoint;
-            // `TC_CNET_4_3`'s `@run_if_endpoint_matches(has_feature(...))`
-            // gate finds the Ethernet feature only there, and would otherwise
-            // skip (which `--fail-on-skipped` turns into a runner failure).
+            // the `@run_if_endpoint_matches(has_feature(...))` gates on these
+            // find the Ethernet / Wi-Fi / Thread feature only there, and would
+            // otherwise skip (which `--fail-on-skipped` turns into a failure).
             | "TC_CNET_4_3"
+            | "TC_CNET_4_1"
+            | "TC_CNET_4_2"
+            | "TC_CNET_4_4"
+            | "TC_CNET_4_15"
+            | "TC_CNET_4_22"
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_2_5"
@@ -2151,7 +2220,7 @@ impl ITests {
     ) -> anyhow::Result<()> {
         warn!("Building test executable `{target}`...");
 
-        let test_exe_crate_dir = self.workspace_dir.join("examples");
+        let test_exe_crate_dir = self.workspace_dir.join(TEST_CRATE_DIR);
 
         if force_rebuild {
             info!("Force rebuild requested, cleaning previous build artifacts...");
@@ -2206,7 +2275,7 @@ impl ITests {
 
     fn test_pics_path(&self, target: &str) -> PathBuf {
         self.workspace_dir
-            .join("examples")
+            .join(TEST_CRATE_DIR)
             .join("src")
             .join("bin")
             .join(format!("{target}.pics"))

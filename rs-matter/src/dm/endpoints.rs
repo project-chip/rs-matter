@@ -35,7 +35,9 @@ use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::sw_diag::{self, ClusterHandler as _, SwDiag, SwDiagHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
 use super::clusters::time_sync::{self, ClusterHandler as _, TimeSyncHandler};
-use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
+use super::clusters::wifi_diag::{
+    self, AlwaysConnected, ClusterHandler as _, WifiDiag, WifiDiagHandler, WirelessDiag,
+};
 use super::networks::eth::EthNetCtl;
 use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 
@@ -97,7 +99,7 @@ pub type ThreadSysHandler<'a, T> =
 
 /// A type alias for the handler chain returned by `sys_handler()`.
 pub type SysHandler<'a, T, N> = handler_chain_type!(
-    EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<T>>
+    EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>
     | Async<handler_chain_type!(
         EpClMatcher => desc::HandlerAdaptor<DescHandler<'a>>,
         EpClMatcher => basic_info::HandlerAdaptor<BasicInfoHandler>,
@@ -140,6 +142,7 @@ pub fn eth_sys_handler<'a, R: RngCore>(
         netif_diag,
         sw_diag,
         EthNetCtl::new_default(),
+        &AlwaysConnected,
         EthDiagHandler::CLUSTER.id,
         EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
         rand,
@@ -176,6 +179,7 @@ where
         netif_diag,
         sw_diag,
         net_ctl,
+        wifi_diag,
         WifiDiagHandler::CLUSTER.id,
         WifiDiagHandler::new(Dataver::new_rand(&mut rand), wifi_diag).adapt(),
         rand,
@@ -212,6 +216,7 @@ where
         netif_diag,
         sw_diag,
         net_ctl,
+        thread_diag,
         ThreadDiagHandler::CLUSTER.id,
         ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt(),
         rand,
@@ -239,6 +244,7 @@ fn sys_handler<'a, R: RngCore, T, N>(
     netif_diag: &'a dyn NetifDiag,
     sw_diag: &'a dyn SwDiag,
     net_ctl: T,
+    wireless_diag: &'a dyn WirelessDiag,
     netw_diag_cluster_id: ClusterId,
     netw_diag: N,
     mut rand: R,
@@ -251,7 +257,7 @@ where
             Some(ROOT_ENDPOINT_ID),
             Some(NetCommHandler::<T>::CLUSTER.id),
         ),
-        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt(),
+        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl, wireless_diag).adapt(),
         Async(
             ChainedHandler::new(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(netw_diag_cluster_id)),

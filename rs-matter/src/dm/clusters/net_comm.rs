@@ -21,6 +21,7 @@ use core::fmt::{self, Debug};
 use core::future::{ready, Future};
 
 use crate::dm::clusters::gen_comm::GenCommHandler;
+use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::wireless::{Thread, ThreadTLV, MAX_WIRELESS_NETWORK_ID_LEN};
 use crate::dm::networks::NetChangeNotif;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
@@ -67,35 +68,29 @@ impl NetworkType {
     }
 }
 
-/// Network information as returned by the `Networks` trait
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NetworkInfo<'a> {
-    /// The network ID of the network
-    pub network_id: &'a [u8],
-    /// Whether this network is currently connected
-    pub connected: bool,
-}
-
-impl NetworkInfo<'_> {
-    /// Read the network information into the given `NetworkInfoStructBuilder`.
-    fn read_into<P: TLVBuilderParent>(
-        &self,
-        builder: NetworkInfoStructBuilder<P>,
-    ) -> Result<P, Error> {
-        // `NetworkIdentifier` / `ClientIdentifier` are not part of
-        // `NetworkInfoStruct` in the Matter 1.6.0 data model: the Wi-Fi
-        // per-device-credentials surface moved to the separate
-        // `NetworkIdentityManagement` cluster. They exist again in the 1.6.1
-        // IDL, so the two lines below are kept, commented, to be restored
-        // together with `CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0`.
-        builder
-            .network_id(Octets::new(self.network_id))?
-            .connected(self.connected)?
-            // .network_identifier(None)?
-            // .client_identifier(None)?
-            .end()
-    }
+/// Read one entry of the `Networks` attribute into the given builder.
+///
+/// `connected` is not something the `Networks` store can answer - it is the
+/// network *controller* that knows which network is currently up - so it is
+/// supplied by the caller (see `NetCommHandler::networks`) rather than carried
+/// alongside the network ID.
+fn network_read_into<P: TLVBuilderParent>(
+    network_id: &[u8],
+    connected: bool,
+    builder: NetworkInfoStructBuilder<P>,
+) -> Result<P, Error> {
+    // `NetworkIdentifier` / `ClientIdentifier` are not part of
+    // `NetworkInfoStruct` in the Matter 1.6.0 data model: the Wi-Fi
+    // per-device-credentials surface moved to the separate
+    // `NetworkIdentityManagement` cluster. They exist again in the 1.6.1
+    // IDL, so the two lines below are kept, commented, to be restored
+    // together with `CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0`.
+    builder
+        .network_id(Octets::new(network_id))?
+        .connected(connected)?
+        // .network_identifier(None)?
+        // .client_identifier(None)?
+        .end()
 }
 
 /// Network scan information as returned by the `NetCtl::scan` method
@@ -397,7 +392,7 @@ pub trait Networks {
     fn max_networks(&self) -> Result<u8, Error>;
 
     /// Iterate over the networks recorded in the implementation and call the provided function for each network
-    fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error>;
+    fn networks(&self, f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error>;
 
     /// Get the credentials for the given network ID by calling the provided function
     ///
@@ -486,7 +481,7 @@ where
         (**self).max_networks()
     }
 
-    fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
+    fn networks(&self, f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error> {
         (**self).networks(f)
     }
 
@@ -552,7 +547,7 @@ impl Networks for &mut dyn Networks {
         (**self).max_networks()
     }
 
-    fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
+    fn networks(&self, f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error> {
         (**self).networks(f)
     }
 
@@ -641,7 +636,7 @@ impl Networks for DummyNetworks {
         Ok(0)
     }
 
-    fn networks(&self, _f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
+    fn networks(&self, _f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error> {
         Ok(())
     }
 
@@ -930,7 +925,7 @@ impl Networks for SharedNetworksInstance<'_> {
         self.networks.max_networks()
     }
 
-    fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
+    fn networks(&self, f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error> {
         self.networks.networks(f)
     }
 
@@ -1019,15 +1014,25 @@ impl Networks for SharedNetworksInstance<'_> {
 
 /// The system implementation of a handler for the Network Commissioning Matter cluster.
 #[derive(Clone)]
-pub struct NetCommHandler<T> {
+pub struct NetCommHandler<'a, T> {
     dataver: Dataver,
     net_ctl: T,
+    /// Tells whether the node currently has a network up. Combined with the
+    /// last-connected network ID from `NetCtlStatus`, this is what the
+    /// `Connected` field of each `Networks` entry is derived from - the
+    /// `Networks` store itself has no way of knowing.
+    wireless_diag: &'a dyn WirelessDiag,
 }
 
-impl<T> NetCommHandler<T> {
-    /// Create a new instance of `NetCommHandler` with the given `Dataver` and `NetCtl`.
-    pub const fn new(dataver: Dataver, net_ctl: T) -> Self {
-        Self { dataver, net_ctl }
+impl<'a, T> NetCommHandler<'a, T> {
+    /// Create a new instance of `NetCommHandler` with the given `Dataver`,
+    /// `NetCtl` and `WirelessDiag`.
+    pub const fn new(dataver: Dataver, net_ctl: T, wireless_diag: &'a dyn WirelessDiag) -> Self {
+        Self {
+            dataver,
+            net_ctl,
+            wireless_diag,
+        }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
@@ -1036,7 +1041,7 @@ impl<T> NetCommHandler<T> {
     }
 }
 
-impl<T> ClusterAsyncHandler for NetCommHandler<T>
+impl<T> ClusterAsyncHandler for NetCommHandler<'_, T>
 where
     T: NetCtl + NetCtlStatus,
 {
@@ -1132,12 +1137,30 @@ where
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
     ) -> impl Future<Output = Result<P, Error>> {
+        // A network reads as connected when the node has a network up *and* the
+        // last network it connected to is this one. The liveness half has to
+        // come from the diagnostics hook rather than `LastNetworkingStatus`,
+        // which records the last operation and stays `Success` even after the
+        // link has since dropped.
+        let connected = |network_id: &[u8]| -> Result<bool, Error> {
+            if !self.wireless_diag.connected()? {
+                return Ok(false);
+            }
+
+            self.net_ctl
+                .last_network_id(|last| Ok(last == Some(network_id)))
+        };
+
         ready(ctx.networks().access(|networks| match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
                 let mut builder = Some(builder);
 
-                networks.networks(&mut |ni| {
-                    builder = Some(ni.read_into(unwrap!(builder.take()).push()?)?);
+                networks.networks(&mut |network_id| {
+                    builder = Some(network_read_into(
+                        network_id,
+                        connected(network_id)?,
+                        unwrap!(builder.take()).push()?,
+                    )?);
 
                     Ok(())
                 })?;
@@ -1149,9 +1172,13 @@ where
                 let mut builder = Some(builder);
                 let mut parent = None;
 
-                networks.networks(&mut |ni| {
+                networks.networks(&mut |network_id| {
                     if current == index {
-                        parent = Some(ni.read_into(unwrap!(builder.take()))?);
+                        parent = Some(network_read_into(
+                            network_id,
+                            connected(network_id)?,
+                            unwrap!(builder.take()),
+                        )?);
                     }
 
                     current += 1;
@@ -1561,7 +1588,7 @@ where
     // }
 }
 
-impl<T> Debug for NetCommHandler<T> {
+impl<T> Debug for NetCommHandler<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NetCommHandler")
             .field("dataver", &self.dataver.get())
@@ -1570,7 +1597,7 @@ impl<T> Debug for NetCommHandler<T> {
 }
 
 #[cfg(feature = "defmt")]
-impl<T> defmt::Format for NetCommHandler<T> {
+impl<T> defmt::Format for NetCommHandler<'_, T> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "NetCommHandler {{ dataver: {} }}", self.dataver.get());
     }

@@ -51,17 +51,8 @@ impl net_comm::Networks for EthNetwork<'_> {
         Ok(1)
     }
 
-    fn networks(
-        &self,
-        f: &mut dyn FnMut(&net_comm::NetworkInfo) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        f(&net_comm::NetworkInfo {
-            network_id: self.network_id.as_bytes(),
-            // A wired interface that cannot carry traffic also cannot carry the
-            // read of this very attribute, so the single Ethernet network is
-            // always reported as connected.
-            connected: true,
-        })
+    fn networks(&self, f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error> {
+        f(self.network_id.as_bytes())
     }
 
     fn creds(

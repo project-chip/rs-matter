@@ -272,10 +272,10 @@ impl ChipBuilder {
     /// is left behind with no rule that can refresh it, and switching back and
     /// forth re-compiles the world every time.
     fn out_dir(binary_path: &str) -> &str {
-        binary_path
-            .rsplit_once('/')
+        Path::new(binary_path)
+            .parent()
+            .and_then(|dir| dir.to_str())
             .expect("binary paths are `<out-dir>/<binary>`")
-            .0
     }
 
     /// Build and install the CHIP Python "matter" wheel into the

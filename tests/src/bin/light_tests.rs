@@ -77,14 +77,6 @@ static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
-    let thread = std::thread::Builder::new()
-        .stack_size(550 * 1024)
-        .spawn(run)
-        .unwrap();
-    thread.join().unwrap()
-}
-
-fn run() -> Result<(), Error> {
     env_logger::builder()
         .format(|buf, record| {
             use std::io::Write;
