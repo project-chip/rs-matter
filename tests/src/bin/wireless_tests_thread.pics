@@ -1,0 +1,96 @@
+# PICS for the Thread flavour of `wireless_tests`.
+#
+# Declares only what the binary actually serves. The Network Commissioning
+# cluster is `NetworkType::Thread` (see `net_comm::NetworkType::cluster`), which
+# is `with!(required; ScanMaxTimeSeconds | ConnectMaxTimeSeconds |
+# ThreadVersion | SupportedThreadFeatures)` plus the five Thread provisioning
+# commands.
+
+# Network Commissioning - Thread
+CNET.S=1
+
+# Features: TH only.
+CNET.S.F00=0
+CNET.S.F01=1
+CNET.S.F02=0
+
+# MaxNetworks, Networks, ScanMaxTimeSeconds, ConnectMaxTimeSeconds,
+# InterfaceEnabled, LastNetworkingStatus, LastNetworkID, LastConnectErrorValue.
+CNET.S.A0000=1
+CNET.S.A0001=1
+CNET.S.A0002=1
+CNET.S.A0003=1
+CNET.S.A0004=1
+CNET.S.A0005=1
+CNET.S.A0006=1
+CNET.S.A0007=1
+# SupportedWiFiBands: Wi-Fi only.
+CNET.S.A0008=0
+# SupportedThreadFeatures, ThreadVersion.
+CNET.S.A0009=1
+CNET.S.A000A=1
+
+# ScanNetworks, AddOrUpdateThreadNetwork, RemoveNetwork, ConnectNetwork,
+# ReorderNetwork, and the three responses. AddOrUpdateWiFiNetwork (C02) is not
+# part of the Thread flavour.
+CNET.S.C00.Rsp=1
+CNET.S.C01.Tx=1
+CNET.S.C02.Rsp=0
+CNET.S.C03.Rsp=1
+CNET.S.C04.Rsp=1
+CNET.S.C05.Tx=1
+CNET.S.C06.Rsp=1
+CNET.S.C07.Tx=1
+CNET.S.C08.Rsp=1
+
+# Thread Network Diagnostics
+#
+# `ThreadDiagHandler` is `with_attrs(with!(required))` / `with_cmds(with!())`.
+# The mandatory topology attributes are served (answered by `MockNetCtl` for the
+# provisioned network, or left null where the mock has no equivalent); the MLE
+# and MAC counters and `ResetCounts` are optional and are not implemented.
+DGTHREAD.S=1
+
+# Channel, RoutingRole, NetworkName, PanId, ExtendedPanId, MeshLocalPrefix.
+DGTHREAD.S.A0000=1
+DGTHREAD.S.A0001=1
+DGTHREAD.S.A0002=1
+DGTHREAD.S.A0003=1
+DGTHREAD.S.A0004=1
+DGTHREAD.S.A0005=1
+# OverrunCount - optional.
+DGTHREAD.S.A0006=0
+# NeighborTable, RouteTable, PartitionId, Weighting, DataVersion,
+# StableDataVersion, LeaderRouterId.
+DGTHREAD.S.A0007=1
+DGTHREAD.S.A0008=1
+DGTHREAD.S.A0009=1
+DGTHREAD.S.A000a=1
+DGTHREAD.S.A000b=1
+DGTHREAD.S.A000c=1
+DGTHREAD.S.A000d=1
+
+# RxErr* - optional counters.
+DGTHREAD.S.A0038=0
+DGTHREAD.S.A0039=0
+DGTHREAD.S.A003a=0
+
+# SecurityPolicy, ChannelPage0Mask, OperationalDatasetComponents,
+# ActiveNetworkFaultsList.
+DGTHREAD.S.A003b=1
+DGTHREAD.S.A003c=1
+DGTHREAD.S.A003d=1
+DGTHREAD.S.A003e=1
+
+# ExtAddress, Rloc16.
+DGTHREAD.S.A003f=1
+DGTHREAD.S.A0040=1
+
+# ResetCounts.
+DGTHREAD.S.C00.Rsp=0
+
+# ErrorCounts / MLECounts / MACCounts.
+DGTHREAD.S.F00=0
+DGTHREAD.S.F01=0
+DGTHREAD.S.F02=0
+DGTHREAD.S.F03=0

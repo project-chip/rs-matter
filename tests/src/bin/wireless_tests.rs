@@ -24,7 +24,8 @@
 //! traffic still runs over the ordinary UDP socket, exactly as for the Ethernet
 //! `system_tests` device - only the cluster's view of the world is wireless.
 //!
-//! Pass `--thread` for the Thread flavour; the default is Wi-Fi.
+//! Pass `--thread` (or set `RS_MATTER_WIRELESS_THREAD`) for the Thread
+//! flavour; the default is Wi-Fi.
 #![allow(clippy::uninlined_format_args)]
 
 use core::pin::pin;
@@ -114,7 +115,10 @@ fn run() -> Result<(), Error> {
 
     // The Wi-Fi and Thread network stores are distinct types, so the node is
     // built out in one of two monomorphisations rather than switched at runtime.
-    if args::arg_present("--thread") {
+    //
+    // The environment variable is how the chip-tool YAML runner selects the
+    // flavour: it spawns the device itself and passes it no arguments of ours.
+    if args::arg_present("--thread") || std::env::var_os("RS_MATTER_WIRELESS_THREAD").is_some() {
         run_thread()
     } else {
         run_wifi()

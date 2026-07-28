@@ -677,6 +677,28 @@ pub(crate) const WIRELESS_TESTS: &[&str] = &[
     "TC_CNET_4_10",
     "TC_CNET_4_16",
     "TC_CNET_4_22",
+    //
+    // YAML: the provisioning commands must be refused without an armed
+    // failsafe. Four executable commands each, no radio involved.
+    "Test_TC_CNET_4_5",
+    "Test_TC_CNET_4_6",
+    //
+    // YAML: the mandatory Wi-Fi / Thread diagnostics attributes, answered by
+    // `MockNetCtl` from the provisioned network.
+    //
+    // Their siblings stay off because `WifiDiagHandler` / `ThreadDiagHandler`
+    // are `with_attrs(with!(required))` / `with_cmds(with!())`: everything they
+    // gate on is either an optional counter or `ResetCounts`, none of which is
+    // implemented, so they would run no steps at all -
+    //   `Test_TC_DGWIFI_2_3`    counters + ResetCounts
+    //   `Test_TC_DGTHREAD_2_2`  Tx counters (MACCounts)
+    //   `Test_TC_DGTHREAD_2_3`  Rx counters (MACCounts)
+    //   `Test_TC_DGTHREAD_2_4`  OverrunCount + ResetCounts
+    // Enabling those means implementing the counters first, exactly as for the
+    // Ethernet diagnostics.
+    "Test_TC_DGWIFI_2_1",
+    "Test_TC_DGTHREAD_2_1",
+    //
     // "TC_CNET_4_12", // Skipped: moves the node between two live PANs and
     //                 // re-discovers it on each. A canned `NetCtl` reports
     //                 // success without the node ever moving, so this would go
@@ -690,6 +712,43 @@ pub(crate) const WIRELESS_TESTS: &[&str] = &[
     // claim both, so enabling them needs the Wi-Fi and Thread flavours split
     // into two `[[bin]]` targets sharing one source file.
 ];
+
+/// Which flavour of the `wireless_tests` binary a test drives.
+///
+/// The Wi-Fi and Thread network stores are distinct types, so the binary picks
+/// one at startup; and because the two claim different Network Commissioning
+/// features (`CNET.S.F00` vs `CNET.S.F01`) plus different diagnostics clusters,
+/// they also need different `.pics` files.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WirelessFlavour {
+    Wifi,
+    Thread,
+}
+
+impl WirelessFlavour {
+    /// The flavour a test needs, or `None` if it does not run against
+    /// `wireless_tests` at all.
+    fn of(test_name: &str) -> Option<Self> {
+        let flavour = match test_name {
+            "TC_CNET_4_1" | "TC_CNET_4_4" | "TC_CNET_4_9" | "TC_CNET_4_15"
+            | "Test_TC_CNET_4_5" | "Test_TC_DGWIFI_2_1" | "Test_TC_DGWIFI_2_3" => Self::Wifi,
+            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22"
+            | "Test_TC_CNET_4_6" | "Test_TC_DGTHREAD_2_1" | "Test_TC_DGTHREAD_2_2"
+            | "Test_TC_DGTHREAD_2_3" | "Test_TC_DGTHREAD_2_4" => Self::Thread,
+            _ => return None,
+        };
+
+        Some(flavour)
+    }
+
+    /// The `.pics` basename this flavour declares.
+    fn pics_target(&self) -> &'static str {
+        match self {
+            Self::Wifi => "wireless_tests_wifi",
+            Self::Thread => "wireless_tests_thread",
+        }
+    }
+}
 
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
@@ -1042,6 +1101,13 @@ impl ITests {
             .env("CHIP_HOME", chip_dir)
             .arg(&test_command);
 
+        // `run_test_suite.py` spawns the device itself and takes no per-app
+        // arguments, so the Thread flavour of `wireless_tests` is selected out
+        // of the environment instead (inherited by the app it launches).
+        if matches!(WirelessFlavour::of(test_name), Some(WirelessFlavour::Thread)) {
+            cmd.env("RS_MATTER_WIRELESS_THREAD", "1");
+        }
+
         match run_command(&mut cmd, self.print_cmd_output) {
             Ok(()) => {
                 // A zero exit status is NOT sufficient for the YAML suites:
@@ -1327,7 +1393,7 @@ impl ITests {
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = self.chip_builder.chip_tool_path();
         let test_exe_path = self.test_exe_path(profile, target);
-        let test_pics_path = self.test_pics_path(target);
+        let test_pics_path = self.test_pics_path(test_name, target);
 
         // OTA tests (`OTA_*`) run as a 3-party flow: the YAML commissions both an
         // OTA provider and an OTA requestor. We slot the rs-matter `system_tests`
@@ -1494,7 +1560,7 @@ impl ITests {
         // ones that need it at the target's own `.pics` (the same file the YAML
         // runner uses), by absolute path since the runner's CWD is `chip_dir`.
         let pics_clause = if Self::needs_target_pics(test_name) {
-            format!(" --PICS {}", self.test_pics_path(target).display())
+            format!(" --PICS {}", self.test_pics_path(test_name, target).display())
         } else {
             String::new()
         };
@@ -2285,7 +2351,11 @@ impl ITests {
         self.workspace_dir.join("target").join(profile).join(target)
     }
 
-    fn test_pics_path(&self, target: &str) -> PathBuf {
+    fn test_pics_path(&self, test_name: &str, target: &str) -> PathBuf {
+        let target = WirelessFlavour::of(test_name)
+            .map(|flavour| flavour.pics_target())
+            .unwrap_or(target);
+
         self.workspace_dir
             .join(TEST_CRATE_DIR)
             .join("src")

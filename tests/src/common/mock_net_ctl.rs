@@ -35,10 +35,13 @@ use rs_matter::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetCtlStatus, NetworkCommissioningStatusEnum, NetworkScanInfo,
     NetworkType, WiFiBandEnum, WiFiSecurityBitmap, WirelessCreds,
 };
-use rs_matter::dm::clusters::thread_diag::ThreadDiag;
-use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
+use rs_matter::dm::clusters::thread_diag::{RoutingRoleEnum, ThreadDiag};
+use rs_matter::dm::clusters::wifi_diag::{
+    SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
+};
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::error::Error;
+use rs_matter::tlv::Nullable;
 use rs_matter::utils::sync::DynBase;
 
 /// A canned Wi-Fi network, as reported by `ScanNetworks`.
@@ -253,8 +256,57 @@ impl WirelessDiag for MockNetCtl {
     }
 }
 
-// The remaining diagnostics are left at their defaults (absent / null), which is
-// what a device that cannot read a real radio should report.
-impl WifiDiag for MockNetCtl {}
+// The diagnostics clusters report the provisioned network. Left at their
+// defaults these would all read null, which the certification tests tolerate but
+// learn nothing from - answering them from the same canned table the scans use
+// is what gives `TC_DGWIFI_*` / `TC_DGTHREAD_*` something to check.
+impl WifiDiag for MockNetCtl {
+    fn bssid(&self, f: &mut dyn FnMut(Option<&[u8]>) -> Result<(), Error>) -> Result<(), Error> {
+        f(Some(MOCK_WIFI_NETWORKS[0].bssid))
+    }
 
-impl ThreadDiag for MockNetCtl {}
+    fn security_type(&self) -> Result<Nullable<SecurityTypeEnum>, Error> {
+        Ok(Nullable::some(SecurityTypeEnum::WPA2))
+    }
+
+    fn wi_fi_version(&self) -> Result<Nullable<WiFiVersionEnum>, Error> {
+        Ok(Nullable::some(WiFiVersionEnum::N))
+    }
+
+    fn channel_number(&self) -> Result<Nullable<u16>, Error> {
+        Ok(Nullable::some(MOCK_WIFI_NETWORKS[0].channel))
+    }
+
+    fn rssi(&self) -> Result<Nullable<i8>, Error> {
+        Ok(Nullable::some(MOCK_WIFI_NETWORKS[0].rssi))
+    }
+}
+
+impl ThreadDiag for MockNetCtl {
+    fn channel(&self) -> Result<Option<u16>, Error> {
+        Ok(Some(MOCK_THREAD_NETWORKS[0].channel))
+    }
+
+    fn routing_role(&self) -> Result<Option<RoutingRoleEnum>, Error> {
+        Ok(Some(RoutingRoleEnum::EndDevice))
+    }
+
+    fn network_name(
+        &self,
+        f: &mut dyn FnMut(Option<&str>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        f(Some(MOCK_THREAD_NETWORKS[0].network_name))
+    }
+
+    fn pan_id(&self) -> Result<Option<u16>, Error> {
+        Ok(Some(MOCK_THREAD_NETWORKS[0].pan_id))
+    }
+
+    fn extended_pan_id(&self) -> Result<Option<u64>, Error> {
+        Ok(Some(MOCK_THREAD_NETWORKS[0].ext_pan_id))
+    }
+
+    fn ext_address(&self) -> Result<Option<u64>, Error> {
+        Ok(Some(u64::from_be_bytes(*MOCK_THREAD_NETWORKS[0].ext_addr)))
+    }
+}

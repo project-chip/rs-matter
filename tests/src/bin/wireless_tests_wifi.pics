@@ -1,0 +1,75 @@
+# PICS for the Wi-Fi flavour of `wireless_tests`.
+#
+# Declares only what the binary actually serves. The Network Commissioning
+# cluster is `NetworkType::Wifi` (see `net_comm::NetworkType::cluster`), which is
+# `with!(required; ScanMaxTimeSeconds | ConnectMaxTimeSeconds | SupportedWiFiBands)`
+# plus the five Wi-Fi provisioning commands.
+
+# Network Commissioning - Wi-Fi
+CNET.S=1
+
+# Features: WI only.
+CNET.S.F00=1
+CNET.S.F01=0
+CNET.S.F02=0
+
+# MaxNetworks, Networks, ScanMaxTimeSeconds, ConnectMaxTimeSeconds,
+# InterfaceEnabled, LastNetworkingStatus, LastNetworkID, LastConnectErrorValue.
+CNET.S.A0000=1
+CNET.S.A0001=1
+CNET.S.A0002=1
+CNET.S.A0003=1
+CNET.S.A0004=1
+CNET.S.A0005=1
+CNET.S.A0006=1
+CNET.S.A0007=1
+# SupportedWiFiBands.
+CNET.S.A0008=1
+# SupportedThreadFeatures / ThreadVersion: Thread-only.
+CNET.S.A0009=0
+CNET.S.A000A=0
+
+# ScanNetworks, AddOrUpdateWiFiNetwork, RemoveNetwork, ConnectNetwork,
+# ReorderNetwork, and the three responses. AddOrUpdateThreadNetwork (C03) is
+# not part of the Wi-Fi flavour.
+CNET.S.C00.Rsp=1
+CNET.S.C01.Tx=1
+CNET.S.C02.Rsp=1
+CNET.S.C03.Rsp=0
+CNET.S.C04.Rsp=1
+CNET.S.C05.Tx=1
+CNET.S.C06.Rsp=1
+CNET.S.C07.Tx=1
+CNET.S.C08.Rsp=1
+
+# Wi-Fi Network Diagnostics
+#
+# `WifiDiagHandler` is `with_attrs(with!(required))` / `with_cmds(with!())`, so
+# only the five mandatory attributes are served - the packet/beacon counters and
+# `ResetCounts` are optional and are not implemented. `MockNetCtl` answers the
+# five from the provisioned network.
+DGWIFI.S=1
+
+# BSSID, SecurityType, WiFiVersion, ChannelNumber, RSSI.
+DGWIFI.S.A0000=1
+DGWIFI.S.A0001=1
+DGWIFI.S.A0002=1
+DGWIFI.S.A0003=1
+DGWIFI.S.A0004=1
+
+# BeaconLostCount .. OverrunCount - optional counters, not served.
+DGWIFI.S.A0005=0
+DGWIFI.S.A0006=0
+DGWIFI.S.A0007=0
+DGWIFI.S.A0008=0
+DGWIFI.S.A0009=0
+DGWIFI.S.A000a=0
+DGWIFI.S.A000b=0
+DGWIFI.S.A000c=0
+
+# ResetCounts.
+DGWIFI.S.C00.Rsp=0
+
+# ErrorCounts / PacketCounts.
+DGWIFI.S.F00=0
+DGWIFI.S.F01=0
