@@ -188,20 +188,14 @@ fn struct_field(
         quote!(
             #doc_comment
             pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
-                let element = self.0.structure()?.find_ctx(#code)?;
-
-                if element.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(#krate::tlv::FromTLV::from_tlv(&element)?))
-                }
+                self.0.read_opt(#code)
             }
         )
     } else {
         quote!(
             #doc_comment
             pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
-                #krate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(#code)?)
+                self.0.read(#code)
             }
         )
     }
@@ -341,30 +335,20 @@ mod tests {
                         &self.0
                     }
                     pub fn connected(&self) -> Result<bool, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+                        self.0.read(1)
                     }
                     pub fn test_optional(&self) -> Result<Option<u8>, rs_matter_crate::error::Error> {
-                        let element = self.0.structure()?.find_ctx(2)?;
-                        if element.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
-                        }
+                        self.0.read_opt(2)
                     }
                     pub fn test_nullable(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(3)?)
+                        self.0.read(3)
                     }
                     pub fn test_both(
                         &self,
                     ) -> Result<Option<rs_matter_crate::tlv::Nullable<u32>>, rs_matter_crate::error::Error> {
-                        let element = self.0.structure()?.find_ctx(4)?;
-                        if element.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
-                        }
+                        self.0.read_opt(4)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for NetworkInfoStruct<'a> {
@@ -476,7 +460,7 @@ mod tests {
                         &self.0
                     }
                     pub fn identify_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+                        self.0.read(0)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for IdentifyRequest<'a> {
@@ -542,7 +526,7 @@ mod tests {
                         &self.0
                     }
                     pub fn group(&self) -> Result<u16, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+                        self.0.read(0)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for SomeRequest<'a> {
@@ -603,7 +587,7 @@ mod tests {
                         &self.0
                     }
                     pub fn capacity(&self) -> Result<u8, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+                        self.0.read(0)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestResponse<'a> {
@@ -666,10 +650,10 @@ mod tests {
                         &self.0
                     }
                     pub fn status(&self) -> Result<u8, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+                        self.0.read(0)
                     }
                     pub fn group_id(&self) -> Result<u16, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(12)?)
+                        self.0.read(12)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for AnotherResponse<'a> {
@@ -821,10 +805,10 @@ mod tests {
                         &self.0
                     }
                     pub fn effect_identifier(&self) -> Result<EffectIdentifierEnum, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+                        self.0.read(0)
                     }
                     pub fn effect_variant(&self) -> Result<u8, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+                        self.0.read(1)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for OffWithEffectRequest<'a> {
@@ -905,13 +889,13 @@ mod tests {
                         &self.0
                     }
                     pub fn on_off_control(&self) -> Result<OnOffControlBitmap, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+                        self.0.read(0)
                     }
                     pub fn on_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+                        self.0.read(1)
                     }
                     pub fn off_wait_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
+                        self.0.read(2)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for OnWithTimedOffRequest<'a> {
@@ -1059,22 +1043,17 @@ mod tests {
                     pub fn short_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+                        self.0.read(1)
                     }
                     pub fn long_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
+                        self.0.read(2)
                     }
                     pub fn opt_str(
                         &self,
                     ) -> Result<Option<rs_matter_crate::tlv::Utf8Str<'_>>, rs_matter_crate::error::Error> {
-                        let element = self.0.structure()?.find_ctx(3)?;
-                        if element.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
-                        }
+                        self.0.read_opt(3)
                     }
                     pub fn opt_nul_str(
                         &self,
@@ -1082,12 +1061,7 @@ mod tests {
                         Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>>,
                         rs_matter_crate::error::Error,
                     > {
-                        let element = self.0.structure()?.find_ctx(4)?;
-                        if element.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
-                        }
+                        self.0.read_opt(4)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for WithStringMember<'a> {
@@ -1249,22 +1223,17 @@ mod tests {
                     pub fn short_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+                        self.0.read(1)
                     }
                     pub fn long_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::error::Error> {
-                        rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
+                        self.0.read(2)
                     }
                     pub fn opt_str(
                         &self,
                     ) -> Result<Option<rs_matter_crate::tlv::OctetStr<'_>>, rs_matter_crate::error::Error> {
-                        let element = self.0.structure()?.find_ctx(3)?;
-                        if element.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
-                        }
+                        self.0.read_opt(3)
                     }
                     pub fn opt_nul_str(
                         &self,
@@ -1272,12 +1241,7 @@ mod tests {
                         Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>>,
                         rs_matter_crate::error::Error,
                     > {
-                        let element = self.0.structure()?.find_ctx(4)?;
-                        if element.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
-                        }
+                        self.0.read_opt(4)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for WithStringMember<'a> {

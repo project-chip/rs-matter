@@ -19,7 +19,7 @@ use core::{cmp::Ordering, fmt};
 
 use crate::error::{Error, ErrorCode};
 
-use super::{pad, TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, TLV};
+use super::{pad, FromTLV, TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, TLV};
 
 /// A newtype for reading TLV-encoded data from Rust `&[u8]` slices.
 ///
@@ -75,6 +75,31 @@ use super::{pad, TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, TLV};
 pub struct TLVElement<'a>(TLVSequence<'a>);
 
 impl<'a> TLVElement<'a> {
+    /// Read a mandatory context-tagged field out of this (structure) element.
+    ///
+    /// Taking the tag as a runtime argument rather than baking it into the
+    /// caller is what keeps this cheap in code size: the generated per-field
+    /// accessors are otherwise structurally identical yet monomorphise
+    /// separately, so the same TLV walk is emitted once per *field* instead of
+    /// once per *type*.
+    pub fn read<T: FromTLV<'a>>(&self, ctx: u8) -> Result<T, Error> {
+        T::from_tlv(&self.structure()?.ctx(ctx)?)
+    }
+
+    /// Read an optional context-tagged field out of this (structure) element.
+    ///
+    /// Returns `None` when the field is absent. See [`Self::read`] for why the
+    /// tag is a runtime argument.
+    pub fn read_opt<T: FromTLV<'a>>(&self, ctx: u8) -> Result<Option<T>, Error> {
+        let element = self.structure()?.find_ctx(ctx)?;
+
+        if element.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(T::from_tlv(&element)?))
+        }
+    }
+
     /// Create a new `TLVElement` from a byte slice, where the byte slice contains an encoded TLV stream (a TLV element).
     #[inline(always)]
     pub const fn new(data: &'a [u8]) -> Self {
