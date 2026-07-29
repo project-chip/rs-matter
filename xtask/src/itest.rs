@@ -1168,23 +1168,25 @@ impl ITests {
         let chip_dir = self.chip_builder.chip_dir();
         let script_path = chip_dir.join("scripts/run_in_build_env.sh");
 
-        let env_file = env::temp_dir().join(format!("xtask-chip-env-{}", std::process::id()));
-        _ = fs::remove_file(&env_file);
+        // A `NamedTempFile` rather than a hand-rolled path in the shared temp
+        // dir: the file is pre-created 0600 with an unpredictable name (no
+        // symlink-clobber window), and it is deleted on drop, early returns
+        // included.
+        let env_file = tempfile::NamedTempFile::new()?;
 
         let mut cmd = Command::new(&script_path);
         cmd.current_dir(chip_dir)
             .env("CHIP_HOME", chip_dir)
-            .arg(format!("env -0 > '{}'", env_file.display()));
+            .arg(format!("env -0 > '{}'", env_file.path().display()));
 
         run_command(&mut cmd, self.print_cmd_output)?;
 
-        let data = fs::read(&env_file).map_err(|e| {
+        let data = fs::read(env_file.path()).map_err(|e| {
             anyhow::anyhow!(
                 "CHIP environment activation did not produce {}: {e}",
-                env_file.display()
+                env_file.path().display()
             )
         })?;
-        _ = fs::remove_file(&env_file);
 
         let mut env_map = HashMap::new();
         for entry in data.split(|byte| *byte == 0) {
