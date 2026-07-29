@@ -19,7 +19,8 @@
 
 use core::iter::once;
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
@@ -1091,9 +1092,50 @@ impl ITests {
         // free when the venv is intact.
         self.chip_builder.build_python_wheel(false)?;
 
-        // Run each test
-        for test_name in tests {
-            self.run_test(test_name, test_timeout_secs, profile, target)?;
+        // Activate the CHIP build environment ONCE and capture the resulting
+        // environment variables. `scripts/run_in_build_env.sh` re-runs the full
+        // pigweed activation (CIPD manifest regeneration, `pw_activate`, git
+        // submodule probes) on every invocation - several seconds each - so
+        // per-test activation used to be a fixed tax on all ~150 tests of a
+        // system-suite run. The activated environment is just a set of
+        // variables that is a pure function of the checkout, so one capture
+        // serves every test. This mirrors CHIP's own CI, which activates once
+        // around a whole batch runner.
+        let chip_env = self.capture_chip_env()?;
+
+        // Run the tests. Python (`TC_*`) tests keep one process each - their
+        // wrappers, shims and timeouts are all per-test - while YAML tests
+        // sharing the same per-invocation configuration (see
+        // `Self::yaml_batch_key`) are folded into a single `run_test_suite.py`
+        // invocation. The runner still restarts and re-pairs the app for every
+        // test inside a batch; what is amortized is the (multi-second) Python
+        // runner startup and network-namespace setup, once per batch instead
+        // of once per test.
+        let mut done = vec![false; tests.len()];
+        for i in 0..tests.len() {
+            if done[i] {
+                continue;
+            }
+
+            if Self::is_python_test(tests[i]) {
+                done[i] = true;
+                self.run_python_test(tests[i], test_timeout_secs, profile, target, &chip_env)?;
+            } else {
+                let key = Self::yaml_batch_key(tests[i]);
+
+                let mut batch = Vec::new();
+                for j in i..tests.len() {
+                    if !done[j]
+                        && !Self::is_python_test(tests[j])
+                        && Self::yaml_batch_key(tests[j]) == key
+                    {
+                        done[j] = true;
+                        batch.push(tests[j]);
+                    }
+                }
+
+                self.run_yaml_batch(&batch, test_timeout_secs, profile, target, &chip_env)?;
+            }
         }
 
         info!("All tests completed successfully.");
@@ -1101,25 +1143,78 @@ impl ITests {
         Ok(())
     }
 
-    fn run_test(
-        &self,
-        test_name: &str,
-        timeout_secs: u32,
-        profile: &str,
-        target: &str,
-    ) -> anyhow::Result<()> {
-        // TODO: Running test-by-test is slow. Turn this into a run-multiple-tests function.
+    /// Grouping key for folding YAML tests into one `run_test_suite.py`
+    /// invocation. Tests may share an invocation only when they agree on
+    /// everything that is fixed per-invocation:
+    /// - the `.pics` file and the `RS_MATTER_WIRELESS_THREAD` device-flavour
+    ///   selection, both determined by [`WirelessFlavour::of`];
+    /// - the OTA app-path wiring, which is role-specific - so `OTA_*` tests
+    ///   stay singleton batches, keyed by their own (role-suffixed) name.
+    fn yaml_batch_key(test_name: &str) -> (Option<WirelessFlavour>, Option<&str>) {
+        let real_name = test_name.strip_suffix("@requestor").unwrap_or(test_name);
 
-        // Some tests legitimately need more wall-clock time than the default
-        // (e.g. those that wait for a commissioning window to expire on its
-        // own). Allow per-test overrides while keeping the global `--timeout`
-        // as the floor for everything else.
-        let timeout_secs = Self::per_test_timeout_secs(test_name).unwrap_or(timeout_secs);
+        (
+            WirelessFlavour::of(test_name),
+            real_name.starts_with("OTA_").then_some(test_name),
+        )
+    }
 
-        info!("=> Running test `{test_name}` with timeout {timeout_secs}s...");
+    /// Activate the CHIP build environment and capture the resulting process
+    /// environment, NUL-separated via a temp file (the activation itself
+    /// prints to stdout, so stdout cannot carry the dump).
+    fn capture_chip_env(&self) -> anyhow::Result<HashMap<String, String>> {
+        info!("Capturing the CHIP build environment (one-time activation)...");
 
         let chip_dir = self.chip_builder.chip_dir();
+        let script_path = chip_dir.join("scripts/run_in_build_env.sh");
 
+        // A `NamedTempFile` rather than a hand-rolled path in the shared temp
+        // dir: the file is pre-created 0600 with an unpredictable name (no
+        // symlink-clobber window), and it is deleted on drop, early returns
+        // included.
+        let env_file = tempfile::NamedTempFile::new()?;
+
+        let mut cmd = Command::new(&script_path);
+        cmd.current_dir(chip_dir)
+            .env("CHIP_HOME", chip_dir)
+            .arg(format!("env -0 > '{}'", env_file.path().display()));
+
+        run_command(&mut cmd, self.print_cmd_output)?;
+
+        let data = fs::read(env_file.path()).map_err(|e| {
+            anyhow::anyhow!(
+                "CHIP environment activation did not produce {}: {e}",
+                env_file.path().display()
+            )
+        })?;
+
+        let mut env_map = HashMap::new();
+        for entry in data.split(|byte| *byte == 0) {
+            let entry = String::from_utf8_lossy(entry);
+            if let Some((key, value)) = entry.split_once('=') {
+                if !key.is_empty() {
+                    env_map.insert(key.to_string(), value.to_string());
+                }
+            }
+        }
+
+        // A capture without PATH means the activation output is unusable -
+        // every test command resolves python/chip-tool through it.
+        if !env_map.contains_key("PATH") {
+            anyhow::bail!("CHIP environment capture has no PATH; activation output looks corrupt");
+        }
+
+        info!(
+            "CHIP build environment captured ({} variables)",
+            env_map.len()
+        );
+
+        Ok(env_map)
+    }
+
+    /// Best-effort cleanup of processes left in the `app` network namespace by
+    /// a previous (possibly crashed) run.
+    fn kill_netns_leftovers(&self, chip_dir: &Path) {
         info!("Killing all netns processes in app namespace to clean previous runs");
         // If this fails, that's ok; best-effort
         _ = run_command(
@@ -1133,14 +1228,29 @@ impl ITests {
                 .current_dir(chip_dir),
             self.print_cmd_output,
         );
+    }
 
-        let test_command = if Self::is_python_test(test_name) {
-            self.python_test_command(test_name, timeout_secs, profile, target)?
-        } else {
-            self.yaml_test_command(test_name, timeout_secs, profile, target)
-        };
+    fn run_python_test(
+        &self,
+        test_name: &str,
+        timeout_secs: u32,
+        profile: &str,
+        target: &str,
+        chip_env: &HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        // Some tests legitimately need more wall-clock time than the default
+        // (e.g. those that wait for a commissioning window to expire on its
+        // own). Allow per-test overrides while keeping the global `--timeout`
+        // as the floor for everything else.
+        let timeout_secs = Self::per_test_timeout_secs(test_name).unwrap_or(timeout_secs);
 
-        let script_path = chip_dir.join("scripts/run_in_build_env.sh");
+        info!("=> Running test `{test_name}` with timeout {timeout_secs}s...");
+
+        let chip_dir = self.chip_builder.chip_dir();
+
+        self.kill_netns_leftovers(chip_dir);
+
+        let test_command = self.python_test_command(test_name, timeout_secs, profile, target)?;
 
         // `run_python_test.py` has no equivalent of `run_test_suite.py`'s
         // `--ble-wifi`, so the mock Bluetooth stack is stood up here and torn
@@ -1149,18 +1259,22 @@ impl ITests {
             .then(|| BleEnv::start(chip_dir))
             .transpose()?;
 
-        let mut cmd = Command::new(&script_path);
+        // The command runs with the pre-captured CHIP build environment
+        // injected (see `Self::capture_chip_env`) instead of being wrapped in
+        // `run_in_build_env.sh`, which would re-do the activation every time.
+        let mut cmd = Command::new("bash");
         cmd.current_dir(chip_dir)
+            .envs(chip_env)
             .env("CHIP_HOME", chip_dir)
+            .arg("-c")
             .arg(&test_command);
 
         if let Some(ble_env) = &_ble_env {
             cmd.env("DBUS_SYSTEM_BUS_ADDRESS", ble_env.dbus_address());
         }
 
-        // `run_test_suite.py` spawns the device itself and takes no per-app
-        // arguments, so the Thread flavour of `wireless_tests` is selected out
-        // of the environment instead (inherited by the app it launches).
+        // The Thread flavour of `wireless_tests` is selected out of the
+        // environment (inherited by the app the runner launches).
         if matches!(
             WirelessFlavour::of(test_name),
             Some(WirelessFlavour::Thread)
@@ -1169,17 +1283,7 @@ impl ITests {
         }
 
         match run_command(&mut cmd, self.print_cmd_output) {
-            Ok(()) => {
-                // A zero exit status is NOT sufficient for the YAML suites:
-                // `run_test_suite.py` has been observed to exit 0 while
-                // individual tests were marked failed, so a failing YAML test
-                // would silently pass the whole run (and CI with it). Consult
-                // the JSON run summary it wrote instead - that is the
-                // authoritative per-test verdict.
-                Self::assert_yaml_summary_clean(test_name)?;
-
-                info!("Test `{test_name}` completed successfully")
-            }
+            Ok(()) => info!("Test `{test_name}` completed successfully"),
             Err(err) => {
                 info!("Command failed: {}", test_command);
                 return Err(err);
@@ -1189,22 +1293,99 @@ impl ITests {
         Ok(())
     }
 
-    /// Path of the JSON run summary that `run_test_suite.py` is asked to write
-    /// for `test_name` (see `--summary-file` in [`Self::yaml_test_command`]).
-    fn yaml_summary_path(test_name: &str) -> PathBuf {
-        env::temp_dir().join(format!("xtask-yaml-summary-{test_name}.json"))
-    }
-
-    /// Fail if the YAML run summary for `test_name` records any failed test.
+    /// Run a batch of YAML tests in a single `run_test_suite.py` invocation.
     ///
-    /// Python (`TC_*`) tests propagate their failures through the process exit
-    /// status, so they are left alone; only the YAML suites need this.
-    fn assert_yaml_summary_clean(test_name: &str) -> anyhow::Result<()> {
-        if Self::is_python_test(test_name) {
-            return Ok(());
+    /// All batch members share one per-invocation configuration - guaranteed
+    /// by [`Self::yaml_batch_key`] - and none of them has a
+    /// [`Self::per_test_timeout_secs`] override (those are all `TC_*` Python
+    /// tests), so the suite default applies to every member, enforced
+    /// per-test by the runner itself via `--test-timeout-seconds`.
+    fn run_yaml_batch(
+        &self,
+        batch: &[&str],
+        timeout_secs: u32,
+        profile: &str,
+        target: &str,
+        chip_env: &HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        info!(
+            "=> Running YAML test batch of {} test(s) with per-test timeout {timeout_secs}s: {batch:?}...",
+            batch.len()
+        );
+
+        let chip_dir = self.chip_builder.chip_dir();
+
+        self.kill_netns_leftovers(chip_dir);
+
+        let test_command = self.yaml_batch_command(batch, timeout_secs, profile, target);
+
+        // See `run_python_test` for why the captured environment replaces the
+        // `run_in_build_env.sh` wrapper.
+        let mut cmd = Command::new("bash");
+        cmd.current_dir(chip_dir)
+            .envs(chip_env)
+            .env("CHIP_HOME", chip_dir)
+            .arg("-c")
+            .arg(&test_command);
+
+        // `run_test_suite.py` spawns the device itself and takes no per-app
+        // arguments, so the Thread flavour of `wireless_tests` is selected out
+        // of the environment instead (inherited by the app it launches).
+        // Uniform across the batch by construction of the batch key.
+        if matches!(WirelessFlavour::of(batch[0]), Some(WirelessFlavour::Thread)) {
+            cmd.env("RS_MATTER_WIRELESS_THREAD", "1");
         }
 
-        let path = Self::yaml_summary_path(test_name);
+        match run_command(&mut cmd, self.print_cmd_output) {
+            Ok(()) => {
+                // A zero exit status is NOT sufficient for the YAML suites:
+                // `run_test_suite.py` has been observed to exit 0 while
+                // individual tests were marked failed, so a failing YAML test
+                // would silently pass the whole run (and CI with it). It also
+                // merely logs (and skips) `--target` names it does not know,
+                // which with a batched invocation would silently drop
+                // coverage e.g. across an upstream test rename. Consult the
+                // JSON run summary instead - that is the authoritative
+                // per-test verdict - and require every batch member to appear
+                // in it as passed.
+                Self::assert_yaml_summary_clean(batch)?;
+
+                info!("YAML test batch completed successfully: {batch:?}")
+            }
+            Err(err) => {
+                info!("Command failed: {}", test_command);
+
+                // Best-effort: surface which test(s) of the batch failed,
+                // if the runner got as far as writing the summary.
+                if let Err(summary_err) = Self::assert_yaml_summary_clean(batch) {
+                    warn!("{summary_err}");
+                }
+
+                return Err(err);
+            }
+        };
+
+        Ok(())
+    }
+
+    /// Path of the JSON run summary that `run_test_suite.py` is asked to write
+    /// for a batch (see `--summary-file` in [`Self::yaml_batch_command`]).
+    /// Keyed by the batch's first test name, which is unique within a run.
+    fn yaml_summary_path(batch: &[&str]) -> PathBuf {
+        env::temp_dir().join(format!("xtask-yaml-summary-{}.json", batch[0]))
+    }
+
+    /// Fail unless the batch's YAML run summary records every requested test
+    /// as passed.
+    ///
+    /// Two failure modes are covered:
+    /// - a test ran and failed (`run_test_suite.py` has been observed to exit
+    ///   0 in that situation);
+    /// - a test never ran at all: the runner only *logs* an unknown `--target`
+    ///   name and carries on with the rest, so e.g. an upstream rename would
+    ///   otherwise silently drop coverage from a batch.
+    fn assert_yaml_summary_clean(batch: &[&str]) -> anyhow::Result<()> {
+        let path = Self::yaml_summary_path(batch);
 
         let Ok(summary) = fs::read_to_string(&path) else {
             // No summary: an older `run_test_suite.py` without `--summary-file`,
@@ -1212,20 +1393,51 @@ impl ITests {
             // failure - the exit status already passed - but make the loss of
             // coverage visible rather than silently trusting the exit code.
             warn!(
-                "Test `{test_name}`: no run summary at {} - cannot verify per-test results",
+                "YAML batch {batch:?}: no run summary at {} - cannot verify per-test results",
                 path.display()
             );
             return Ok(());
         };
 
-        // `TestStatus` is a `StrEnum`, so statuses serialize as lowercase
-        // strings ("passed" / "failed" / "cancelled" / "dry_run").
-        if summary.contains("\"status\": \"failed\"") {
-            anyhow::bail!(
-                "Test `{test_name}` reported a FAILED result in its run summary ({}), \
-                 even though the runner exited successfully",
+        let summary: serde_json::Value = serde_json::from_str(&summary).map_err(|e| {
+            anyhow::anyhow!(
+                "YAML batch {batch:?}: run summary at {} is not valid JSON: {e}",
                 path.display()
-            );
+            )
+        })?;
+
+        let results = summary["results"].as_array().cloned().unwrap_or_default();
+
+        for test_name in batch {
+            // OTA role suffixes are an xtask-ism; the runner reports the
+            // upstream name.
+            let real_name = test_name.strip_suffix("@requestor").unwrap_or(test_name);
+
+            // The runner matches `--target` names case-insensitively, so
+            // mirror that when looking its reports back up.
+            let result = results.iter().find(|result| {
+                result["name"]
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(real_name))
+            });
+
+            let Some(result) = result else {
+                anyhow::bail!(
+                    "Test `{test_name}` is absent from the run summary ({}) - \
+                     most likely `run_test_suite.py` did not recognize the target name",
+                    path.display()
+                );
+            };
+
+            // `TestStatus` is a `StrEnum`, so statuses serialize as lowercase
+            // strings ("passed" / "failed" / "cancelled" / "dry_run").
+            let status = result["status"].as_str().unwrap_or("<unknown>");
+            if status != "passed" {
+                anyhow::bail!(
+                    "Test `{test_name}` reported status `{status}` in the run summary ({})",
+                    path.display()
+                );
+            }
         }
 
         Ok(())
@@ -1442,9 +1654,9 @@ impl ITests {
         Ok(())
     }
 
-    fn yaml_test_command(
+    fn yaml_batch_command(
         &self,
-        test_name: &str,
+        batch: &[&str],
         timeout_secs: u32,
         profile: &str,
         target: &str,
@@ -1453,7 +1665,10 @@ impl ITests {
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = self.chip_builder.chip_tool_path();
         let test_exe_path = self.test_exe_path(profile, target);
-        let test_pics_path = self.test_pics_path(test_name, target);
+        // Uniform across the batch by construction of the batch key (the
+        // wireless flavour is the only thing that changes it for a fixed
+        // `target`).
+        let test_pics_path = self.test_pics_path(batch[0], target);
 
         // OTA tests (`OTA_*`) run as a 3-party flow: the YAML commissions both an
         // OTA provider and an OTA requestor. We slot the rs-matter `system_tests`
@@ -1461,11 +1676,13 @@ impl ITests {
         // the other. A `@requestor` suffix on the test name selects the role
         // (rs-matter as the requestor DUT); default is rs-matter as the provider.
         // The suffix is stripped before the YAML name is handed to the runner.
-        let (real_name, rs_is_requestor) = match test_name.strip_suffix("@requestor") {
+        // OTA tests are singleton batches (see `Self::yaml_batch_key`), so
+        // inspecting `batch[0]` covers them fully.
+        let (real_first, rs_is_requestor) = match batch[0].strip_suffix("@requestor") {
             Some(name) => (name, true),
-            None => (test_name, false),
+            None => (batch[0], false),
         };
-        let ota_app_clause = if real_name.starts_with("OTA_") {
+        let ota_app_clause = if real_first.starts_with("OTA_") {
             let chip_requestor = self.chip_builder.ota_requestor_app_path();
             let chip_provider = self.chip_builder.ota_provider_app_path();
             if rs_is_requestor {
@@ -1485,22 +1702,23 @@ impl ITests {
             String::new()
         };
 
-        // `TestIcd*` YAML suites are classified as the `LIT_ICD` target by the
-        // runner (`target_for_name`), so it launches the DUT from the
-        // `lit-icd` app slot (not `all-clusters`) and pairs with
-        // `--icd-registration true` — driving commissioning-time ICD client
-        // registration. Point that slot at our binary.
-        let lit_icd_app_clause = if real_name.starts_with("TestIcd") {
-            format!(" --app-path 'lit-icd:{}'", test_exe_path.display())
-        } else {
-            String::new()
-        };
+        // One `--target` per batch member; the runner takes the option
+        // repeatedly and runs the matches in the given order.
+        let targets_clause = batch
+            .iter()
+            .map(|test_name| {
+                format!(
+                    " --target {}",
+                    test_name.strip_suffix("@requestor").unwrap_or(test_name)
+                )
+            })
+            .collect::<String>();
 
         // Ask for a JSON run summary and drop any stale one first: a zero exit
         // status from `run_test_suite.py` does not imply the tests passed (see
         // `Self::assert_yaml_summary_clean`), so this file is what we actually
         // judge the run by.
-        let summary_path = Self::yaml_summary_path(test_name);
+        let summary_path = Self::yaml_summary_path(batch);
         _ = fs::remove_file(&summary_path);
 
         // NB: `--tool-path` / `--app-path` are options of the `run` subcommand,
@@ -1512,21 +1730,28 @@ impl ITests {
         // own target (`Test_TC_OO_*` resolve to `all-devices`, the YAML suites
         // to `all-clusters`) and errors with `KeyError: 'default'` when that
         // slot is empty. The `lock` slot serves `TestSystemCommands`, which
-        // spawns a second accessory from it. Registering a slot no test
-        // selects is free: the runner only ever starts the app it resolved to
-        // `default` (plus, for `TestSystemCommands`, the explicitly-started
-        // second instance).
+        // spawns a second accessory from it. The `lit-icd` slot serves the
+        // `TestIcd*` suites, which the runner classifies as the `LIT_ICD`
+        // target: it launches the DUT from that slot and pairs with
+        // `--icd-registration true`, driving commissioning-time ICD client
+        // registration. Registering a slot no test selects is free: the
+        // runner only ever starts the app it resolved to `default` (plus, for
+        // `TestSystemCommands`, the explicitly-started second instance).
+        // `--log-level info` (not `warn`): with a whole batch inside one
+        // invocation, the per-test "Executing ..." progress lines have to come
+        // from the runner itself, or a hung batch is a silent wall of nothing
+        // in the CI log until the job-level timeout kills it.
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python run --iterations 1 --test-timeout-seconds {} --tool-path 'chip-tool:{}' --app-path 'all-clusters:{}' --app-path 'all-devices:{}' --app-path 'lock:{}'{}{} --pics-file {} --summary-file '{}'",
+            "{} --log-level info{} --runner chip_tool_python run --iterations 1 --test-timeout-seconds {} --tool-path 'chip-tool:{}' --app-path 'all-clusters:{}' --app-path 'all-devices:{}' --app-path 'lock:{}' --app-path 'lit-icd:{}'{} --pics-file {} --summary-file '{}'",
             test_suite_path.display(),
-            real_name,
+            targets_clause,
             timeout_secs,
             chip_tool_path.display(),
             test_exe_path.display(),
             test_exe_path.display(),
             test_exe_path.display(),
+            test_exe_path.display(),
             ota_app_clause,
-            lit_icd_app_clause,
             test_pics_path.display(),
             summary_path.display(),
         )

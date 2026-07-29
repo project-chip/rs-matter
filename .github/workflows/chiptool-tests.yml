@@ -31,7 +31,21 @@ env:
 jobs:
   chip_integration_tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 120
+
+    # The suites are independent, so they run as parallel jobs: the wall clock
+    # of the workflow is then bounded by its slowest leg instead of the sum of
+    # all suites. The split follows the measured step durations - the (long)
+    # `system` suite is halved along the YAML/Python axis that `cargo xtask
+    # itest` already exposes as `--suite system-yaml` / `system-python`, the
+    # (long) `light` suite keeps a leg of its own, and everything that runs in
+    # single-digit minutes is lumped into one `rest` leg.
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [system-yaml, system-python, light, rest]
+
+    name: chip_integration_tests (${{ matrix.suite }})
 
     steps:
       - name: Setup Rust toolchain
@@ -42,6 +56,18 @@ jobs:
 
       - name: Checkout rs-matter
         uses: actions/checkout@v4
+
+      # Each matrix leg compiles the test drivers on its own runner, so
+      # without a cargo cache every leg would pay the full cold build of the
+      # rs-matter dependency tree. The cache is keyed per leg (rust-cache
+      # includes the matrix values in its key), since the legs build different
+      # binaries and feature sets.
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            xtask
 
       - name: Install libdbus
         run: sudo apt-get install -y libdbus-1-dev
@@ -87,14 +113,45 @@ jobs:
           # address picker in `initialize_network`.
           ip -6 addr show
 
-      - name: Cache Chip build
-        uses: actions/cache@v4
+      # The cache key must be derivable BEFORE the cached directory exists:
+      # hashFiles() over `.build/itest/connectedhomeip/**` evaluates against a
+      # not-yet-restored path, comes out empty, and produces one constant key —
+      # which is immutable in the actions/cache store, so the very first save
+      # is served forever. Once `CHIP_DEFAULT_GITREF` moves past that snapshot,
+      # `setup_chip` sees the checkout change on every run, wipes `out/`, and
+      # rebuilds chip-tool from scratch (~20 min) without the result ever being
+      # saved back. Key on the requested Chip ref instead: it is what actually
+      # determines the build contents, and it is known before restore.
+      - name: Compute Chip cache key
+        id: chip-key
+        run: |
+          if [ -n "${{ inputs.chip_ref }}" ]; then
+            ref="${{ inputs.chip_ref }}"
+          else
+            ref=$(sed -n 's/^pub const CHIP_DEFAULT_GITREF: &str = "\([^"]*\)".*/\1/p' xtask/src/common.rs)
+          fi
+          test -n "$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      # Restore-only: the save is an explicit step at the end of ONE
+      # designated leg (see "Save Chip build cache" below). With the implicit
+      # post-job save of `actions/cache`, every leg would race to save the
+      # (immutable) key, and the fastest leg is precisely the one that builds
+      # the least — `system-yaml` would win with a tree lacking
+      # `chip-all-clusters-app`, condemning the legs that lazily build it
+      # (`system-python` for TC_SC_3_5 / TC_DA_1_9, `rest` for the
+      # commissioner suite) to rebuild it on every subsequent run.
+      - name: Restore Chip build cache
+        uses: actions/cache/restore@v4
         with:
           path: .build/itest/connectedhomeip
-          key: >-
-            chip0-${{ runner.os }}-${{
-            hashFiles('.build/itest/connectedhomeip/**/*.py',
-            '.build/itest/connectedhomeip/**/*.sh', '.build/itest/connectedhomeip/**/BUILD.gn') }}
+          key: chip1-${{ runner.os }}-${{ steps.chip-key.outputs.ref }}
+          # On a ref bump, start from the previous ref's cache: the pigweed
+          # `.environment` and the clone survive `setup_chip`'s `out/` clean,
+          # so only chip-tool itself is rebuilt — and the save then stores
+          # the rebuilt tree under the new key.
+          restore-keys: |
+            chip1-${{ runner.os }}-
 
       - name: Setup Chip environment
         run: |
@@ -104,7 +161,8 @@ jobs:
             cargo xtask itest-setup
           fi
 
-      - name: Run System integration tests with RustCrypto
+      - name: Run System YAML integration tests with RustCrypto
+        if: matrix.suite == 'system-yaml'
         run: |
           # `tee` so the system_tests stdout/stderr (and the python
           # framework's mDNS browse, PASE traces, etc.) end up both in
@@ -113,60 +171,89 @@ jobs:
           # because the relevant lines have already scrolled past the
           # GitHub Actions live tail.
           set -o pipefail
-          cargo xtask itest --skip-setup 2>&1 | tee /tmp/itest-system-rustcrypto.log
+          cargo xtask itest --skip-setup --suite system-yaml \
+            2>&1 | tee /tmp/itest-system-yaml.log
+
+      - name: Run System Python integration tests with RustCrypto
+        if: matrix.suite == 'system-python'
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite system-python \
+            2>&1 | tee /tmp/itest-system-python.log
 
       - name: Run one System integration test with MbedTLS
+        if: matrix.suite == 'rest'
         run: |
+          set -o pipefail
           cargo xtask itest --skip-setup --features mbedtls TestBasicInformation \
             2>&1 | tee /tmp/itest-system-mbedtls.log
 
       - name: Run one System integration test with OpenSSL
+        if: matrix.suite == 'rest'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --features openssl TestBasicInformation \
             2>&1 | tee /tmp/itest-system-openssl.log
 
       - name: Run Wireless Network Commissioning integration tests
+        if: matrix.suite == 'rest'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite wireless \
             2>&1 | tee /tmp/itest-wireless.log
 
       - name: Run BLE commissioning integration tests
+        if: matrix.suite == 'rest'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite ble \
             2>&1 | tee /tmp/itest-ble.log
 
       - name: Run LevelControl and OnOff integration tests
+        if: matrix.suite == 'light'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite light \
             2>&1 | tee /tmp/itest-light.log
 
       - name: Run Scenes integration tests
+        if: matrix.suite == 'rest'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite scenes \
             2>&1 | tee /tmp/itest-scenes.log
 
       - name: Run Camera integration tests
+        if: matrix.suite == 'rest'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite camera \
             2>&1 | tee /tmp/itest-camera.log
 
       - name: Run Commissioner integration tests
+        if: matrix.suite == 'rest'
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite commissioner \
             2>&1 | tee /tmp/itest-commissioner.log
 
+      # The designated cache saver: `system-python` is the leg whose lazy
+      # builds make the cached tree complete (it builds
+      # `chip-all-clusters-app` during its test run). `always()` so a test
+      # failure doesn't discard a perfectly good chip build; if the exact key
+      # already exists, the save skips gracefully.
+      - name: Save Chip build cache
+        if: always() && matrix.suite == 'system-python'
+        uses: actions/cache/save@v4
+        with:
+          path: .build/itest/connectedhomeip
+          key: chip1-${{ runner.os }}-${{ steps.chip-key.outputs.ref }}
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ github.run_id }}
+          name: test-results-${{ github.run_id }}-${{ matrix.suite }}
           # `/tmp/matter_testing/logs/` is where the python `MatterBaseTest`
           # framework drops one directory per run, each containing
           # `test_log.DEBUG` (the mDNS browse dumps and per-step
