@@ -467,20 +467,8 @@ where
         Ok(N as _)
     }
 
-    fn networks(
-        &self,
-        f: &mut dyn FnMut(&net_comm::NetworkInfo) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        WirelessNetworks::networks(self, |network| {
-            let network_id = network.id();
-
-            let network_info = net_comm::NetworkInfo {
-                network_id,
-                connected: false, // TODO
-            };
-
-            f(&network_info)
-        })
+    fn networks(&self, f: &mut dyn FnMut(&[u8]) -> Result<(), Error>) -> Result<(), Error> {
+        WirelessNetworks::networks(self, |network| f(network.id()))
     }
 
     fn creds(

@@ -778,28 +778,9 @@ async fn process_indicate(
 
             trace!("Sent indication to peer: {:?}", &buf[..len]);
 
-            // NOTE: This code would only work for BlueZ >= 5.80
-            // See https://github.com/project-chip/connectedhomeip/pull/40147
-            //
-            // Also note that when/if enabling this code, we should also
-            // reconsider how we handle the `monitor_close` method, as it currently
-            // assumes that the socket becoming readable means it is being closed
-            // (i.e. the peer is unsubscribing from the C2 characteristic).
-            //
-            // Interestingly, latest-released `bluer`does not do this either,
-            // so I wonder if it is in sync with latezt BlueZ releases?
-
-            // // let mut confirmation = [0];
-            // // endpoint.socket.recv_from(&mut confirmation).await?;
-
-            // // trace!(
-            // //     "Received confirmation from peer {}: {:?}",
-            // //     peer_addr, confirmation
-            // // );
-
-            // if confirmation[0] != 1 {
-            //     return Err(Error::new(ErrorCode::Invalid));
-            // }
+            // The indication confirmation, if the peer's BlueZ sends one over
+            // this socket, is consumed by `wait_complete` - it is the only
+            // reader of the notifier, so that the two cannot race for it.
         } else {
             btp.wait_outgoing().await;
         }
@@ -807,12 +788,43 @@ async fn process_indicate(
 }
 
 /// Listen for unsubscription from characteristic `C2` as well as for session connection timeout.
+///
+/// Doubles as the sole reader of the notifier socket, because the socket carries
+/// two different things and telling them apart is the point:
+/// - end-of-file, i.e. the peer unsubscribed from `C2` and the session is over;
+/// - a one-byte indication confirmation. BlueZ >= 5.80 delivers it here, whereas
+///   BlueZ <= 5.73 delivered it as a D-Bus `Confirm` call and never writes to
+///   this socket at all. Treating readability alone as an unsubscription
+///   therefore drops the session on the first indication against a newer BlueZ.
 async fn wait_complete(btp: &Btp, notifier: &Async<UnixDatagram>) -> Result<(), Error> {
-    let result = select(notifier.readable(), btp.wait_timeout()).await;
+    let mut confirmation = [0; 1];
 
-    match result {
-        Either::First(_) => info!("Peer unsubscribed"),
-        Either::Second(_) => info!("Timeout while waiting for data from the peer"),
+    loop {
+        let result = select(
+            notifier.read_with(|socket| socket.recv(&mut confirmation)),
+            btp.wait_timeout(),
+        )
+        .await;
+
+        match result {
+            Either::First(Ok(0)) => {
+                info!("Peer unsubscribed");
+                break;
+            }
+            Either::First(Ok(_)) => {
+                if confirmation[0] != 1 {
+                    warn!(
+                        "Unexpected indication confirmation from peer: {}",
+                        confirmation[0]
+                    );
+                }
+            }
+            Either::First(Err(err)) => return Err(err.into()),
+            Either::Second(_) => {
+                info!("Timeout while waiting for data from the peer");
+                break;
+            }
+        }
     }
 
     Ok(())

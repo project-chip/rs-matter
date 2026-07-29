@@ -207,6 +207,35 @@ impl ChipBuilder {
         &self.chip_dir
     }
 
+    /// Path of the `chip-tool` binary, relative to the Chip root.
+    pub const CHIP_TOOL: &'static str = "out/host/chip-tool";
+    /// Path of the `chip-all-clusters-app` binary, relative to the Chip root.
+    pub const ALL_CLUSTERS_APP: &'static str = "out/all-clusters/chip-all-clusters-app";
+    /// Path of the `chip-ota-provider-app` binary, relative to the Chip root.
+    pub const OTA_PROVIDER_APP: &'static str = "out/ota-provider/chip-ota-provider-app";
+    /// Path of the `chip-ota-requestor-app` binary, relative to the Chip root.
+    pub const OTA_REQUESTOR_APP: &'static str = "out/ota-requestor/chip-ota-requestor-app";
+
+    /// Absolute path of the `chip-tool` binary.
+    pub fn chip_tool_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::CHIP_TOOL)
+    }
+
+    /// Absolute path of the `chip-all-clusters-app` binary.
+    pub fn all_clusters_app_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::ALL_CLUSTERS_APP)
+    }
+
+    /// Absolute path of the `chip-ota-provider-app` binary.
+    pub fn ota_provider_app_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::OTA_PROVIDER_APP)
+    }
+
+    /// Absolute path of the `chip-ota-requestor-app` binary.
+    pub fn ota_requestor_app_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::OTA_REQUESTOR_APP)
+    }
+
     /// Build the chip_tool binary.
     ///
     /// Handles Chip repo setup if required and acitvates the Chip
@@ -221,16 +250,32 @@ impl ChipBuilder {
         self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
 
         // Build chip-tool if not cached or force rebuild
-        let chip_tool_path = chip_dir.join("out/host/chip-tool");
+        let chip_tool_path = self.chip_tool_path();
         if !chip_tool_path.exists() || force_rebuild {
             warn!("Building `chip-tool`...");
 
-            self.build_example("examples/chip-tool", "out/host")?;
+            self.build_example("examples/chip-tool", Self::out_dir(Self::CHIP_TOOL))?;
         } else {
             info!("Using existing chip-tool build");
         }
 
         Ok(())
+    }
+
+    /// The gn output directory holding `binary_path`, i.e. everything up to the
+    /// final path component.
+    ///
+    /// Every example gets its own output directory. `gn gen <dir>` writes an
+    /// `args.gn` and a `build.ninja` describing exactly one example's target
+    /// graph, so pointing two examples at the same directory makes each build
+    /// re-generate over the other's configuration: the previously built binary
+    /// is left behind with no rule that can refresh it, and switching back and
+    /// forth re-compiles the world every time.
+    fn out_dir(binary_path: &str) -> &str {
+        Path::new(binary_path)
+            .parent()
+            .and_then(|dir| dir.to_str())
+            .expect("binary paths are `<out-dir>/<binary>`")
     }
 
     /// Build and install the CHIP Python "matter" wheel into the
@@ -401,11 +446,14 @@ impl ChipBuilder {
         self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
 
         // Build chip-all-clusters-app if not cached or force rebuild
-        let app_path = chip_dir.join("out/host/chip-all-clusters-app");
+        let app_path = self.all_clusters_app_path();
         if !app_path.exists() || force_rebuild {
             warn!("Building chip-all-clusters-app...");
 
-            self.build_example("examples/all-clusters-app/linux", "out/host")?;
+            self.build_example(
+                "examples/all-clusters-app/linux",
+                Self::out_dir(Self::ALL_CLUSTERS_APP),
+            )?;
         } else {
             info!("Using existing chip-all-clusters-app build");
         }
@@ -425,11 +473,14 @@ impl ChipBuilder {
 
         self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
 
-        let app_path = chip_dir.join("out/host/chip-ota-provider-app");
+        let app_path = self.ota_provider_app_path();
         if !app_path.exists() || force_rebuild {
             warn!("Building chip-ota-provider-app...");
 
-            self.build_example("examples/ota-provider-app/linux", "out/host")?;
+            self.build_example(
+                "examples/ota-provider-app/linux",
+                Self::out_dir(Self::OTA_PROVIDER_APP),
+            )?;
         } else {
             info!("Using existing chip-ota-provider-app build");
         }
@@ -449,11 +500,14 @@ impl ChipBuilder {
 
         self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
 
-        let app_path = chip_dir.join("out/host/chip-ota-requestor-app");
+        let app_path = self.ota_requestor_app_path();
         if !app_path.exists() || force_rebuild {
             warn!("Building chip-ota-requestor-app...");
 
-            self.build_example("examples/ota-requestor-app/linux", "out/host")?;
+            self.build_example(
+                "examples/ota-requestor-app/linux",
+                Self::out_dir(Self::OTA_REQUESTOR_APP),
+            )?;
         } else {
             info!("Using existing chip-ota-requestor-app build");
         }

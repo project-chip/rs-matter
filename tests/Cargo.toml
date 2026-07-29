@@ -1,0 +1,82 @@
+[package]
+name = "rs-matter-tests"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - test drivers"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Device-under-test drivers for the CHIP integration tests (`cargo xtask itest`).
+#
+# These are deliberately kept out of `examples`: each one carries the command
+# line surface, alternate node compositions and test-only knobs that the CHIP
+# harness drives it through, whereas an example should stay short enough to read
+# as documentation of a single feature.
+
+[[bin]]
+name = "system_tests"
+
+[[bin]]
+name = "camera_tests"
+
+[[bin]]
+name = "light_tests"
+
+[[bin]]
+name = "scenes_tests"
+
+[[bin]]
+name = "commissioner_tests"
+
+[features]
+default = ["log"]
+log = []
+mbedtls = ["rs-matter/mbedtls"]
+openssl = ["rs-matter/openssl"]
+sync-mutex = ["rs-matter/sync-mutex"]
+zbus = ["rs-matter/zbus"]
+# The BlueZ (zbus) BLE backend - the default for `ble_tests`.
+ble = ["zbus"]
+# The alternative BlueR BLE backend, selected with `--bluer` at runtime. Additive
+# to `ble`, so a binary built with both can exercise either stack.
+bluer = ["rs-matter/bluer", "dep:async-compat"]
+astro-dnssd = ["rs-matter/astro-dnssd"]
+zeroconf = ["rs-matter/zeroconf"]
+avahi = ["rs-matter/zbus"]
+resolve = ["rs-matter/zbus"]
+test-tcp = ["rs-matter/large-buffers"]
+# Temporary fix for unexpected cfgs lint
+defmt = []
+
+[dependencies]
+log = "0.4"
+env_logger = "0.11"
+embassy-futures = "0.1"
+embassy-sync = "0.8"
+embassy-time = { version = "0.5", features = ["std"] }
+embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
+static_cell = "1"
+if-addrs = "0.15"
+async-io = "2"
+blocking = "1"
+futures-lite = "2"
+rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
+rand = { version = "0.8", features = ["std", "std_rng"] }
+async-signal = "0.2"
+socket2 = "0.5"
+async-compat = { version = "0.2", optional = true }
+
+[[bin]]
+name = "wireless_tests"
+
+# BLE commissioning needs the BlueZ (zbus) stack, which is slow to compile - keep
+# it off the default build so the other drivers do not pay for it.
+[[bin]]
+name = "ble_tests"
+required-features = ["ble"]

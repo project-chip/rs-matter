@@ -5,6 +5,7 @@ members = [
         "rs-matter-macros",
         "rs-matter-codegen",
         "examples",
+        "tests",
 ]
 
 exclude = ["bloat-check", "xtask"]

@@ -27,6 +27,7 @@ use clap::ValueEnum;
 
 use log::{debug, info, warn};
 
+use crate::ble_env::BleEnv;
 use crate::common::{run_command, ChipBuilder};
 
 /// System cluster tests + general Matter protocol/IM/SC tests.
@@ -61,6 +62,15 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestDelayCommands",
     // "TestDescriptorCluster", // Skipped: hardcodes upstream `all-clusters-app`'s exact EP0 shape. The Power Source device-type half is now satisfiable (DEV_TYPE_POWER_SOURCE + the PowerSource cluster exist), but it also requires `ServerList` to contain FaultInjection (0xFFF1FC06, a chip test cluster), `PartsList == [1,2,3,4]` (four child endpoints) and an exact EP0 `TagList` — mirroring all-clusters-app rather than testing conformance.
     "TestDiagnosticLogs",
+    // Skipped: every Ethernet Network Diagnostics attribute (PHYRate ..
+    // TimeSinceReset) is optional and `ResetCounts` is its only command, while
+    // `eth_diag::EthDiagHandler` declares `with_attrs(with!(required))` and
+    // `with_cmds(with!())` - so it serves the global attributes and nothing
+    // else. Both tests read the optional attributes under PICS gates, so
+    // enabling them requires the handler to source real interface counters;
+    // claiming them in the `.pics` without that just buys a vacuous pass.
+    // "Test_TC_DGETH_2_1",
+    // "Test_TC_DGETH_2_2",
     "TestDiscovery",
     "TestEqualities",
     "TestEvents",
@@ -310,16 +320,46 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Network Commissioning (system cluster)
     //
     "TC_CNET_1_4",
-    // "TC_CNET_4_1",  // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_2",  // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_3",  // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_4",  // TODO: Thread network provisioning.
-    // "TC_CNET_4_9",  // TODO: Thread network provisioning.
-    // "TC_CNET_4_10", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_12", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_15", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_16", // TODO: Wi-Fi network provisioning.
-    // "TC_CNET_4_22", // TODO: Thread network provisioning.
+    // The Ethernet variant of the attribute-check test, gated on
+    // `has_feature(kEthernetNetworkInterface)`. `system_tests` claims that
+    // feature (`net_comm::NetworkType::Ethernet` on EP0, `CNET.S.F02` in the
+    // `.pics`), so the test runs rather than skipping.
+    "TC_CNET_4_3",
+    //
+    // The remaining `TC_CNET_4_*` tests target the Wi-Fi (`CNET.S.F00`) and
+    // Thread (`CNET.S.F01`) features. `system_tests` claims neither, so their
+    // `has_feature(...)` decorators / FeatureMap gates skip them. Upstream
+    // lists all of them under `not_automated` in
+    // `src/python_testing/test_metadata.yaml` and runs none of them in CI.
+    //
+    // Most do not actually need a radio, only a DUT that claims the feature
+    // and a `NetCtl` that answers `scan`/`connect` locally — see
+    // `dm::networks::wireless::NoopWirelessNetCtl` for the shape:
+    //   4_1  Wi-Fi   attribute reads only
+    //   4_2  Thread  attribute reads only; needs the network entry to report
+    //                `connected: true`, else the body skips at step 3
+    //   4_4  Wi-Fi   ScanNetworks; the directed-scan SSID is read back from
+    //                the DUT's own `Networks` entry, not supplied as a PIXIT
+    //   4_9  Wi-Fi   RemoveNetwork/ConnectNetwork under an armed failsafe;
+    //                no reboot and no operator prompt anywhere in the body
+    //   4_10 Thread  as 4_9
+    //   4_15 Wi-Fi   NetworkIDNotFound for a bogus network ID; the ID is
+    //                hardcoded in the test, so no PIXIT is needed
+    //   4_16 Thread  as 4_15
+    //   4_22 Thread  ScanNetworks
+    // These need a wireless example binary to run against; they cannot run
+    // against `system_tests`, whose CNET cluster is Ethernet-only.
+    //
+    // `4_12` (Thread ConnectNetwork) is the exception: it moves the DUT
+    // between two live PANs and re-discovers it on each, so a local `NetCtl`
+    // would satisfy it only vacuously. It needs real Thread.
+    //
+    // On the YAML side, `Test_TC_CNET_4_5` / `_4_6` (Wi-Fi / Thread
+    // FAILSAFE_REQUIRED) are four executable commands each and equally
+    // radio-free, while `Test_TC_CNET_4_11` needs two live access points.
+    // `Test_TC_CNET_4_13`, `_4_14`, `_4_20` and `_4_21` carry no executable
+    // steps at all (every step is `disabled: true`) — they are operator
+    // procedures, not runnable tests, and are deliberately not tracked here.
 
     //
     // Python tests — General Diagnostics (system cluster)
@@ -616,6 +656,133 @@ pub(crate) const OTA_TESTS: &[&str] = &[
     "OTA_SuccessfulTransfer@requestor",
 ];
 
+/// Network Commissioning tests for the wireless network types — run against the
+/// `wireless_tests` binary, whose `NetCtl` answers `ScanNetworks` /
+/// `ConnectNetwork` from a canned table instead of a radio.
+///
+/// Upstream lists every one of these under `not_automated` in
+/// `src/python_testing/test_metadata.yaml` because `chip-all-clusters-app` binds
+/// the cluster straight to the platform's Wi-Fi / Thread stack, leaving nowhere
+/// to stand in for the radio. The `NetCtl` trait is that seam here.
+///
+/// The Thread entries drive the same binary in its Thread flavour — see
+/// `Self::app_args_override`.
+pub(crate) const WIRELESS_TESTS: &[&str] = &[
+    // Wi-Fi
+    "TC_CNET_4_1",
+    "TC_CNET_4_4",
+    "TC_CNET_4_9",
+    "TC_CNET_4_15",
+    // Thread
+    "TC_CNET_4_2",
+    "TC_CNET_4_10",
+    "TC_CNET_4_16",
+    "TC_CNET_4_22",
+    //
+    // YAML: the provisioning commands must be refused without an armed
+    // failsafe. Four executable commands each, no radio involved.
+    "Test_TC_CNET_4_5",
+    "Test_TC_CNET_4_6",
+    //
+    // YAML: the mandatory Wi-Fi / Thread diagnostics attributes, answered by
+    // `MockNetCtl` from the provisioned network.
+    //
+    // Their siblings stay off because `WifiDiagHandler` / `ThreadDiagHandler`
+    // are `with_attrs(with!(required))` / `with_cmds(with!())`: everything they
+    // gate on is either an optional counter or `ResetCounts`, none of which is
+    // implemented, so they would run no steps at all -
+    //   `Test_TC_DGWIFI_2_3`    counters + ResetCounts
+    //   `Test_TC_DGTHREAD_2_2`  Tx counters (MACCounts)
+    //   `Test_TC_DGTHREAD_2_3`  Rx counters (MACCounts)
+    //   `Test_TC_DGTHREAD_2_4`  OverrunCount + ResetCounts
+    // Enabling those means implementing the counters first, exactly as for the
+    // Ethernet diagnostics.
+    "Test_TC_DGWIFI_2_1",
+    "Test_TC_DGTHREAD_2_1",
+    //
+    // "TC_CNET_4_12", // Skipped: moves the node between two live PANs and
+    //                 // re-discovers it on each. A canned `NetCtl` reports
+    //                 // success without the node ever moving, so this would go
+    //                 // green without testing anything. Needs real Thread.
+    //
+    // `Test_TC_CNET_4_5` (Wi-Fi) and `Test_TC_CNET_4_6` (Thread) are equally
+    // radio-free — four commands each, checking that the provisioning commands
+    // are rejected without an armed failsafe. They are YAML, so the runner
+    // always hands them `--pics-file <target>.pics`, and they gate on
+    // `CNET.S.F00` / `CNET.S.F01` respectively. One `.pics` per target cannot
+    // claim both, so enabling them needs the Wi-Fi and Thread flavours split
+    // into two `[[bin]]` targets sharing one source file.
+];
+
+/// Which flavour of the `wireless_tests` binary a test drives.
+///
+/// The Wi-Fi and Thread network stores are distinct types, so the binary picks
+/// one at startup; and because the two claim different Network Commissioning
+/// features (`CNET.S.F00` vs `CNET.S.F01`) plus different diagnostics clusters,
+/// they also need different `.pics` files.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WirelessFlavour {
+    Wifi,
+    Thread,
+}
+
+impl WirelessFlavour {
+    /// The flavour a test needs, or `None` if it does not run against
+    /// `wireless_tests` at all.
+    fn of(test_name: &str) -> Option<Self> {
+        let flavour = match test_name {
+            "TC_CNET_4_1" | "TC_CNET_4_4" | "TC_CNET_4_9" | "TC_CNET_4_15" | "Test_TC_CNET_4_5"
+            | "Test_TC_DGWIFI_2_1" | "Test_TC_DGWIFI_2_3" => Self::Wifi,
+            "TC_CNET_4_2"
+            | "TC_CNET_4_10"
+            | "TC_CNET_4_16"
+            | "TC_CNET_4_22"
+            | "Test_TC_CNET_4_6"
+            | "Test_TC_DGTHREAD_2_1"
+            | "Test_TC_DGTHREAD_2_2"
+            | "Test_TC_DGTHREAD_2_3"
+            | "Test_TC_DGTHREAD_2_4" => Self::Thread,
+            _ => return None,
+        };
+
+        Some(flavour)
+    }
+
+    /// The `.pics` basename this flavour declares.
+    fn pics_target(&self) -> &'static str {
+        match self {
+            Self::Wifi => "wireless_tests_wifi",
+            Self::Thread => "wireless_tests_thread",
+        }
+    }
+}
+
+/// Tests re-run with commissioning over **BLE** instead of on-network, against
+/// the `ble_tests` driver.
+///
+/// These add no new certification test names - the point is the transport: the
+/// whole BTP / GATT / BlueZ path plus the non-concurrent provisioning flow
+/// (`AddOrUpdateWiFiNetwork` + `ConnectNetwork` carried over BTP) has no other
+/// automated coverage. `TC_CNET_4_1` is a good vehicle because it then reads
+/// back the network the commissioner actually provisioned, rather than one the
+/// device seeded for itself.
+pub(crate) const BLE_TESTS: &[&str] = &[
+    "TC_CNET_4_1",
+    // "TC_CNET_4_1@bluer", // Skipped: the `bluer` backend cannot complete BTP
+    //                      // against a BlueZ that confirms indications over the
+    //                      // `AcquireNotify` socket (>= 5.80, and `bluezoo`).
+    //                      // `bluer` exposes that socket as a write-only
+    //                      // `CharacteristicWriter` and never drains the
+    //                      // confirmation byte, so the session stalls after the
+    //                      // first indication - the same defect that
+    //                      // `gatt::bluez::wait_complete` handles on our side,
+    //                      // but inside the crate where we cannot fix it.
+    //                      // The `--bluer` switch and this entry are kept so the
+    //                      // backend can be exercised by hand against an older
+    //                      // BlueZ, and re-enabled once `bluer` reads the
+    //                      // confirmation.
+];
+
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
 /// and a per-test timeout suitable for that suite.
@@ -643,6 +810,12 @@ pub(crate) enum TestSuite {
     /// OTA Software Update — `system_tests` plays an rs-matter OTA role against a
     /// CHIP `chip-ota-{provider,requestor}-app` counterpart.
     Ota,
+    /// Network Commissioning for the wireless network types, against the
+    /// `wireless_tests` binary and its canned `NetCtl`. Needs no radio.
+    Wireless,
+    /// Commissioning over BLE, against the `ble_tests` driver. Runs on a mock
+    /// BlueZ (`bluezoo`), so it needs no Bluetooth hardware.
+    Ble,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
@@ -674,6 +847,8 @@ impl TestSuite {
             Self::Light => LIGHT_TESTS.to_vec(),
             Self::Scenes => SCENES_TESTS.to_vec(),
             Self::Ota => OTA_TESTS.to_vec(),
+            Self::Wireless => WIRELESS_TESTS.to_vec(),
+            Self::Ble => BLE_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
             // ignores the test list (there's nothing to parameterise yet).
@@ -690,6 +865,8 @@ impl TestSuite {
             Self::Scenes => "scenes_tests",
             // rs-matter plays its OTA role from the `system_tests` binary.
             Self::Ota => "system_tests",
+            Self::Wireless => "wireless_tests",
+            Self::Ble => "ble_tests",
             Self::Commissioner => "commissioner_tests",
         }
     }
@@ -704,7 +881,11 @@ impl TestSuite {
             | Self::Light
             | Self::Scenes
             | Self::Ota
+            | Self::Wireless
             | Self::Commissioner => &[],
+            // The BlueZ GATT peripheral lives behind `zbus`; `bluer` adds the
+            // alternative backend, selected per-test with `--bluer`.
+            Self::Ble => &["ble", "bluer"],
         }
     }
 
@@ -720,6 +901,9 @@ impl TestSuite {
             // A full OTA flow commissions two nodes and transfers an image over
             // BDX; give it headroom.
             Self::Ota => 300,
+            Self::Wireless => 120,
+            // BLE discovery plus the BTP handshake are slower than plain UDP.
+            Self::Ble => 300,
             Self::Commissioner => 120,
         }
     }
@@ -727,6 +911,13 @@ impl TestSuite {
 
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
+
+/// The `--target` whose tests are commissioned over BLE.
+const BLE_TARGET: &str = "ble_tests";
+
+/// The workspace crate holding the device-under-test drivers (`*_tests`
+/// binaries) and their `.pics` files.
+const TEST_CRATE_DIR: &str = "tests";
 
 /// Synthetic test name surfaced for [`TestSuite::Commissioner`] — picked
 /// up by [`ITests::run_tests`] and routed to [`ITests::run_commissioner_suite`].
@@ -845,7 +1036,7 @@ impl ITests {
             return self.run_commissioner_suite(test_timeout_secs, profile, target);
         }
 
-        let chip_tool_path = chip_dir.join("out/host/chip-tool");
+        let chip_tool_path = self.chip_builder.chip_tool_path();
         if !chip_tool_path.exists() {
             anyhow::bail!("`chip-tool` not found. Run `cargo xtask itest-setup` first.");
         }
@@ -951,10 +1142,31 @@ impl ITests {
 
         let script_path = chip_dir.join("scripts/run_in_build_env.sh");
 
+        // `run_python_test.py` has no equivalent of `run_test_suite.py`'s
+        // `--ble-wifi`, so the mock Bluetooth stack is stood up here and torn
+        // down when `_ble_env` drops at the end of this function.
+        let _ble_env = (target == BLE_TARGET)
+            .then(|| BleEnv::start(chip_dir))
+            .transpose()?;
+
         let mut cmd = Command::new(&script_path);
         cmd.current_dir(chip_dir)
             .env("CHIP_HOME", chip_dir)
             .arg(&test_command);
+
+        if let Some(ble_env) = &_ble_env {
+            cmd.env("DBUS_SYSTEM_BUS_ADDRESS", ble_env.dbus_address());
+        }
+
+        // `run_test_suite.py` spawns the device itself and takes no per-app
+        // arguments, so the Thread flavour of `wireless_tests` is selected out
+        // of the environment instead (inherited by the app it launches).
+        if matches!(
+            WirelessFlavour::of(test_name),
+            Some(WirelessFlavour::Thread)
+        ) {
+            cmd.env("RS_MATTER_WIRELESS_THREAD", "1");
+        }
 
         match run_command(&mut cmd, self.print_cmd_output) {
             Ok(()) => {
@@ -1054,8 +1266,7 @@ impl ITests {
         // 1. Build the upstream device binary lazily (cached).
         self.chip_builder.build_chip_all_clusters_app(None, false)?;
 
-        let chip_dir = self.chip_builder.chip_dir();
-        let app_path = chip_dir.join("out/host/chip-all-clusters-app");
+        let app_path = self.chip_builder.all_clusters_app_path();
         if !app_path.exists() {
             anyhow::bail!(
                 "`chip-all-clusters-app` not found at {}",
@@ -1240,9 +1451,9 @@ impl ITests {
     ) -> String {
         let chip_dir = self.chip_builder.chip_dir();
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
-        let chip_tool_path = chip_dir.join("out/host/chip-tool");
+        let chip_tool_path = self.chip_builder.chip_tool_path();
         let test_exe_path = self.test_exe_path(profile, target);
-        let test_pics_path = self.test_pics_path(target);
+        let test_pics_path = self.test_pics_path(test_name, target);
 
         // OTA tests (`OTA_*`) run as a 3-party flow: the YAML commissions both an
         // OTA provider and an OTA requestor. We slot the rs-matter `system_tests`
@@ -1255,8 +1466,8 @@ impl ITests {
             None => (test_name, false),
         };
         let ota_app_clause = if real_name.starts_with("OTA_") {
-            let chip_requestor = chip_dir.join("out/host/chip-ota-requestor-app");
-            let chip_provider = chip_dir.join("out/host/chip-ota-provider-app");
+            let chip_requestor = self.chip_builder.ota_requestor_app_path();
+            let chip_provider = self.chip_builder.ota_provider_app_path();
             if rs_is_requestor {
                 format!(
                     " --app-path 'ota-requestor:{}' --app-path 'ota-provider:{}'",
@@ -1331,6 +1542,14 @@ impl ITests {
         let chip_dir = self.chip_builder.chip_dir();
         let runner_path = chip_dir.join("scripts/tests/run_python_test.py");
         let test_exe_path = self.test_exe_path(profile, target);
+
+        // A `@bluer` suffix re-runs the same test against the alternative BLE
+        // backend; it is stripped before the script name is resolved.
+        let (test_name, bluer) = match test_name.strip_suffix("@bluer") {
+            Some(name) => (name, true),
+            None => (test_name, false),
+        };
+
         let script_path = chip_dir
             .join("src/python_testing")
             .join(format!("{test_name}.py"));
@@ -1366,9 +1585,22 @@ impl ITests {
         // the framework attempt commissioning twice (once per setup
         // payload) and the second attempt times out, so we must drop the
         // raw form here.
+        let ble = target == BLE_TARGET;
+
         let commissioning_args = match Self::setup_payload_override(test_name) {
             Some(setup_payload) => setup_payload.to_string(),
             None => format!("--discriminator {discriminator} --passcode {passcode}"),
+        };
+        // The device takes `hci0` and the commissioner `hci1`, so the two ends
+        // of the link are distinct adapters - the arrangement CHIP's own
+        // BLE-Wi-Fi harness uses, and the one `bluezoo` publishes by default.
+        let commissioning_args = if ble {
+            format!(
+                "{commissioning_args} --ble-controller 1 \
+                 --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword"
+            )
+        } else {
+            commissioning_args
         };
         // A handful of tests (e.g. TC_SC_7_1) only do PASE establishment in
         // the test body itself, and assert that the device starts factory
@@ -1376,6 +1608,8 @@ impl ITests {
         // assertion, so omit `--commissioning-method` for those tests.
         let commissioning_method = if Self::skip_pre_commissioning(test_name) {
             ""
+        } else if ble {
+            "--commissioning-method ble-wifi "
         } else {
             "--commissioning-method on-network "
         };
@@ -1385,8 +1619,16 @@ impl ITests {
         // `chip-all-clusters-app` is the canonical implementation; its path
         // is plumbed in via the `th_server_app_path` string user-param.
         let th_server_arg = if Self::needs_th_server_app(test_name) {
-            let app = chip_dir.join("out/host/chip-all-clusters-app");
+            let app = self.chip_builder.all_clusters_app_path();
             format!(" --string-arg th_server_app_path:{}", app.display())
+        } else {
+            String::new()
+        };
+        // Tests that spawn `chip-all-clusters-app` themselves take its path via
+        // the `app_path` string user-param instead.
+        let app_path_arg = if Self::needs_all_clusters_app_arg(test_name) {
+            let app = self.chip_builder.all_clusters_app_path();
+            format!(" --string-arg app_path:{}", app.display())
         } else {
             String::new()
         };
@@ -1401,7 +1643,10 @@ impl ITests {
         // ones that need it at the target's own `.pics` (the same file the YAML
         // runner uses), by absolute path since the runner's CWD is `chip_dir`.
         let pics_clause = if Self::needs_target_pics(test_name) {
-            format!(" --PICS {}", self.test_pics_path(target).display())
+            format!(
+                " --PICS {}",
+                self.test_pics_path(test_name, target).display()
+            )
         } else {
             String::new()
         };
@@ -1414,16 +1659,21 @@ impl ITests {
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{framework_timeout_clause}{extra_args_clause}{pics_clause}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{framework_timeout_clause}{extra_args_clause}{pics_clause}{th_server_arg}{app_path_arg}"
         );
 
         // Optional `--app-args` passed through to `system_tests`. Used by
         // tests like TC_SC_7_1 that require non-default discriminator /
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
-        let app_args_clause = match Self::app_args_override(test_name) {
-            Some(args) => format!(" --app-args '{args}'"),
-            None => String::new(),
+        let backend = if bluer { " --bluer" } else { "" };
+        let app_args_clause = match (ble, Self::app_args_override(test_name)) {
+            (true, Some(args)) => {
+                format!(" --app-args '--ble-controller 0{backend} {args}'")
+            }
+            (true, None) => format!(" --app-args '--ble-controller 0{backend}'"),
+            (false, Some(args)) => format!(" --app-args '{args}'"),
+            (false, None) => String::new(),
         };
 
         // Some tests need a vendored Python wrapper substituted in place of
@@ -1696,15 +1946,23 @@ impl ITests {
     /// framework as a TH_SERVER). Drives the lazy build in `run_tests`.
     fn needs_chip_all_clusters_app(test_name: &str) -> bool {
         // TC_SC_3_5 plumbs the path through `--string-arg th_server_app_path`
-        // (see `needs_th_server_app`). TC_DA_1_9 spawns the binary itself
-        // via `--string-arg app_path:out/host/chip-all-clusters-app` (see
-        // `extra_python_script_args`).
+        // (see `needs_th_server_app`). TC_DA_1_9 spawns the binary itself and
+        // takes it via `--string-arg app_path` (see
+        // `needs_all_clusters_app_arg`).
         matches!(test_name, "TC_SC_3_5" | "TC_DA_1_9")
     }
 
     /// Tests that need the CHIP `chip-all-clusters-app` binary path injected
     /// as the `th_server_app_path` string user-param (consumed by
     /// `matter.testing.apps.AppServerSubprocess`).
+    /// Tests that spawn `chip-all-clusters-app` themselves and take its path
+    /// via the `app_path` string user-param.
+    fn needs_all_clusters_app_arg(test_name: &str) -> bool {
+        // TC_DA_1_9 launches the binary repeatedly, each time with a different
+        // revoked DAC/PAI configuration.
+        matches!(test_name, "TC_DA_1_9")
+    }
+
     fn needs_th_server_app(test_name: &str) -> bool {
         // TC_SC_3_5 ("CASE Error Handling [DUT_Initiator]") spawns a TH_SERVER
         // and uses CHIP's `FaultInjection` cluster on it to corrupt Sigma2
@@ -1808,6 +2066,11 @@ impl ITests {
             // wrapper around `()` that flips `TestEventTriggersEnabled` to
             // true and validates the key/trigger per spec §11.12.7.1.
             "TC_TestEventTrigger" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // The Thread half of the `wireless` suite drives the same
+            // `wireless_tests` binary in its Thread flavour; the Wi-Fi tests
+            // take the default. The two network stores are distinct types, so
+            // the binary picks one at startup rather than switching later.
+            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22" => Some("--thread"),
             // TC_DGSW_2_2 triggers a `SoftwareFault` event via
             // `GeneralDiagnostics::TestEventTrigger` (trigger code
             // 0x0034000000000000, Matter spec §11.13.7). The Python helper
@@ -1886,6 +2149,30 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => "--endpoint 0",
+            // The wireless Network Commissioning tests read the network they
+            // expect the DUT to be provisioned with out of the commissioning
+            // arguments, even when - as here - the node was commissioned
+            // on-network. The values have to match what `wireless_tests` seeds
+            // itself with; see `MOCK_WIFI_SSID` / `MOCK_THREAD_DATASET` in
+            // `tests/src/common/mock_net_ctl.rs`.
+            //
+            // `--in-test-commissioning-method` is what makes the framework keep
+            // them: it copies the Wi-Fi / Thread credentials into the test
+            // config only when the commissioning method is a wireless one
+            // (`runner.py`, `commissioning_method = args.in_test_commissioning_method
+            // or args.commissioning_method`), otherwise they are parsed and
+            // dropped. It does not change how the node is actually commissioned
+            // - `--commissioning-method on-network` still governs that.
+            "TC_CNET_4_9" => {
+                "--endpoint 0 --in-test-commissioning-method ble-wifi \
+                 --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword"
+            }
+            // `0208` is the Extended PAN ID TLV header (type 2, length 8),
+            // followed by the mock network's Extended PAN ID.
+            "TC_CNET_4_10" | "TC_CNET_4_16" => {
+                "--endpoint 0 --in-test-commissioning-method ble-thread \
+                 --thread-dataset-hex 0208123456789abcdef0"
+            }
             // Gates on `MCORE.ROLE.COMMISSIONEE` + `G.S`; `--endpoint 1` is
             // `PIXIT.G.ENDPOINT` (the default script args already carry it).
             "TC_ACE_1_6" => "--PICS src/app/tests/suites/certification/ci-pics-values",
@@ -1982,6 +2269,16 @@ impl ITests {
             // CADMIN_1_10 reads `SpecificationVersion` there.
             | "TC_IDM_2_3"
             | "TC_CADMIN_1_10"
+            // CNET (Network Commissioning) is served on the root endpoint;
+            // the `@run_if_endpoint_matches(has_feature(...))` gates on these
+            // find the Ethernet / Wi-Fi / Thread feature only there, and would
+            // otherwise skip (which `--fail-on-skipped` turns into a failure).
+            | "TC_CNET_4_3"
+            | "TC_CNET_4_1"
+            | "TC_CNET_4_2"
+            | "TC_CNET_4_4"
+            | "TC_CNET_4_15"
+            | "TC_CNET_4_22"
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_2_5"
@@ -2050,9 +2347,11 @@ impl ITests {
             // chip output from `cargo xtask itest-setup` and bump its
             // per-test timeout (default 90 s) past the seven 30-s commission
             // attempts the test performs.
+            // The `app_path` pointing at that binary is appended separately (see
+            // `needs_all_clusters_app_arg`), since only that path is resolved
+            // against the chip output tree rather than being a fixed literal.
             "TC_DA_1_9" => {
                 "--PICS src/app/tests/suites/certification/ci-pics-values \
-                 --string-arg app_path:out/host/chip-all-clusters-app \
                  --string-arg dac_provider_base_path:credentials/test/revoked-attestation-certificates/dac-provider-test-vectors \
                  --string-arg revocation_set_base_path:credentials/test/revoked-attestation-certificates/revocation-sets \
                  --timeout 300"
@@ -2090,7 +2389,7 @@ impl ITests {
     ) -> anyhow::Result<()> {
         warn!("Building test executable `{target}`...");
 
-        let test_exe_crate_dir = self.workspace_dir.join("examples");
+        let test_exe_crate_dir = self.workspace_dir.join(TEST_CRATE_DIR);
 
         if force_rebuild {
             info!("Force rebuild requested, cleaning previous build artifacts...");
@@ -2143,9 +2442,13 @@ impl ITests {
         self.workspace_dir.join("target").join(profile).join(target)
     }
 
-    fn test_pics_path(&self, target: &str) -> PathBuf {
+    fn test_pics_path(&self, test_name: &str, target: &str) -> PathBuf {
+        let target = WirelessFlavour::of(test_name)
+            .map(|flavour| flavour.pics_target())
+            .unwrap_or(target);
+
         self.workspace_dir
-            .join("examples")
+            .join(TEST_CRATE_DIR)
             .join("src")
             .join("bin")
             .join(format!("{target}.pics"))

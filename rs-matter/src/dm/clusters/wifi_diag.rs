@@ -47,6 +47,21 @@ where
 
 impl WirelessDiag for () {}
 
+/// A [`WirelessDiag`] that always reports the node as connected.
+///
+/// For links whose liveness is implied by the node answering at all - notably
+/// the wired interface behind `EthNetCtl`, which cannot carry the read of an
+/// attribute while being down.
+pub struct AlwaysConnected;
+
+impl DynBase for AlwaysConnected {}
+
+impl WirelessDiag for AlwaysConnected {
+    fn connected(&self) -> Result<bool, Error> {
+        Ok(true)
+    }
+}
+
 /// A trait for the Wifi Diagnostics cluster.
 ///
 /// The names of the methods in this trait are matching 1:1 the mandatory attributes of the
