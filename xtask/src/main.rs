@@ -28,6 +28,7 @@ use log::{Level, LevelFilter};
 
 use crate::itest::{ITests, TestSuite};
 
+mod ble_env;
 mod common;
 mod copyright;
 mod itest;

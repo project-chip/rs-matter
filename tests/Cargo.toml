@@ -41,6 +41,11 @@ mbedtls = ["rs-matter/mbedtls"]
 openssl = ["rs-matter/openssl"]
 sync-mutex = ["rs-matter/sync-mutex"]
 zbus = ["rs-matter/zbus"]
+# The BlueZ (zbus) BLE backend - the default for `ble_tests`.
+ble = ["zbus"]
+# The alternative BlueR BLE backend, selected with `--bluer` at runtime. Additive
+# to `ble`, so a binary built with both can exercise either stack.
+bluer = ["rs-matter/bluer", "dep:async-compat"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]
 avahi = ["rs-matter/zbus"]
@@ -65,6 +70,13 @@ rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persiste
 rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"
+async-compat = { version = "0.2", optional = true }
 
 [[bin]]
 name = "wireless_tests"
+
+# BLE commissioning needs the BlueZ (zbus) stack, which is slow to compile - keep
+# it off the default build so the other drivers do not pay for it.
+[[bin]]
+name = "ble_tests"
+required-features = ["ble"]

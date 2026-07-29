@@ -27,6 +27,7 @@ use clap::ValueEnum;
 
 use log::{debug, info, warn};
 
+use crate::ble_env::BleEnv;
 use crate::common::{run_command, ChipBuilder};
 
 /// System cluster tests + general Matter protocol/IM/SC tests.
@@ -730,11 +731,17 @@ impl WirelessFlavour {
     /// `wireless_tests` at all.
     fn of(test_name: &str) -> Option<Self> {
         let flavour = match test_name {
-            "TC_CNET_4_1" | "TC_CNET_4_4" | "TC_CNET_4_9" | "TC_CNET_4_15"
-            | "Test_TC_CNET_4_5" | "Test_TC_DGWIFI_2_1" | "Test_TC_DGWIFI_2_3" => Self::Wifi,
-            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22"
-            | "Test_TC_CNET_4_6" | "Test_TC_DGTHREAD_2_1" | "Test_TC_DGTHREAD_2_2"
-            | "Test_TC_DGTHREAD_2_3" | "Test_TC_DGTHREAD_2_4" => Self::Thread,
+            "TC_CNET_4_1" | "TC_CNET_4_4" | "TC_CNET_4_9" | "TC_CNET_4_15" | "Test_TC_CNET_4_5"
+            | "Test_TC_DGWIFI_2_1" | "Test_TC_DGWIFI_2_3" => Self::Wifi,
+            "TC_CNET_4_2"
+            | "TC_CNET_4_10"
+            | "TC_CNET_4_16"
+            | "TC_CNET_4_22"
+            | "Test_TC_CNET_4_6"
+            | "Test_TC_DGTHREAD_2_1"
+            | "Test_TC_DGTHREAD_2_2"
+            | "Test_TC_DGTHREAD_2_3"
+            | "Test_TC_DGTHREAD_2_4" => Self::Thread,
             _ => return None,
         };
 
@@ -749,6 +756,32 @@ impl WirelessFlavour {
         }
     }
 }
+
+/// Tests re-run with commissioning over **BLE** instead of on-network, against
+/// the `ble_tests` driver.
+///
+/// These add no new certification test names - the point is the transport: the
+/// whole BTP / GATT / BlueZ path plus the non-concurrent provisioning flow
+/// (`AddOrUpdateWiFiNetwork` + `ConnectNetwork` carried over BTP) has no other
+/// automated coverage. `TC_CNET_4_1` is a good vehicle because it then reads
+/// back the network the commissioner actually provisioned, rather than one the
+/// device seeded for itself.
+pub(crate) const BLE_TESTS: &[&str] = &[
+    "TC_CNET_4_1",
+    // "TC_CNET_4_1@bluer", // Skipped: the `bluer` backend cannot complete BTP
+    //                      // against a BlueZ that confirms indications over the
+    //                      // `AcquireNotify` socket (>= 5.80, and `bluezoo`).
+    //                      // `bluer` exposes that socket as a write-only
+    //                      // `CharacteristicWriter` and never drains the
+    //                      // confirmation byte, so the session stalls after the
+    //                      // first indication - the same defect that
+    //                      // `gatt::bluez::wait_complete` handles on our side,
+    //                      // but inside the crate where we cannot fix it.
+    //                      // The `--bluer` switch and this entry are kept so the
+    //                      // backend can be exercised by hand against an older
+    //                      // BlueZ, and re-enabled once `bluer` reads the
+    //                      // confirmation.
+];
 
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
@@ -780,6 +813,9 @@ pub(crate) enum TestSuite {
     /// Network Commissioning for the wireless network types, against the
     /// `wireless_tests` binary and its canned `NetCtl`. Needs no radio.
     Wireless,
+    /// Commissioning over BLE, against the `ble_tests` driver. Runs on a mock
+    /// BlueZ (`bluezoo`), so it needs no Bluetooth hardware.
+    Ble,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
@@ -812,6 +848,7 @@ impl TestSuite {
             Self::Scenes => SCENES_TESTS.to_vec(),
             Self::Ota => OTA_TESTS.to_vec(),
             Self::Wireless => WIRELESS_TESTS.to_vec(),
+            Self::Ble => BLE_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
             // ignores the test list (there's nothing to parameterise yet).
@@ -829,6 +866,7 @@ impl TestSuite {
             // rs-matter plays its OTA role from the `system_tests` binary.
             Self::Ota => "system_tests",
             Self::Wireless => "wireless_tests",
+            Self::Ble => "ble_tests",
             Self::Commissioner => "commissioner_tests",
         }
     }
@@ -845,6 +883,9 @@ impl TestSuite {
             | Self::Ota
             | Self::Wireless
             | Self::Commissioner => &[],
+            // The BlueZ GATT peripheral lives behind `zbus`; `bluer` adds the
+            // alternative backend, selected per-test with `--bluer`.
+            Self::Ble => &["ble", "bluer"],
         }
     }
 
@@ -861,6 +902,8 @@ impl TestSuite {
             // BDX; give it headroom.
             Self::Ota => 300,
             Self::Wireless => 120,
+            // BLE discovery plus the BTP handshake are slower than plain UDP.
+            Self::Ble => 300,
             Self::Commissioner => 120,
         }
     }
@@ -868,6 +911,9 @@ impl TestSuite {
 
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
+
+/// The `--target` whose tests are commissioned over BLE.
+const BLE_TARGET: &str = "ble_tests";
 
 /// The workspace crate holding the device-under-test drivers (`*_tests`
 /// binaries) and their `.pics` files.
@@ -1096,15 +1142,29 @@ impl ITests {
 
         let script_path = chip_dir.join("scripts/run_in_build_env.sh");
 
+        // `run_python_test.py` has no equivalent of `run_test_suite.py`'s
+        // `--ble-wifi`, so the mock Bluetooth stack is stood up here and torn
+        // down when `_ble_env` drops at the end of this function.
+        let _ble_env = (target == BLE_TARGET)
+            .then(|| BleEnv::start(chip_dir))
+            .transpose()?;
+
         let mut cmd = Command::new(&script_path);
         cmd.current_dir(chip_dir)
             .env("CHIP_HOME", chip_dir)
             .arg(&test_command);
 
+        if let Some(ble_env) = &_ble_env {
+            cmd.env("DBUS_SYSTEM_BUS_ADDRESS", ble_env.dbus_address());
+        }
+
         // `run_test_suite.py` spawns the device itself and takes no per-app
         // arguments, so the Thread flavour of `wireless_tests` is selected out
         // of the environment instead (inherited by the app it launches).
-        if matches!(WirelessFlavour::of(test_name), Some(WirelessFlavour::Thread)) {
+        if matches!(
+            WirelessFlavour::of(test_name),
+            Some(WirelessFlavour::Thread)
+        ) {
             cmd.env("RS_MATTER_WIRELESS_THREAD", "1");
         }
 
@@ -1482,6 +1542,14 @@ impl ITests {
         let chip_dir = self.chip_builder.chip_dir();
         let runner_path = chip_dir.join("scripts/tests/run_python_test.py");
         let test_exe_path = self.test_exe_path(profile, target);
+
+        // A `@bluer` suffix re-runs the same test against the alternative BLE
+        // backend; it is stripped before the script name is resolved.
+        let (test_name, bluer) = match test_name.strip_suffix("@bluer") {
+            Some(name) => (name, true),
+            None => (test_name, false),
+        };
+
         let script_path = chip_dir
             .join("src/python_testing")
             .join(format!("{test_name}.py"));
@@ -1517,9 +1585,22 @@ impl ITests {
         // the framework attempt commissioning twice (once per setup
         // payload) and the second attempt times out, so we must drop the
         // raw form here.
+        let ble = target == BLE_TARGET;
+
         let commissioning_args = match Self::setup_payload_override(test_name) {
             Some(setup_payload) => setup_payload.to_string(),
             None => format!("--discriminator {discriminator} --passcode {passcode}"),
+        };
+        // The device takes `hci0` and the commissioner `hci1`, so the two ends
+        // of the link are distinct adapters - the arrangement CHIP's own
+        // BLE-Wi-Fi harness uses, and the one `bluezoo` publishes by default.
+        let commissioning_args = if ble {
+            format!(
+                "{commissioning_args} --ble-controller 1 \
+                 --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword"
+            )
+        } else {
+            commissioning_args
         };
         // A handful of tests (e.g. TC_SC_7_1) only do PASE establishment in
         // the test body itself, and assert that the device starts factory
@@ -1527,6 +1608,8 @@ impl ITests {
         // assertion, so omit `--commissioning-method` for those tests.
         let commissioning_method = if Self::skip_pre_commissioning(test_name) {
             ""
+        } else if ble {
+            "--commissioning-method ble-wifi "
         } else {
             "--commissioning-method on-network "
         };
@@ -1560,7 +1643,10 @@ impl ITests {
         // ones that need it at the target's own `.pics` (the same file the YAML
         // runner uses), by absolute path since the runner's CWD is `chip_dir`.
         let pics_clause = if Self::needs_target_pics(test_name) {
-            format!(" --PICS {}", self.test_pics_path(test_name, target).display())
+            format!(
+                " --PICS {}",
+                self.test_pics_path(test_name, target).display()
+            )
         } else {
             String::new()
         };
@@ -1580,9 +1666,14 @@ impl ITests {
         // tests like TC_SC_7_1 that require non-default discriminator /
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
-        let app_args_clause = match Self::app_args_override(test_name) {
-            Some(args) => format!(" --app-args '{args}'"),
-            None => String::new(),
+        let backend = if bluer { " --bluer" } else { "" };
+        let app_args_clause = match (ble, Self::app_args_override(test_name)) {
+            (true, Some(args)) => {
+                format!(" --app-args '--ble-controller 0{backend} {args}'")
+            }
+            (true, None) => format!(" --app-args '--ble-controller 0{backend}'"),
+            (false, Some(args)) => format!(" --app-args '{args}'"),
+            (false, None) => String::new(),
         };
 
         // Some tests need a vendored Python wrapper substituted in place of
