@@ -87,14 +87,37 @@ jobs:
           # address picker in `initialize_network`.
           ip -6 addr show
 
+      # The cache key must be derivable BEFORE the cached directory exists:
+      # hashFiles() over `.build/itest/connectedhomeip/**` evaluates against a
+      # not-yet-restored path, comes out empty, and produces one constant key —
+      # which is immutable in the actions/cache store, so the very first save
+      # is served forever. Once `CHIP_DEFAULT_GITREF` moves past that snapshot,
+      # `setup_chip` sees the checkout change on every run, wipes `out/`, and
+      # rebuilds chip-tool from scratch (~20 min) without the result ever being
+      # saved back. Key on the requested Chip ref instead: it is what actually
+      # determines the build contents, and it is known before restore.
+      - name: Compute Chip cache key
+        id: chip-key
+        run: |
+          if [ -n "${{ inputs.chip_ref }}" ]; then
+            ref="${{ inputs.chip_ref }}"
+          else
+            ref=$(sed -n 's/^pub const CHIP_DEFAULT_GITREF: &str = "\([^"]*\)".*/\1/p' xtask/src/common.rs)
+          fi
+          test -n "$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Cache Chip build
         uses: actions/cache@v4
         with:
           path: .build/itest/connectedhomeip
-          key: >-
-            chip0-${{ runner.os }}-${{
-            hashFiles('.build/itest/connectedhomeip/**/*.py',
-            '.build/itest/connectedhomeip/**/*.sh', '.build/itest/connectedhomeip/**/BUILD.gn') }}
+          key: chip1-${{ runner.os }}-${{ steps.chip-key.outputs.ref }}
+          # On a ref bump, start from the previous ref's cache: the pigweed
+          # `.environment` and the clone survive `setup_chip`'s `out/` clean,
+          # so only chip-tool itself is rebuilt — and the post-job save then
+          # stores the rebuilt tree under the new key.
+          restore-keys: |
+            chip1-${{ runner.os }}-
 
       - name: Setup Chip environment
         run: |
