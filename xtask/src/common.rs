@@ -68,6 +68,10 @@ const REQUIRED_PACKAGES: &[&str] = &[
     "libreadline-dev",
     "libssl-dev",
     "libdbus-1-dev",
+    // Provides the `dbus-daemon` binary. The BLE test suite runs `bluezoo` on a
+    // private bus rather than the system one, so it needs the daemon itself and
+    // not just the `-dev` headers above.
+    "dbus",
     "libglib2.0-dev",
     "libavahi-client-dev",
     // Required by `pyscard` (built as part of the CHIP Python wheel):

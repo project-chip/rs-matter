@@ -126,6 +126,18 @@ jobs:
           cargo xtask itest --skip-setup --features openssl TestBasicInformation \
             2>&1 | tee /tmp/itest-system-openssl.log
 
+      - name: Run Wireless Network Commissioning integration tests
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite wireless \
+            2>&1 | tee /tmp/itest-wireless.log
+
+      - name: Run BLE commissioning integration tests
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite ble \
+            2>&1 | tee /tmp/itest-ble.log
+
       - name: Run LevelControl and OnOff integration tests
         run: |
           set -o pipefail

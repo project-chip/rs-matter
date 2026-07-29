@@ -20,7 +20,7 @@ use num_traits::ToBytes;
 use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
 
-use super::{TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType};
+use super::{TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, ToTLV};
 
 /// A trait representing a storage where data can be serialized as a TLV stream.
 /// by synchronously emitting bytes to the storage.
@@ -38,6 +38,21 @@ use super::{TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType};
 /// For iterator-style TLV serialization look at the `ToTLVIter` trait.
 pub trait TLVWrite {
     type Position: PartialEq + Copy;
+
+    /// Write `value` under a context tag.
+    ///
+    /// Taking the tag as a runtime argument rather than baking it into the
+    /// caller is what keeps this cheap in code size: the generated per-field
+    /// builder setters are otherwise structurally identical yet monomorphise
+    /// separately - and, because the builders carry both the parent chain and
+    /// the field index in their type, once per (field, parent, index) rather
+    /// than once per type.
+    fn write_ctx<T: ToTLV>(&mut self, ctx: u8, value: &T) -> Result<(), Error>
+    where
+        Self: Sized,
+    {
+        value.to_tlv(&TLVTag::Context(ctx), self)
+    }
 
     /// Write a TLV tag and value to the TLV stream.
     fn tlv(&mut self, tag: &TLVTag, value: &TLVValue) -> Result<(), Error> {

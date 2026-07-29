@@ -306,11 +306,7 @@ fn struct_field_builder(
                     #[cfg(feature = "log")]
                     #krate::reexport::log::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
 
-                    #krate::tlv::ToTLV::to_tlv(
-                        &value,
-                        &#krate::tlv::TLVTag::Context(#code),
-                        self.0.writer(),
-                    )?;
+                    #krate::tlv::TLVWrite::write_ctx(self.0.writer(), #code, &value)?;
 
                     Ok(#parent_name(self.0))
                 }
@@ -326,11 +322,7 @@ fn struct_field_builder(
                     #[cfg(feature = "log")]
                     #krate::reexport::log::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
 
-                    #krate::tlv::ToTLV::to_tlv(
-                        &value,
-                        &#krate::tlv::TLVTag::Context(#code),
-                        self.0.writer(),
-                    )?;
+                    #krate::tlv::TLVWrite::write_ctx(self.0.writer(), #code, &value)?;
 
                     Ok(#parent_name(self.0))
                 }
@@ -446,11 +438,7 @@ mod tests {
                             "connected",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -471,11 +459,7 @@ mod tests {
                             "connected",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -505,11 +489,7 @@ mod tests {
                             "test_optional",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -530,11 +510,7 @@ mod tests {
                             "test_optional",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -564,11 +540,7 @@ mod tests {
                             "test_nullable",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(3),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -589,11 +561,7 @@ mod tests {
                             "test_nullable",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(3),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -623,11 +591,7 @@ mod tests {
                             "test_both",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(4),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -648,11 +612,7 @@ mod tests {
                             "test_both",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(4),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
@@ -831,11 +791,7 @@ mod tests {
                             "identifyTime",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(IdentifyRequestBuilder(self.0))
                     }
                 }
@@ -856,11 +812,7 @@ mod tests {
                             "identifyTime",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(IdentifyRequestBuilder(self.0))
                     }
                 }
@@ -1039,11 +991,7 @@ mod tests {
                             "group",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(SomeRequestBuilder(self.0))
                     }
                 }
@@ -1064,11 +1012,7 @@ mod tests {
                             "group",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(SomeRequestBuilder(self.0))
                     }
                 }
@@ -1247,11 +1191,7 @@ mod tests {
                             "capacity",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(TestResponseBuilder(self.0))
                     }
                 }
@@ -1272,11 +1212,7 @@ mod tests {
                             "capacity",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(TestResponseBuilder(self.0))
                     }
                 }
@@ -1455,11 +1391,7 @@ mod tests {
                             "status",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
                 }
@@ -1480,11 +1412,7 @@ mod tests {
                             "status",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
                 }
@@ -1514,11 +1442,7 @@ mod tests {
                             "groupID",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(12),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 12, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
                 }
@@ -1539,11 +1463,7 @@ mod tests {
                             "groupID",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(12),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 12, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
                 }
@@ -1759,11 +1679,7 @@ mod tests {
                             "effectIdentifier",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
                 }
@@ -1784,11 +1700,7 @@ mod tests {
                             "effectIdentifier",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
                 }
@@ -1818,11 +1730,7 @@ mod tests {
                             "effectVariant",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
                 }
@@ -1843,11 +1751,7 @@ mod tests {
                             "effectVariant",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
                 }
@@ -2029,11 +1933,7 @@ mod tests {
                             "onOffControl",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
@@ -2056,11 +1956,7 @@ mod tests {
                             "onOffControl",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(0),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
@@ -2092,11 +1988,7 @@ mod tests {
                             "onTime",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
@@ -2119,11 +2011,7 @@ mod tests {
                             "onTime",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
@@ -2155,11 +2043,7 @@ mod tests {
                             "offWaitTime",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
@@ -2182,11 +2066,7 @@ mod tests {
                             "offWaitTime",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
@@ -2398,11 +2278,7 @@ mod tests {
                             "short_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2423,11 +2299,7 @@ mod tests {
                             "short_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2457,11 +2329,7 @@ mod tests {
                             "long_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2482,11 +2350,7 @@ mod tests {
                             "long_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2516,11 +2380,7 @@ mod tests {
                             "opt_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(3),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2541,11 +2401,7 @@ mod tests {
                             "opt_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(3),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2577,11 +2433,7 @@ mod tests {
                             "opt_nul_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(4),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2604,11 +2456,7 @@ mod tests {
                             "opt_nul_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(4),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2818,11 +2666,7 @@ mod tests {
                             "short_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2843,11 +2687,7 @@ mod tests {
                             "short_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(1),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2877,11 +2717,7 @@ mod tests {
                             "long_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2902,11 +2738,7 @@ mod tests {
                             "long_string",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(2),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2936,11 +2768,7 @@ mod tests {
                             "opt_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(3),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2961,11 +2789,7 @@ mod tests {
                             "opt_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(3),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -2997,11 +2821,7 @@ mod tests {
                             "opt_nul_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(4),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
@@ -3024,11 +2844,7 @@ mod tests {
                             "opt_nul_str",
                             value
                         );
-                        rs_matter_crate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &rs_matter_crate::tlv::TLVTag::Context(4),
-                            self.0.writer(),
-                        )?;
+                        rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
