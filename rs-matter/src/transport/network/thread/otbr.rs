@@ -18,11 +18,12 @@
 //! A `NetCtl`, `WirelessDiag`, `ThreadDiag` and `NetChangeNotif` implementation
 //! based on the OpenThread Border Router (`otbr-agent`) D-Bus API.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
-use futures_lite::future::block_on;
 
 use zbus::Connection;
 
@@ -34,7 +35,11 @@ use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::Error;
 use crate::utils::sync::{blocking, DynBase};
-use crate::utils::zbus_proxies::openthread::border_router::{BorderRouterProxy, NeighborEntry};
+use crate::utils::zbus_proxies::openthread::border_router::{
+    BorderRouterProxy, LeaderData, NeighborEntry,
+};
+
+extern crate alloc;
 
 /// A `NetCtl`, `WirelessDiag`, `ThreadDiag` and `NetChangeNotif`
 /// implementation based on the `otbr-agent` (OpenThread Border Router)
@@ -51,9 +56,10 @@ use crate::utils::zbus_proxies::openthread::border_router::{BorderRouterProxy, N
 /// (D-Bus service name `io.openthread.BorderRouter.wpan0`).
 pub struct OtbrCtl<'a> {
     connection: &'a Connection,
-    /// The last observed device role, so that the non-async
-    /// `WirelessDiag::connected` can answer without a D-Bus round-trip.
-    role: blocking::Mutex<RefCell<RoutingRoleEnum>>,
+    /// The last observed network state, so that the non-async
+    /// `WirelessDiag` / `ThreadDiag` getters can answer without D-Bus
+    /// round-trips. See [`OtbrCtl::refresh`].
+    state: blocking::Mutex<RefCell<OtbrState>>,
 }
 
 impl<'a> OtbrCtl<'a> {
@@ -67,7 +73,7 @@ impl<'a> OtbrCtl<'a> {
     pub const fn new(connection: &'a Connection) -> Self {
         Self {
             connection,
-            role: blocking::Mutex::new(RefCell::new(RoutingRoleEnum::Unspecified)),
+            state: blocking::Mutex::new(RefCell::new(OtbrState::new())),
         }
     }
 
@@ -115,33 +121,47 @@ impl<'a> OtbrCtl<'a> {
         )
     }
 
-    /// Re-read the device role, update the cache, and return
-    /// `(changed, attached)`.
-    async fn refresh_role(&self) -> Result<(bool, bool), zbus::Error> {
-        let role = Self::role_from_str(&self.proxy().await?.device_role().await?);
+    /// Re-read the network state off the running agent, update the cache, and
+    /// return `(role_changed, attached)`.
+    ///
+    /// The cache exists because the `WirelessDiag` / `ThreadDiag` getters are
+    /// synchronous by design (they run inside attribute-read handling) and
+    /// must not block on D-Bus round-trips. It is refreshed on every
+    /// (re)connect and by the `NetChangeNotif` polling loop, so the served
+    /// values are at most one poll period old.
+    async fn refresh(&self) -> Result<(bool, bool), zbus::Error> {
+        let proxy = self.proxy().await?;
 
-        Ok(self.role.lock(|cached| {
+        // The role is the load-bearing part (connectivity status and change
+        // detection); a failure to fetch it fails the refresh. Failures of
+        // the individual diagnostics properties below merely degrade that
+        // value to "unknown".
+        let role = Self::role_from_str(&proxy.device_role().await?);
+
+        let state = OtbrState {
+            role,
+            channel: proxy.channel().await.ok(),
+            network_name: proxy.network_name().await.ok(),
+            pan_id: proxy.pan_id().await.ok(),
+            ext_pan_id: proxy.ext_pan_id().await.ok(),
+            ext_address: proxy.extended_address().await.ok(),
+            rloc16: proxy.rloc16().await.ok(),
+            leader_data: proxy.leader_data().await.ok(),
+            neighbors: proxy
+                .neighbor_table()
+                .await
+                .map(|entries| entries.iter().map(neighbor_table_entry).collect())
+                .unwrap_or_default(),
+        };
+
+        Ok(self.state.lock(|cached| {
             let mut cached = cached.borrow_mut();
 
-            let changed = *cached != role;
-            *cached = role;
+            let changed = cached.role != state.role;
+            *cached = state;
 
             (changed, Self::role_attached(role))
         }))
-    }
-
-    /// Run a (quick) D-Bus call from a non-async context.
-    ///
-    /// Used by the `ThreadDiag` getters, which are synchronous by design
-    /// (they run inside attribute-read handling). The agent answers on a
-    /// local Unix socket, so each call is a sub-millisecond round-trip;
-    /// zbus's internal executor runs on its own thread, which makes blocking
-    /// here deadlock-free.
-    fn call_blocking<R>(
-        &self,
-        f: impl AsyncFnOnce(&BorderRouterProxy<'a>) -> Result<R, zbus::Error>,
-    ) -> Result<R, Error> {
-        Ok(block_on(async { f(&self.proxy().await?).await })?)
     }
 }
 
@@ -232,7 +252,7 @@ impl NetCtl for OtbrCtl<'_> {
             }
         }
 
-        let _ = self.refresh_role().await;
+        let _ = self.refresh().await;
         info!("Attached to Thread network");
 
         Ok(())
@@ -243,87 +263,93 @@ impl DynBase for OtbrCtl<'_> {}
 
 impl WirelessDiag for OtbrCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {
-        Ok(self.role.lock(|role| Self::role_attached(*role.borrow())))
+        Ok(self
+            .state
+            .lock(|state| Self::role_attached(state.borrow().role)))
     }
 }
 
+// All getters answer from the cache - see `OtbrCtl::refresh`.
 impl ThreadDiag for OtbrCtl<'_> {
     fn channel(&self) -> Result<Option<u16>, Error> {
-        self.call_blocking(async |proxy| proxy.channel().await)
-            .map(Some)
+        Ok(self.state.lock(|state| state.borrow().channel))
     }
 
     fn routing_role(&self) -> Result<Option<RoutingRoleEnum>, Error> {
-        let role = self.call_blocking(async |proxy| proxy.device_role().await)?;
-
-        Ok(Some(Self::role_from_str(&role)))
+        Ok(Some(self.state.lock(|state| state.borrow().role)))
     }
 
     fn network_name(
         &self,
         f: &mut dyn FnMut(Option<&str>) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let name = self.call_blocking(async |proxy| proxy.network_name().await)?;
-
-        f(Some(&name))
+        self.state
+            .lock(|state| f(state.borrow().network_name.as_deref()))
     }
 
     fn pan_id(&self) -> Result<Option<u16>, Error> {
-        self.call_blocking(async |proxy| proxy.pan_id().await)
-            .map(Some)
+        Ok(self.state.lock(|state| state.borrow().pan_id))
     }
 
     fn extended_pan_id(&self) -> Result<Option<u64>, Error> {
-        self.call_blocking(async |proxy| proxy.ext_pan_id().await)
-            .map(Some)
+        Ok(self.state.lock(|state| state.borrow().ext_pan_id))
     }
 
     fn ext_address(&self) -> Result<Option<u64>, Error> {
-        self.call_blocking(async |proxy| proxy.extended_address().await)
-            .map(Some)
+        Ok(self.state.lock(|state| state.borrow().ext_address))
     }
 
     fn rloc_16(&self) -> Result<Option<u16>, Error> {
-        self.call_blocking(async |proxy| proxy.rloc16().await)
-            .map(Some)
+        Ok(self.state.lock(|state| state.borrow().rloc16))
     }
 
     fn partition_id(&self) -> Result<Option<u32>, Error> {
-        self.call_blocking(async |proxy| proxy.leader_data().await)
-            .map(|data| Some(data.partition_id))
+        Ok(self
+            .state
+            .lock(|state| state.borrow().leader_data.map(|data| data.partition_id)))
     }
 
     fn weighting(&self) -> Result<Option<u16>, Error> {
-        self.call_blocking(async |proxy| proxy.leader_data().await)
-            .map(|data| Some(data.weighting as u16))
+        Ok(self
+            .state
+            .lock(|state| state.borrow().leader_data.map(|data| data.weighting as u16)))
     }
 
     fn data_version(&self) -> Result<Option<u16>, Error> {
-        self.call_blocking(async |proxy| proxy.leader_data().await)
-            .map(|data| Some(data.data_version as u16))
+        Ok(self.state.lock(|state| {
+            state
+                .borrow()
+                .leader_data
+                .map(|data| data.data_version as u16)
+        }))
     }
 
     fn stable_data_version(&self) -> Result<Option<u16>, Error> {
-        self.call_blocking(async |proxy| proxy.leader_data().await)
-            .map(|data| Some(data.stable_data_version as u16))
+        Ok(self.state.lock(|state| {
+            state
+                .borrow()
+                .leader_data
+                .map(|data| data.stable_data_version as u16)
+        }))
     }
 
     fn leader_router_id(&self) -> Result<Option<u8>, Error> {
-        self.call_blocking(async |proxy| proxy.leader_data().await)
-            .map(|data| Some(data.leader_router_id))
+        Ok(self
+            .state
+            .lock(|state| state.borrow().leader_data.map(|data| data.leader_router_id)))
     }
 
     fn neighbor_table(
         &self,
         f: &mut dyn FnMut(&NeighborTable) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let entries = self.call_blocking(async |proxy| proxy.neighbor_table().await)?;
+        self.state.lock(|state| {
+            for entry in &state.borrow().neighbors {
+                f(entry)?;
+            }
 
-        for entry in &entries {
-            f(&neighbor_table_entry(entry))?;
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -337,11 +363,44 @@ impl NetChangeNotif for OtbrCtl<'_> {
         loop {
             Timer::after(Duration::from_secs(POLL_PERIOD_SECS)).await;
 
-            match self.refresh_role().await {
+            match self.refresh().await {
                 Ok((true, _)) => break,
                 Ok((false, _)) => {}
                 Err(e) => error!("Failed to refresh device role: {:?}", e),
             }
+        }
+    }
+}
+
+/// The cached network state served by the synchronous `WirelessDiag` /
+/// `ThreadDiag` getters. Refreshed off the running agent by
+/// [`OtbrCtl::refresh`]; `None` values mean the corresponding property could
+/// not be fetched (yet).
+#[derive(Debug, Clone)]
+struct OtbrState {
+    role: RoutingRoleEnum,
+    channel: Option<u16>,
+    network_name: Option<String>,
+    pan_id: Option<u16>,
+    ext_pan_id: Option<u64>,
+    ext_address: Option<u64>,
+    rloc16: Option<u16>,
+    leader_data: Option<LeaderData>,
+    neighbors: Vec<NeighborTable>,
+}
+
+impl OtbrState {
+    const fn new() -> Self {
+        Self {
+            role: RoutingRoleEnum::Unspecified,
+            channel: None,
+            network_name: None,
+            pan_id: None,
+            ext_pan_id: None,
+            ext_address: None,
+            rloc16: None,
+            leader_data: None,
+            neighbors: Vec::new(),
         }
     }
 }
