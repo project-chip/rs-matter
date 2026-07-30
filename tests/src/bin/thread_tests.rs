@@ -44,14 +44,16 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, Networks, WirelessCreds};
-use rs_matter::dm::clusters::thread_diag::ThreadDiag;
+use rs_matter::dm::clusters::net_comm::{
+    NetCtl, NetCtlStatus, NetworkType, Networks, WirelessCreds,
+};
+use rs_matter::dm::clusters::thread_diag::{self, ThreadDiag};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, ThreadNetworks};
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
@@ -64,7 +66,7 @@ use rs_matter::transport::network::thread::otbr::OtbrCtl;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::zbus::Connection;
-use rs_matter::{clusters, devices, root_endpoint, Matter};
+use rs_matter::{clusters, devices, Matter};
 
 use static_cell::StaticCell;
 
@@ -242,10 +244,72 @@ fn run() -> Result<(), Error> {
     futures_lite::future::block_on(all.coalesce())
 }
 
-/// The Node meta-data: same composition as `wireless_tests`' Thread flavour.
+/// The Thread Network Diagnostics cluster, widened past the handler's
+/// `required`-only default metadata with the `MACCounts` feature and the MAC
+/// counter attributes that the otbr backend serves off the live stack
+/// (exercised by `Test_TC_DGTHREAD_2_2` / `_2_3`).
+///
+/// The two `TxDirect/IndirectMaxRetryExpiryCount` attributes stay out (and
+/// unclaimed in the `.pics`): otbr's D-Bus marshaling of the MAC counters
+/// omits them.
+
+const THREAD_DIAG_CLUSTER: Cluster<'static> = thread_diag::FULL_CLUSTER
+    .with_features(thread_diag::Feature::MAC_COUNTS.bits())
+    .with_attrs(rs_matter::with!(
+        required;
+        thread_diag::AttributeId::TxTotalCount
+            | thread_diag::AttributeId::TxUnicastCount
+            | thread_diag::AttributeId::TxBroadcastCount
+            | thread_diag::AttributeId::TxAckRequestedCount
+            | thread_diag::AttributeId::TxAckedCount
+            | thread_diag::AttributeId::TxNoAckRequestedCount
+            | thread_diag::AttributeId::TxDataCount
+            | thread_diag::AttributeId::TxDataPollCount
+            | thread_diag::AttributeId::TxBeaconCount
+            | thread_diag::AttributeId::TxBeaconRequestCount
+            | thread_diag::AttributeId::TxOtherCount
+            | thread_diag::AttributeId::TxRetryCount
+            | thread_diag::AttributeId::TxErrCcaCount
+            | thread_diag::AttributeId::TxErrAbortCount
+            | thread_diag::AttributeId::TxErrBusyChannelCount
+            | thread_diag::AttributeId::RxTotalCount
+            | thread_diag::AttributeId::RxUnicastCount
+            | thread_diag::AttributeId::RxBroadcastCount
+            | thread_diag::AttributeId::RxDataCount
+            | thread_diag::AttributeId::RxDataPollCount
+            | thread_diag::AttributeId::RxBeaconCount
+            | thread_diag::AttributeId::RxBeaconRequestCount
+            | thread_diag::AttributeId::RxOtherCount
+            | thread_diag::AttributeId::RxAddressFilteredCount
+            | thread_diag::AttributeId::RxDestAddrFilteredCount
+            | thread_diag::AttributeId::RxDuplicatedCount
+            | thread_diag::AttributeId::RxErrNoFrameCount
+            | thread_diag::AttributeId::RxErrUnknownNeighborCount
+            | thread_diag::AttributeId::RxErrInvalidSrcAddrCount
+            | thread_diag::AttributeId::RxErrSecCount
+            | thread_diag::AttributeId::RxErrFcsCount
+            | thread_diag::AttributeId::RxErrOtherCount
+    ))
+    .with_cmds(rs_matter::with!());
+
+/// The Node meta-data: same composition as `wireless_tests`' Thread flavour,
+/// except for the widened Thread diagnostics cluster - hence the root
+/// endpoint is spelled out (`root_endpoint!(thread)` would pull in the
+/// handler's default, `required`-only metadata).
 const NODE_THREAD: Node<'static> = Node {
     endpoints: &[
-        root_endpoint!(thread),
+        Endpoint {
+            id: endpoints::ROOT_ENDPOINT_ID,
+            device_types: devices!(DEV_TYPE_ROOT_NODE),
+            clusters: clusters!(
+                sys;
+                NetworkType::Thread.cluster(),
+                THREAD_DIAG_CLUSTER,
+            ),
+            client_clusters: &[],
+            unique_id: None,
+            semantic_tags: &[],
+        },
         Endpoint::new(
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT),

@@ -831,13 +831,12 @@ pub(crate) const THREAD_TESTS: &[&str] = &[
     // The mandatory Thread diagnostics attributes, now answered from the live
     // stack (channel, routing role, neighbor table, ...) instead of a mock.
     "Test_TC_DGTHREAD_2_1",
-    // The optional MAC Tx / Rx counter attributes (`Test_TC_DGTHREAD_2_2` /
-    // `_2_3`) are within reach here — `otbr-agent` serves them all via its
-    // `MacCounters` D-Bus property — but `dm::clusters::thread_diag`'s
-    // `ThreadDiag` trait does not model the per-counter getters yet, so the
-    // handler cannot serve the attributes. Enable both once the trait grows
-    // them. `Test_TC_DGTHREAD_2_4` additionally needs `ResetCounts`, which
-    // the otbr D-Bus API does not expose at all.
+    // The optional MAC Tx / Rx counter attributes (`MACCNT` feature), served
+    // off `otbr-agent`'s MAC counters D-Bus property via
+    // `ThreadDiag::mac_counters`. `Test_TC_DGTHREAD_2_4` stays off: it needs
+    // `ResetCounts`, which the otbr D-Bus API does not expose at all.
+    "Test_TC_DGTHREAD_2_2",
+    "Test_TC_DGTHREAD_2_3",
     //
     // The one CNET test that a canned `NetCtl` can only satisfy vacuously
     // (see the note in `WIRELESS_TESTS`): the DUT moves between two live

@@ -1007,6 +1007,13 @@ where
     ) -> Result<(), Error> {
         self.net_ctl.active_network_faults_list(f)
     }
+
+    fn mac_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&thread_diag::MacCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.net_ctl.mac_counters(f)
+    }
 }
 
 #[cfg(test)]

@@ -47,9 +47,10 @@ CNET.S.C08.Rsp=1
 # Thread Network Diagnostics
 #
 # `ThreadDiagHandler` is `with_attrs(with!(required))` / `with_cmds(with!())`.
-# The mandatory topology attributes are served (answered by `MockNetCtl` for the
-# provisioned network, or left null where the mock has no equivalent); the MLE
-# and MAC counters and `ResetCounts` are optional and are not implemented.
+# The mandatory topology attributes plus the MAC counters (`MACCNT`, F03) are
+# served off the live otbr-agent stack; the MLE counters and `ResetCounts`
+# are optional and not implemented (the otbr D-Bus API does not expose a
+# counter reset).
 DGTHREAD.S=1
 
 # Channel, RoutingRole, NetworkName, PanId, ExtendedPanId, MeshLocalPrefix.
@@ -71,7 +72,46 @@ DGTHREAD.S.A000b=1
 DGTHREAD.S.A000c=1
 DGTHREAD.S.A000d=1
 
-# RxErr* - optional counters.
+# The MAC counters (`MACCNT` feature), 0x16..0x37, served from `otbr-agent`'s
+# MAC counters D-Bus property (named `LinkCounters`, after the
+# `otLinkGetCounters` API it fronts). `TxDirect/IndirectMaxRetryExpiryCount`
+# (0x22, 0x23) are the exception: otbr's D-Bus marshaling omits them.
+DGTHREAD.S.A0016=1
+DGTHREAD.S.A0017=1
+DGTHREAD.S.A0018=1
+DGTHREAD.S.A0019=1
+DGTHREAD.S.A001a=1
+DGTHREAD.S.A001b=1
+DGTHREAD.S.A001c=1
+DGTHREAD.S.A001d=1
+DGTHREAD.S.A001e=1
+DGTHREAD.S.A001f=1
+DGTHREAD.S.A0020=1
+DGTHREAD.S.A0021=1
+DGTHREAD.S.A0022=0
+DGTHREAD.S.A0023=0
+DGTHREAD.S.A0024=1
+DGTHREAD.S.A0025=1
+DGTHREAD.S.A0026=1
+DGTHREAD.S.A0027=1
+DGTHREAD.S.A0028=1
+DGTHREAD.S.A0029=1
+DGTHREAD.S.A002a=1
+DGTHREAD.S.A002b=1
+DGTHREAD.S.A002c=1
+DGTHREAD.S.A002d=1
+DGTHREAD.S.A002e=1
+DGTHREAD.S.A002f=1
+DGTHREAD.S.A0030=1
+DGTHREAD.S.A0031=1
+DGTHREAD.S.A0032=1
+DGTHREAD.S.A0033=1
+DGTHREAD.S.A0034=1
+DGTHREAD.S.A0035=1
+DGTHREAD.S.A0036=1
+DGTHREAD.S.A0037=1
+
+# ActiveTimestamp, PendingTimestamp, Delay - optional, not served.
 DGTHREAD.S.A0038=0
 DGTHREAD.S.A0039=0
 DGTHREAD.S.A003a=0
@@ -90,8 +130,10 @@ DGTHREAD.S.A0040=1
 # ResetCounts.
 DGTHREAD.S.C00.Rsp=0
 
-# ErrorCounts / MLECounts / MACCounts.
+# PacketCounts (F00) / ErrorCounts (F01) / MLECounts (F02) / MACCounts (F03).
+# Only the MAC counters are served - see the `MACCNT` attribute block above.
 DGTHREAD.S.F00=0
 DGTHREAD.S.F01=0
 DGTHREAD.S.F02=0
+DGTHREAD.S.F03=1
 DGTHREAD.S.F03=0

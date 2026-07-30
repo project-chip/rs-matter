@@ -41,9 +41,13 @@ const ADAPTERS: [&str; 2] = ["00:00:00:11:11:11", "00:00:00:22:22:22"];
 /// `bluezoo`, relative to the Chip checkout.
 const BLUEZOO: &str = ".environment/pigweed-venv/bin/bluezoo";
 
-/// A running mock Bluetooth stack. Both processes are torn down on drop.
+/// A running mock Bluetooth stack. All processes are torn down on drop.
 pub struct BleEnv {
     dbus_socket: PathBuf,
+    /// The private `dbus-daemon` process (kept in the foreground so that it
+    /// can be terminated on drop - a forked daemon would leak, one instance
+    /// per suite start).
+    dbus_daemon: Child,
     bluezoo: Child,
 }
 
@@ -68,15 +72,27 @@ impl BleEnv {
         let dbus_socket = PathBuf::from(format!("/tmp/rs-matter-ble-{}", std::process::id()));
         let _ = std::fs::remove_file(&dbus_socket);
 
-        // `--fork` returns once the socket is ready to accept connections.
-        let status = Command::new("dbus-daemon")
+        // Foreground (`--nofork`), so the process handle survives and the
+        // daemon can be terminated on drop. Readiness = the socket appearing.
+        let mut dbus_daemon = Command::new("dbus-daemon")
             .arg("--session")
             .arg(format!("--address=unix:path={}", dbus_socket.display()))
-            .arg("--fork")
-            .status()
+            .arg("--nofork")
+            .spawn()
             .map_err(|e| anyhow::anyhow!("failed to spawn dbus-daemon: {e}"))?;
-        if !status.success() {
-            anyhow::bail!("dbus-daemon exited with {status:?}");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dbus_socket.exists() {
+            if Instant::now() >= deadline {
+                let _ = dbus_daemon.kill();
+                let _ = dbus_daemon.wait();
+                anyhow::bail!(
+                    "dbus-daemon did not create its socket at {} within 5s",
+                    dbus_socket.display()
+                );
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         info!("Mock Bluetooth bus at {}", dbus_socket.display());
@@ -111,12 +127,16 @@ impl BleEnv {
 
         if seen != ADAPTERS.len() {
             let _ = bluezoo.kill();
+            let _ = bluezoo.wait();
+            let _ = dbus_daemon.kill();
+            let _ = dbus_daemon.wait();
             let _ = std::fs::remove_file(&dbus_socket);
             anyhow::bail!("bluezoo did not publish both virtual adapters");
         }
 
         Ok(Self {
             dbus_socket,
+            dbus_daemon,
             bluezoo,
         })
     }
@@ -139,7 +159,11 @@ impl Drop for BleEnv {
         }
         let _ = self.bluezoo.wait();
 
-        // The daemon exits once its socket is gone.
+        if let Err(err) = self.dbus_daemon.kill() {
+            warn!("Failed to stop dbus-daemon: {err}");
+        }
+        let _ = self.dbus_daemon.wait();
+
         let _ = std::fs::remove_file(&self.dbus_socket);
     }
 }

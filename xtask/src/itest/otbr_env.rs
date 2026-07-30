@@ -65,6 +65,10 @@ const OTBR_IFNAME: &str = "wpan0";
 /// A running otbr-agent on a private D-Bus bus. Torn down on drop.
 pub struct OtbrEnv {
     dbus_socket: PathBuf,
+    /// The private `dbus-daemon` process (kept in the foreground so that it
+    /// can be terminated on drop - a forked daemon would leak, one instance
+    /// per suite start).
+    dbus_daemon: Child,
     /// The `otbr-agent` process (running as the invoking user, via file
     /// capabilities on the binary).
     agent: Child,
@@ -146,14 +150,26 @@ impl OtbrEnv {
             ),
         )?;
 
-        // `--fork` returns once the socket is ready to accept connections.
-        let status = Command::new("dbus-daemon")
+        // Foreground (`--nofork`), so the process handle survives and the
+        // daemon can be terminated on drop. Readiness = the socket appearing.
+        let mut dbus_daemon = Command::new("dbus-daemon")
             .arg(format!("--config-file={}", dbus_config.display()))
-            .arg("--fork")
-            .status()
+            .arg("--nofork")
+            .spawn()
             .map_err(|e| anyhow::anyhow!("failed to spawn dbus-daemon: {e}"))?;
-        if !status.success() {
-            anyhow::bail!("dbus-daemon exited with {status:?}");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !dbus_socket.exists() {
+            if std::time::Instant::now() >= deadline {
+                let _ = dbus_daemon.kill();
+                let _ = dbus_daemon.wait();
+                anyhow::bail!(
+                    "dbus-daemon did not create its socket at {} within 5s",
+                    dbus_socket.display()
+                );
+            }
+
+            thread::sleep(Duration::from_millis(50));
         }
 
         info!("Thread environment bus at {}", dbus_socket.display());
@@ -205,10 +221,11 @@ impl OtbrEnv {
         if ready_rx.recv_timeout(Duration::from_secs(20)).is_err() {
             let env = Self {
                 dbus_socket,
+                dbus_daemon,
                 agent,
                 _settings_dir: settings_dir,
             };
-            drop(env); // kills the agent, removes the socket
+            drop(env); // kills the agent and the bus daemon, removes the socket
             anyhow::bail!(
                 "otbr-agent did not complete the RCP handshake within 20s \
                  (radio URL: {radio_url}); re-run with `-v` for its output"
@@ -219,6 +236,7 @@ impl OtbrEnv {
 
         Ok(Self {
             dbus_socket,
+            dbus_daemon,
             agent,
             _settings_dir: settings_dir,
         })
@@ -286,7 +304,11 @@ impl Drop for OtbrEnv {
         }
         let _ = self.agent.wait();
 
-        // The daemon exits once its socket is gone.
+        if let Err(err) = self.dbus_daemon.kill() {
+            warn!("Failed to stop dbus-daemon: {err}");
+        }
+        let _ = self.dbus_daemon.wait();
+
         let _ = std::fs::remove_file(&self.dbus_socket);
     }
 }

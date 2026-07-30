@@ -53,6 +53,51 @@ pub struct NeighborTable {
     pub is_child: bool,
 }
 
+/// A snapshot of the IEEE 802.15.4 MAC counters — the cluster's `MACCounts`
+/// (`MACCNT`) feature set, attributes `TxTotalCount` .. `RxErrOtherCount` —
+/// as returned by [`ThreadDiag::mac_counters`].
+///
+/// The two `*MaxRetryExpiryCount` values are `Option`s because not every
+/// Thread backend tracks them; `None` surfaces as an unsupported attribute.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MacCounters {
+    pub tx_total_count: u32,
+    pub tx_unicast_count: u32,
+    pub tx_broadcast_count: u32,
+    pub tx_ack_requested_count: u32,
+    pub tx_acked_count: u32,
+    pub tx_no_ack_requested_count: u32,
+    pub tx_data_count: u32,
+    pub tx_data_poll_count: u32,
+    pub tx_beacon_count: u32,
+    pub tx_beacon_request_count: u32,
+    pub tx_other_count: u32,
+    pub tx_retry_count: u32,
+    pub tx_direct_max_retry_expiry_count: Option<u32>,
+    pub tx_indirect_max_retry_expiry_count: Option<u32>,
+    pub tx_err_cca_count: u32,
+    pub tx_err_abort_count: u32,
+    pub tx_err_busy_channel_count: u32,
+    pub rx_total_count: u32,
+    pub rx_unicast_count: u32,
+    pub rx_broadcast_count: u32,
+    pub rx_data_count: u32,
+    pub rx_data_poll_count: u32,
+    pub rx_beacon_count: u32,
+    pub rx_beacon_request_count: u32,
+    pub rx_other_count: u32,
+    pub rx_address_filtered_count: u32,
+    pub rx_dest_addr_filtered_count: u32,
+    pub rx_duplicated_count: u32,
+    pub rx_err_no_frame_count: u32,
+    pub rx_err_unknown_neighbor_count: u32,
+    pub rx_err_invalid_src_addr_count: u32,
+    pub rx_err_sec_count: u32,
+    pub rx_err_fcs_count: u32,
+    pub rx_err_other_count: u32,
+}
+
 impl NeighborTable {
     /// Reads the `NeighborTable` into the provided `NeighborTableStructBuilder`.
     fn read_into<P: TLVBuilderParent>(
@@ -269,12 +314,34 @@ pub trait ThreadDiag: WirelessDiag {
     ) -> Result<(), Error> {
         Ok(())
     }
+
+    /// Lend a snapshot of the IEEE 802.15.4 MAC counters (the cluster's
+    /// `MACCounts` feature set) to the provided closure, or call it with
+    /// `None` if the backend does not track them - in which case the
+    /// corresponding attributes read as unsupported.
+    ///
+    /// Lent by reference (as the other composite payloads of this trait)
+    /// rather than returned by value: the snapshot is a ~144-byte struct.
+    #[allow(clippy::type_complexity)]
+    fn mac_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&MacCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        f(None)
+    }
 }
 
 impl<T> ThreadDiag for &T
 where
     T: ThreadDiag,
 {
+    fn mac_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&MacCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        (*self).mac_counters(f)
+    }
+
     fn channel(&self) -> Result<Option<u16>, Error> {
         (*self).channel()
     }
@@ -386,6 +453,24 @@ impl<'a> ThreadDiagHandler<'a> {
     /// Create a new instance.
     pub const fn new(dataver: Dataver, diag: &'a dyn ThreadDiag) -> Self {
         Self { dataver, diag }
+    }
+
+    /// Read one MAC counter off the wrapped [`ThreadDiag`]'s (lent) snapshot;
+    /// `AttributeNotFound` when the backend does not track the counters (or
+    /// this particular one).
+    fn counter(&self, pick: impl FnOnce(&MacCounters) -> Option<u32>) -> Result<u32, Error> {
+        let mut pick = Some(pick);
+        let mut value = None;
+
+        self.diag.mac_counters(&mut |counters| {
+            if let (Some(counters), Some(pick)) = (counters, pick.take()) {
+                value = pick(counters);
+            }
+
+            Ok(())
+        })?;
+
+        value.ok_or_else(|| ErrorCode::AttributeNotFound.into())
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -684,6 +769,145 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
 
     fn rloc_16(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.rloc_16()?))
+    }
+
+    // The MAC counter attributes (`MACCounts` feature set), all served off
+    // one `ThreadDiag::mac_counters` snapshot.
+
+    fn tx_total_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_total_count))
+    }
+
+    fn tx_unicast_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_unicast_count))
+    }
+
+    fn tx_broadcast_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_broadcast_count))
+    }
+
+    fn tx_ack_requested_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_ack_requested_count))
+    }
+
+    fn tx_acked_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_acked_count))
+    }
+
+    fn tx_no_ack_requested_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_no_ack_requested_count))
+    }
+
+    fn tx_data_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_data_count))
+    }
+
+    fn tx_data_poll_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_data_poll_count))
+    }
+
+    fn tx_beacon_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_beacon_count))
+    }
+
+    fn tx_beacon_request_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_beacon_request_count))
+    }
+
+    fn tx_other_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_other_count))
+    }
+
+    fn tx_retry_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_retry_count))
+    }
+
+    fn tx_err_cca_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_err_cca_count))
+    }
+
+    fn tx_err_abort_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_err_abort_count))
+    }
+
+    fn tx_err_busy_channel_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.tx_err_busy_channel_count))
+    }
+
+    fn rx_total_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_total_count))
+    }
+
+    fn rx_unicast_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_unicast_count))
+    }
+
+    fn rx_broadcast_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_broadcast_count))
+    }
+
+    fn rx_data_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_data_count))
+    }
+
+    fn rx_data_poll_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_data_poll_count))
+    }
+
+    fn rx_beacon_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_beacon_count))
+    }
+
+    fn rx_beacon_request_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_beacon_request_count))
+    }
+
+    fn rx_other_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_other_count))
+    }
+
+    fn rx_address_filtered_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_address_filtered_count))
+    }
+
+    fn rx_dest_addr_filtered_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_dest_addr_filtered_count))
+    }
+
+    fn rx_duplicated_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_duplicated_count))
+    }
+
+    fn rx_err_no_frame_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_err_no_frame_count))
+    }
+
+    fn rx_err_unknown_neighbor_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_err_unknown_neighbor_count))
+    }
+
+    fn rx_err_invalid_src_addr_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_err_invalid_src_addr_count))
+    }
+
+    fn rx_err_sec_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_err_sec_count))
+    }
+
+    fn rx_err_fcs_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_err_fcs_count))
+    }
+
+    fn rx_err_other_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| Some(counters.rx_err_other_count))
+    }
+
+    fn tx_direct_max_retry_expiry_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| counters.tx_direct_max_retry_expiry_count)
+    }
+
+    fn tx_indirect_max_retry_expiry_count(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        self.counter(|counters| counters.tx_indirect_max_retry_expiry_count)
     }
 
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {

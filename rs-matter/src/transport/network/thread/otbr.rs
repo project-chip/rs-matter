@@ -30,13 +30,15 @@ use zbus::Connection;
 use crate::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetworkScanInfo, NetworkType, WirelessCreds,
 };
-use crate::dm::clusters::thread_diag::{NeighborTable, RoutingRoleEnum, ThreadDiag};
+use crate::dm::clusters::thread_diag::{
+    MacCounters as DiagMacCounters, NeighborTable, RoutingRoleEnum, ThreadDiag,
+};
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::Error;
 use crate::utils::sync::{blocking, DynBase};
 use crate::utils::zbus_proxies::openthread::border_router::{
-    BorderRouterProxy, LeaderData, NeighborEntry,
+    BorderRouterProxy, LeaderData, MacCounters, NeighborEntry,
 };
 
 extern crate alloc;
@@ -147,6 +149,11 @@ impl<'a> OtbrCtl<'a> {
             ext_address: proxy.extended_address().await.ok(),
             rloc16: proxy.rloc16().await.ok(),
             leader_data: proxy.leader_data().await.ok(),
+            mac_counters: proxy
+                .mac_counters()
+                .await
+                .inspect_err(|e| debug!("Fetching the MAC counters failed: {:?}", e))
+                .ok(),
             neighbors: proxy
                 .neighbor_table()
                 .await
@@ -339,6 +346,17 @@ impl ThreadDiag for OtbrCtl<'_> {
             .lock(|state| state.borrow().leader_data.map(|data| data.leader_router_id)))
     }
 
+    fn mac_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&DiagMacCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.state
+            .lock(|state| match state.borrow().mac_counters.as_ref() {
+                Some(counters) => f(Some(&diag_mac_counters(counters))),
+                None => f(None),
+            })
+    }
+
     fn neighbor_table(
         &self,
         f: &mut dyn FnMut(&NeighborTable) -> Result<(), Error>,
@@ -386,6 +404,7 @@ struct OtbrState {
     ext_address: Option<u64>,
     rloc16: Option<u16>,
     leader_data: Option<LeaderData>,
+    mac_counters: Option<MacCounters>,
     neighbors: Vec<NeighborTable>,
 }
 
@@ -400,8 +419,51 @@ impl OtbrState {
             ext_address: None,
             rloc16: None,
             leader_data: None,
+            mac_counters: None,
             neighbors: Vec::new(),
         }
+    }
+}
+
+/// Map the otbr MAC counters onto the Matter diagnostics snapshot.
+fn diag_mac_counters(counters: &MacCounters) -> DiagMacCounters {
+    DiagMacCounters {
+        tx_total_count: counters.tx_total,
+        tx_unicast_count: counters.tx_unicast,
+        tx_broadcast_count: counters.tx_broadcast,
+        tx_ack_requested_count: counters.tx_ack_requested,
+        tx_acked_count: counters.tx_acked,
+        tx_no_ack_requested_count: counters.tx_no_ack_requested,
+        tx_data_count: counters.tx_data,
+        tx_data_poll_count: counters.tx_data_poll,
+        tx_beacon_count: counters.tx_beacon,
+        tx_beacon_request_count: counters.tx_beacon_request,
+        tx_other_count: counters.tx_other,
+        tx_retry_count: counters.tx_retry,
+        // Not part of otbr's D-Bus marshaling of the counters (see the
+        // proxy struct) - even though otbr tracks them internally.
+        tx_direct_max_retry_expiry_count: None,
+        tx_indirect_max_retry_expiry_count: None,
+        tx_err_cca_count: counters.tx_err_cca,
+        tx_err_abort_count: counters.tx_err_abort,
+        tx_err_busy_channel_count: counters.tx_busy_channel,
+        rx_total_count: counters.rx_total,
+        rx_unicast_count: counters.rx_unicast,
+        rx_broadcast_count: counters.rx_broadcast,
+        rx_data_count: counters.rx_data,
+        rx_data_poll_count: counters.rx_data_poll,
+        rx_beacon_count: counters.rx_beacon,
+        rx_beacon_request_count: counters.rx_beacon_request,
+        rx_other_count: counters.rx_other,
+        rx_address_filtered_count: counters.rx_address_filtered,
+        rx_dest_addr_filtered_count: counters.rx_dest_address_filtered,
+        rx_duplicated_count: counters.rx_duplicated,
+        rx_err_no_frame_count: counters.rx_err_no_frame,
+        rx_err_unknown_neighbor_count: counters.rx_err_unknown_neighbor,
+        rx_err_invalid_src_addr_count: counters.rx_err_invalid_src_addr,
+        rx_err_sec_count: counters.rx_err_sec,
+        rx_err_fcs_count: counters.rx_err_fcs,
+        rx_err_other_count: counters.rx_err_other,
     }
 }
 
