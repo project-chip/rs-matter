@@ -14,8 +14,9 @@ on:
       chip_ref:
         description: >-
           Chip repository reference (branch/tag/commit). Leave empty to use
-          `CHIP_DEFAULT_GITREF` from `xtask/src/common.rs`, which is the pin
-          local runs use. Set this only to test against a different revision.
+          `CHIP_DEFAULT_GITREF` from `xtask/src/itest/common.rs`, which is the
+          pin local runs use. Set this only to test against a different
+          revision.
         required: false
         type: string
 
@@ -128,7 +129,7 @@ jobs:
           if [ -n "${{ inputs.chip_ref }}" ]; then
             ref="${{ inputs.chip_ref }}"
           else
-            ref=$(sed -n 's/^pub const CHIP_DEFAULT_GITREF: &str = "\([^"]*\)".*/\1/p' xtask/src/common.rs)
+            ref=$(sed -n 's/^pub const CHIP_DEFAULT_GITREF: &str = "\([^"]*\)".*/\1/p' xtask/src/itest/common.rs)
           fi
           test -n "$ref"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"

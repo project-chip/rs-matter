@@ -28,11 +28,8 @@ use log::{Level, LevelFilter};
 
 use crate::itest::{ITests, TestSuite};
 
-mod ble_env;
-mod common;
 mod copyright;
 mod itest;
-mod otbr_env;
 mod tlv;
 
 /// The main command-line interface for `xtask`.
@@ -225,7 +222,7 @@ impl Verbosity {
 #[derive(Parser, Debug, Clone)]
 struct ItestSetupArgs {
     /// Chip repository reference (branch/tag/commit)
-    #[arg(long, default_value = common::CHIP_DEFAULT_GITREF)]
+    #[arg(long, default_value = itest::common::CHIP_DEFAULT_GITREF)]
     gitref: String,
     /// Force setup even if cached
     #[arg(long)]

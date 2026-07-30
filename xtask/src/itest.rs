@@ -28,9 +28,13 @@ use clap::ValueEnum;
 
 use log::{debug, info, warn};
 
-use crate::ble_env::BleEnv;
-use crate::common::{run_command, ChipBuilder};
-use crate::otbr_env::OtbrEnv;
+use self::ble_env::BleEnv;
+use self::common::{run_command, ChipBuilder};
+use self::otbr_env::OtbrEnv;
+
+pub(crate) mod ble_env;
+pub(crate) mod common;
+pub(crate) mod otbr_env;
 
 /// System cluster tests + general Matter protocol/IM/SC tests.
 ///
