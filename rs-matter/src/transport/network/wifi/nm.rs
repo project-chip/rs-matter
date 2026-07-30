@@ -42,7 +42,7 @@ use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
-use crate::transport::network::wifi::band::{band_and_channel, signal_strength_to_rssi};
+use crate::transport::network::wifi::wpa_supp::band::{band_and_channel, signal_strength_to_rssi};
 use crate::utils::sync::{blocking, DynBase, IfMutex};
 use crate::utils::zbus_proxies::nm::access_point::AccessPointProxy;
 use crate::utils::zbus_proxies::nm::connection::ConnectionProxy;

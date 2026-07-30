@@ -36,7 +36,7 @@ use embassy_time::{Instant, Timer};
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::{
-    NetCtl, NetworkType, Networks, NetworksAccess, SharedNetworks,
+    NetCtl, NetCtlStatus, NetworkType, Networks, NetworksAccess, SharedNetworks,
 };
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::eth::EthNetwork;
@@ -621,7 +621,7 @@ where
 
     pub async fn run(&self) -> Result<(), Error>
     where
-        NC: NetCtl + WirelessDiag + NetChangeNotif,
+        NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
     {
         self.emit_start_up_once();
 
@@ -643,7 +643,7 @@ where
     /// the registered networks and (re)connecting as needed once commissioned.
     async fn run_net_mgr(&self) -> Result<(), Error>
     where
-        NC: NetCtl + WirelessDiag + NetChangeNotif,
+        NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
     {
         if self.net_ctl.net_type() == NetworkType::Ethernet {
             // Nothing to manage for a wired device - just pend forever.
@@ -668,7 +668,7 @@ where
     /// to own a `WirelessMgr` (or the networks) itself.
     pub async fn connect_once(&self, network_id: &[u8]) -> Result<(), Error>
     where
-        NC: NetCtl + WirelessDiag + NetChangeNotif,
+        NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
     {
         let mut buf = [0u8; MAX_CREDS_SIZE];
         let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf);

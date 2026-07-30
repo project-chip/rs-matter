@@ -28,8 +28,13 @@ use clap::ValueEnum;
 
 use log::{debug, info, warn};
 
-use crate::ble_env::BleEnv;
-use crate::common::{run_command, ChipBuilder};
+use self::ble_env::BleEnv;
+use self::common::{run_command, ChipBuilder};
+use self::otbr_env::OtbrEnv;
+
+pub(crate) mod ble_env;
+pub(crate) mod common;
+pub(crate) mod otbr_env;
 
 /// System cluster tests + general Matter protocol/IM/SC tests.
 ///
@@ -784,6 +789,77 @@ pub(crate) const BLE_TESTS: &[&str] = &[
     //                      // confirmation.
 ];
 
+/// The first Thread operational dataset for the `thread` suite — the network
+/// the DUT driver auto-attaches to at startup (handed to it via the
+/// `RS_MATTER_THREAD_DATASET` env var), and the `--thread-dataset-hex` the
+/// Python tests receive.
+///
+/// Layout is exactly what `ot-ctl dataset init new` emits: ActiveTimestamp,
+/// Channel (17), ChannelMask, ExtPANID, NetworkName ("rsm-thread-1"), PSKc,
+/// NetworkKey, MeshLocalPrefix, PanId (0x1234), SecurityPolicy.
+///
+/// NB: the Extended PAN ID deliberately avoids `1111111122222222` - that is
+/// `TC_CNET_4_16`'s hardcoded "unknown second network" ID, which must NOT
+/// match the commissioned network.
+const THREAD_DATASET_1: &str = "0e080000000000010000\
+     0003000011\
+     35060004001fffe0\
+     02081a2b3c4d5e6f7081\
+     030c72736d2d7468726561642d31\
+     0410c3f59368445a1b6106be420a706d4cc9\
+     051000112233445566778899aabbccddeeff\
+     0708fd11111111220000\
+     01021234\
+     0c0402a0f7f8";
+
+/// The second Thread operational dataset (`PIXIT.CNET.THREAD_2ND_OPERATIONALDATASET`):
+/// the network `TC_CNET_4_12` moves the DUT onto and back off of. Distinct
+/// channel (22), ExtPANID, name ("rsm-thread-2"), keys, prefix and PanId
+/// (0xabcd) from [`THREAD_DATASET_1`].
+const THREAD_DATASET_2: &str = "0e080000000000010000\
+     0003000016\
+     35060004001fffe0\
+     02088888888877777777\
+     030c72736d2d7468726561642d32\
+     0410d4e6f8a91b2c3d4e5f60718293a4b5c6\
+     0510ffeeddccbbaa99887766554433221100\
+     0708fd22222222330000\
+     0102abcd\
+     0c0402a0f7f8";
+
+/// Thread tests against a REAL Thread stack: the `thread_tests` driver wired
+/// to `otbr-agent` over D-Bus (see [`crate::otbr_env::OtbrEnv`]), radio
+/// defaulting to OpenThread's simulated RCP. Unlike the `wireless` suite,
+/// `ScanNetworks`/`ConnectNetwork` here actually form and switch PANs.
+pub(crate) const THREAD_TESTS: &[&str] = &[
+    // The mandatory Thread diagnostics attributes, now answered from the live
+    // stack (channel, routing role, neighbor table, ...) instead of a mock.
+    "Test_TC_DGTHREAD_2_1",
+    // The optional MAC Tx / Rx counter attributes (`MACCNT` feature), served
+    // off `otbr-agent`'s MAC counters D-Bus property via
+    // `ThreadDiag::mac_counters`. `Test_TC_DGTHREAD_2_4` stays off: it needs
+    // `ResetCounts`, which the otbr D-Bus API does not expose at all.
+    "Test_TC_DGTHREAD_2_2",
+    "Test_TC_DGTHREAD_2_3",
+    //
+    // The one CNET test that a canned `NetCtl` can only satisfy vacuously
+    // (see the note in `WIRELESS_TESTS`): the DUT moves between two live
+    // PANs. With the simulated radio the DUT genuinely detaches from
+    // `thread_dataset_1` and forms/joins `thread_dataset_2` as its own
+    // partition — `Networks[].connected` reflects the real device role.
+    "TC_CNET_4_12",
+    // Re-runs of the `wireless` suite's Thread CNET set against the real
+    // stack: attribute reads off a genuinely-attached network (4_2),
+    // RemoveNetwork/ConnectNetwork under an armed fail-safe with a real
+    // revert-and-reattach (4_10 — the e2e for the `WirelessMgr` fail-safe
+    // reconnect), and NetworkIDNotFound refusal (4_16). Their
+    // `--thread-dataset-hex` is the suite's real dataset here (see
+    // `extra_python_script_args`); the mock TLV serves the wireless suite.
+    "TC_CNET_4_2",
+    "TC_CNET_4_10",
+    "TC_CNET_4_16",
+];
+
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
 /// and a per-test timeout suitable for that suite.
@@ -814,6 +890,12 @@ pub(crate) enum TestSuite {
     /// Network Commissioning for the wireless network types, against the
     /// `wireless_tests` binary and its canned `NetCtl`. Needs no radio.
     Wireless,
+    /// Thread tests against a real Thread stack: `otbr-agent` + the
+    /// `thread_tests` driver, on OpenThread's simulated radio by default
+    /// (no hardware needed; set `RS_MATTER_THREAD_RADIO_URL` for a real
+    /// RCP dongle). Local-only for now; requires `sudo` for the TUN
+    /// interface.
+    Thread,
     /// Commissioning over BLE, against the `ble_tests` driver. Runs on a mock
     /// BlueZ (`bluezoo`), so it needs no Bluetooth hardware.
     Ble,
@@ -849,6 +931,7 @@ impl TestSuite {
             Self::Scenes => SCENES_TESTS.to_vec(),
             Self::Ota => OTA_TESTS.to_vec(),
             Self::Wireless => WIRELESS_TESTS.to_vec(),
+            Self::Thread => THREAD_TESTS.to_vec(),
             Self::Ble => BLE_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
@@ -867,6 +950,7 @@ impl TestSuite {
             // rs-matter plays its OTA role from the `system_tests` binary.
             Self::Ota => "system_tests",
             Self::Wireless => "wireless_tests",
+            Self::Thread => THREAD_TARGET,
             Self::Ble => "ble_tests",
             Self::Commissioner => "commissioner_tests",
         }
@@ -884,6 +968,9 @@ impl TestSuite {
             | Self::Ota
             | Self::Wireless
             | Self::Commissioner => &[],
+            // The otbr D-Bus client (`OtbrNetCtl` + the `BorderRouterProxy`)
+            // lives behind `zbus`.
+            Self::Thread => &["zbus"],
             // The BlueZ GATT peripheral lives behind `zbus`; `bluer` adds the
             // alternative backend, selected per-test with `--bluer`.
             Self::Ble => &["ble", "bluer"],
@@ -903,6 +990,9 @@ impl TestSuite {
             // BDX; give it headroom.
             Self::Ota => 300,
             Self::Wireless => 120,
+            // Real (if simulated-radio) Thread attaches: PAN formation plus
+            // the `ConnectMaxTimeSeconds + fudge` settling waits.
+            Self::Thread => 300,
             // BLE discovery plus the BTP handshake are slower than plain UDP.
             Self::Ble => 300,
             Self::Commissioner => 120,
@@ -915,6 +1005,11 @@ const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
 /// The `--target` whose tests are commissioned over BLE.
 const BLE_TARGET: &str = "ble_tests";
+
+/// The `--target` whose tests run against a real Thread stack (`otbr-agent`,
+/// stood up by [`OtbrEnv`]). Its driver receives the startup dataset via the
+/// `RS_MATTER_THREAD_DATASET` env var.
+const THREAD_TARGET: &str = "thread_tests";
 
 /// The workspace crate holding the device-under-test drivers (`*_tests`
 /// binaries) and their `.pics` files.
@@ -983,7 +1078,14 @@ impl ITests {
             .build_chip_tool(chip_gitref, force_rebuild)?;
         // Required so that `TC_*` Python tests can be dispatched via
         // `scripts/tests/run_python_test.py`.
-        self.chip_builder.build_python_wheel(force_rebuild)
+        self.chip_builder.build_python_wheel(force_rebuild)?;
+        // The `thread` suite's Thread stack (`otbr-agent` + the simulation
+        // `ot-rcp`). Built here - and not only lazily by the suite itself -
+        // so that in CI the artifacts end up in the Chip build cache: the
+        // cache is saved by a different matrix leg (`system-python`) than the
+        // one running the thread suite (`rest`), and a lazily-built tree
+        // would be rebuilt on every run without ever being saved.
+        self.chip_builder.build_otbr(chip_gitref, force_rebuild)
     }
 
     /// Build the executable (`system-tests`) that is to be tested with the Chip integration tests.
@@ -1075,6 +1177,13 @@ impl ITests {
             self.chip_builder
                 .build_chip_ota_requestor_app(None, false)?;
             self.chip_builder.build_chip_ota_provider_app(None, false)?;
+        }
+
+        // The thread suite's DUT-side Thread stack is `otbr-agent` plus (by
+        // default) the simulated `ot-rcp` radio; both are built lazily out of
+        // the submodules vendored in the Chip checkout (cached on disk).
+        if target == THREAD_TARGET {
+            self.chip_builder.build_otbr(None, false)?;
         }
 
         // Re-assert the CHIP Python wheel *after* the lazy app builds above.
@@ -1259,6 +1368,19 @@ impl ITests {
             .then(|| BleEnv::start(chip_dir))
             .transpose()?;
 
+        // Likewise the Thread stack: one fresh `otbr-agent` per test, so a
+        // dataset the previous test attached to can't leak into the next one
+        // (the app itself is factory-reset by the runner, but the Thread
+        // stack lives in the agent).
+        let _otbr_env = (target == THREAD_TARGET)
+            .then(|| {
+                OtbrEnv::start(
+                    &self.chip_builder.otbr_agent_path(),
+                    &self.chip_builder.ot_rcp_sim_path(),
+                )
+            })
+            .transpose()?;
+
         // The command runs with the pre-captured CHIP build environment
         // injected (see `Self::capture_chip_env`) instead of being wrapped in
         // `run_in_build_env.sh`, which would re-do the activation every time.
@@ -1273,12 +1395,24 @@ impl ITests {
             cmd.env("DBUS_SYSTEM_BUS_ADDRESS", ble_env.dbus_address());
         }
 
+        if let Some(otbr_env) = &_otbr_env {
+            // The driver finds `otbr-agent` through the private bus, and
+            // auto-attaches to the suite's first dataset at startup (the
+            // runner spawns it with this environment inherited).
+            cmd.env("DBUS_SYSTEM_BUS_ADDRESS", otbr_env.dbus_address());
+            cmd.env("RS_MATTER_THREAD_DATASET", THREAD_DATASET_1);
+        }
+
         // The Thread flavour of `wireless_tests` is selected out of the
-        // environment (inherited by the app the runner launches).
-        if matches!(
-            WirelessFlavour::of(test_name),
-            Some(WirelessFlavour::Thread)
-        ) {
+        // environment (inherited by the app the runner launches). Only for
+        // that target — the same test names in the `thread` suite drive a
+        // driver with no flavour switch.
+        if target == "wireless_tests"
+            && matches!(
+                WirelessFlavour::of(test_name),
+                Some(WirelessFlavour::Thread)
+            )
+        {
             cmd.env("RS_MATTER_WIRELESS_THREAD", "1");
         }
 
@@ -1319,6 +1453,18 @@ impl ITests {
 
         let test_command = self.yaml_batch_command(batch, timeout_secs, profile, target);
 
+        // One `otbr-agent` for the whole batch: the YAML Thread tests only
+        // read diagnostics, so cross-test dataset leakage is not a concern
+        // and the (several-second) agent startup is better amortized.
+        let _otbr_env = (target == THREAD_TARGET)
+            .then(|| {
+                OtbrEnv::start(
+                    &self.chip_builder.otbr_agent_path(),
+                    &self.chip_builder.ot_rcp_sim_path(),
+                )
+            })
+            .transpose()?;
+
         // See `run_python_test` for why the captured environment replaces the
         // `run_in_build_env.sh` wrapper.
         let mut cmd = Command::new("bash");
@@ -1328,11 +1474,19 @@ impl ITests {
             .arg("-c")
             .arg(&test_command);
 
+        if let Some(otbr_env) = &_otbr_env {
+            cmd.env("DBUS_SYSTEM_BUS_ADDRESS", otbr_env.dbus_address());
+            cmd.env("RS_MATTER_THREAD_DATASET", THREAD_DATASET_1);
+        }
+
         // `run_test_suite.py` spawns the device itself and takes no per-app
         // arguments, so the Thread flavour of `wireless_tests` is selected out
         // of the environment instead (inherited by the app it launches).
-        // Uniform across the batch by construction of the batch key.
-        if matches!(WirelessFlavour::of(batch[0]), Some(WirelessFlavour::Thread)) {
+        // Uniform across the batch by construction of the batch key, and only
+        // meaningful for the `wireless_tests` target (see `run_python_test`).
+        if target == "wireless_tests"
+            && matches!(WirelessFlavour::of(batch[0]), Some(WirelessFlavour::Thread))
+        {
             cmd.env("RS_MATTER_WIRELESS_THREAD", "1");
         }
 
@@ -1800,7 +1954,7 @@ impl ITests {
         // `run_python_test.py` also deletes the controller-side fabric state.
         // Without it, the Python SDK reuses stale fabric storage from previous
         // runs while the device has been factory-reset, causing AddNOC to fail.
-        let extra_args = Self::extra_python_script_args(test_name);
+        let extra_args = Self::extra_python_script_args(test_name, target);
         // Some tests (e.g. TC_SC_4_1) need to be commissioned via a setup
         // payload (manual or QR code) rather than the raw discriminator /
         // passcode pair, because their script logic inspects
@@ -1892,7 +2046,7 @@ impl ITests {
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
         let backend = if bluer { " --bluer" } else { "" };
-        let app_args_clause = match (ble, Self::app_args_override(test_name)) {
+        let app_args_clause = match (ble, Self::app_args_override(test_name, target)) {
             (true, Some(args)) => {
                 format!(" --app-args '--ble-controller 0{backend} {args}'")
             }
@@ -2078,6 +2232,10 @@ impl ITests {
             // Declares its own `default_timeout = 600` (subscription-interval
             // waits across 12+ steps); the process ceiling must exceed it.
             "TC_IDM_4_3" => Some(700),
+            // Three PAN switches, each followed by a
+            // `ConnectMaxTimeSeconds + fudge` settling sleep plus a CASE
+            // re-establishment against the moved DUT.
+            "TC_CNET_4_12" => Some(600),
             _ => None,
         }
     }
@@ -2098,6 +2256,9 @@ impl ITests {
             // commissioning window to expire before opening the next one.
             "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
             | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            // The settling sleeps alone (3 × `ConnectMaxTimeSeconds + fudge`)
+            // exceed the framework's default 90s per-method budget.
+            "TC_CNET_4_12" => Some(480),
             _ => None,
         }
     }
@@ -2234,7 +2395,7 @@ impl ITests {
     /// `system_tests` recognises `--discriminator <u16>` and
     /// `--passcode <u32>`; both override the spec-default `TEST_DEV_COMM`
     /// values for tests that demand non-defaults.
-    fn app_args_override(test_name: &str) -> Option<&'static str> {
+    fn app_args_override(test_name: &str, target: &str) -> Option<&'static str> {
         match test_name {
             // Match the values encoded in the QR code returned by
             // `setup_payload_override` for this test (MT:-24J0KCZ16N71648G00).
@@ -2295,7 +2456,13 @@ impl ITests {
             // `wireless_tests` binary in its Thread flavour; the Wi-Fi tests
             // take the default. The two network stores are distinct types, so
             // the binary picks one at startup rather than switching later.
-            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22" => Some("--thread"),
+            // Only for that target: the same test names in the `thread` suite
+            // drive `thread_tests`, which has no flavour switch.
+            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22"
+                if target == "wireless_tests" =>
+            {
+                Some("--thread")
+            }
             // TC_DGSW_2_2 triggers a `SoftwareFault` event via
             // `GeneralDiagnostics::TestEventTrigger` (trigger code
             // 0x0034000000000000, Matter spec §11.13.7). The Python helper
@@ -2322,8 +2489,36 @@ impl ITests {
     /// on the command line via the `--int-arg`, `--string-arg`, `--hex-arg`
     /// flags. Map them here per test, keyed by file stem, so the rest of the
     /// dispatch path stays uniform.
-    fn extra_python_script_args(test_name: &str) -> &'static str {
-        match test_name {
+    fn extra_python_script_args(test_name: &str, target: &str) -> String {
+        // Thread-suite only (`THREAD_TESTS`). The first dataset reaches
+        // `matter_test_config.thread_operational_dataset` via
+        // `--thread-dataset-hex` — kept by the framework because
+        // `--in-test-commissioning-method` is a wireless one, exactly as for
+        // `TC_CNET_4_9`/`4_10` below; commissioning itself is still
+        // on-network. The second dataset is read with `user_params.get()`
+        // followed by `bytes.fromhex()`, so it must arrive as a hex *string*
+        // (`--string-arg`, not `--hex-arg`). Composed at runtime from the
+        // dataset consts — the only entry that cannot be a `'static` literal.
+        // Against the real-otbr `thread_tests` driver, the Thread CNET tests
+        // are handed the suite's REAL dataset; the mock xpan-only TLV in the
+        // static arm below belongs to `MockNetCtl`'s canned network and is
+        // what the same tests receive in the `wireless` suite.
+        if target == THREAD_TARGET && matches!(test_name, "TC_CNET_4_10" | "TC_CNET_4_16") {
+            return format!(
+                "--endpoint 0 --in-test-commissioning-method ble-thread \
+                 --thread-dataset-hex {THREAD_DATASET_1}"
+            );
+        }
+
+        if test_name == "TC_CNET_4_12" {
+            return format!(
+                "--endpoint 0 --in-test-commissioning-method ble-thread \
+                 --thread-dataset-hex {THREAD_DATASET_1} \
+                 --string-arg PIXIT.CNET.THREAD_2ND_OPERATIONALDATASET:{THREAD_DATASET_2}"
+            );
+        }
+
+        let args: &'static str = match test_name {
             // TC_ACE_1_4 needs the PIXITs that point at the application
             // endpoint/cluster/attribute exposed by `system_tests`. Endpoint 1
             // hosts the OnOff cluster on a `DEV_TYPE_ON_OFF_LIGHT` (device type
@@ -2602,7 +2797,9 @@ impl ITests {
             // endpoint 0 like the other root-endpoint SC tests.
             "TC_SC_7_1" => "--bool-arg post_cert_test:true --endpoint 0",
             _ => "",
-        }
+        };
+
+        args.to_string()
     }
 
     fn build_test_exe<'a>(
@@ -2668,9 +2865,17 @@ impl ITests {
     }
 
     fn test_pics_path(&self, test_name: &str, target: &str) -> PathBuf {
-        let target = WirelessFlavour::of(test_name)
-            .map(|flavour| flavour.pics_target())
-            .unwrap_or(target);
+        // The Wi-Fi/Thread flavour split (and its per-flavour `.pics`) is a
+        // `wireless_tests` concept; the same test names running against
+        // another target (e.g. `Test_TC_DGTHREAD_2_1` in the `thread` suite)
+        // use that target's own `.pics`.
+        let target = if target == "wireless_tests" {
+            WirelessFlavour::of(test_name)
+                .map(|flavour| flavour.pics_target())
+                .unwrap_or(target)
+        } else {
+            target
+        };
 
         self.workspace_dir
             .join(TEST_CRATE_DIR)

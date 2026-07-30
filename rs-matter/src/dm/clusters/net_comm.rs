@@ -456,11 +456,32 @@ pub trait Networks {
     /// Return the index of the network ID if it was removed, or an error if the operation failed.
     fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError>;
 
-    /// Return whether the network interface is commissioned
-    fn commissioned(&self) -> Result<bool, Error>;
+    /// Return whether the networks store is in "managed" state.
+    ///
+    /// Managed means: the store holds *committed* operational network
+    /// configuration, and the operational connectivity manager
+    /// (`WirelessMgr`) may act on it. The store starts unmanaged (never
+    /// commissioned, empty), and temporarily *becomes* unmanaged again while
+    /// network changes are staged under an armed fail-safe (any successful
+    /// `AddOrUpdate*Network` / `RemoveNetwork` / `ReorderNetwork` /
+    /// `ConnectNetwork` flips it to `false`) - during such a window the
+    /// commissioner drives connectivity explicitly, and the manager must
+    /// stand down.
+    ///
+    /// The state comes back to managed on either exit from the window:
+    /// - commit: `CommissioningComplete` calls `set_managed(true)` and
+    ///   persists the store;
+    /// - revert: the fail-safe expiry reloads the persisted store, which
+    ///   always carries the committed - hence managed - state.
+    ///
+    /// Note that a window which stages no network changes (e.g. opened only
+    /// to commission an additional fabric) leaves the store managed, so
+    /// connectivity maintenance of the operational network continues
+    /// throughout - matching CHIP's behavior.
+    fn managed(&self) -> Result<bool, Error>;
 
-    /// Set the commissioned state of the network interface
-    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error>;
+    /// Set the managed state of the networks store (see `managed`).
+    fn set_managed(&mut self, managed: bool) -> Result<(), Error>;
 
     /// Reset the networks to the initial state, removing all recorded network credentials
     fn reset(&mut self) -> Result<(), Error>;
@@ -521,12 +542,12 @@ where
         (*self).remove(network_id)
     }
 
-    fn commissioned(&self) -> Result<bool, Error> {
-        (**self).commissioned()
+    fn managed(&self) -> Result<bool, Error> {
+        (**self).managed()
     }
 
-    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
-        (**self).set_commissioned(commissioned)
+    fn set_managed(&mut self, managed: bool) -> Result<(), Error> {
+        (**self).set_managed(managed)
     }
 
     fn reset(&mut self) -> Result<(), Error> {
@@ -587,12 +608,12 @@ impl Networks for &mut dyn Networks {
         (**self).remove(network_id)
     }
 
-    fn commissioned(&self) -> Result<bool, Error> {
-        (**self).commissioned()
+    fn managed(&self) -> Result<bool, Error> {
+        (**self).managed()
     }
 
-    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
-        (**self).set_commissioned(commissioned)
+    fn set_managed(&mut self, managed: bool) -> Result<(), Error> {
+        (**self).set_managed(managed)
     }
 
     fn reset(&mut self) -> Result<(), Error> {
@@ -676,11 +697,11 @@ impl Networks for DummyNetworks {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
-    fn commissioned(&self) -> Result<bool, Error> {
+    fn managed(&self) -> Result<bool, Error> {
         Ok(false)
     }
 
-    fn set_commissioned(&mut self, _commissioned: bool) -> Result<(), Error> {
+    fn set_managed(&mut self, _managed: bool) -> Result<(), Error> {
         Ok(())
     }
 
@@ -981,12 +1002,12 @@ impl Networks for SharedNetworksInstance<'_> {
         Ok(index)
     }
 
-    fn commissioned(&self) -> Result<bool, Error> {
-        self.networks.commissioned()
+    fn managed(&self) -> Result<bool, Error> {
+        self.networks.managed()
     }
 
-    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
-        self.networks.set_commissioned(commissioned)?;
+    fn set_managed(&mut self, managed: bool) -> Result<(), Error> {
+        self.networks.set_managed(managed)?;
 
         self.changed.notify();
 
@@ -1002,7 +1023,17 @@ impl Networks for SharedNetworksInstance<'_> {
     }
 
     fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.networks.load(data)
+        self.networks.load(data)?;
+
+        // As for every other mutator: `load` replaces the whole store state.
+        // It is notably how the fail-safe expiry *reverts* staged network
+        // changes (reloading the committed blob from the KV store) - without
+        // the notification, a `WirelessMgr` parked on the store would sleep
+        // through the revert and never reconcile connectivity with the
+        // restored networks.
+        self.changed.notify();
+
+        Ok(())
     }
 
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
@@ -1524,7 +1555,7 @@ where
                 let (mut status, mut err_code, _) = NetworkCommissioningStatusEnum::map(
                     GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
                         ctx.networks().access(|networks| {
-                            networks.creds(request.network_id()?.0, &mut |creds| {
+                            let index = networks.creds(request.network_id()?.0, &mut |creds| {
                                 let WirelessCreds::Thread { dataset_tlv } = creds else {
                                     error!("Thread creds expected");
                                     return Err(ErrorCode::InvalidAction.into());
@@ -1539,7 +1570,16 @@ where
                                 dataset_len = dataset_tlv.len();
 
                                 Ok(())
-                            })
+                            })?;
+
+                            // `ConnectNetwork` is a staged, fail-safe-gated
+                            // change like the list mutations: flip the store
+                            // to unmanaged so the `WirelessMgr` stands down
+                            // for the rest of the window instead of racing
+                            // the connect we are about to perform.
+                            networks.set_managed(false)?;
+
+                            Ok(index)
                         })
                     }),
                 )?;
@@ -1565,7 +1605,7 @@ where
                 let (mut status, mut err_code, _) = NetworkCommissioningStatusEnum::map(
                     GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
                         ctx.networks().access(|networks| {
-                            networks.creds(request.network_id()?.0, &mut |creds| {
+                            let index = networks.creds(request.network_id()?.0, &mut |creds| {
                                 let WirelessCreds::Wifi { ssid, pass } = creds else {
                                     error!("Wifi creds expected");
                                     return Err(ErrorCode::InvalidAction.into());
@@ -1587,7 +1627,13 @@ where
                                 pass_len = pass.len();
 
                                 Ok(())
-                            })
+                            })?;
+
+                            // As for the Thread branch: `ConnectNetwork` is a
+                            // staged, fail-safe-gated change.
+                            networks.set_managed(false)?;
+
+                            Ok(index)
                         })
                     }),
                 )?;

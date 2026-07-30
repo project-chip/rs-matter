@@ -42,6 +42,7 @@ use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
 use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
 use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;
 
+pub mod band;
 #[cfg(unix)]
 pub mod unix;
 
@@ -224,7 +225,7 @@ where
 
             // If we can't determine the band and channel we prefer to still report the network
             // even if with unknown band and channel.
-            let (band, channel) = super::band::band_and_channel(bss_info.frequency().await? as u32)
+            let (band, channel) = band::band_and_channel(bss_info.frequency().await? as u32)
                 .unwrap_or((WiFiBandEnum::V2G4, 0));
 
             let network_scan_info = NetworkScanInfo::Wifi {

@@ -174,9 +174,10 @@ pub struct NeighborEntry {
     pub is_child: bool,
 }
 
-/// Link-layer statistic counters.
+/// IPv6-level packet counters — the [`BorderRouterProxy::ip6_counters`]
+/// property.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
-pub struct LinkCounters {
+pub struct Ip6Counters {
     pub ip_tx_success: u32,
     pub ip_rx_success: u32,
     pub ip_tx_failure: u32,
@@ -386,6 +387,12 @@ pub struct VendorTxtEntry {
 
 /// MAC layer statistic counters — the [`BorderRouterProxy::mac_counters`]
 /// property. Every counter is a `uint32`.
+///
+/// NB: deliberately 32 fields, NOT the 34 of otbr's own `MacCounters` C++
+/// struct: otbr's D-Bus marshaling of the property omits
+/// `mTxDirectMaxRetryExpiry` / `mTxIndirectMaxRetryExpiry` (wire signature
+/// `(u{32})`, verified empirically), and the zvariant derive PANICS - rather
+/// than erroring - on a field-arity mismatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
 pub struct MacCounters {
     pub tx_total: u32,
@@ -651,13 +658,17 @@ pub trait BorderRouter {
     #[zbus(property)]
     fn cca_failure_rate(&self) -> zbus::Result<u16>;
 
-    /// MAC layer statistics.
-    #[zbus(property)]
+    /// MAC layer statistics (`otMacCounters`).
+    ///
+    /// NB: otbr serves these under the (historical) `LinkCounters` property
+    /// name, after the `otLinkGetCounters` API they come from; the property
+    /// actually named `MacCounters` does not exist.
+    #[zbus(property, name = "LinkCounters")]
     fn mac_counters(&self) -> zbus::Result<MacCounters>;
 
-    /// Link counters.
+    /// IPv6-level packet counters.
     #[zbus(property)]
-    fn link_counters(&self) -> zbus::Result<LinkCounters>;
+    fn ip6_counters(&self) -> zbus::Result<Ip6Counters>;
 
     /// Bitmask of supported link channels.
     #[zbus(property)]
