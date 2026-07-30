@@ -28,6 +28,11 @@
 //! `RS_MATTER_THREAD_RADIO_URL` at e.g. `spinel+hdlc+uart:///dev/ttyACM0` to
 //! run the very same suite against a physical RCP dongle instead.
 //!
+//! The agent can alternatively join a bus another fixture already owns
+//! ([`OtbrEnv::start_on`]) — the BLE-Thread commissioning flow runs it on
+//! `BleEnv`'s mock-Bluetooth bus, so that one `DBUS_SYSTEM_BUS_ADDRESS`
+//! reaches both `org.bluez` and `io.openthread.BorderRouter`.
+//!
 //! `otbr-agent` creates a TUN interface (`wpan0`) and therefore needs
 //! `CAP_NET_ADMIN` (+`CAP_NET_RAW` for its ICMPv6 traffic). Rather than
 //! running the daemon as root, the suite relies on *file capabilities* on the
@@ -62,13 +67,17 @@ const SIM_NODE_ID: u32 = 1;
 /// this fixture must agree.
 const OTBR_IFNAME: &str = "wpan0";
 
-/// A running otbr-agent on a private D-Bus bus. Torn down on drop.
+/// A running otbr-agent, on a private D-Bus bus of its own or on a
+/// caller-provided one. Torn down on drop.
 pub struct OtbrEnv {
-    dbus_socket: PathBuf,
-    /// The private `dbus-daemon` process (kept in the foreground so that it
-    /// can be terminated on drop - a forked daemon would leak, one instance
-    /// per suite start).
-    dbus_daemon: Child,
+    /// The private bus socket and its foreground `dbus-daemon` process (kept in
+    /// the foreground so that it can be terminated on drop - a forked daemon
+    /// would leak, one instance per suite start). `None` when the agent joined
+    /// a caller-provided bus ([`Self::start_on`]) - that bus's owner tears it
+    /// down.
+    dbus: Option<(PathBuf, Child)>,
+    /// The address of the bus the agent is on, own or caller-provided.
+    bus_address: String,
     /// The `otbr-agent` process (running as the invoking user, via file
     /// capabilities on the binary).
     agent: Child,
@@ -85,6 +94,65 @@ impl OtbrEnv {
     /// (real or simulated), so a driver started afterwards finds the D-Bus API
     /// live.
     pub fn start(otbr_agent: &Path, ot_rcp_sim: &Path) -> anyhow::Result<Self> {
+        Self::check_agent_exists(otbr_agent)?;
+        let radio_url = Self::radio_url(ot_rcp_sim)?;
+        Self::ensure_agent_caps(otbr_agent)?;
+
+        let settings_dir = tempfile::TempDir::new()?;
+
+        let (dbus_socket, mut dbus_daemon) = Self::start_bus(settings_dir.path())?;
+        let bus_address = Self::bus_address(&dbus_socket);
+
+        info!("Thread environment bus at {}", dbus_socket.display());
+
+        match Self::start_agent(otbr_agent, &radio_url, &bus_address, settings_dir.path()) {
+            Ok(agent) => Ok(Self {
+                dbus: Some((dbus_socket, dbus_daemon)),
+                bus_address,
+                agent,
+                _settings_dir: settings_dir,
+            }),
+            Err(err) => {
+                let _ = dbus_daemon.kill();
+                let _ = dbus_daemon.wait();
+                let _ = std::fs::remove_file(&dbus_socket);
+                Err(err)
+            }
+        }
+    }
+
+    /// Start `otbr-agent` on a bus another fixture already owns (readiness as
+    /// for [`Self::start`]). Used by the BLE-Thread commissioning flow, where
+    /// the agent shares `BleEnv`'s mock-Bluetooth bus.
+    pub fn start_on(
+        bus_address: &str,
+        otbr_agent: &Path,
+        ot_rcp_sim: &Path,
+    ) -> anyhow::Result<Self> {
+        Self::check_agent_exists(otbr_agent)?;
+        let radio_url = Self::radio_url(ot_rcp_sim)?;
+        Self::ensure_agent_caps(otbr_agent)?;
+
+        let settings_dir = tempfile::TempDir::new()?;
+
+        let agent = Self::start_agent(otbr_agent, &radio_url, bus_address, settings_dir.path())?;
+
+        Ok(Self {
+            dbus: None,
+            bus_address: bus_address.to_string(),
+            agent,
+            _settings_dir: settings_dir,
+        })
+    }
+
+    /// The value to put in `DBUS_SYSTEM_BUS_ADDRESS` so that the driver (and
+    /// anything else) talks to the agent's bus rather than the real system one.
+    pub fn dbus_address(&self) -> String {
+        self.bus_address.clone()
+    }
+
+    /// Bail with an actionable message if the `otbr-agent` binary is absent.
+    fn check_agent_exists(otbr_agent: &Path) -> anyhow::Result<()> {
         if !otbr_agent.exists() {
             anyhow::bail!(
                 "`otbr-agent` not found at {} — it is built lazily by the thread suite; \
@@ -93,10 +161,16 @@ impl OtbrEnv {
             );
         }
 
-        let radio_url = match env::var(RADIO_URL_ENV) {
+        Ok(())
+    }
+
+    /// Resolve the radio URL: the [`RADIO_URL_ENV`] override (a physical RCP
+    /// dongle), or the simulated RCP.
+    fn radio_url(ot_rcp_sim: &Path) -> anyhow::Result<String> {
+        match env::var(RADIO_URL_ENV) {
             Ok(url) => {
                 info!("Using {RADIO_URL_ENV} radio: {url}");
-                url
+                Ok(url)
             }
             Err(_) => {
                 if !ot_rcp_sim.exists() {
@@ -105,20 +179,20 @@ impl OtbrEnv {
                         ot_rcp_sim.display(),
                     );
                 }
-                format!(
+                Ok(format!(
                     "spinel+hdlc+forkpty://{}?forkpty-arg={SIM_NODE_ID}",
                     ot_rcp_sim.display()
-                )
+                ))
             }
-        };
+        }
+    }
 
-        Self::ensure_agent_caps(otbr_agent)?;
-
+    /// Stand up the private D-Bus daemon; returns its socket path and process
+    /// handle once the socket exists.
+    fn start_bus(settings_dir: &Path) -> anyhow::Result<(PathBuf, Child)> {
         // Deliberately short: a Unix socket path is capped at ~108 bytes.
         let dbus_socket = PathBuf::from(format!("/tmp/rs-matter-otbr-{}", std::process::id()));
         let _ = std::fs::remove_file(&dbus_socket);
-
-        let settings_dir = tempfile::TempDir::new()?;
 
         // A custom bus configuration rather than `--session`, because the bus
         // must ALSO accept `ANONYMOUS` auth: the chip-tool YAML runner spawns
@@ -127,7 +201,7 @@ impl OtbrEnv {
         // daemon sees (the real user), so the standard `EXTERNAL` mechanism
         // rejects it. `EXTERNAL` stays enabled for the (un-namespaced)
         // `otbr-agent`.
-        let dbus_config = settings_dir.path().join("dbus.conf");
+        let dbus_config = settings_dir.join("dbus.conf");
         std::fs::write(
             &dbus_config,
             format!(
@@ -172,10 +246,18 @@ impl OtbrEnv {
             thread::sleep(Duration::from_millis(50));
         }
 
-        info!("Thread environment bus at {}", dbus_socket.display());
+        Ok((dbus_socket, dbus_daemon))
+    }
 
+    /// Spawn `otbr-agent` on the given bus and wait for its RCP handshake.
+    fn start_agent(
+        otbr_agent: &Path,
+        radio_url: &str,
+        bus_address: &str,
+        settings_dir: &Path,
+    ) -> anyhow::Result<Child> {
         let mut agent = Command::new(otbr_agent)
-            .env("DBUS_SYSTEM_BUS_ADDRESS", Self::bus_address(&dbus_socket))
+            .env("DBUS_SYSTEM_BUS_ADDRESS", bus_address)
             .arg(format!("-I{OTBR_IFNAME}"))
             // A border-routing infra interface is mandatory on the command
             // line; the suite does not exercise border routing (the DUT is
@@ -186,8 +268,8 @@ impl OtbrEnv {
             // so the verbosity only reaches the operator with `-v` runs.
             .arg("-d7")
             .arg("-v")
-            .arg(&radio_url)
-            .current_dir(settings_dir.path())
+            .arg(radio_url)
+            .current_dir(settings_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -219,13 +301,8 @@ impl OtbrEnv {
         }
 
         if ready_rx.recv_timeout(Duration::from_secs(20)).is_err() {
-            let env = Self {
-                dbus_socket,
-                dbus_daemon,
-                agent,
-                _settings_dir: settings_dir,
-            };
-            drop(env); // kills the agent and the bus daemon, removes the socket
+            let _ = agent.kill();
+            let _ = agent.wait();
             anyhow::bail!(
                 "otbr-agent did not complete the RCP handshake within 20s \
                  (radio URL: {radio_url}); re-run with `-v` for its output"
@@ -234,18 +311,7 @@ impl OtbrEnv {
 
         info!("otbr-agent up on {OTBR_IFNAME} (radio: {radio_url})");
 
-        Ok(Self {
-            dbus_socket,
-            dbus_daemon,
-            agent,
-            _settings_dir: settings_dir,
-        })
-    }
-
-    /// The value to put in `DBUS_SYSTEM_BUS_ADDRESS` so that the driver (and
-    /// anything else) talks to the private bus rather than the real system one.
-    pub fn dbus_address(&self) -> String {
-        Self::bus_address(&self.dbus_socket)
+        Ok(agent)
     }
 
     /// Make sure the agent binary carries the file capabilities it needs to
@@ -304,11 +370,13 @@ impl Drop for OtbrEnv {
         }
         let _ = self.agent.wait();
 
-        if let Err(err) = self.dbus_daemon.kill() {
-            warn!("Failed to stop dbus-daemon: {err}");
-        }
-        let _ = self.dbus_daemon.wait();
+        if let Some((dbus_socket, dbus_daemon)) = self.dbus.as_mut() {
+            if let Err(err) = dbus_daemon.kill() {
+                warn!("Failed to stop dbus-daemon: {err}");
+            }
+            let _ = dbus_daemon.wait();
 
-        let _ = std::fs::remove_file(&self.dbus_socket);
+            let _ = std::fs::remove_file(dbus_socket);
+        }
     }
 }

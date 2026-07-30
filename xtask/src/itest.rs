@@ -774,6 +774,16 @@ impl WirelessFlavour {
 /// device seeded for itself.
 pub(crate) const BLE_TESTS: &[&str] = &[
     "TC_CNET_4_1",
+    // The BLE-**Thread** flow, against the `--thread` flavour of `ble_tests`:
+    // same BTP transport, but the provisioned network is a real Thread PAN
+    // (`otbr-agent` joins the mock-Bluetooth bus, radio simulated as in the
+    // `thread` suite). This is the only e2e of the **non-concurrent**
+    // provisioning contract: the DUT answers `ConnectNetwork` over BTP
+    // without touching the radio, then replays the attach via
+    // `InteractionModel::connect_once` once BTP is torn down, and the
+    // commissioner completes commissioning over the operational (UDP)
+    // network. `TC_CNET_4_2` then reads back the genuinely-attached network.
+    "TC_CNET_4_2",
     // "TC_CNET_4_1@bluer", // Skipped: the `bluer` backend cannot complete BTP
     //                      // against a BlueZ that confirms indications over the
     //                      // `AcquireNotify` socket (>= 5.80, and `bluezoo`).
@@ -1181,8 +1191,9 @@ impl ITests {
 
         // The thread suite's DUT-side Thread stack is `otbr-agent` plus (by
         // default) the simulated `ot-rcp` radio; both are built lazily out of
-        // the submodules vendored in the Chip checkout (cached on disk).
-        if target == THREAD_TARGET {
+        // the submodules vendored in the Chip checkout (cached on disk). The
+        // BLE suite needs the same stack for its BLE-Thread flow.
+        if target == THREAD_TARGET || tests.iter().any(|t| Self::ble_thread(t, target)) {
             self.chip_builder.build_otbr(None, false)?;
         }
 
@@ -1371,15 +1382,28 @@ impl ITests {
         // Likewise the Thread stack: one fresh `otbr-agent` per test, so a
         // dataset the previous test attached to can't leak into the next one
         // (the app itself is factory-reset by the runner, but the Thread
-        // stack lives in the agent).
-        let _otbr_env = (target == THREAD_TARGET)
-            .then(|| {
-                OtbrEnv::start(
-                    &self.chip_builder.otbr_agent_path(),
-                    &self.chip_builder.ot_rcp_sim_path(),
-                )
-            })
-            .transpose()?;
+        // stack lives in the agent). For the BLE-Thread flow the agent joins
+        // the mock-Bluetooth bus instead of owning one, so that the single
+        // `DBUS_SYSTEM_BUS_ADDRESS` the processes inherit reaches both
+        // `org.bluez` and `io.openthread.BorderRouter`.
+        let _otbr_env = if target == THREAD_TARGET {
+            Some(OtbrEnv::start(
+                &self.chip_builder.otbr_agent_path(),
+                &self.chip_builder.ot_rcp_sim_path(),
+            ))
+        } else {
+            _ble_env
+                .as_ref()
+                .filter(|_| Self::ble_thread(test_name, target))
+                .map(|ble_env| {
+                    OtbrEnv::start_on(
+                        &ble_env.dbus_address(),
+                        &self.chip_builder.otbr_agent_path(),
+                        &self.chip_builder.ot_rcp_sim_path(),
+                    )
+                })
+        }
+        .transpose()?;
 
         // The command runs with the pre-captured CHIP build environment
         // injected (see `Self::capture_chip_env`) instead of being wrapped in
@@ -1396,11 +1420,16 @@ impl ITests {
         }
 
         if let Some(otbr_env) = &_otbr_env {
-            // The driver finds `otbr-agent` through the private bus, and
-            // auto-attaches to the suite's first dataset at startup (the
-            // runner spawns it with this environment inherited).
+            // The driver finds `otbr-agent` through the private bus (in the
+            // BLE-Thread case this is the mock-Bluetooth bus again). Only the
+            // `thread` suite's driver auto-attaches to the suite's first
+            // dataset at startup - in the BLE flow the commissioner provisions
+            // the network itself.
             cmd.env("DBUS_SYSTEM_BUS_ADDRESS", otbr_env.dbus_address());
-            cmd.env("RS_MATTER_THREAD_DATASET", THREAD_DATASET_1);
+
+            if target == THREAD_TARGET {
+                cmd.env("RS_MATTER_THREAD_DATASET", THREAD_DATASET_1);
+            }
         }
 
         // The Thread flavour of `wireless_tests` is selected out of the
@@ -1973,7 +2002,17 @@ impl ITests {
         // The device takes `hci0` and the commissioner `hci1`, so the two ends
         // of the link are distinct adapters - the arrangement CHIP's own
         // BLE-Wi-Fi harness uses, and the one `bluezoo` publishes by default.
-        let commissioning_args = if ble {
+        //
+        // The network credentials are what the commissioner provisions the DUT
+        // with over BTP: mock Wi-Fi ones, or - for the BLE-Thread flow - the
+        // suite's first (real) operational dataset, which then doubles as the
+        // network the CNET test expects to read back.
+        let ble_thread = Self::ble_thread(test_name, target);
+        let commissioning_args = if ble_thread {
+            format!(
+                "{commissioning_args} --ble-controller 1 --thread-dataset-hex {THREAD_DATASET_1}"
+            )
+        } else if ble {
             format!(
                 "{commissioning_args} --ble-controller 1 \
                  --wifi-ssid MatterAP --wifi-passphrase MatterAPPassword"
@@ -1987,6 +2026,8 @@ impl ITests {
         // assertion, so omit `--commissioning-method` for those tests.
         let commissioning_method = if Self::skip_pre_commissioning(test_name) {
             ""
+        } else if ble_thread {
+            "--commissioning-method ble-thread "
         } else if ble {
             "--commissioning-method ble-wifi "
         } else {
@@ -2390,12 +2431,33 @@ impl ITests {
         )
     }
 
+    /// Whether this test runs the BLE suite's BLE-**Thread** flow: commissioned
+    /// with `--commissioning-method ble-thread`, against the `--thread` flavour
+    /// of `ble_tests` plus an `otbr-agent` on the same mock-Bluetooth bus.
+    ///
+    /// Piggy-backs on [`WirelessFlavour`]: the same Wi-Fi/Thread split decides
+    /// which network type a BLE commissioning provisions.
+    fn ble_thread(test_name: &str, target: &str) -> bool {
+        let test_name = test_name.strip_suffix("@bluer").unwrap_or(test_name);
+
+        target == BLE_TARGET
+            && matches!(
+                WirelessFlavour::of(test_name),
+                Some(WirelessFlavour::Thread)
+            )
+    }
+
     /// Optional `--app-args` passed straight through to `system_tests`.
     ///
     /// `system_tests` recognises `--discriminator <u16>` and
     /// `--passcode <u32>`; both override the spec-default `TEST_DEV_COMM`
     /// values for tests that demand non-defaults.
     fn app_args_override(test_name: &str, target: &str) -> Option<&'static str> {
+        // The BLE-Thread flow drives the `--thread` flavour of `ble_tests`.
+        if Self::ble_thread(test_name, target) {
+            return Some("--thread");
+        }
+
         match test_name {
             // Match the values encoded in the QR code returned by
             // `setup_payload_override` for this test (MT:-24J0KCZ16N71648G00).
