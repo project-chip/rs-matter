@@ -32,6 +32,7 @@ mod ble_env;
 mod common;
 mod copyright;
 mod itest;
+mod otbr_env;
 mod tlv;
 
 /// The main command-line interface for `xtask`.

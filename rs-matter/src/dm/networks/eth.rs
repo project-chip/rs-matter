@@ -91,11 +91,11 @@ impl net_comm::Networks for EthNetwork<'_> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
-    fn commissioned(&self) -> Result<bool, Error> {
+    fn managed(&self) -> Result<bool, Error> {
         Ok(true)
     }
 
-    fn set_commissioned(&mut self, _commissioned: bool) -> Result<(), Error> {
+    fn set_managed(&mut self, _managed: bool) -> Result<(), Error> {
         Ok(())
     }
 

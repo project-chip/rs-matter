@@ -107,7 +107,7 @@ pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WirelessNetworks<const N: usize, T> {
     networks: crate::utils::storage::Vec<T, N>,
-    commissioned: bool,
+    managed: bool,
 }
 
 impl<const N: usize, T> Default for WirelessNetworks<N, T>
@@ -126,21 +126,21 @@ where
     pub const fn new() -> Self {
         Self {
             networks: crate::utils::storage::Vec::new(),
-            commissioned: false,
+            managed: false,
         }
     }
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
             networks <- crate::utils::storage::Vec::init(),
-            commissioned: false,
+            managed: false,
         })
     }
 
     /// Reset the state
     pub fn reset(&mut self) {
         self.networks.clear();
-        self.commissioned = false;
+        self.managed = false;
     }
 
     /// Remove all networks from the provided BLOB store and from memory
@@ -195,8 +195,8 @@ where
 
         self.networks.clear();
 
-        // Try new format: struct { ctx(0): networks array, ctx(1): commissioned bool }
-        // Fall back to old format: bare TLV array (with commissioned defaulting to false)
+        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool }
+        // Fall back to old format: bare TLV array (with managed defaulting to false)
         if let Ok(structure) = root.structure() {
             for network in structure.ctx(0)?.array()?.iter() {
                 let network = network?;
@@ -206,7 +206,7 @@ where
                 })?;
             }
 
-            self.commissioned = structure.ctx(1)?.bool()?;
+            self.managed = structure.ctx(1)?.bool()?;
         } else {
             for network in root.array()?.iter() {
                 let network = network?;
@@ -216,7 +216,7 @@ where
                 })?;
             }
 
-            self.commissioned = false;
+            self.managed = false;
         }
 
         Ok(())
@@ -234,7 +234,7 @@ where
         wb.start_struct(&TLVTag::Anonymous)?;
 
         self.networks.to_tlv(&TLVTag::Context(0), &mut wb)?;
-        self.commissioned.to_tlv(&TLVTag::Context(1), &mut wb)?;
+        self.managed.to_tlv(&TLVTag::Context(1), &mut wb)?;
 
         wb.end_container()?;
 
@@ -360,6 +360,13 @@ where
             // Update
             update(unetwork)?;
 
+            // A successful list mutation means network changes are now staged
+            // under the (armed) fail-safe: flip to unmanaged so the
+            // `WirelessMgr` stands down until the changes are either committed
+            // (`CommissioningComplete` -> `set_managed(true)`) or reverted
+            // (fail-safe expiry -> `load` of the persisted, committed state).
+            self.managed = false;
+
             info!("Updated network with ID {}", unetwork.display());
 
             Ok(index as _)
@@ -374,6 +381,9 @@ where
             // Add
             self.networks
                 .push_init(add, || ErrorCode::ResourceExhausted.into())?;
+
+            // See the update branch above.
+            self.managed = false;
 
             info!("Added network with ID {}", T::display_id(network_id));
 
@@ -401,6 +411,9 @@ where
             if index < self.networks.len() as u8 {
                 let conf = self.networks.remove(cur_index);
                 unwrap!(self.networks.insert(index as usize, conf).map_err(|_| ()));
+
+                // Staged change - see `add_or_update`.
+                self.managed = false;
 
                 info!(
                     "Network with ID {} reordered to index {}",
@@ -440,6 +453,9 @@ where
             // Found
             self.networks.remove(index);
 
+            // Staged change - see `add_or_update`.
+            self.managed = false;
+
             info!("Removed network with ID {}", T::display_id(network_id));
 
             Ok(index as _)
@@ -450,12 +466,12 @@ where
         }
     }
 
-    pub fn commissioned(&self) -> bool {
-        self.commissioned
+    pub fn managed(&self) -> bool {
+        self.managed
     }
 
-    pub fn set_commissioned(&mut self, commissioned: bool) {
-        self.commissioned = commissioned;
+    pub fn set_managed(&mut self, managed: bool) {
+        self.managed = managed;
     }
 }
 
@@ -512,12 +528,12 @@ where
         WirelessNetworks::remove(self, network_id)
     }
 
-    fn commissioned(&self) -> Result<bool, Error> {
-        Ok(self.commissioned())
+    fn managed(&self) -> Result<bool, Error> {
+        Ok(self.managed())
     }
 
-    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
-        WirelessNetworks::set_commissioned(self, commissioned);
+    fn set_managed(&mut self, managed: bool) -> Result<(), Error> {
+        WirelessNetworks::set_managed(self, managed);
 
         Ok(())
     }
@@ -613,6 +629,25 @@ impl net_comm::NetCtl for NoopWirelessNetCtl {
 impl NetChangeNotif for NoopWirelessNetCtl {
     async fn wait_changed(&self) {
         core::future::pending().await
+    }
+}
+
+impl net_comm::NetCtlStatus for NoopWirelessNetCtl {
+    fn last_networking_status(
+        &self,
+    ) -> Result<Option<net_comm::NetworkCommissioningStatusEnum>, Error> {
+        Ok(None)
+    }
+
+    fn last_network_id<F, R>(&self, f: F) -> Result<R, Error>
+    where
+        F: FnOnce(Option<&[u8]>) -> Result<R, Error>,
+    {
+        f(None)
+    }
+
+    fn last_connect_error_value(&self) -> Result<Option<i32>, Error> {
+        Ok(None)
     }
 }
 
@@ -1188,7 +1223,7 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        nets.set_commissioned(true);
+        nets.set_managed(true);
 
         let mut buf = [0u8; 512];
         let len = nets.store(&mut buf).unwrap();
@@ -1197,24 +1232,61 @@ mod tests {
         loaded.load(&buf[..len]).unwrap();
 
         assert_eq!(collect_ssids(&loaded), collect_ssids(&nets));
-        assert!(loaded.commissioned());
+        assert!(loaded.managed());
     }
 
-    // ── WirelessNetworks: commissioned state ──
+    // ── WirelessNetworks: managed state ──
 
     #[test]
-    fn commissioned_default_false() {
+    fn managed_default_false() {
         let nets = WifiNetworks::<4>::new();
-        assert!(!nets.commissioned());
+        assert!(!nets.managed());
     }
 
     #[test]
-    fn set_commissioned() {
+    fn set_managed() {
         let mut nets = WifiNetworks::<4>::new();
-        nets.set_commissioned(true);
-        assert!(nets.commissioned());
-        nets.set_commissioned(false);
-        assert!(!nets.commissioned());
+        nets.set_managed(true);
+        assert!(nets.managed());
+        nets.set_managed(false);
+        assert!(!nets.managed());
+    }
+
+    #[test]
+    fn mutations_clear_managed() {
+        let mut nets = WifiNetworks::<4>::new();
+
+        // A successful add stages a change
+        nets.set_managed(true);
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+        assert!(!nets.managed());
+
+        // ... as does a successful update ...
+        nets.set_managed(true);
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"q")), |network| {
+            network.update(&wifi_creds(b"A", b"q"))
+        })
+        .unwrap();
+        assert!(!nets.managed());
+
+        // ... a successful reorder ...
+        nets.add_or_update(b"B", Wifi::init_from(&wifi_creds(b"B", b"p")), |_| Ok(()))
+            .unwrap();
+        nets.set_managed(true);
+        nets.reorder(0, b"B").unwrap();
+        assert!(!nets.managed());
+
+        // ... and a successful remove.
+        nets.set_managed(true);
+        nets.remove(b"B").unwrap();
+        assert!(!nets.managed());
+
+        // A FAILED operation stages nothing and leaves the state alone.
+        nets.set_managed(true);
+        assert!(nets.remove(b"NOSUCH").is_err());
+        assert!(nets.reorder(42, b"A").is_err());
+        assert!(nets.managed());
     }
 
     // ── WirelessNetworks: reset ──
@@ -1224,11 +1296,11 @@ mod tests {
         let mut nets = WifiNetworks::<4>::new();
         nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
             .unwrap();
-        nets.set_commissioned(true);
+        nets.set_managed(true);
 
         nets.reset();
         assert!(collect_ssids(&nets).is_empty());
-        assert!(!nets.commissioned());
+        assert!(!nets.managed());
     }
 
     // ── SharedNetworks: delegates to inner WifiNetworks correctly ──
@@ -1265,13 +1337,13 @@ mod tests {
     fn shared_networks_commissioned_via_access() {
         let shared = SharedNetworks::new(WifiNetworks::<4>::new());
 
-        let commissioned = shared.access(|networks| networks.commissioned().unwrap());
-        assert!(!commissioned);
+        let managed = shared.access(|networks| networks.managed().unwrap());
+        assert!(!managed);
 
-        shared.access(|networks| networks.set_commissioned(true).unwrap());
+        shared.access(|networks| networks.set_managed(true).unwrap());
 
-        let commissioned = shared.access(|networks| networks.commissioned().unwrap());
-        assert!(commissioned);
+        let managed = shared.access(|networks| networks.managed().unwrap());
+        assert!(managed);
     }
 
     #[test]
@@ -1346,8 +1418,8 @@ mod tests {
 
         assert_eq!(collect_ssids(&nets), vec![b"A".to_vec(), b"B".to_vec()]);
         assert!(
-            !nets.commissioned(),
-            "Old format should default commissioned to false"
+            !nets.managed(),
+            "Old format should default managed to false"
         );
     }
 

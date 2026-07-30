@@ -75,6 +75,12 @@ async-compat = { version = "0.2", optional = true }
 [[bin]]
 name = "wireless_tests"
 
+# Thread against a real `otbr-agent` stack over D-Bus — the driver for
+# `cargo xtask itest --suite thread`.
+[[bin]]
+name = "thread_tests"
+required-features = ["zbus"]
+
 # BLE commissioning needs the BlueZ (zbus) stack, which is slow to compile - keep
 # it off the default build so the other drivers do not pay for it.
 [[bin]]

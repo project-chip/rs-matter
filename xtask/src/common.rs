@@ -83,6 +83,11 @@ const REQUIRED_PACKAGES: &[&str] = &[
     // are missing, and without them the failure appears deep inside the ninja
     // build of `chip-tool` rather than at dependency-check time.
     "libevent-dev",
+    // Required by the `ot-br-posix` build (`ChipBuilder::build_otbr`): its
+    // D-Bus API (`-DOTBR_DBUS=ON`) pulls in `src/proto`, whose CMakeLists
+    // does `find_package(Protobuf REQUIRED)`.
+    "libprotobuf-dev",
+    "protobuf-compiler",
 ];
 
 /// Execute command with stderr always surpressed
@@ -238,6 +243,42 @@ impl ChipBuilder {
     /// Absolute path of the `chip-ota-requestor-app` binary.
     pub fn ota_requestor_app_path(&self) -> PathBuf {
         self.chip_dir.join(Self::OTA_REQUESTOR_APP)
+    }
+
+    /// Path of the `otbr-agent` binary, relative to the Chip root. Built out of
+    /// the `ot-br-posix` submodule vendored in the Chip checkout, with the same
+    /// cmake configuration Chip's own CI uses for its Thread jobs.
+    pub const OTBR_AGENT: &'static str =
+        "third_party/ot-br-posix/repo/build/otbr/src/agent/otbr-agent";
+    /// Path of the `ot-ctl` binary (the OpenThread CLI client for a running
+    /// `otbr-agent`), produced by the same `ot-br-posix` build. Nothing in
+    /// the harness calls it — it is the operator's tool for poking the
+    /// suite's Thread stack by hand (`sudo ot-ctl state`, `dataset active`,
+    /// ...), hence deliberately kept reachable.
+    #[allow(dead_code)]
+    pub const OT_CTL: &'static str =
+        "third_party/ot-br-posix/repo/build/otbr/third_party/openthread/repo/src/posix/ot-ctl";
+    /// Path of the *simulation* `ot-rcp` binary, relative to the Chip root.
+    /// An RCP whose 802.15.4 radio is OpenThread's simulation platform: all
+    /// sim nodes on the host mesh over localhost UDP, so `otbr-agent` can run
+    /// a real Thread stack with no radio hardware.
+    pub const OT_RCP_SIM: &'static str =
+        "third_party/openthread/repo/build/simulation/examples/apps/ncp/ot-rcp";
+
+    /// Absolute path of the `otbr-agent` binary.
+    pub fn otbr_agent_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::OTBR_AGENT)
+    }
+
+    /// Absolute path of the `ot-ctl` binary.
+    #[allow(dead_code)]
+    pub fn ot_ctl_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::OT_CTL)
+    }
+
+    /// Absolute path of the simulation `ot-rcp` binary.
+    pub fn ot_rcp_sim_path(&self) -> PathBuf {
+        self.chip_dir.join(Self::OT_RCP_SIM)
     }
 
     /// Build the chip_tool binary.
@@ -514,6 +555,117 @@ impl ChipBuilder {
             )?;
         } else {
             info!("Using existing chip-ota-requestor-app build");
+        }
+
+        Ok(())
+    }
+
+    /// Build `otbr-agent` + `ot-ctl` (from the vendored `ot-br-posix`
+    /// submodule) and the simulation `ot-rcp` (from the vendored `openthread`
+    /// submodule). Together they let the Thread integration suite run a real
+    /// Thread stack with no radio hardware; a real RCP dongle replaces only
+    /// the `ot-rcp` piece, via the radio URL.
+    ///
+    /// The cmake invocations mirror Chip CI's "Build OpenThread dependencies
+    /// for commissioning tests" step (`.github/workflows/tests.yaml`), so the
+    /// binaries match what upstream's own Thread jobs run against. Both build
+    /// trees live inside the Chip checkout, so the CI cache picks them up.
+    pub fn build_otbr(&self, chip_gitref: Option<&str>, force_rebuild: bool) -> anyhow::Result<()> {
+        let chip_dir = self.chip_dir();
+
+        self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
+
+        if !self.otbr_agent_path().exists() || force_rebuild {
+            warn!("Building otbr-agent + ot-ctl (this may take several minutes)...");
+
+            // Deliberately a PLAIN shell, not `run_in_build_env.sh`: the
+            // otbr build needs only system cmake/ninja/git, and the pigweed
+            // environment carries its own (newer) `protoc`, which cmake's
+            // `FindProtobuf` then pairs with the *system* libprotobuf headers
+            // — the generated `.pb.cc` files include
+            // `google/protobuf/runtime_version.h`, which those headers do not
+            // have. Outside the env, system protoc and system headers match.
+            //
+            // `OT_POSIX_SETTINGS_PATH='"tmp"'` (a *relative* path, quoted for
+            // the C preprocessor) is upstream's CI value: the agent stores its
+            // Thread settings under `<cwd>/tmp`, which keeps runs hermetic as
+            // long as the agent is started from a scratch directory.
+            //
+            // The daemon-socket basename moves from its `/run/openthread-%s`
+            // default to `/tmp`: the suite runs `otbr-agent` as a regular
+            // user (with `cap_net_admin` file capabilities rather than root —
+            // see `OtbrEnv`), and `/run` is not writable for it. The value is
+            // a `#ifndef` default with no cmake option of its own, hence the
+            // compiler-flag override; `ot-ctl` picks the same header up, so
+            // client and daemon agree on the path.
+            let cmd_line = r#"cd third_party/ot-br-posix/repo && \
+                git submodule update --init --recursive --depth 1 && \
+                PLATFORM=Linux ./script/cmake-build \
+                -DBUILD_TESTING=OFF \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DOTBR_BORDER_ROUTING=ON \
+                -DOTBR_DBUS=ON \
+                -DOTBR_MDNS=openthread \
+                -DOTBR_VENDOR_NAME=MatterTest \
+                -DOTBR_PRODUCT_NAME=MatterTest \
+                -DOT_POSIX_SETTINGS_PATH='"tmp"' \
+                -DCMAKE_C_FLAGS='-DOPENTHREAD_POSIX_CONFIG_DAEMON_SOCKET_BASENAME=\"/tmp/openthread-%s\"' \
+                -DCMAKE_CXX_FLAGS='-DOPENTHREAD_POSIX_CONFIG_DAEMON_SOCKET_BASENAME=\"/tmp/openthread-%s\"' \
+                -DOT_FIREWALL=OFF \
+                -DOT_LOG_LEVEL=INFO \
+                -DOT_TREL=OFF"#;
+
+            run_command_with(
+                Command::new("bash")
+                    .current_dir(chip_dir)
+                    .arg("-c")
+                    .arg(cmd_line),
+                self.print_cmd_output,
+                !self.print_cmd_output,
+            )?;
+
+            if !self.otbr_agent_path().exists() {
+                anyhow::bail!(
+                    "`ot-br-posix` build completed but `otbr-agent` is not at {}",
+                    self.otbr_agent_path().display()
+                );
+            }
+        } else {
+            info!("Using existing otbr-agent build");
+        }
+
+        if !self.ot_rcp_sim_path().exists() || force_rebuild {
+            warn!("Building simulation ot-rcp...");
+
+            // Plain shell for the same reason as the otbr-agent build above.
+            let cmd_line = r#"cd third_party/openthread/repo && \
+                ./script/cmake-build simulation \
+                -DBUILD_TESTING=OFF \
+                -DOT_BUILD_GTEST=OFF \
+                -DOT_FTD=OFF \
+                -DOT_MTD=OFF \
+                -DOT_RCP=ON \
+                -DOT_APP_CLI=OFF \
+                -DOT_APP_NCP=OFF \
+                -DOT_APP_RCP=ON"#;
+
+            run_command_with(
+                Command::new("bash")
+                    .current_dir(chip_dir)
+                    .arg("-c")
+                    .arg(cmd_line),
+                self.print_cmd_output,
+                !self.print_cmd_output,
+            )?;
+
+            if !self.ot_rcp_sim_path().exists() {
+                anyhow::bail!(
+                    "`openthread` simulation build completed but `ot-rcp` is not at {}",
+                    self.ot_rcp_sim_path().display()
+                );
+            }
+        } else {
+            info!("Using existing simulation ot-rcp build");
         }
 
         Ok(())

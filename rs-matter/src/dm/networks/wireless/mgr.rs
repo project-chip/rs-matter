@@ -47,7 +47,7 @@ pub struct WirelessMgr<'a, W, T> {
 impl<'a, W, T> WirelessMgr<'a, W, T>
 where
     W: net_comm::NetworksAccess + NetChangeNotif,
-    T: net_comm::NetCtl + wifi_diag::WirelessDiag + NetChangeNotif,
+    T: net_comm::NetCtl + net_comm::NetCtlStatus + wifi_diag::WirelessDiag + NetChangeNotif,
 {
     /// Creates a new `WirelessMgr` instance.
     ///
@@ -70,11 +70,15 @@ where
     /// moving to the next network.
     pub async fn run(&mut self) -> Result<(), Error> {
         loop {
-            // Don't try to connect to any network until we are commissioned, just wait for the commissioning to complete.
-            Self::wait_while_not_commissioned(&self.networks).await?;
+            // Stay hands-off while the store is unmanaged: either the device
+            // was never commissioned (store empty), or network changes are
+            // currently staged under an armed fail-safe - in both cases the
+            // commissioner drives connectivity explicitly via
+            // `ConnectNetwork`, and the manager must not race it.
+            Self::wait_while_not_managed(&self.networks).await?;
 
-            // The commissioning status changed to commissioned, so start trying to connect to the networks
-            // Do it while the networks don't change.
+            // The store became managed (commit or revert), so start trying to
+            // connect to the networks. Do it while the networks don't change.
             let mut changed = pin!(Self::wait_while_not_changed(&self.networks));
             let mut connect = pin!(Self::run_connect(&self.networks, &self.net_ctl, self.buf));
 
@@ -120,16 +124,26 @@ where
     async fn run_connect(networks: &W, net_ctl: &T, buf: &mut [u8]) -> Result<(), Error> {
         // Try to connect to the networks in a round-robin fashion until we succeed or the commissioning status changes.
 
-        // TODO: Not really clear if we should do this
+        // A "connected" device parks the manager here - but only while the
+        // network it is connected to is (still) one of the stored ones. When
+        // the fail-safe expires and reverts the networks store, the device
+        // may well remain attached to a network that is no longer stored
+        // (`TC_CNET_4_12`: `ConnectNetwork` moved it to a staged network,
+        // then the fail-safe rolled the store back) - treating plain
+        // "connected" as terminal would strand it there forever, because the
+        // cluster handler that performed the staged connect is not coming
+        // back to undo it. Skipping the wait sends the manager into the
+        // round-robin below, which moves the device back onto a stored
+        // network.
         //
-        // On the one hand, we don't want to needlessly reconnect when the commissioning is complete and the
-        // manager takes over
-        //
-        // On the other, if there is a change in the networks' details, we might want to disconnect and reconnect
-        // even if we are currently connected because - say - the network we are connected to might not even be present anymore
-        // or might have a different password?
-        // It is another topic that a change to the networks' details once these are already commissioned seems very unlikely.
-        Self::wait_while_connected_status(net_ctl, true).await?;
+        // Racing the commissioner is not a concern here: every staged
+        // (fail-safe-gated) network mutation - `AddOrUpdate*` / `Remove` /
+        // `Reorder` / `ConnectNetwork` - flips the store to unmanaged, so
+        // for the remainder of such a window [`WirelessMgr::run`] holds the
+        // manager in `wait_while_not_managed` instead of here.
+        if Self::connected_network_stored(networks, net_ctl)? {
+            Self::wait_while_connected_status(net_ctl, true).await?;
+        }
 
         let mut network_id = OwnedWirelessNetworkId::new();
 
@@ -300,6 +314,42 @@ where
         result
     }
 
+    /// Whether the network of the last (successful) connect operation is
+    /// present in the networks store.
+    ///
+    /// An unknown last network (no connect recorded yet) counts as "not
+    /// stored": if the device nevertheless reports link-level connectivity,
+    /// the manager proceeds to (re)connect to a stored network, which is at
+    /// worst an idempotent re-connect.
+    ///
+    /// NB: the last-operation network ID is also updated by directed *scans*,
+    /// so a scan of a foreign network while connected can make this
+    /// spuriously return `false` once - the resulting reconnect to the
+    /// current network is benign.
+    fn connected_network_stored(networks: &W, net_ctl: &T) -> Result<bool, Error> {
+        net_ctl.last_network_id(|id| {
+            let Some(id) = id else {
+                return Ok(false);
+            };
+
+            if id.is_empty() {
+                return Ok(false);
+            }
+
+            let mut found = false;
+
+            networks.access(|networks| {
+                networks.networks(&mut |network_id| {
+                    found |= network_id == id;
+
+                    Ok(())
+                })
+            })?;
+
+            Ok(found)
+        })
+    }
+
     async fn wait_while_connected_status(net_ctl: &T, connected: bool) -> Result<(), Error> {
         loop {
             if connected != net_ctl.connected()? {
@@ -310,10 +360,10 @@ where
         }
     }
 
-    async fn wait_while_not_commissioned(networks: &W) -> Result<(), Error> {
+    async fn wait_while_not_managed(networks: &W) -> Result<(), Error> {
         loop {
-            let commissioned = networks.access(|networks| networks.commissioned())?;
-            if commissioned {
+            let managed = networks.access(|networks| networks.managed())?;
+            if managed {
                 break Ok(());
             }
 
@@ -335,8 +385,8 @@ mod tests {
     use core::cell::Cell;
 
     use crate::dm::clusters::net_comm::{
-        self, NetCtlError, NetworkScanInfo, NetworkType, NetworksAccess, SharedNetworks,
-        WirelessCreds,
+        self, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, NetworksAccess,
+        SharedNetworks, WirelessCreds,
     };
     use crate::dm::clusters::wifi_diag;
     use crate::dm::networks::wireless::wifi::WifiNetworks;
@@ -348,7 +398,7 @@ mod tests {
 
     type TestNetworks = SharedNetworks<WifiNetworks<4>>;
 
-    fn make_networks(entries: &[(&[u8], &[u8])], commissioned: bool) -> TestNetworks {
+    fn make_networks(entries: &[(&[u8], &[u8])], managed: bool) -> TestNetworks {
         let shared = SharedNetworks::new(WifiNetworks::new());
 
         shared.access(|networks| {
@@ -358,8 +408,8 @@ mod tests {
                     .unwrap();
             }
 
-            if commissioned {
-                networks.set_commissioned(true).unwrap();
+            if managed {
+                networks.set_managed(true).unwrap();
             }
         });
 
@@ -371,6 +421,12 @@ mod tests {
     struct FakeNetCtl {
         connected: Cell<bool>,
         connect_fails_remaining: Cell<u32>,
+        connect_calls: Cell<u32>,
+        /// The SSID of the last `connect` call (successful or not) - what a
+        /// `NetCtlWithStatusImpl` would report as `LastNetworkID`. Seedable
+        /// by tests to model a device attached to a network the manager did
+        /// not connect itself (e.g. via the cluster's `ConnectNetwork`).
+        last_network_id: core::cell::RefCell<heapless::Vec<u8, 32>>,
     }
 
     impl FakeNetCtl {
@@ -378,7 +434,21 @@ mod tests {
             Self {
                 connected: Cell::new(false),
                 connect_fails_remaining: Cell::new(0),
+                connect_calls: Cell::new(0),
+                last_network_id: core::cell::RefCell::new(heapless::Vec::new()),
             }
+        }
+
+        fn with_connected_to(network_id: &[u8]) -> Self {
+            let this = Self::new();
+
+            this.connected.set(true);
+            this.last_network_id
+                .borrow_mut()
+                .extend_from_slice(network_id)
+                .unwrap();
+
+            this
         }
     }
 
@@ -394,7 +464,15 @@ mod tests {
             Err(NetCtlError::Other(ErrorCode::InvalidAction.into()))
         }
 
-        async fn connect(&self, _creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
+        async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
+            self.connect_calls.set(self.connect_calls.get() + 1);
+
+            if let WirelessCreds::Wifi { ssid, .. } = creds {
+                let mut last = self.last_network_id.borrow_mut();
+                last.clear();
+                last.extend_from_slice(ssid).unwrap();
+            }
+
             let remaining = self.connect_fails_remaining.get();
             if remaining > 0 {
                 self.connect_fails_remaining.set(remaining - 1);
@@ -407,6 +485,27 @@ mod tests {
     }
 
     impl DynBase for FakeNetCtl {}
+
+    impl net_comm::NetCtlStatus for FakeNetCtl {
+        fn last_networking_status(
+            &self,
+        ) -> Result<Option<net_comm::NetworkCommissioningStatusEnum>, Error> {
+            Ok(None)
+        }
+
+        fn last_network_id<F, R>(&self, f: F) -> Result<R, Error>
+        where
+            F: FnOnce(Option<&[u8]>) -> Result<R, Error>,
+        {
+            let last = self.last_network_id.borrow();
+
+            f((!last.is_empty()).then_some(last.as_slice()))
+        }
+
+        fn last_connect_error_value(&self) -> Result<Option<i32>, Error> {
+            Ok(None)
+        }
+    }
 
     impl wifi_diag::WirelessDiag for FakeNetCtl {
         fn connected(&self) -> Result<bool, Error> {
@@ -552,11 +651,11 @@ mod tests {
     // ── commissioned tests ──
 
     #[test]
-    fn wait_while_not_commissioned_returns_when_commissioned() {
+    fn wait_while_not_managed_returns_when_managed() {
         let networks = make_networks(&[], true);
 
         embassy_futures::block_on(async {
-            let result = TestMgr::wait_while_not_commissioned(&networks).await;
+            let result = TestMgr::wait_while_not_managed(&networks).await;
             assert!(result.is_ok());
         });
     }
@@ -573,6 +672,73 @@ mod tests {
             let result = TestMgr::wait_while_connected_status(&net_ctl, true).await;
             assert!(result.is_ok());
         });
+    }
+
+    // ── post-revert reconnect tests ──
+
+    /// Run `fut` until `done` reports completion, panicking if `fut` exits
+    /// first. `fut` is the (never-ending) manager future under test.
+    async fn drive_until<F: core::future::Future + Unpin>(fut: F, done: impl Fn() -> bool) {
+        use embassy_futures::select::{select, Either};
+
+        let watcher = async {
+            while !done() {
+                embassy_futures::yield_now().await;
+            }
+        };
+
+        match select(fut, pin!(watcher)).await {
+            Either::First(_) => panic!("manager future exited unexpectedly"),
+            Either::Second(()) => {}
+        }
+    }
+
+    #[test]
+    fn run_connect_reconnects_when_connected_network_not_stored() {
+        // The device is attached to a network that is NOT in the store: the
+        // `TC_CNET_4_12` ending, where a staged `ConnectNetwork` moved the
+        // device and the fail-safe then reverted the store. "Connected" must
+        // not park the manager; it must move the device onto a stored
+        // network.
+        let networks = make_networks(&[(b"Stored", b"Pass")], true);
+        let net_ctl = FakeNetCtl::with_connected_to(b"Gone");
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+
+        embassy_futures::block_on(async {
+            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf));
+
+            drive_until(connect, || {
+                net_ctl
+                    .last_network_id(|id| Ok(id == Some(b"Stored".as_slice())))
+                    .unwrap()
+            })
+            .await;
+        });
+
+        assert_eq!(net_ctl.connect_calls.get(), 1);
+    }
+
+    #[test]
+    fn run_connect_stays_put_when_connected_network_stored() {
+        // The inverse: attached to a network that IS stored - the manager
+        // must park in the connected-wait without issuing any connect.
+        let networks = make_networks(&[(b"Stored", b"Pass")], true);
+        let net_ctl = FakeNetCtl::with_connected_to(b"Stored");
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+
+        embassy_futures::block_on(async {
+            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf));
+
+            // Give the manager a bounded number of polls to (wrongly) act.
+            let polls = Cell::new(0u32);
+            drive_until(connect, || {
+                polls.set(polls.get() + 1);
+                polls.get() > 64
+            })
+            .await;
+        });
+
+        assert_eq!(net_ctl.connect_calls.get(), 0);
     }
 
     // ── creds-by-id / connect_once tests (deferred non-concurrent connect) ──

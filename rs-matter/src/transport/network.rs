@@ -28,6 +28,7 @@ use crate::error::{Error, ErrorCode};
 pub mod btp;
 pub mod mdns;
 pub mod tcp;
+pub mod thread;
 pub mod udp;
 pub mod wifi;
 
