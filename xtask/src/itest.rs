@@ -797,10 +797,14 @@ pub(crate) const BLE_TESTS: &[&str] = &[
 /// Layout is exactly what `ot-ctl dataset init new` emits: ActiveTimestamp,
 /// Channel (17), ChannelMask, ExtPANID, NetworkName ("rsm-thread-1"), PSKc,
 /// NetworkKey, MeshLocalPrefix, PanId (0x1234), SecurityPolicy.
+///
+/// NB: the Extended PAN ID deliberately avoids `1111111122222222` - that is
+/// `TC_CNET_4_16`'s hardcoded "unknown second network" ID, which must NOT
+/// match the commissioned network.
 const THREAD_DATASET_1: &str = "0e080000000000010000\
      0003000011\
      35060004001fffe0\
-     02081111111122222222\
+     02081a2b3c4d5e6f7081\
      030c72736d2d7468726561642d31\
      0410c3f59368445a1b6106be420a706d4cc9\
      051000112233445566778899aabbccddeeff\
@@ -844,6 +848,16 @@ pub(crate) const THREAD_TESTS: &[&str] = &[
     // `thread_dataset_1` and forms/joins `thread_dataset_2` as its own
     // partition — `Networks[].connected` reflects the real device role.
     "TC_CNET_4_12",
+    // Re-runs of the `wireless` suite's Thread CNET set against the real
+    // stack: attribute reads off a genuinely-attached network (4_2),
+    // RemoveNetwork/ConnectNetwork under an armed fail-safe with a real
+    // revert-and-reattach (4_10 — the e2e for the `WirelessMgr` fail-safe
+    // reconnect), and NetworkIDNotFound refusal (4_16). Their
+    // `--thread-dataset-hex` is the suite's real dataset here (see
+    // `extra_python_script_args`); the mock TLV serves the wireless suite.
+    "TC_CNET_4_2",
+    "TC_CNET_4_10",
+    "TC_CNET_4_16",
 ];
 
 /// A pre-canned test suite. Selects a default test list, the example
@@ -1940,7 +1954,7 @@ impl ITests {
         // `run_python_test.py` also deletes the controller-side fabric state.
         // Without it, the Python SDK reuses stale fabric storage from previous
         // runs while the device has been factory-reset, causing AddNOC to fail.
-        let extra_args = Self::extra_python_script_args(test_name);
+        let extra_args = Self::extra_python_script_args(test_name, target);
         // Some tests (e.g. TC_SC_4_1) need to be commissioned via a setup
         // payload (manual or QR code) rather than the raw discriminator /
         // passcode pair, because their script logic inspects
@@ -2032,7 +2046,7 @@ impl ITests {
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
         let backend = if bluer { " --bluer" } else { "" };
-        let app_args_clause = match (ble, Self::app_args_override(test_name)) {
+        let app_args_clause = match (ble, Self::app_args_override(test_name, target)) {
             (true, Some(args)) => {
                 format!(" --app-args '--ble-controller 0{backend} {args}'")
             }
@@ -2381,7 +2395,7 @@ impl ITests {
     /// `system_tests` recognises `--discriminator <u16>` and
     /// `--passcode <u32>`; both override the spec-default `TEST_DEV_COMM`
     /// values for tests that demand non-defaults.
-    fn app_args_override(test_name: &str) -> Option<&'static str> {
+    fn app_args_override(test_name: &str, target: &str) -> Option<&'static str> {
         match test_name {
             // Match the values encoded in the QR code returned by
             // `setup_payload_override` for this test (MT:-24J0KCZ16N71648G00).
@@ -2442,7 +2456,13 @@ impl ITests {
             // `wireless_tests` binary in its Thread flavour; the Wi-Fi tests
             // take the default. The two network stores are distinct types, so
             // the binary picks one at startup rather than switching later.
-            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22" => Some("--thread"),
+            // Only for that target: the same test names in the `thread` suite
+            // drive `thread_tests`, which has no flavour switch.
+            "TC_CNET_4_2" | "TC_CNET_4_10" | "TC_CNET_4_16" | "TC_CNET_4_22"
+                if target == "wireless_tests" =>
+            {
+                Some("--thread")
+            }
             // TC_DGSW_2_2 triggers a `SoftwareFault` event via
             // `GeneralDiagnostics::TestEventTrigger` (trigger code
             // 0x0034000000000000, Matter spec §11.13.7). The Python helper
@@ -2469,7 +2489,7 @@ impl ITests {
     /// on the command line via the `--int-arg`, `--string-arg`, `--hex-arg`
     /// flags. Map them here per test, keyed by file stem, so the rest of the
     /// dispatch path stays uniform.
-    fn extra_python_script_args(test_name: &str) -> String {
+    fn extra_python_script_args(test_name: &str, target: &str) -> String {
         // Thread-suite only (`THREAD_TESTS`). The first dataset reaches
         // `matter_test_config.thread_operational_dataset` via
         // `--thread-dataset-hex` — kept by the framework because
@@ -2479,6 +2499,17 @@ impl ITests {
         // followed by `bytes.fromhex()`, so it must arrive as a hex *string*
         // (`--string-arg`, not `--hex-arg`). Composed at runtime from the
         // dataset consts — the only entry that cannot be a `'static` literal.
+        // Against the real-otbr `thread_tests` driver, the Thread CNET tests
+        // are handed the suite's REAL dataset; the mock xpan-only TLV in the
+        // static arm below belongs to `MockNetCtl`'s canned network and is
+        // what the same tests receive in the `wireless` suite.
+        if target == THREAD_TARGET && matches!(test_name, "TC_CNET_4_10" | "TC_CNET_4_16") {
+            return format!(
+                "--endpoint 0 --in-test-commissioning-method ble-thread \
+                 --thread-dataset-hex {THREAD_DATASET_1}"
+            );
+        }
+
         if test_name == "TC_CNET_4_12" {
             return format!(
                 "--endpoint 0 --in-test-commissioning-method ble-thread \
