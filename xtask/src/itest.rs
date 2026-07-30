@@ -1065,7 +1065,14 @@ impl ITests {
             .build_chip_tool(chip_gitref, force_rebuild)?;
         // Required so that `TC_*` Python tests can be dispatched via
         // `scripts/tests/run_python_test.py`.
-        self.chip_builder.build_python_wheel(force_rebuild)
+        self.chip_builder.build_python_wheel(force_rebuild)?;
+        // The `thread` suite's Thread stack (`otbr-agent` + the simulation
+        // `ot-rcp`). Built here - and not only lazily by the suite itself -
+        // so that in CI the artifacts end up in the Chip build cache: the
+        // cache is saved by a different matrix leg (`system-python`) than the
+        // one running the thread suite (`rest`), and a lazily-built tree
+        // would be rebuilt on every run without ever being saved.
+        self.chip_builder.build_otbr(chip_gitref, force_rebuild)
     }
 
     /// Build the executable (`system-tests`) that is to be tested with the Chip integration tests.

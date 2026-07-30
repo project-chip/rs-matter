@@ -88,6 +88,9 @@ const REQUIRED_PACKAGES: &[&str] = &[
     // does `find_package(Protobuf REQUIRED)`.
     "libprotobuf-dev",
     "protobuf-compiler",
+    // Provides `setcap`/`getcap`, used by the thread suite to grant
+    // `otbr-agent` the file capabilities it needs to run unprivileged.
+    "libcap2-bin",
 ];
 
 /// Execute command with stderr always surpressed

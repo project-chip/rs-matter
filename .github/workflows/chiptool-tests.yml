@@ -210,6 +210,17 @@ jobs:
           cargo xtask itest --skip-setup --suite ble \
             2>&1 | tee /tmp/itest-ble.log
 
+      # Real Thread stack (`otbr-agent` over D-Bus) on OpenThread's simulated
+      # radio - no hardware involved. `otbr-agent` runs unprivileged via file
+      # capabilities, granted by the suite through the runner's passwordless
+      # sudo (`sudo -n setcap`).
+      - name: Run Thread integration tests
+        if: matrix.suite == 'rest'
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite thread \
+            2>&1 | tee /tmp/itest-thread.log
+
       - name: Run LevelControl and OnOff integration tests
         if: matrix.suite == 'light'
         run: |
