@@ -127,6 +127,27 @@ impl IdentifyHooks for () {
     }
 }
 
+/// Read-only view over an endpoint's identification state, for sibling
+/// clusters whose behavior depends on it — notably the Groups cluster,
+/// whose `AddGroupIfIdentifying` command only takes effect while the
+/// endpoint is identifying (App Cluster spec).
+///
+/// Implemented by [`IdentifyHandler`]; couple it to the sibling handler
+/// serving the *same* endpoint (identification state is per-endpoint).
+pub trait IdentifyStatus {
+    /// Whether the endpoint is currently identifying (`IdentifyTime > 0`).
+    fn is_identifying(&self) -> bool;
+}
+
+impl<T> IdentifyStatus for &T
+where
+    T: IdentifyStatus + ?Sized,
+{
+    fn is_identifying(&self) -> bool {
+        (*self).is_identifying()
+    }
+}
+
 /// The captured identify session. Reads of `IdentifyTime` compute
 /// `duration.saturating_sub(elapsed)` from this on-demand; the run task
 /// uses `endpoint_id` to target its `notify_attr_changed` at the right
@@ -269,6 +290,15 @@ where
         } else {
             IdentifyAction::Time(value)
         });
+    }
+}
+
+impl<H> IdentifyStatus for IdentifyHandler<H>
+where
+    H: IdentifyHooks,
+{
+    fn is_identifying(&self) -> bool {
+        self.remaining() > 0
     }
 }
 

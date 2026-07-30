@@ -283,6 +283,12 @@ fn main() -> Result<(), Error> {
         TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), time_zone_store);
     let binding_handler_ep1 = BindingHandler::new(Dataver::new_rand(&mut rand), 1, bindings);
 
+    // Identify handlers for EP1/EP2 — owned by `main` (rather than moved
+    // into the handler chain) because the per-endpoint Groups handlers
+    // borrow them for `AddGroupIfIdentifying`.
+    let identify_handler_ep1 = IdentifyHandler::new(Dataver::new_rand(&mut rand));
+    let identify_handler_ep2 = IdentifyHandler::new(Dataver::new_rand(&mut rand));
+
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
@@ -379,6 +385,8 @@ fn main() -> Result<(), Error> {
             &user_label_handler,
             &binding_handler_ep0,
             &binding_handler_ep1,
+            &identify_handler_ep1,
+            &identify_handler_ep2,
             ota_images,
             &ota_providers,
             &ota_state,
@@ -931,6 +939,8 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
     binding_handler_ep0: &'a BindingHandler<'a, 16>,
     binding_handler_ep1: &'a BindingHandler<'a, 16>,
+    identify_handler_ep1: &'a IdentifyHandler,
+    identify_handler_ep2: &'a IdentifyHandler,
     ota_images: &'a OtaFileImages,
     ota_providers: &'a Providers,
     ota_state: &'a OtaState,
@@ -1009,13 +1019,22 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
+            // Identify at EP1 — owned by `main`, borrowed by reference into
+            // the chain, because the EP1 Groups handler below also borrows
+            // it for `AddGroupIfIdentifying`.
             .chain(
                 EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
-                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(identify::HandlerAdaptor(identify_handler_ep1)),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(
+                    groups::GroupsHandler::new_with_identify(
+                        Dataver::new_rand(&mut rand),
+                        identify_handler_ep1,
+                    )
+                    .adapt(),
+                ),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
@@ -1050,13 +1069,20 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
+            // Identify + Groups at EP2, coupled the same way as EP1 above.
             .chain(
                 EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
-                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(identify::HandlerAdaptor(identify_handler_ep2)),
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(
+                    groups::GroupsHandler::new_with_identify(
+                        Dataver::new_rand(&mut rand),
+                        identify_handler_ep2,
+                    )
+                    .adapt(),
+                ),
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),

@@ -86,6 +86,17 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestGroupMessaging",
     "TestGroupsCluster",
     "TestGroupKeyManagementCluster",
+    // Certification variants of the Groups / GroupKeyManagement suites
+    // (the `Test_TC_*` YAMLs the CSA Test Harness runs, stricter than the
+    // functional `Test*Cluster` suites above). The remaining cert YAMLs in
+    // this area - `Test_TC_G_2_3`, `Test_TC_G_3_2`, `Test_TC_GRPKEY_5_4`
+    // and `Test_TC_BIND_2_1/2_2/2_3` - are manual procedures (every step
+    // is `disabled: true`, DUT-as-client or operator-driven), so enabling
+    // them here would only buy a vacuous pass.
+    "Test_TC_G_2_1",
+    "Test_TC_G_2_4",
+    "Test_TC_GRPKEY_2_1",
+    "Test_TC_GRPKEY_2_2",
     "TestIdentifyCluster",
     "TestLogCommands",
     "TestMultiAdmin",
