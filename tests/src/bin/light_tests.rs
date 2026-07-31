@@ -46,6 +46,7 @@ use futures_lite::StreamExt;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::color_control::test::TestColorControlDeviceLogic;
 use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
@@ -664,12 +665,92 @@ fn json_u64(line: &str, key: &str) -> Option<u64> {
 
 // ---- ColorControl business logic ----
 //
-// The cluster owns all attribute state internally — this example just
-// re-exports the bundled `TestColorControlDeviceLogic` (all 5 features
-// enabled, stub actuator) as `ColorControlDeviceLogic` for naming
-// symmetry with `LevelControlDeviceLogic` / `OnOffDeviceLogic`.
+// The cluster owns all attribute state internally, so this is the bundled
+// `TestColorControlDeviceLogic` (all 5 features enabled, stub actuator)
+// with one addition: `StartUpColorTemperatureMireds` is persisted to a
+// file rather than kept in RAM, so it survives the device restart that
+// `TC_CC_6_5` performs. (The cluster handler itself already applies the
+// persisted value to `ColorTemperatureMireds` at power-up - see
+// `ColorControlHandler::init`.)
 
-pub use rs_matter::dm::clusters::app::color_control::test::TestColorControlDeviceLogic as ColorControlDeviceLogic;
+pub struct ColorControlDeviceLogic {
+    inner: TestColorControlDeviceLogic,
+    storage_path: PathBuf,
+}
+
+const CT_STORAGE_FILE_NAME: &str = "rs-matter-light-tests-start-up-ct";
+
+impl Default for ColorControlDeviceLogic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ColorControlDeviceLogic {
+    pub fn new() -> Self {
+        // Tie the state file to `--KVS` when given, so concurrent
+        // instances don't clobber each other (same reasoning as
+        // `OnOffDeviceLogic`).
+        let storage_path = match args::kvs_override() {
+            Some(kvs) => PathBuf::from(format!("{kvs}-start-up-ct")),
+            None => std::env::temp_dir().join(CT_STORAGE_FILE_NAME),
+        };
+
+        let inner = TestColorControlDeviceLogic::new();
+
+        // Re-hydrate: a 2-byte little-endian value, or absent for null.
+        if let Ok(mut file) = fs::File::open(storage_path.as_path()) {
+            let mut buf = [0u8; 2];
+            if file.read_exact(&mut buf).is_ok() {
+                let value = u16::from_le_bytes(buf);
+                let _ = inner.set_start_up_color_temperature_mireds(Nullable::some(value));
+            }
+        }
+
+        Self {
+            inner,
+            storage_path,
+        }
+    }
+}
+
+impl ColorControlHooks for ColorControlDeviceLogic {
+    const CLUSTER: Cluster<'static> = TestColorControlDeviceLogic::CLUSTER;
+    const COLOR_CAPABILITIES: color_control::ColorCapabilitiesBitmap =
+        TestColorControlDeviceLogic::COLOR_CAPABILITIES;
+    const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 =
+        TestColorControlDeviceLogic::COLOR_TEMP_PHYSICAL_MIN_MIREDS;
+    const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 =
+        TestColorControlDeviceLogic::COLOR_TEMP_PHYSICAL_MAX_MIREDS;
+    const COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS: u16 =
+        TestColorControlDeviceLogic::COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS;
+
+    fn set_device_color(&self, target: color_control::SetDeviceColor) -> Result<(), ()> {
+        self.inner.set_device_color(target)
+    }
+
+    fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
+        self.inner.start_up_color_temperature_mireds()
+    }
+
+    fn set_start_up_color_temperature_mireds(&self, value: Nullable<u16>) -> Result<(), Error> {
+        self.inner
+            .set_start_up_color_temperature_mireds(value.clone())?;
+
+        match value.into_option() {
+            Some(mireds) => {
+                let mut file = fs::File::create(self.storage_path.as_path())?;
+                file.write_all(&mireds.to_le_bytes())?;
+            }
+            // Null: drop the file so the next boot starts with no value.
+            None => {
+                let _ = fs::remove_file(self.storage_path.as_path());
+            }
+        }
+
+        Ok(())
+    }
+}
 
 // ---- LevelControl business logic (identical to dimmable_light) ----
 

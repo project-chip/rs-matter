@@ -633,7 +633,14 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                             OnOffCommand::CoupledClusterOff => {
                                 self.set_off(state, true, false, &ctx);
                                 state.state = OnOffClusterState::DelayedOff;
-                                Outcome::Done
+                                // Same as the `Off` / `Toggle` arm above: the
+                                // guarded `DelayedOff` state carries a
+                                // non-zero `OffWaitTime` that the 1/10th-second
+                                // update must count down to 0 (App Cluster
+                                // spec). This is the path an `Off` takes when
+                                // a coupled LevelControl runs its own
+                                // off-transition first.
+                                Outcome::Continue
                             }
                             OnOffCommand::OffWithEffect(effect) => {
                                 // 1.5.7.4.3. Effect on Receipt
@@ -741,7 +748,16 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         state.state = final_state;
                     });
 
-                    break;
+                    // Landing in the guarded `DelayedOff` state (an
+                    // `OffWithEffect` received while a timed-on cycle was
+                    // running) leaves a non-zero `OffWaitTime` behind, and
+                    // per App Cluster spec the 1/10th-second update must
+                    // keep running until it reaches 0 - so keep looping and
+                    // let the `DelayedOff` arm count it down. Any other
+                    // final state has no timers left to service.
+                    if final_state != OnOffClusterState::DelayedOff {
+                        break;
+                    }
                 }
             }
         }

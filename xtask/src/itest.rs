@@ -605,18 +605,26 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     // OnOff
     "Test_TC_OO_2_1",
     "Test_TC_OO_2_2",
+    "Test_TC_OO_2_3",
     "Test_TC_OO_2_4",
     "Test_TC_OO_2_6",
-    // "Test_TC_OO_2_7", // TODO: not yet passing
+    // `TC_OO_2_7` is a Scenes-interaction test - see `SCENES_TESTS`.
     // LevelControl
     "Test_TC_LVL_2_1",
     "Test_TC_LVL_2_2",
+    // Asserts the Q-quality reporting *cadence* of `RemainingTime` across
+    // two overlapping transitions (exactly 3 reports: start, command-driven
+    // change, and the final 0). Needs the runner args from its own CI block
+    // - see `test_args`.
+    "TC_LVL_2_3",
     "Test_TC_LVL_3_1",
-    // "Test_TC_LVL_4_1", // TODO: not yet passing
+    "Test_TC_LVL_4_1",
     "Test_TC_LVL_5_1",
     "Test_TC_LVL_6_1",
     "Test_TC_LVL_7_1",
-    // "Test_TC_LVL_9_1", // TODO: not yet passing
+    // `Test_TC_LVL_8_1` is a "DUT as Client" test whose single step is
+    // `disabled: true` - enabling it would only buy a vacuous pass.
+    // `TC_LVL_9_1` is a Scenes-interaction test - see `SCENES_TESTS`.
     // ColorControl — attribute reads + write validation (Python).
     "TC_CC_2_1",
     "TC_CC_2_2",
@@ -637,9 +645,8 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     "Test_TC_CC_6_1",
     "Test_TC_CC_6_2",
     "Test_TC_CC_6_3",
-    // "Test_TC_CC_6_5", // TODO: needs persistence of
-    // StartUpColorTemperatureMireds + ColorTemperatureMireds across
-    // reboots, which the light_tests example doesn't implement.
+    "TC_CC_6_5",
+    // `TC_CC_10_1` is a Scenes-interaction test - see `SCENES_TESTS`.
     // ColorControl — Enhanced hue.
     "Test_TC_CC_7_1",
     "Test_TC_CC_7_2",
@@ -671,6 +678,14 @@ pub(crate) const SCENES_TESTS: &[&str] = &[
     "TestScenesMultiFabric",
     "TestScenesFabricRemoval",
     "TestScenesMaxCapacity",
+    // Scenes-interaction tests (Python) for the *other* clusters' scenable
+    // attributes. They belong here rather than in `LIGHT_TESTS` because they
+    // need Scenes and the cluster under test on the SAME endpoint, which is
+    // exactly the `scenes_tests` EP1 composition (OnOff + LevelControl +
+    // ScenesManagement); the `light_tests` light endpoint carries no Scenes.
+    "TC_OO_2_7",
+    "TC_LVL_9_1",
+    "TC_CC_10_1",
 ];
 
 /// OTA Software Update tests — run against the `system_tests` example, which
@@ -2732,6 +2747,15 @@ impl ITests {
             // `PICS_SDK_CI_ONLY` is set (else it prompts an operator). The
             // `--app-pipe` path is mirrored on the DUT side via
             // `app_args_override`.
+            // `TC_LVL_2_3` subscribes to LevelControl and checks the report
+            // cadence of a long `MoveToLevelWithOnOff` transition. Its
+            // upstream CI arguments pass a PICS file; without one the
+            // controller's setup-code pairer takes a discovery path that
+            // rejects our args ("Long discriminator is required").
+            "TC_LVL_2_3" => {
+                "--endpoint 1 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values"
+            }
             "TC_SWTCH" => {
                 "--endpoint 3 \
                  --PICS src/app/tests/suites/certification/ci-pics-values \
