@@ -722,8 +722,10 @@ S.C.AO-READ=0
 S.C.AO-WRITE=0
 
 # Switch Cluster
-SWTCH.S=1
-SWTCH.S.F00=1
+# No Switch cluster handler exists (the `TC_SWTCH` Python test skips all of
+# its methods) - claiming `SWTCH.S=1` here would be a PICS/device mismatch.
+SWTCH.S=0
+SWTCH.S.F00=0
 SWTCH.S.F01=0
 SWTCH.S.F02=0
 SWTCH.S.F03=0

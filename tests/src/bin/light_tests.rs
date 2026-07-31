@@ -18,9 +18,18 @@
 //! Example Matter device exercising OnOff + LevelControl + ColorControl
 //! over Ethernet. Used to drive the chip-tool `light` itest suite
 //! (`Test_TC_OO_*`, `Test_TC_LVL_*`, `Test_TC_CC_*`).
+//!
+//! Besides the Extended Color Light on endpoint 1, the device hosts an
+//! **On/Off Light Switch** (`0x0103`) on endpoint 2 — OnOff in its *client*
+//! list plus a Binding cluster — so the same binary also exercises the
+//! client role: the `switch` itest suite runs two instances of it, binds one
+//! instance's switch endpoint to the other's light endpoint, and triggers a
+//! "switch press" via the `--app-pipe` command channel, making the first
+//! instance resolve + CASE + `OnOff::Toggle` the second.
 #![allow(clippy::uninlined_format_args)]
 
 use core::cell::Cell;
+use core::num::NonZeroU8;
 use core::pin::pin;
 
 use std::fs;
@@ -28,7 +37,7 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 
-use embassy_futures::select::select3;
+use embassy_futures::select::{select3, select4};
 
 use async_signal::{Signal, Signals};
 use log::{error, info, trace};
@@ -40,18 +49,29 @@ use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
+use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
+use rs_matter::dm::clusters::decl::switch::{
+    self as switch_cluster, ClusterHandler as _, Feature as SwitchFeature, InitialPress, LongPress,
+    LongRelease,
+};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
+use rs_matter::dm::devices::{
+    DEV_TYPE_EXTENDED_COLOR_LIGHT, DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH,
+};
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EventEmitter,
+    Node, ReadContext,
+};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
@@ -59,10 +79,14 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
+
+// `OnOffClient` brings the `.on_off()` IM-client method into scope on `Exchange`.
+use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
 
 use static_cell::StaticCell;
 
@@ -71,6 +95,20 @@ mod mdns;
 
 #[path = "../common/args.rs"]
 mod args;
+
+#[path = "../common/pipe.rs"]
+mod pipe;
+
+/// The local endpoint hosting the On/Off Light Switch (OnOff client + Binding).
+const SWITCH_ENDPOINT: u16 = 2;
+
+/// The local endpoint hosting the Generic Switch (`Switch` server cluster,
+/// press events) — exercised by the `TC_SWTCH` Python test via its
+/// `--app-pipe` button simulator.
+const GENERIC_SWITCH_ENDPOINT: u16 = 3;
+
+/// How many binding entries the device can hold (across all fabrics/endpoints).
+const MAX_BINDINGS: usize = 8;
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
@@ -139,6 +177,14 @@ fn main() -> Result<(), Error> {
     );
     color_control_handler.init(Some(&on_off_handler));
 
+    // The Binding registry (the switch endpoint's address book), re-hydrated
+    // from KV by the `Startup` lifecycle op delivered below.
+    let bindings = Bindings::<MAX_BINDINGS>::new();
+
+    // The Generic Switch's current position, shared between its cluster
+    // handler and the button-simulator task.
+    let switch_position = Cell::new(0u8);
+
     let im = InteractionModel::new(
         matter,
         &crypto,
@@ -148,6 +194,8 @@ fn main() -> Result<(), Error> {
             &on_off_handler,
             &level_control_handler,
             &color_control_handler,
+            &bindings,
+            &switch_position,
         ),
         &kv,
         state,
@@ -183,13 +231,120 @@ fn main() -> Result<(), Error> {
         Ok(())
     });
 
+    // The switch-press trigger: the itest orchestration sends
+    // `{"Name": "Toggle"}` over the `--app-pipe` FIFO to simulate a press,
+    // and the switch task reacts by toggling every bound light.
+    let toggle_requested = Notification::new();
+
+    // The Generic Switch button simulator, driven by `TC_SWTCH` over the
+    // same `--app-pipe` FIFO (`SimulateLongPress` / `SimulateSwitchIdle`).
+    let sim = SimChannel::new();
+
+    let mut pipe_job = pin!(pipe::run_app_pipe_actions(
+        args::parse_arg_opt_override("--app-pipe", |s| s.to_string()),
+        |line| {
+            if line.contains("\"Toggle\"") {
+                toggle_requested.notify();
+                Ok(true)
+            } else if line.contains("\"SimulateLongPress\"") {
+                sim.send(SimCommand::LongPress {
+                    button: json_u64(&line, "ButtonId").unwrap_or(1) as u8,
+                    delay_ms: json_u64(&line, "LongPressDelayMillis").unwrap_or(4500),
+                    duration_ms: json_u64(&line, "LongPressDurationMillis").unwrap_or(5000),
+                });
+                Ok(true)
+            } else if line.contains("\"SimulateSwitchIdle\"") {
+                sim.send(SimCommand::Idle);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+    ));
+
+    let mut switch_job = pin!(run_switch(matter, &crypto, &bindings, &toggle_requested));
+    let mut sim_job = pin!(run_switch_simulation(&im, &switch_position, &sim));
+
     let all = select3(
         &mut transport,
         &mut mdns,
-        select3(&mut respond, &mut im_job, &mut term).coalesce(),
+        select4(
+            &mut respond,
+            &mut im_job,
+            &mut term,
+            select3(&mut pipe_job, &mut switch_job, &mut sim_job).coalesce(),
+        )
+        .coalesce(),
     );
 
     futures_lite::future::block_on(all.coalesce())
+}
+
+/// The switch loop: on every requested "press", walk the binding registry and
+/// send `OnOff::Toggle` to each unicast `(node, endpoint)` target bound on
+/// [`SWITCH_ENDPOINT`]. Each binding carries its own `fab_idx`, and
+/// `Exchange::initiate` performs the operational mDNS resolve + CASE when no
+/// session to the target exists yet.
+async fn run_switch<const N: usize>(
+    matter: &Matter<'_>,
+    crypto: &impl Crypto,
+    bindings: &Bindings<N>,
+    toggle_requested: &Notification,
+) -> Result<(), Error> {
+    loop {
+        toggle_requested.wait().await;
+
+        info!("Switch: toggling all bound lights...");
+
+        // Iterate by index; `get` clones each entry out (lock released per
+        // call) so we can `await` the remote invoke below.
+        for i in 0..bindings.len() {
+            let Some(binding) = bindings.get(i) else {
+                break;
+            };
+
+            // Only this switch's endpoint.
+            if binding.local_endpoint != SWITCH_ENDPOINT {
+                continue;
+            }
+
+            // Only unicast OnOff targets (node + endpoint present).
+            let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
+                continue;
+            };
+
+            // If a specific cluster is bound, it must be OnOff.
+            if let Some(cluster) = binding.cluster {
+                if cluster != on_off_cluster::FULL_CLUSTER.id {
+                    continue;
+                }
+            }
+
+            info!(
+                "Switch: toggling fabric {}, node 0x{:016X}, endpoint {}",
+                binding.fab_idx, node, endpoint
+            );
+
+            match toggle(matter, crypto, binding.fab_idx, node, endpoint).await {
+                Ok(()) => info!("Switch: toggle ok"),
+                Err(e) => error!("Switch: toggle failed: {:?}", e),
+            }
+        }
+    }
+}
+
+/// Open (or reuse) a CASE session to `(fab_idx, node)` and send `OnOff::Toggle`
+/// to `endpoint`.
+async fn toggle(
+    matter: &Matter<'_>,
+    crypto: &impl Crypto,
+    fab_idx: NonZeroU8,
+    node: u64,
+    endpoint: u16,
+) -> Result<(), Error> {
+    let exchange = Exchange::initiate(matter, crypto, fab_idx, node).await?;
+
+    exchange.on_off().toggle(endpoint).await
 }
 
 const NODE: Node<'static> = Node {
@@ -206,6 +361,28 @@ const NODE: Node<'static> = Node {
                 ColorControlDeviceLogic::CLUSTER,
             ),
         ),
+        // The On/Off Light Switch (`0x0103`): OnOff in the *client* list plus
+        // the Binding cluster (its address book) — the `switch_binding` Rust
+        // integration test and the (manual) TC-BIND certification procedures
+        // drive a bound light through this endpoint.
+        Endpoint::new_with_clients(
+            SWITCH_ENDPOINT,
+            devices!(DEV_TYPE_ON_OFF_LIGHT_SWITCH),
+            clusters!(
+                desc::DescHandler::CLUSTER,
+                identify::CLUSTER,
+                binding::CLUSTER,
+            ),
+            &[on_off_cluster::FULL_CLUSTER.id],
+        ),
+        // The Generic Switch (`0x000F`): a momentary push-button (`Switch`
+        // server cluster) whose presses are simulated over the `--app-pipe`
+        // channel — exercised by the `TC_SWTCH` Python test.
+        Endpoint::new(
+            GENERIC_SWITCH_ENDPOINT,
+            devices!(DEV_TYPE_GENERIC_SWITCH),
+            clusters!(desc::DescHandler::CLUSTER, SwitchHandler::CLUSTER),
+        ),
     ],
 };
 
@@ -214,6 +391,8 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
+    bindings: &'a Bindings<MAX_BINDINGS>,
+    switch_position: &'a Cell<u8>,
 ) -> impl DataModel + 'a {
     (
         NODE,
@@ -239,8 +418,200 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
             .chain(
                 EpClMatcher::new(Some(1), Some(ColorControlDeviceLogic::CLUSTER.id)),
                 color_control::HandlerAsyncAdaptor(color_control),
+            )
+            // Clusters for the switch endpoint
+            .chain(
+                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(identify::CLUSTER.id)),
+                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(binding::CLUSTER.id)),
+                Async(
+                    BindingHandler::new(Dataver::new_rand(&mut rand), SWITCH_ENDPOINT, bindings)
+                        .adapt(),
+                ),
+            )
+            // Clusters for the Generic Switch endpoint
+            .chain(
+                EpClMatcher::new(
+                    Some(GENERIC_SWITCH_ENDPOINT),
+                    Some(desc::DescHandler::CLUSTER.id),
+                ),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(GENERIC_SWITCH_ENDPOINT),
+                    Some(SwitchHandler::CLUSTER.id),
+                ),
+                Async(SwitchHandler::new(Dataver::new_rand(&mut rand), switch_position).adapt()),
             ),
     )
+}
+
+// ---- Generic Switch: cluster handler + button simulator ----
+
+/// A momentary Generic Switch cluster handler: `MS | MSR | MSL` — a
+/// push-button reporting `InitialPress` on press and, for the (simulated)
+/// long presses `TC_SWTCH` drives, `LongPress` / `LongRelease`.
+///
+/// The `CurrentPosition` state is shared (by reference) with the button
+/// simulator task, which mutates it and emits the events.
+struct SwitchHandler<'a> {
+    dataver: Dataver,
+    position: &'a Cell<u8>,
+}
+
+impl<'a> SwitchHandler<'a> {
+    const fn new(dataver: Dataver, position: &'a Cell<u8>) -> Self {
+        Self { dataver, position }
+    }
+
+    fn adapt(self) -> switch_cluster::HandlerAdaptor<Self> {
+        switch_cluster::HandlerAdaptor(self)
+    }
+}
+
+impl switch_cluster::ClusterHandler for SwitchHandler<'_> {
+    const CLUSTER: Cluster<'static> = switch_cluster::FULL_CLUSTER
+        .with_features(
+            SwitchFeature::MOMENTARY_SWITCH
+                .union(SwitchFeature::MOMENTARY_SWITCH_RELEASE)
+                .union(SwitchFeature::MOMENTARY_SWITCH_LONG_PRESS)
+                .bits(),
+        )
+        .with_attrs(with!(required));
+
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn number_of_positions(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(2)
+    }
+
+    fn current_position(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.position.get())
+    }
+}
+
+/// A button-simulator command, parsed off the `--app-pipe` channel.
+#[derive(Copy, Clone, Debug)]
+enum SimCommand {
+    /// `SimulateLongPress`: press `button`, emit `LongPress` after
+    /// `delay_ms`, release (with `LongRelease`) at `duration_ms`.
+    LongPress {
+        button: u8,
+        delay_ms: u64,
+        duration_ms: u64,
+    },
+    /// `SimulateSwitchIdle`: return the button to its resting position.
+    Idle,
+}
+
+/// The single-slot channel from the (sync) app-pipe action closure to the
+/// (async) button-simulator task.
+struct SimChannel {
+    cmd: Cell<Option<SimCommand>>,
+    notify: Notification,
+}
+
+impl SimChannel {
+    const fn new() -> Self {
+        Self {
+            cmd: Cell::new(None),
+            notify: Notification::new(),
+        }
+    }
+
+    fn send(&self, cmd: SimCommand) {
+        self.cmd.set(Some(cmd));
+        self.notify.notify();
+    }
+}
+
+/// The Generic Switch button simulator: play each [`SimCommand`] against the
+/// shared `CurrentPosition` state, notifying subscribers of the position
+/// changes and emitting the press events, with the command's timing.
+async fn run_switch_simulation(
+    notifier: &(impl EventEmitter + AttrChangeNotifier),
+    position: &Cell<u8>,
+    sim: &SimChannel,
+) -> Result<(), Error> {
+    fn set_position(notifier: &impl AttrChangeNotifier, position: &Cell<u8>, value: u8) {
+        if position.replace(value) != value {
+            notifier.notify_attr_changed(
+                GENERIC_SWITCH_ENDPOINT,
+                switch_cluster::FULL_CLUSTER.id,
+                switch_cluster::AttributeId::CurrentPosition as _,
+            );
+        }
+    }
+
+    loop {
+        sim.notify.wait().await;
+
+        let Some(cmd) = sim.cmd.take() else {
+            continue;
+        };
+
+        info!("Switch simulator: {cmd:?}");
+
+        match cmd {
+            SimCommand::Idle => set_position(notifier, position, 0),
+            SimCommand::LongPress {
+                button,
+                delay_ms,
+                duration_ms,
+            } => {
+                set_position(notifier, position, button);
+                if let Err(e) = InitialPress::emit_for(notifier, GENERIC_SWITCH_ENDPOINT, |b| {
+                    b.new_position(button)?.end()
+                }) {
+                    error!("InitialPress emit failed: {e:?}");
+                }
+
+                embassy_time::Timer::after(embassy_time::Duration::from_millis(delay_ms)).await;
+                if let Err(e) = LongPress::emit_for(notifier, GENERIC_SWITCH_ENDPOINT, |b| {
+                    b.new_position(button)?.end()
+                }) {
+                    error!("LongPress emit failed: {e:?}");
+                }
+
+                embassy_time::Timer::after(embassy_time::Duration::from_millis(
+                    duration_ms.saturating_sub(delay_ms),
+                ))
+                .await;
+                set_position(notifier, position, 0);
+                if let Err(e) = LongRelease::emit_for(notifier, GENERIC_SWITCH_ENDPOINT, |b| {
+                    b.previous_position(button)?.end()
+                }) {
+                    error!("LongRelease emit failed: {e:?}");
+                }
+            }
+        }
+    }
+}
+
+/// Extract a `"key": <number>` field from a single-line JSON dict — the
+/// app-pipe protocol is simple enough to not warrant a JSON dependency.
+fn json_u64(line: &str, key: &str) -> Option<u64> {
+    let pos = line.find(&format!("\"{key}\""))?;
+    let rest = &line[pos..];
+    let rest = &rest[rest.find(':')? + 1..];
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 // ---- ColorControl business logic ----
@@ -375,7 +746,13 @@ const STORAGE_FILE_NAME: &str = "rs-matter-light-tests-on-off-state";
 
 impl OnOffDeviceLogic {
     pub fn new() -> Self {
-        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
+        // Tie the OnOff state file to the `--KVS` path when one is given, so
+        // multiple simultaneous instances (the two-node `switch` itest suite)
+        // don't clobber each other's persisted OnOff state.
+        let storage_path = match args::kvs_override() {
+            Some(kvs) => PathBuf::from(format!("{kvs}-on-off-state")),
+            None => std::env::temp_dir().join(STORAGE_FILE_NAME),
+        };
         let persisted_state = match fs::File::open(storage_path.as_path()) {
             Ok(mut file) => {
                 let mut buf: [u8; 1] = [0];

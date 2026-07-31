@@ -129,6 +129,11 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/pipe.rs"]
+mod pipe;
+
+use pipe::run_app_pipe_actions;
+
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
@@ -1314,69 +1319,6 @@ async fn persist_icd_counter_on_trigger(
     loop {
         ICD_COUNTER_PERSIST_NOTIFY.wait().await;
         kv.access(|store, buf| icd.persist_counter(store, buf))?;
-    }
-}
-
-/// Read JSON command lines from the named pipe at `path` and dispatch them to
-/// `bump` on the calling task — which is the main thread, so it's free to
-/// touch `&Matter` / `&InteractionModel` directly (neither is `Sync`).
-async fn run_app_pipe_actions(
-    path: Option<String>,
-    mut action: impl FnMut(String) -> Result<bool, Error>,
-) -> Result<(), Error> {
-    let Some(path) = path else {
-        info!("No --app-pipe provided; out-of-band command channel disabled.");
-        core::future::pending::<()>().await;
-        unreachable!()
-    };
-    info!("App pipe enabled at {path}");
-
-    use blocking::{unblock, Unblock};
-    use futures_lite::io::{AsyncBufReadExt, BufReader};
-
-    // Best-effort: create the FIFO if it doesn't already exist. Shell out to
-    // `mkfifo` to avoid pulling in a `libc`/`nix` dep just for this. Errors
-    // here are non-fatal: if the file already exists (or is a regular file
-    // from a prior run) the reader open below will surface a useful error.
-    let _ = std::process::Command::new("mkfifo").arg(&path).status();
-
-    loop {
-        let path_clone = path.clone();
-        let file = match unblock(move || std::fs::File::open(&path_clone)).await {
-            Ok(f) => f,
-            Err(e) => {
-                log::warn!("Failed to open app pipe {}: {}", path, e);
-                embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        let mut reader = BufReader::new(Unblock::new(file));
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // writer closed; reopen
-                Ok(_) => {
-                    // Avoid a JSON dep: the framework sends one JSON dict per
-                    // line and we only care about a single command name.
-
-                    let line = line.trim_end();
-                    info!("[app-pipe] received: {line}");
-
-                    match action(line.to_string()) {
-                        Ok(true) => info!("Processed"),
-                        Ok(false) => info!("Skipped"),
-                        Err(e) => warn!("Failed: {}", e),
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Error reading from app pipe: {}", e);
-                    break;
-                }
-            }
-        }
     }
 }
 
