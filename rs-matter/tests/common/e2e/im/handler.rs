@@ -127,8 +127,8 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncHandler for E2eTestHandler<
         self.0.bump_dataver(ctx)
     }
 
-    async fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        self.0.lifecycle(ctx, op).await
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        self.0.lifecycle(ctx, op)
     }
 }
 

@@ -368,6 +368,8 @@ impl ClusterHandler for GenCommHandler<'_> {
         // in-flight `AddNOC` / `SetRegulatoryConfig` changes are reverted —
         // the bare `failsafe.arm(0, ...)` path only flips the state to
         // `Idle` and would leave the staged fabric committed.
+        let mut removed_fabric = None;
+
         let status = if expiry_length_seconds == 0 {
             let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
             let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
@@ -377,7 +379,7 @@ impl ClusterHandler for GenCommHandler<'_> {
                 let pase_sess_id =
                     matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
 
-                state.failsafe.expire(
+                removed_fabric = state.failsafe.expire(
                     &mut state.fabrics,
                     &mut state.sessions,
                     pase_sess_id,
@@ -401,6 +403,14 @@ impl ClusterHandler for GenCommHandler<'_> {
                 )
             }))?
         };
+
+        // Broadcast for a fabric the expiry dropped (a not-yet-committed
+        // `AddNOC` one; an `UpdateNOC`-mutated fabric is resurrected instead
+        // and not reported). Outside `with_state`, since the broadcast runs
+        // the handlers inline.
+        if let Some(fab_idx) = removed_fabric {
+            ctx.notify_fabric_removed(fab_idx);
+        }
 
         // Breadcrumb (and possibly failsafe-arm state) may have changed
         ctx.notify_own_cluster_changed();

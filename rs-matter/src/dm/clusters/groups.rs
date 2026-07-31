@@ -20,6 +20,7 @@
 use core::num::NonZeroU8;
 
 use crate::dm::clusters::acl::notify_auxiliary_access_updated;
+use crate::dm::clusters::identify::IdentifyStatus;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
@@ -32,19 +33,41 @@ pub use crate::dm::clusters::decl::groups::*;
 /// The handler for the Groups Matter cluster.
 ///
 /// This handler manages per-endpoint group membership in the node-wide Group Table.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GroupsHandler {
+#[derive(Clone)]
+pub struct GroupsHandler<'a> {
     dataver: Dataver,
+    /// Identification state of the endpoint this instance serves.
+    /// `AddGroupIfIdentifying` is a successful no-op when absent — an
+    /// endpoint without an Identify coupling is never identifying.
+    identify: Option<&'a dyn IdentifyStatus>,
 }
 
-impl GroupsHandler {
+impl<'a> GroupsHandler<'a> {
     /// Creates a new instance of the `GroupsHandler`.
     ///
     /// # Arguments
     /// * `dataver` - The data version tracker
     pub const fn new(dataver: Dataver) -> Self {
-        Self { dataver }
+        Self {
+            dataver,
+            identify: None,
+        }
+    }
+
+    /// Creates a new instance of the `GroupsHandler` coupled to the
+    /// Identify cluster handler serving the same endpoint, so that
+    /// `AddGroupIfIdentifying` can take effect while the endpoint is
+    /// identifying.
+    ///
+    /// # Arguments
+    /// * `dataver` - The data version tracker
+    /// * `identify` - The Identify handler (or any [`IdentifyStatus`] impl)
+    ///   of the endpoint this `GroupsHandler` instance is matched to
+    pub const fn new_with_identify(dataver: Dataver, identify: &'a dyn IdentifyStatus) -> Self {
+        Self {
+            dataver,
+            identify: Some(identify),
+        }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -69,7 +92,7 @@ impl GroupsHandler {
     }
 }
 
-impl GroupsHandler {
+impl GroupsHandler<'_> {
     /// Whether the given (aux-flagged) group's auxiliary ACL coverage of
     /// `endpoint_id` would change by adding/removing that endpoint - i.e.
     /// whether an `AuxiliaryAccessUpdated` notification is due.
@@ -117,44 +140,22 @@ impl GroupsHandler {
             warn!("Failed to notify the auxiliary ACL change: {:?}", e);
         }
     }
-}
 
-impl ClusterHandler for GroupsHandler {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_features(Feature::GROUP_NAMES.bits())
-        .with_attrs(with!(required));
-
-    fn dataver(&self) -> u32 {
-        self.dataver.get()
-    }
-
-    fn dataver_changed(&self) {
-        self.dataver.changed();
-    }
-
-    fn name_support(&self, _ctx: impl ReadContext) -> Result<NameSupportBitmap, Error> {
-        // Bit 7 (GroupNames) = 1 when GN feature is supported
-        Ok(NameSupportBitmap::GROUP_NAMES)
-    }
-
-    fn handle_add_group<P: TLVBuilderParent>(
+    /// Add the invoked endpoint to `group_id` for the invoking fabric —
+    /// the shared core of `AddGroup` and `AddGroupIfIdentifying` (which
+    /// differ only in how the outcome is reported back).
+    ///
+    /// Returns the IM status of the operation: `UnsupportedAccess` when
+    /// the fabric has no group key material for the group,
+    /// `ResourceExhausted` when the group table is full, `Success`
+    /// otherwise. Emits the auxiliary-ACL change notification when due.
+    fn add_group(
         &self,
-        ctx: impl InvokeContext,
-        request: AddGroupRequest<'_>,
-        response: AddGroupResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        let fab_idx = ctx.accessor()?.fab_idx()?;
-        let group_id = request.group_id()?;
-        let group_name: &str = request.group_name()?;
-
-        // Validate constraints
-        if (group_id == 0) || (group_name.len() > 16) {
-            return response
-                .status(IMStatusCode::ConstraintError as u8)?
-                .group_id(group_id)?
-                .end();
-        }
-
+        ctx: &impl InvokeContext,
+        fab_idx: NonZeroU8,
+        group_id: u16,
+        group_name: &str,
+    ) -> Result<IMStatusCode, Error> {
         let mut persist = FabricPersist::new(ctx.kv());
 
         let status = ctx.exchange().with_state(|state| {
@@ -198,8 +199,50 @@ impl ClusterHandler for GroupsHandler {
 
         let (status, aux_touched) = status;
         if aux_touched && matches!(status, IMStatusCode::Success) {
-            Self::notify_aux(&ctx, fab_idx);
+            Self::notify_aux(ctx, fab_idx);
         }
+
+        Ok(status)
+    }
+}
+
+impl ClusterHandler for GroupsHandler<'_> {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_features(Feature::GROUP_NAMES.bits())
+        .with_attrs(with!(required));
+
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn name_support(&self, _ctx: impl ReadContext) -> Result<NameSupportBitmap, Error> {
+        // Bit 7 (GroupNames) = 1 when GN feature is supported
+        Ok(NameSupportBitmap::GROUP_NAMES)
+    }
+
+    fn handle_add_group<P: TLVBuilderParent>(
+        &self,
+        ctx: impl InvokeContext,
+        request: AddGroupRequest<'_>,
+        response: AddGroupResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let fab_idx = ctx.accessor()?.fab_idx()?;
+        let group_id = request.group_id()?;
+        let group_name: &str = request.group_name()?;
+
+        // Validate constraints
+        if (group_id == 0) || (group_name.len() > 16) {
+            return response
+                .status(IMStatusCode::ConstraintError as u8)?
+                .group_id(group_id)?
+                .end();
+        }
+
+        let status = self.add_group(&ctx, fab_idx, group_id, group_name)?;
 
         response.status(status as u8)?.group_id(group_id)?.end()
     }
@@ -374,10 +417,35 @@ impl ClusterHandler for GroupsHandler {
 
     fn handle_add_group_if_identifying(
         &self,
-        _ctx: impl InvokeContext,
-        _request: AddGroupIfIdentifyingRequest<'_>,
+        ctx: impl InvokeContext,
+        request: AddGroupIfIdentifyingRequest<'_>,
     ) -> Result<(), Error> {
-        // TODO: implement with Identity Cluster
-        todo!()
+        // Per App Cluster spec, the command is accepted (SUCCESS) but has
+        // no effect unless the endpoint is currently identifying
+        if !self
+            .identify
+            .is_some_and(|identify| identify.is_identifying())
+        {
+            return Ok(());
+        }
+
+        let fab_idx = ctx.accessor()?.fab_idx()?;
+        let group_id = request.group_id()?;
+        let group_name: &str = request.group_name()?;
+
+        // Validate constraints
+        if (group_id == 0) || (group_name.len() > 16) {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+
+        // Unlike `AddGroup`, this command responds with a plain status
+        // rather than an `AddGroupResponse` - so a non-success outcome
+        // is reported by erroring out
+        let status = self.add_group(&ctx, fab_idx, group_id, group_name)?;
+        if let Some(code) = status.to_error_code() {
+            return Err(code.into());
+        }
+
+        Ok(())
     }
 }

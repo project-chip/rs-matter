@@ -618,13 +618,16 @@ PRS.C.AO-WRITE=0
 # Groups Cluster
 G.S=1
 G.S.F00=1
-G.S.A0000=0
+G.S.A0000=1
 G.S.C00.Rsp=1
 G.S.C01.Rsp=1
 G.S.C02.Rsp=1
 G.S.C03.Rsp=1
 G.S.C04.Rsp=1
-G.S.C05.Rsp=0
+G.S.C05.Rsp=1
+# Groups cluster present on more than one endpoint (EP0, EP1 and EP2 here),
+# as required by Test_TC_G_2_4
+MCORE.G.MULTIENDPOINT=1
 G.S.C00.Tx=1
 G.S.C01.Tx=1
 G.S.C02.Tx=1
@@ -642,6 +645,8 @@ G.C.C05.Tx=0
 GRPKEY.S=1
 # No support for the CacheAndSync feature so far
 GRPKEY.S.F00=0
+# Malformed spelling of GRPKEY.S.F00 used by a Test_TC_GRPKEY_2_2 step gate
+GRPKEY.F00=0
 # Groupcast (Matter 1.6). Not implemented - the cluster metadata is built with
 # `with!(required)`, so the provisional `GroupcastAdoption` attribute is not
 # advertised either.
@@ -717,8 +722,10 @@ S.C.AO-READ=0
 S.C.AO-WRITE=0
 
 # Switch Cluster
-SWTCH.S=1
-SWTCH.S.F00=1
+# No Switch cluster handler exists (the `TC_SWTCH` Python test skips all of
+# its methods) - claiming `SWTCH.S=1` here would be a PICS/device mismatch.
+SWTCH.S=0
+SWTCH.S.F00=0
 SWTCH.S.F01=0
 SWTCH.S.F02=0
 SWTCH.S.F03=0

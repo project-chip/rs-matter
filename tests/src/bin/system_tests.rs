@@ -129,6 +129,11 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/pipe.rs"]
+mod pipe;
+
+use pipe::run_app_pipe_actions;
+
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
@@ -283,6 +288,12 @@ fn main() -> Result<(), Error> {
         TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), time_zone_store);
     let binding_handler_ep1 = BindingHandler::new(Dataver::new_rand(&mut rand), 1, bindings);
 
+    // Identify handlers for EP1/EP2 — owned by `main` (rather than moved
+    // into the handler chain) because the per-endpoint Groups handlers
+    // borrow them for `AddGroupIfIdentifying`.
+    let identify_handler_ep1 = IdentifyHandler::new(Dataver::new_rand(&mut rand));
+    let identify_handler_ep2 = IdentifyHandler::new(Dataver::new_rand(&mut rand));
+
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
@@ -379,6 +390,8 @@ fn main() -> Result<(), Error> {
             &user_label_handler,
             &binding_handler_ep0,
             &binding_handler_ep1,
+            &identify_handler_ep1,
+            &identify_handler_ep2,
             ota_images,
             &ota_providers,
             &ota_state,
@@ -931,6 +944,8 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
     binding_handler_ep0: &'a BindingHandler<'a, 16>,
     binding_handler_ep1: &'a BindingHandler<'a, 16>,
+    identify_handler_ep1: &'a IdentifyHandler,
+    identify_handler_ep2: &'a IdentifyHandler,
     ota_images: &'a OtaFileImages,
     ota_providers: &'a Providers,
     ota_state: &'a OtaState,
@@ -1009,13 +1024,22 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
+            // Identify at EP1 — owned by `main`, borrowed by reference into
+            // the chain, because the EP1 Groups handler below also borrows
+            // it for `AddGroupIfIdentifying`.
             .chain(
                 EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
-                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(identify::HandlerAdaptor(identify_handler_ep1)),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(
+                    groups::GroupsHandler::new_with_identify(
+                        Dataver::new_rand(&mut rand),
+                        identify_handler_ep1,
+                    )
+                    .adapt(),
+                ),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
@@ -1050,13 +1074,20 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
+            // Identify + Groups at EP2, coupled the same way as EP1 above.
             .chain(
                 EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
-                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(identify::HandlerAdaptor(identify_handler_ep2)),
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(
+                    groups::GroupsHandler::new_with_identify(
+                        Dataver::new_rand(&mut rand),
+                        identify_handler_ep2,
+                    )
+                    .adapt(),
+                ),
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -1288,69 +1319,6 @@ async fn persist_icd_counter_on_trigger(
     loop {
         ICD_COUNTER_PERSIST_NOTIFY.wait().await;
         kv.access(|store, buf| icd.persist_counter(store, buf))?;
-    }
-}
-
-/// Read JSON command lines from the named pipe at `path` and dispatch them to
-/// `bump` on the calling task — which is the main thread, so it's free to
-/// touch `&Matter` / `&InteractionModel` directly (neither is `Sync`).
-async fn run_app_pipe_actions(
-    path: Option<String>,
-    mut action: impl FnMut(String) -> Result<bool, Error>,
-) -> Result<(), Error> {
-    let Some(path) = path else {
-        info!("No --app-pipe provided; out-of-band command channel disabled.");
-        core::future::pending::<()>().await;
-        unreachable!()
-    };
-    info!("App pipe enabled at {path}");
-
-    use blocking::{unblock, Unblock};
-    use futures_lite::io::{AsyncBufReadExt, BufReader};
-
-    // Best-effort: create the FIFO if it doesn't already exist. Shell out to
-    // `mkfifo` to avoid pulling in a `libc`/`nix` dep just for this. Errors
-    // here are non-fatal: if the file already exists (or is a regular file
-    // from a prior run) the reader open below will surface a useful error.
-    let _ = std::process::Command::new("mkfifo").arg(&path).status();
-
-    loop {
-        let path_clone = path.clone();
-        let file = match unblock(move || std::fs::File::open(&path_clone)).await {
-            Ok(f) => f,
-            Err(e) => {
-                log::warn!("Failed to open app pipe {}: {}", path, e);
-                embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        let mut reader = BufReader::new(Unblock::new(file));
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // writer closed; reopen
-                Ok(_) => {
-                    // Avoid a JSON dep: the framework sends one JSON dict per
-                    // line and we only care about a single command name.
-
-                    let line = line.trim_end();
-                    info!("[app-pipe] received: {line}");
-
-                    match action(line.to_string()) {
-                        Ok(true) => info!("Processed"),
-                        Ok(false) => info!("Skipped"),
-                        Err(e) => warn!("Failed: {}", e),
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Error reading from app pipe: {}", e);
-                    break;
-                }
-            }
-        }
     }
 }
 

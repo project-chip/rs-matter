@@ -21,6 +21,8 @@ mod attributes;
 mod aux_acl;
 mod commands;
 mod events;
+#[cfg(feature = "groups")]
+mod groups;
 mod long_reads;
 mod provisional;
 mod timed_requests;

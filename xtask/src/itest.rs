@@ -86,6 +86,17 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestGroupMessaging",
     "TestGroupsCluster",
     "TestGroupKeyManagementCluster",
+    // Certification variants of the Groups / GroupKeyManagement suites
+    // (the `Test_TC_*` YAMLs the CSA Test Harness runs, stricter than the
+    // functional `Test*Cluster` suites above). The remaining cert YAMLs in
+    // this area - `Test_TC_G_2_3`, `Test_TC_G_3_2`, `Test_TC_GRPKEY_5_4`
+    // and `Test_TC_BIND_2_1/2_2/2_3` - are manual procedures (every step
+    // is `disabled: true`, DUT-as-client or operator-driven), so enabling
+    // them here would only buy a vacuous pass.
+    "Test_TC_G_2_1",
+    "Test_TC_G_2_4",
+    "Test_TC_GRPKEY_2_1",
+    "Test_TC_GRPKEY_2_2",
     "TestIdentifyCluster",
     "TestLogCommands",
     "TestMultiAdmin",
@@ -506,10 +517,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TC_BRBINFO_4_1", // Skipped: rs-matter does not implement bridge devices.
 
     //
-    // Python tests — Switch (optional application cluster)
-    //
-    "TC_SWTCH", // Switch cluster not implemented (Matter spec §1.13); 5 inner test methods, each `@run_if_endpoint_matches(has_feature(Switch, ...))`, all skip cleanly via `no_fail_on_skipped.py`.
-    //
     // Python tests — Device Attestation (commissioning)
     //
     "TC_DA_1_2",
@@ -644,6 +651,11 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     "Test_TC_CC_9_1",
     "Test_TC_CC_9_2",
     "Test_TC_CC_9_3",
+    // Generic Switch (Python): runs against the `light_tests` Generic
+    // Switch endpoint (EP3, `MS | MSR | MSL`), with the presses simulated
+    // over the `--app-pipe` channel. The latching (2_2) and multi-press
+    // (2_5 / 2_6) methods skip on the feature gates; 2_3 / 2_4 run.
+    "TC_SWTCH",
 ];
 
 /// Scenes Management YAML tests — run against the `scenes_tests` example.
@@ -2241,7 +2253,10 @@ impl ITests {
                 | "TC_LCFG_2_1"      // has_cluster(LocalizationConfiguration)
                 | "TC_LTIME_3_1"     // has_cluster(TimeFormatLocalization)
                 | "TC_LUNIT_3_1"     // has_cluster(UnitLocalization) and has_attribute(TemperatureUnit)
-                | "TC_SWTCH"         // 5 inner methods, each has_feature(Switch, ...)
+                // The latching (2_2) and multi-press (2_5 / 2_6) methods skip
+                // on their feature gates (`light_tests`' Generic Switch is
+                // `MS | MSR | MSL`); 2_3 / 2_4 run.
+                | "TC_SWTCH"
                 // All three test the optional `AccessControlExtension`
                 // feature (Extension attribute); rs-matter does not implement
                 // it, so `has_attribute(AccessControl.Extension)` skips cleanly.
@@ -2508,6 +2523,10 @@ impl ITests {
             // is fixed upstream, the steps skip here too, and the attribute
             // is covered by rs-matter's own e2e test instead.
             "TC_BINFO_3_2" => Some("--app-pipe /tmp/rs_matter_bin_info_3_2_fifo"),
+            // `TC_SWTCH` simulates the Generic Switch presses via app-pipe
+            // commands (`SimulateLongPress` / `SimulateSwitchIdle`); the
+            // same path is handed to the Python side in `test_args`.
+            "TC_SWTCH" => Some("--app-pipe /tmp/rs_matter_swtch_fifo"),
             // The `TC_GC_*` suite runs against the Groupcast-enabled app
             // composition (`NODE_GROUPCAST` in `system_tests`): the
             // Groupcast cluster on EP0 plus the aux-ACL-enabled Access
@@ -2707,6 +2726,16 @@ impl ITests {
                 "--endpoint 0 \
                  --PICS src/app/tests/suites/certification/ci-pics-values \
                  --app-pipe /tmp/rs_matter_bin_info_3_2_fifo"
+            }
+            // `TC_SWTCH` targets the `light_tests` Generic Switch endpoint
+            // and takes its button-simulator path only when
+            // `PICS_SDK_CI_ONLY` is set (else it prompts an operator). The
+            // `--app-pipe` path is mirrored on the DUT side via
+            // `app_args_override`.
+            "TC_SWTCH" => {
+                "--endpoint 3 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values \
+                 --app-pipe /tmp/rs_matter_swtch_fifo"
             }
             // `test_TC_IDM_10_5` flags every server cluster that is not part of
             // some device type declared on its endpoint. `system_tests` hosts

@@ -120,6 +120,11 @@ impl FailSafe {
     ///
     /// This should be called periodically to ensure that the fail-safe state is updated in a timely manner.
     /// Ideally, it should also be called at the beginning of any API that requires the fail-safe to be armed to ensure that the state is up to date.
+    ///
+    /// Returns the local index of the fabric that ended up removed by the
+    /// rollback (see [`Failsafe::expire`]), if any - the caller must follow
+    /// up with a `HandlerContext::notify_fabric_removed` broadcast once the
+    /// Matter state lock is released.
     #[allow(clippy::too_many_arguments)]
     pub fn check_failsafe_timeout<S, N>(
         &mut self,
@@ -130,7 +135,7 @@ impl FailSafe {
         expire_sess_id: Option<u32>,
         mdns_notif: impl FnMut(),
         notify_change: impl FnMut(EndptId, ClusterId),
-    ) -> Result<bool, Error>
+    ) -> Result<Option<NonZeroU8>, Error>
     where
         S: KvBlobStoreAccess,
         N: NetworksAccess,
@@ -145,7 +150,7 @@ impl FailSafe {
                 // Timeout path: no caller exchange to preserve, so wipe
                 // every PASE session along with the fabric / networks
                 // rollback.
-                self.expire(
+                return self.expire(
                     fabrics,
                     sessions,
                     expire_sess_id,
@@ -153,12 +158,11 @@ impl FailSafe {
                     kv,
                     mdns_notif,
                     notify_change,
-                )?;
-                return Ok(true);
+                );
             }
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     /// Force the fail-safe context to expire immediately, rolling back any
@@ -170,6 +174,14 @@ impl FailSafe {
     /// over PASE, so the response can still be sent before the slot is
     /// reclaimed. `None` for the timeout-driven path or when the trigger
     /// arrived over CASE.
+    ///
+    /// Returns the local index of the fabric the rollback ended up removing,
+    /// if any: a fabric added by the in-flight `AddNOC` has no persisted copy
+    /// yet and is simply dropped, whereas a pre-existing fabric mutated by
+    /// `UpdateNOC` is resurrected from its persisted copy (and is thus NOT
+    /// reported as removed). The caller must follow up with a
+    /// `HandlerContext::notify_fabric_removed` broadcast for a reported
+    /// removal, once the Matter state lock is released.
     #[allow(clippy::too_many_arguments)]
     pub fn expire<S, N>(
         &mut self,
@@ -180,13 +192,13 @@ impl FailSafe {
         kv: S,
         mut mdns_notif: impl FnMut(),
         mut notify_change: impl FnMut(EndptId, ClusterId),
-    ) -> Result<bool, Error>
+    ) -> Result<Option<NonZeroU8>, Error>
     where
         S: KvBlobStoreAccess,
         N: NetworksAccess,
     {
         let State::Armed(ctx) = &self.state else {
-            return Ok(false);
+            return Ok(None);
         };
 
         warn!(
@@ -195,11 +207,14 @@ impl FailSafe {
         );
 
         let fab_idx_raw = ctx.fab_idx;
+        let mut removed_fabric = None;
 
         kv.access(|mut kv, buf| {
             if let Some(fab_idx) = NonZeroU8::new(fab_idx_raw) {
                 fabrics.remove(fab_idx)?;
                 fabrics.add_load(fab_idx.get(), &mut kv, buf)?;
+
+                removed_fabric = fabrics.get(fab_idx).is_none().then_some(fab_idx);
             }
 
             networks.access(|networks| {
@@ -247,7 +262,7 @@ impl FailSafe {
             crate::dm::clusters::decl::network_commissioning::FULL_CLUSTER.id,
         );
 
-        Ok(true)
+        Ok(removed_fabric)
     }
 
     pub fn arm(

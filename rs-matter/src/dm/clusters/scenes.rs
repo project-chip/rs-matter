@@ -624,6 +624,29 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
         store.remove(SCENES_KEY, buf)
     }
 
+    /// Drop every scene-table row and `CurrentScene` slot belonging to
+    /// `fab_idx`, returning whether anything was removed.
+    ///
+    /// Called on fabric removal via the [`LifecycleOp::FabricRemoval`]
+    /// lifecycle operation delivered to the [`ScenesHandler`] instance(s)
+    /// borrowing this state. Idempotent, since each borrowing handler
+    /// instance receives the (broadcast) lifecycle operation.
+    pub fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
+        self.with(|inner| {
+            let before = inner.table.len() + inner.current_per_fabric.len();
+
+            inner.table.retain(|entry| entry.fab_idx != fab_idx);
+            inner.current_per_fabric.retain(|c| c.fab_idx != fab_idx);
+
+            let removed = inner.table.len() + inner.current_per_fabric.len() < before;
+            if removed {
+                inner.bump_info_dataver();
+            }
+
+            removed
+        })
+    }
+
     /// Persist the current state under [`SCENES_KEY`]. Called from
     /// every mutating handler path after the in-memory change is
     /// committed.
@@ -1626,15 +1649,22 @@ where
         self.dataver.changed();
     }
 
-    fn lifecycle(
-        &self,
-        ctx: impl HandlerContext,
-        op: LifecycleOp,
-    ) -> impl Future<Output = Result<(), Error>> {
-        ready(ctx.kv().access(|store, buf| match op {
-            LifecycleOp::Startup => self.state.load_persist(store, buf),
-            LifecycleOp::FactoryReset => self.state.reset_persist(store, buf),
-        }))
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        match op {
+            LifecycleOp::Startup => ctx
+                .kv()
+                .access(|store, buf| self.state.load_persist(store, buf)),
+            LifecycleOp::FactoryReset => ctx
+                .kv()
+                .access(|store, buf| self.state.reset_persist(store, buf)),
+            LifecycleOp::FabricRemoval { fab_idx } => {
+                if self.state.remove_for_fabric(fab_idx) {
+                    self.state.store_persist(&ctx)
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
 
     fn scene_table_size(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {

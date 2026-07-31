@@ -175,8 +175,24 @@ impl<const N: usize> Bindings<N> {
         store.remove(BINDINGS_KEY, buf)
     }
 
+    /// Drop every binding belonging to `fab_idx`, returning whether anything
+    /// was removed.
+    ///
+    /// Called on fabric removal via the [`LifecycleOp::FabricRemoval`]
+    /// lifecycle operation delivered to the [`BindingHandler`] instance(s)
+    /// borrowing this registry. Idempotent, since each borrowing handler
+    /// instance receives the (broadcast) lifecycle operation.
+    pub fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
+        self.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            let before = state.len();
+            state.retain(|binding| binding.fab_idx != fab_idx);
+            state.len() < before
+        })
+    }
+
     /// Serialise the registry to `ctx.kv()` under [`BINDINGS_KEY`].
-    fn store_persist<C: WriteContext>(&self, ctx: &C) -> Result<(), Error> {
+    fn store_persist<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
         let mut persist = Persist::new(ctx.kv());
 
         self.state.lock(|cell| {
@@ -427,10 +443,21 @@ impl<const N: usize> ClusterHandler for BindingHandler<'_, N> {
     }
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        ctx.kv().access(|store, buf| match op {
-            LifecycleOp::Startup => self.bindings.load_persist(store, buf),
-            LifecycleOp::FactoryReset => self.bindings.reset_persist(store, buf),
-        })
+        match op {
+            LifecycleOp::Startup => ctx
+                .kv()
+                .access(|store, buf| self.bindings.load_persist(store, buf)),
+            LifecycleOp::FactoryReset => ctx
+                .kv()
+                .access(|store, buf| self.bindings.reset_persist(store, buf)),
+            LifecycleOp::FabricRemoval { fab_idx } => {
+                if self.bindings.remove_for_fabric(fab_idx) {
+                    self.bindings.store_persist(&ctx)?;
+                }
+
+                Ok(())
+            }
+        }
     }
 
     fn binding<P: TLVBuilderParent>(

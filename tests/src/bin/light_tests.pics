@@ -56,10 +56,11 @@ OO.S.F01=0
 OO.S.F02=0
 OO.M.ManuallyControlled=1
 
-OO.C=0
+# The On/Off Light Switch endpoint (EP2) sends `Toggle` to its bound lights.
+OO.C=1
 OO.C.C00.Tx=0
 OO.C.C01.Tx=0
-OO.C.C02.Tx=0
+OO.C.C02.Tx=1
 OO.C.C40.Tx=0
 OO.C.C41.Tx=0
 OO.C.C42.Tx=0
@@ -67,6 +68,36 @@ OO.C.AM-READ=0
 OO.C.AM-WRITE=0
 OO.C.AO-READ=0
 OO.C.AO-WRITE=0
+
+# ---- Identify Cluster (on the On/Off Light Switch endpoint, EP2) ----
+I.S=1
+I.S.A0000=1
+I.S.A0001=1
+I.S.C00.Rsp=1
+I.S.C01.Rsp=1
+I.S.C40.Rsp=1
+I.S.C00.Tx=0
+I.S.F00=0
+
+I.C=0
+
+# ---- Binding Cluster (on the On/Off Light Switch endpoint, EP2) ----
+BIND.S=1
+BIND.S.A0000=1
+
+BIND.C=0
+
+# ---- Switch Cluster (on the Generic Switch endpoint, EP3) ----
+# A momentary push-button: MS (F01) + MSR (F02) + MSL (F03); no latching
+# (F00) and no multi-press (F04).
+SWTCH.S=1
+SWTCH.S.F00=0
+SWTCH.S.F01=1
+SWTCH.S.F02=1
+SWTCH.S.F03=1
+SWTCH.S.F04=0
+
+SWTCH.C=0
 
 # ---- Color Control Cluster ----
 CC.S=1

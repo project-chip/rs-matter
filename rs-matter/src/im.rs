@@ -562,7 +562,7 @@ where
         // Needs the events watermark loaded just above.
         self.resume_subscriptions()?;
 
-        self.handler.lifecycle(self, LifecycleOp::Startup).await
+        self.handler.lifecycle(self, LifecycleOp::Startup)
     }
 
     /// Factory-reset the Data Model persistable state.
@@ -580,9 +580,7 @@ where
     pub async fn factory_reset(&self) -> Result<(), Error> {
         self.state.reset_persist(&self.kv)?;
 
-        self.handler
-            .lifecycle(self, LifecycleOp::FactoryReset)
-            .await
+        self.handler.lifecycle(self, LifecycleOp::FactoryReset)
     }
 
     /// Run the Data Model instance.
@@ -691,7 +689,7 @@ where
         let mut notify_change =
             |endpt_id, clust_id| self.notify_cluster_changed(endpt_id, clust_id);
 
-        self.matter.with_state(|state| {
+        let removed_fabric = self.matter.with_state(|state| {
             let expire_sess_id = exch_id.and_then(|exch_id| {
                 state
                     .sessions
@@ -700,7 +698,7 @@ where
             });
 
             // Disarm the failsafe on timeout
-            state.failsafe.check_failsafe_timeout(
+            let removed_fabric = state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
                 &mut state.sessions,
                 &self.state.networks,
@@ -715,8 +713,16 @@ where
                 .pase
                 .check_comm_window_timeout(&mut notify_mdns, &mut notify_change)?;
 
-            Ok(())
-        })
+            Ok::<_, Error>(removed_fabric)
+        })?;
+
+        // Outside `with_state`, since the broadcast runs the handlers inline
+        // and they are free to access the Matter state themselves
+        if let Some(fab_idx) = removed_fabric {
+            self.notify_fabric_removed(fab_idx);
+        }
+
+        Ok(())
     }
 
     /// Answer a responding exchange using the `DataModel` instance wrapped by this exchange handler.
@@ -1755,6 +1761,21 @@ where
 
     fn im_stats(&self) -> impl ImStats + '_ {
         self
+    }
+
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
+        if let Err(e) = self
+            .handler
+            .lifecycle(self, LifecycleOp::FabricRemoval { fab_idx })
+        {
+            warn!(
+                "Failed to broadcast the removal of fabric {}: {:?}",
+                fab_idx, e
+            );
+        }
+
+        #[cfg(feature = "groups")]
+        self.matter.transport().notify_groups_changed();
     }
 }
 
