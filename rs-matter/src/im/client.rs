@@ -32,8 +32,12 @@ use either::Either;
 pub use super::{AttrId, ClusterId, EndptId};
 
 use crate::error::{Error, ErrorCode};
+#[cfg(feature = "groups")]
+use crate::tlv::TLVWriteParent;
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, OwnedSender, OwnedSenderTx};
+#[cfg(feature = "groups")]
+use crate::utils::storage::WriteBuf;
 
 use super::{
     IMStatusCode, InvReqBuilder, InvokeResp, OpCode, ReadReqBuilder, ReportDataResp, StatusResp,
@@ -299,7 +303,50 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
             state: SubscribeSenderState::Ready(sender),
         })
     }
+
+    /// Perform a fire-and-forget IM invoke — for group (multicast) exchanges
+    /// opened with [`Exchange::initiate_group`].
+    ///
+    /// Sends a single `InvokeRequestMessage` with `SuppressResponse = true`
+    /// and completes as soon as the message is out: groupcast invokes elicit
+    /// no responses and group messages carry no MRP, so there is nothing to
+    /// wait for. Push the command entries with endpoint-less paths
+    /// ([`CmdDataBuilder::path_from`] with an endpoint-less
+    /// [`crate::im::CmdPath`]) — receivers apply them to their group-member
+    /// endpoints.
+    #[cfg(feature = "groups")]
+    async fn group_invoke_with<B>(self, mut build: B) -> Result<(), Error>
+    where
+        B: for<'x, 'y> FnMut(
+            GroupInvokeRequestsBuilder<'x, 'y>,
+        ) -> Result<GroupInvokeRequestsBuilder<'x, 'y>, Error>,
+    {
+        let mut exchange: Exchange<'a> = self.into();
+
+        exchange
+            .send_with(|_, wb| {
+                let builder =
+                    InvReqBuilder::new(TLVWriteParent::new("GroupInvoke", wb), &TLVTag::Anonymous)?
+                        .suppress_response(true)?
+                        .invoke_requests()?;
+
+                let builder = build(builder)?;
+
+                builder.end()?.end()?;
+
+                Ok(Some(OpCode::InvokeRequest.meta().reliable(false)))
+            })
+            .await
+    }
 }
+
+/// The builder handed to [`ImClient::group_invoke_with`]'s closure: the
+/// `InvokeRequests` array of a `SuppressResponse` invoke, writing into the
+/// exchange's TX buffer.
+#[cfg(feature = "groups")]
+pub type GroupInvokeRequestsBuilder<'x, 'y> = crate::im::CmdDataArrayBuilder<
+    InvReqBuilder<TLVWriteParent<&'static str, &'x mut WriteBuf<'y>>, 3>,
+>;
 
 /// Blanket impl so any [`Exchange<'a>`] is an [`ImClient<'a>`] when
 /// the trait is `use`d. The default-method bodies do all the work;
