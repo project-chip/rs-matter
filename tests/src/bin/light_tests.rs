@@ -85,8 +85,10 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
-// `OnOffClient` brings the `.on_off()` IM-client method into scope on `Exchange`.
+// `OnOffClient` brings the `.on_off()` IM-client method into scope on
+// `Exchange`; `ImClient` brings `group_invoke_with`.
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
+use rs_matter::im::client::ImClient as _;
 
 use static_cell::StaticCell;
 
@@ -308,17 +310,34 @@ async fn run_switch<const N: usize>(
                 continue;
             }
 
-            // Only unicast OnOff targets (node + endpoint present).
-            let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
-                continue;
-            };
-
             // If a specific cluster is bound, it must be OnOff.
             if let Some(cluster) = binding.cluster {
                 if cluster != on_off_cluster::FULL_CLUSTER.id {
                     continue;
                 }
             }
+
+            // Group target: multicast an encrypted, fire-and-forget Toggle
+            // to the whole group, with an endpoint-less command path —
+            // receivers apply it to their group-member endpoints.
+            if let Some(group_id) = binding.group {
+                info!(
+                    "Switch: group-toggling fabric {}, group 0x{:04X}",
+                    binding.fab_idx, group_id
+                );
+
+                match group_toggle(matter, crypto, binding.fab_idx, group_id).await {
+                    Ok(()) => info!("Switch: group toggle ok"),
+                    Err(e) => error!("Switch: group toggle failed: {:?}", e),
+                }
+
+                continue;
+            }
+
+            // Unicast OnOff targets (node + endpoint present).
+            let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
+                continue;
+            };
 
             info!(
                 "Switch: toggling fabric {}, node 0x{:016X}, endpoint {}",
@@ -345,6 +364,35 @@ async fn toggle(
     let exchange = Exchange::initiate(matter, crypto, fab_idx, node).await?;
 
     exchange.on_off().toggle(endpoint).await
+}
+
+/// Multicast an encrypted, fire-and-forget `OnOff::Toggle` to `group_id`.
+async fn group_toggle(
+    matter: &Matter<'_>,
+    crypto: &impl Crypto,
+    fab_idx: NonZeroU8,
+    group_id: u16,
+) -> Result<(), Error> {
+    use rs_matter::im::{CmdDataTag, CmdPath};
+    use rs_matter::tlv::{TLVTag, TLVWrite};
+
+    let exchange = Exchange::initiate_group(matter, crypto, fab_idx, group_id)?;
+
+    exchange
+        .group_invoke_with(|b| {
+            b.push()?
+                .path_from(&CmdPath::new(
+                    None,
+                    Some(on_off_cluster::FULL_CLUSTER.id),
+                    Some(on_off_cluster::CommandId::Toggle as u32),
+                ))?
+                .data(|w| {
+                    w.start_struct(&TLVTag::Context(CmdDataTag::Data as u8))?;
+                    w.end_container()
+                })?
+                .end()
+        })
+        .await
 }
 
 const NODE: Node<'static> = Node {

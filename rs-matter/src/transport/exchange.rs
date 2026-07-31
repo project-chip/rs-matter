@@ -1591,8 +1591,15 @@ impl Drop for Exchange<'_> {
 
             let closed = sess.remove_exch(exch_index);
             if closed {
+                // RX group sessions (unicast peer = the sender's address) are
+                // ephemeral, one per received message — remove them with their
+                // last exchange. TX group sessions (multicast peer) stay: the
+                // just-queued outgoing packet still needs the session for
+                // encoding, and subsequent sends to the same group reuse it
+                // (`get_or_create_for_group_tx`); LRU eviction reclaims them.
                 if matches!(sess.get_session_mode(), SessionMode::Group { .. })
                     && sess.exchanges.iter().all(Option::is_none)
+                    && !sess.is_peer_multicast()
                 {
                     // Group session with no remaining exchanges — remove it
                     state.sessions.remove(self.id.session_id());

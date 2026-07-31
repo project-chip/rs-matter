@@ -67,7 +67,12 @@ use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::decl::access_control::{
     AccessControlEntryAuthModeEnum, AccessControlEntryPrivilegeEnum,
 };
+use rs_matter::dm::clusters::decl::group_key_management::{
+    GroupKeyManagementAttrWrites as _, GroupKeyManagementClient as _, GroupKeySecurityPolicyEnum,
+};
+use rs_matter::dm::clusters::decl::groups::GroupsClient as _;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
@@ -76,7 +81,7 @@ use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, EpClMatcher,
 use rs_matter::error::Error;
 use rs_matter::im::client::ImClient;
 use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
-use rs_matter::im::{InteractionModel, InteractionModelState};
+use rs_matter::im::{CmdDataTag, CmdPath, InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
@@ -84,11 +89,12 @@ use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::case::CaseInitiator;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::tlv::{Nullable, OctetStr, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::{clusters, devices, root_endpoint, Matter};
+use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 // IM-client extension traits: `.on_off()` on `Exchange`, and the
 // `.access_control_write()` / `.binding_write()` views on the write-request
@@ -107,10 +113,21 @@ mod common;
 /// Passcode used by `TEST_DEV_COMM`
 const TEST_PASSCODE: u32 = 20202021;
 
-/// Ports for the two devices. Off `MATTER_PORT` (5540), which the
-/// concurrently-running `commissioning` test binary occupies.
+/// The switch's port — off `MATTER_PORT` so it never clashes with B.
 const PORT_A: u16 = 5580;
-const PORT_B: u16 = 5581;
+/// The light's port MUST be `MATTER_PORT` (5540): group data messages are
+/// multicast to the fixed Matter port. Safe against the `commissioning`
+/// test binary (which also binds 5540): cargo runs test binaries
+/// sequentially.
+const PORT_B: u16 = MATTER_PORT;
+
+/// The group the light joins and the switch multicasts to, with its
+/// security material.
+const GROUP_ID: u16 = 0x002A;
+const GROUP_KEY_SET_ID: u16 = 0x01A3;
+const GROUP_EPOCH_KEY: [u8; 16] = [
+    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
+];
 
 /// Operational node ids the controller assigns during commissioning.
 const NODE_ID_A: u64 = 0x11;
@@ -191,7 +208,11 @@ const LIGHT_NODE: Node<'static> = Node {
         Endpoint::new(
             LIGHT_ENDPOINT,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
+            clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER,
+            ),
         ),
     ],
 };
@@ -208,6 +229,13 @@ fn light_data_model<'a, OH: OnOffHooks>(
             .chain(
                 EpClMatcher::new(Some(LIGHT_ENDPOINT), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(LIGHT_ENDPOINT),
+                    Some(groups::GroupsHandler::CLUSTER.id),
+                ),
+                Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 EpClMatcher::new(Some(LIGHT_ENDPOINT), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -313,7 +341,9 @@ async fn run_test() -> Result<(), Error> {
 
     let b_fut = async {
         select3(
-            b_matter.run(&b_crypto, &b_net, &b_net, NoNetwork),
+            // B's own socket doubles as the multicast impl, so the transport
+            // joins the group multicast address once B is added to the group.
+            b_matter.run(&b_crypto, &b_net, &b_net, &b_net),
             b_responder.run::<4, 4>(),
             b_dm.run(),
         )
@@ -404,7 +434,165 @@ async fn run_flow<C: Crypto, AC: Crypto>(
     let toggled = read_light_on_off(ctrl_matter, ctrl_crypto, ctrl_fab_idx).await?;
     assert!(toggled, "expected the light ON after the switch press");
 
-    info!("=== Binding test completed successfully! ===");
+    info!("=== Phase 6: Provision the group on both devices ===");
+    // Key material on both ends: A encrypts with it, B decrypts with it.
+    provision_group_keys(ctrl_matter, ctrl_crypto, ctrl_fab_idx, NODE_ID_A).await?;
+    provision_group_keys(ctrl_matter, ctrl_crypto, ctrl_fab_idx, NODE_ID_B).await?;
+    // B's light endpoint joins the group (and its transport joins the
+    // group's multicast address).
+    add_light_to_group(ctrl_matter, ctrl_crypto, ctrl_fab_idx).await?;
+
+    info!("=== Phase 7: Re-bind A's switch to the group ===");
+    write_switch_group_binding(ctrl_matter, ctrl_crypto, ctrl_fab_idx).await?;
+
+    // Give B's transport a moment to complete the multicast join.
+    Timer::after(Duration::from_millis(500)).await;
+
+    info!("=== Phase 8: Simulate a switch press — now a groupcast Toggle ===");
+    press_switch(a_matter, a_crypto, bindings, addr_b).await?;
+
+    info!("=== Phase 9: Verify the light toggled via the group message ===");
+    // The groupcast Toggle flips the (currently ON) light OFF. Poll: the
+    // multicast delivery is asynchronous to the (fire-and-forget) send.
+    let deadline = embassy_time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if !read_light_on_off(ctrl_matter, ctrl_crypto, ctrl_fab_idx).await? {
+            break;
+        }
+
+        if embassy_time::Instant::now() > deadline {
+            panic!("light did not toggle OFF on the groupcast Toggle");
+        }
+
+        Timer::after(Duration::from_millis(250)).await;
+    }
+
+    info!("=== Binding test (unicast + groupcast) completed successfully! ===");
+    Ok(())
+}
+
+/// Provision the group's security material on `node_id` via the
+/// GroupKeyManagement cluster: `KeySetWrite` with the shared epoch key,
+/// then a `GroupKeyMap` entry binding [`GROUP_ID`] to the key set.
+async fn provision_group_keys<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    fab_idx: NonZeroU8,
+    node_id: u64,
+) -> Result<(), Error> {
+    let exchange = Exchange::initiate(matter, crypto, fab_idx, node_id).await?;
+
+    exchange
+        .group_key_management()
+        .key_set_write(0, |b| {
+            b.group_key_set()?
+                .group_key_set_id(GROUP_KEY_SET_ID)?
+                .group_key_security_policy(GroupKeySecurityPolicyEnum::TrustFirst)?
+                .epoch_key_0(Nullable::some(OctetStr::new(&GROUP_EPOCH_KEY)))?
+                .epoch_start_time_0(Nullable::some(1))?
+                .epoch_key_1(Nullable::none())?
+                .epoch_start_time_1(Nullable::none())?
+                .epoch_key_2(Nullable::none())?
+                .epoch_start_time_2(Nullable::none())?
+                .group_key_multicast_policy(
+                    rs_matter::dm::clusters::decl::group_key_management::GroupKeyMulticastPolicyEnum::PerGroupID,
+                )?
+                .end()?
+                .end()
+        })
+        .await?;
+
+    let exchange = Exchange::initiate(matter, crypto, fab_idx, node_id).await?;
+
+    let handle = exchange
+        .write_with(None, |builder| {
+            let entries = builder.write_requests()?;
+            let map = entries.group_key_management_write().group_key_map(0)?;
+
+            let map = map
+                .push()?
+                .group_id(GROUP_ID)?
+                .group_key_set_id(GROUP_KEY_SET_ID)?
+                .fabric_index(None)?
+                .end()?;
+
+            map.end()?.end()?.end()?.end()
+        })
+        .await?;
+
+    let resp = handle.response()?;
+    for status in resp.write_responses.iter() {
+        let status = status?;
+        assert_eq!(
+            status.status.status,
+            rs_matter::im::IMStatusCode::Success,
+            "GroupKeyMap write failed"
+        );
+    }
+
+    Ok(())
+}
+
+/// Add B's light endpoint to [`GROUP_ID`] via the Groups cluster.
+async fn add_light_to_group<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    fab_idx: NonZeroU8,
+) -> Result<(), Error> {
+    let exchange = Exchange::initiate(matter, crypto, fab_idx, NODE_ID_B).await?;
+
+    let handle = exchange
+        .groups()
+        .add_group(LIGHT_ENDPOINT, |b| {
+            b.group_id(GROUP_ID)?.group_name("")?.end()
+        })
+        .await?;
+
+    {
+        let resp = handle.response()?;
+        assert_eq!(resp.status()?, 0, "AddGroup on the light failed");
+    }
+
+    handle.complete().await
+}
+
+/// Replace A's binding list with a single *group* target — the switch now
+/// multicasts to the group instead of CASE-ing to a node.
+async fn write_switch_group_binding<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    fab_idx: NonZeroU8,
+) -> Result<(), Error> {
+    let exchange = Exchange::initiate(matter, crypto, fab_idx, NODE_ID_A).await?;
+
+    let handle = exchange
+        .write_with(None, |builder| {
+            let entries = builder.write_requests()?;
+            let bindings = entries.binding_write().binding(SWITCH_ENDPOINT)?;
+
+            let bindings = bindings
+                .push()?
+                .node(None)?
+                .group(Some(GROUP_ID))?
+                .endpoint(None)?
+                .cluster(Some(on_off::FULL_CLUSTER.id))?
+                .fabric_index(None)?
+                .end()?;
+
+            bindings.end()?.end()?.end()?.end()
+        })
+        .await?;
+
+    let resp = handle.response()?;
+    for status in resp.write_responses.iter() {
+        let status = status?;
+        assert_eq!(
+            status.status.status,
+            rs_matter::im::IMStatusCode::Success,
+            "Group binding write on the switch failed"
+        );
+    }
+
     Ok(())
 }
 
@@ -556,6 +744,25 @@ async fn write_light_acl<C: Crypto>(
                 .fabric_index(None)?
                 .end()?;
 
+            // Entry 3: operate for groupcast invokes targeting GROUP_ID —
+            // group messages authenticate via the group key, so their ACL
+            // subject is the Group ID, not the sender's node identity.
+            let acl = acl
+                .push()?
+                .privilege(Some(AccessControlEntryPrivilegeEnum::Operate))?
+                .auth_mode(Some(AccessControlEntryAuthModeEnum::Group))?
+                .subjects()?
+                .some()?
+                .non_null()?
+                .push(&(GROUP_ID as u64))?
+                .end()?
+                .targets()?
+                .some()?
+                .null()?
+                .auxiliary_type(None)?
+                .fabric_index(None)?
+                .end()?;
+
             acl.end()?.end()?.end()?.end()
         })
         .await?;
@@ -636,15 +843,47 @@ async fn press_switch<C: Crypto>(
             continue;
         }
 
-        let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
-            continue;
-        };
-
         if let Some(cluster) = binding.cluster {
             if cluster != on_off::FULL_CLUSTER.id {
                 continue;
             }
         }
+
+        if let Some(group_id) = binding.group {
+            // Group target: multicast an encrypted, fire-and-forget Toggle
+            // to the whole group, with an endpoint-less command path —
+            // receivers apply it to their group-member endpoints.
+            info!(
+                "Switch: group-toggling fabric {}, group 0x{:04X}",
+                binding.fab_idx, group_id
+            );
+
+            let exchange = Exchange::initiate_group(a_matter, a_crypto, binding.fab_idx, group_id)?;
+
+            exchange
+                .group_invoke_with(|b| {
+                    b.push()?
+                        .path_from(&CmdPath::new(
+                            None,
+                            Some(on_off::FULL_CLUSTER.id),
+                            Some(on_off::CommandId::Toggle as u32),
+                        ))?
+                        .data(|w| {
+                            w.start_struct(&TLVTag::Context(CmdDataTag::Data as u8))?;
+                            w.end_container()
+                        })?
+                        .end()
+                })
+                .await?;
+
+            toggled += 1;
+            continue;
+        }
+
+        // Unicast OnOff targets (node + endpoint present).
+        let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
+            continue;
+        };
 
         info!(
             "Switch: toggling fabric {}, node 0x{:016X}, endpoint {}",

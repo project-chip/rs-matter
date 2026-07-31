@@ -490,6 +490,20 @@ impl Session {
         }
     }
 
+    /// Whether the session's peer address is a multicast address — true only
+    /// for TX group sessions (see [`Sessions::get_or_create_for_group_tx`]).
+    pub(crate) fn is_peer_multicast(&self) -> bool {
+        match &self.peer_addr {
+            Address::Udp(crate::transport::network::SocketAddr::V6(addr)) => {
+                addr.ip().is_multicast()
+            }
+            Address::Udp(crate::transport::network::SocketAddr::V4(addr)) => {
+                addr.ip().is_multicast()
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn pre_send(
         &mut self,
         exch_index: Option<usize>,
@@ -567,9 +581,12 @@ impl Session {
 
         tx_header.proto.adjust_reliability(false, &self.peer_addr);
 
-        if is_group {
-            // Group messages never use MRP: no reliability, no piggybacked
-            // (or solicited) acknowledgements.
+        if is_group && !is_control {
+            // Group DATA messages never use MRP: they are multicast
+            // fire-and-forget, so there is nobody to acknowledge them.
+            // Group CONTROL messages (MCSP) are unicast-addressed and stay
+            // reliable - which is also what keeps their (ephemeral) session
+            // alive until the reply has been encoded.
             tx_header.proto.unset_reliable();
             tx_header.proto.set_ack(None);
         }
@@ -951,10 +968,14 @@ pub struct Sessions {
     /// [`Sessions::get_or_init_global_group_data_ctr`] to obtain a valid
     /// non-zero value.
     ///
-    /// Not persisted — the counter is re-randomized on each process
-    /// start. Peers will observe a fresh trust-first sync on their next
-    /// MCSP exchange after we restart, which matches the fallback for
-    /// any lost-sync-state scenario.
+    /// TODO: Not persisted yet — the counter is re-randomized on each
+    /// process start, whereas the spec requires persisting it (with an
+    /// epoch/stride scheme) so it never goes backwards across reboots: a
+    /// receiver tracking our source in its group counter store may
+    /// otherwise reject our post-reboot group data messages as replays
+    /// until the fresh random value exceeds the old one. Follow the
+    /// (equally not-yet-wired) `Matter::run_persist_resumption` pattern
+    /// when addressing this.
     #[cfg(feature = "groups")]
     global_group_data_ctr: u32,
 }
