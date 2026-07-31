@@ -36,8 +36,10 @@ use embassy_time::{Duration, Instant};
 
 use crate::acl::AccessReq;
 use crate::crypto::{CanonAeadKey, Crypto};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
-    Access, ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, ReadContext,
+    Access, ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, LifecycleOp,
+    ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
@@ -652,7 +654,7 @@ impl<'a> IcdMgmtHandler<'a> {
     /// Publish the current operating mode to the mDNS layer. This handler serves
     /// the LITS feature, so the device is always ICD-capable — the mode flips
     /// between SIT and LIT as the registration set empties and fills.
-    fn sync_icd_mode(&self, ctx: &impl InvokeContext) {
+    fn sync_icd_mode(&self, ctx: &impl HandlerContext) {
         ctx.matter().set_icd_mode(Some(self.icd.operating_mode()));
     }
 }
@@ -687,6 +689,39 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        match op {
+            // Registration re-hydration and factory reset are app-driven
+            // (`Icd::load_registrations` / KV wipe), since the `Icd` state is
+            // owned by the application and shared with the Check-In machinery.
+            LifecycleOp::Startup | LifecycleOp::FactoryReset => Ok(()),
+            LifecycleOp::FabricRemoval { fab_idx } => {
+                let mode_before = self.icd.operating_mode();
+
+                if self.icd.remove_fabric(fab_idx) {
+                    self.icd.store_registrations(&ctx)?;
+
+                    // Dropping the last LIT registration flips the operating
+                    // mode to SIT - a global (not fabric-scoped) observable,
+                    // so subscribers and the mDNS layer must learn about it.
+                    // ICD Management is a root-node cluster, hence the fixed
+                    // endpoint.
+                    if self.icd.operating_mode() != mode_before {
+                        ctx.notify_attr_changed(
+                            ROOT_ENDPOINT_ID,
+                            Self::CLUSTER.id,
+                            AttributeId::OperatingMode as _,
+                        );
+                    }
+
+                    self.sync_icd_mode(&ctx);
+                }
+
+                Ok(())
+            }
+        }
     }
 
     fn idle_mode_duration(&self, _ctx: impl ReadContext) -> Result<u32, Error> {

@@ -287,6 +287,19 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// Lets a handler read IM-internal figures it cannot otherwise reach - the
     /// General Diagnostics handler uses it for `DeviceLoadStatus`.
     fn im_stats(&self) -> impl ImStats + '_;
+
+    /// Notify that the fabric with the given local index has been removed
+    /// from the fabric table, by synchronously broadcasting
+    /// [`LifecycleOp::FabricRemoval`] to every handler in the data model.
+    ///
+    /// Two caveats for callers:
+    /// - The broadcast runs the handlers' `lifecycle` methods inline, so this
+    ///   must NOT be called while holding the Matter state lock (i.e. from
+    ///   within a `with_state` closure) - handlers are free to access the
+    ///   Matter instance themselves.
+    /// - For the same reason, a handler must not call this from its own
+    ///   `lifecycle` implementation (infinite recursion).
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8);
 }
 
 impl<T> HandlerContext for &T
@@ -323,6 +336,10 @@ where
 
     fn im_stats(&self) -> impl ImStats + '_ {
         (**self).im_stats()
+    }
+
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
+        (**self).notify_fabric_removed(fab_idx);
     }
 }
 
@@ -578,6 +595,10 @@ where
     fn im_stats(&self) -> impl ImStats + '_ {
         self.context.im_stats()
     }
+
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
+        self.context.notify_fabric_removed(fab_idx);
+    }
 }
 
 impl<C> AttrChangeNotifier for ReadContextInstance<'_, C>
@@ -754,6 +775,10 @@ where
     fn im_stats(&self) -> impl ImStats + '_ {
         self.context.im_stats()
     }
+
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
+        self.context.notify_fabric_removed(fab_idx);
+    }
 }
 
 impl<C> AttrChangeNotifier for ReportContextInstance<'_, C>
@@ -875,6 +900,10 @@ where
 
     fn im_stats(&self) -> impl ImStats + '_ {
         self.context.im_stats()
+    }
+
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
+        self.context.notify_fabric_removed(fab_idx);
     }
 }
 
@@ -1060,6 +1089,10 @@ where
     fn im_stats(&self) -> impl ImStats + '_ {
         self.context.im_stats()
     }
+
+    fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
+        self.context.notify_fabric_removed(fab_idx);
+    }
 }
 
 impl<C> AttrChangeNotifier for InvokeContextInstance<'_, C>
@@ -1205,6 +1238,28 @@ pub enum LifecycleOp {
     /// The typical reaction is to reset the handler's in-memory state to factory
     /// defaults and remove the handler's persisted data from [`HandlerContext::kv`].
     FactoryReset,
+    /// The fabric with the given local index has been removed from the node.
+    ///
+    /// Delivered synchronously (via [`HandlerContext::notify_fabric_removed`])
+    /// right after the fabric is gone from the fabric table - via the
+    /// `RemoveFabric` command, an `AddNOC` rollback, or a fail-safe expiry
+    /// that did not resurrect a persisted (pre-`UpdateNOC`) copy of the
+    /// fabric. NOT delivered when a fail-safe expiry reverts an in-progress
+    /// `UpdateNOC` - the fabric is still commissioned in that case.
+    ///
+    /// The typical reaction is to drop the removed fabric's entries from any
+    /// fabric-scoped state the handler owns *outside* the fabric table (a
+    /// bindings registry, a scene table, provider lists, ...) and re-persist.
+    /// State stored inside the `Fabric` object itself (ACLs, group keys)
+    /// needs no reaction - it is dropped with the fabric.
+    ///
+    /// Like every lifecycle operation this is a broadcast, so multiple
+    /// handler instances borrowing one shared registry each receive it -
+    /// reactions must be idempotent (a `retain`-style purge naturally is).
+    FabricRemoval {
+        /// The local index the removed fabric had
+        fab_idx: NonZeroU8,
+    },
 }
 
 /// A version of the `AsyncHandler` trait that never awaits any operation.
@@ -1691,13 +1746,14 @@ mod asynch {
         /// Unlike read/write/invoke - which are routed to the single handler matching the
         /// operation path - this method is invoked on every handler in the handler chain.
         ///
+        /// Deliberately synchronous - like [`AsyncHandler::bump_dataver`] -
+        /// even on the async handler trait, so that lifecycle broadcasts can
+        /// be dispatched eagerly from synchronous call sites (see
+        /// [`HandlerContext::notify_fabric_removed`]).
+        ///
         /// The default implementation does nothing.
-        fn lifecycle(
-            &self,
-            _ctx: impl HandlerContext,
-            _op: LifecycleOp,
-        ) -> impl Future<Output = Result<(), Error>> {
-            ready(Ok(()))
+        fn lifecycle(&self, _ctx: impl HandlerContext, _op: LifecycleOp) -> Result<(), Error> {
+            Ok(())
         }
 
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
@@ -1749,11 +1805,7 @@ mod asynch {
             (**self).bump_dataver(ctx)
         }
 
-        fn lifecycle(
-            &self,
-            ctx: impl HandlerContext,
-            op: LifecycleOp,
-        ) -> impl Future<Output = Result<(), Error>> {
+        fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
             (**self).lifecycle(ctx, op)
         }
 
@@ -1802,11 +1854,7 @@ mod asynch {
             (**self).bump_dataver(ctx)
         }
 
-        fn lifecycle(
-            &self,
-            ctx: impl HandlerContext,
-            op: LifecycleOp,
-        ) -> impl Future<Output = Result<(), Error>> {
+        fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
             (**self).lifecycle(ctx, op)
         }
 
@@ -1938,11 +1986,7 @@ mod asynch {
             self.1.bump_dataver(ctx)
         }
 
-        fn lifecycle(
-            &self,
-            ctx: impl HandlerContext,
-            op: LifecycleOp,
-        ) -> impl Future<Output = Result<(), Error>> {
+        fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
             self.1.lifecycle(ctx, op)
         }
 
@@ -1991,12 +2035,8 @@ mod asynch {
             Handler::bump_dataver(&self.0, ctx)
         }
 
-        fn lifecycle(
-            &self,
-            ctx: impl HandlerContext,
-            op: LifecycleOp,
-        ) -> impl Future<Output = Result<(), Error>> {
-            ready(Handler::lifecycle(&self.0, ctx, op))
+        fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+            Handler::lifecycle(&self.0, ctx, op)
         }
 
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -2116,11 +2156,11 @@ mod asynch {
             self.next.bump_dataver(ctx)
         }
 
-        async fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
             // Lifecycle ops are a broadcast: every handler in the chain gets them,
             // regardless of the matcher.
-            self.handler.lifecycle(&ctx, op).await?;
-            self.next.lifecycle(ctx, op).await
+            self.handler.lifecycle(&ctx, op)?;
+            self.next.lifecycle(ctx, op)
         }
 
         async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {

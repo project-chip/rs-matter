@@ -275,7 +275,7 @@ impl ClusterHandler for AdminCommHandler {
         //     we do it explicitly here so accumulated dangling PASE sessions
         //     don't confuse the commissioner across multiple rounds (see
         //     TC_CGEN_2_4, which iterates open / commission / revoke 8x).
-        ctx.exchange().with_state(|state| {
+        let removed_fabric = ctx.exchange().with_state(|state| {
             // If RevokeCommissioning came in over a PASE session, don't
             // drop it before we've sent the response — mark it as expired
             // instead so it lingers just long enough for the in-flight
@@ -288,7 +288,7 @@ impl ClusterHandler for AdminCommHandler {
             )
             .then(|| sess.id());
 
-            state.failsafe.expire(
+            let removed_fabric = state.failsafe.expire(
                 &mut state.fabrics,
                 &mut state.sessions,
                 expire_sess_id,
@@ -299,8 +299,17 @@ impl ClusterHandler for AdminCommHandler {
             )?;
 
             ctx.exchange().matter().transport().notify_session_removed();
-            Ok::<_, Error>(())
+
+            Ok::<_, Error>(removed_fabric)
         })?;
+
+        // Broadcast for a fabric the expiry dropped (a not-yet-committed
+        // `AddNOC` one; an `UpdateNOC`-mutated fabric is resurrected instead
+        // and not reported). Outside `with_state`, since the broadcast runs
+        // the handlers inline.
+        if let Some(fab_idx) = removed_fabric {
+            ctx.notify_fabric_removed(fab_idx);
+        }
 
         ctx.exchange().with_state(|state| {
             state

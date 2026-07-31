@@ -317,8 +317,35 @@ impl Providers {
         store.remove(OTA_PROVIDERS_KEY, buf)
     }
 
+    /// Drop the default and announced providers belonging to `fab_idx`,
+    /// returning whether anything was removed. Signals
+    /// [`wait_changed`](Self::wait_changed) when so.
+    ///
+    /// Called on fabric removal via the [`LifecycleOp::FabricRemoval`]
+    /// lifecycle operation delivered to the [`OtaRequestorHandler`] borrowing
+    /// this registry. Idempotent.
+    pub fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
+        let removed = self.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            let before = state.default.len() + state.announced.len();
+
+            state.default.retain(|provider| provider.fab_idx != fab_idx);
+            state
+                .announced
+                .retain(|provider| provider.fab_idx != fab_idx);
+
+            state.default.len() + state.announced.len() < before
+        });
+
+        if removed {
+            self.changed.notify();
+        }
+
+        removed
+    }
+
     /// Persist the default provider list to `ctx.kv()`.
-    fn store_persist<C: WriteContext>(&self, ctx: &C) -> Result<(), Error> {
+    fn store_persist<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
         let mut persist = Persist::new(ctx.kv());
 
         self.state.lock(|cell| {
@@ -685,10 +712,21 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
     }
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        ctx.kv().access(|store, buf| match op {
-            LifecycleOp::Startup => self.providers.load_persist(store, buf),
-            LifecycleOp::FactoryReset => self.providers.reset_persist(store, buf),
-        })
+        match op {
+            LifecycleOp::Startup => ctx
+                .kv()
+                .access(|store, buf| self.providers.load_persist(store, buf)),
+            LifecycleOp::FactoryReset => ctx
+                .kv()
+                .access(|store, buf| self.providers.reset_persist(store, buf)),
+            LifecycleOp::FabricRemoval { fab_idx } => {
+                if self.providers.remove_for_fabric(fab_idx) {
+                    self.providers.store_persist(&ctx)?;
+                }
+
+                Ok(())
+            }
+        }
     }
 
     fn default_ota_providers<P: TLVBuilderParent>(

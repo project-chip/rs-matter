@@ -79,27 +79,15 @@ pub fn handler(
         .map(|cmd| handler_command(cmd, asynch, delegate, entities, &krate));
 
     if delegate {
-        let lifecycle_run = if asynch {
-            quote!(
-                fn lifecycle(&self, ctx: impl #krate::dm::HandlerContext, op: #krate::dm::LifecycleOp) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    (**self).lifecycle(ctx, op)
-                }
+        let lifecycle_run = quote!(
+            fn lifecycle(&self, ctx: impl #krate::dm::HandlerContext, op: #krate::dm::LifecycleOp) -> Result<(), #krate::error::Error> {
+                T::lifecycle(self, ctx, op)
+            }
 
-                fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    (**self).run(ctx)
-                }
-            )
-        } else {
-            quote!(
-                fn lifecycle(&self, ctx: impl #krate::dm::HandlerContext, op: #krate::dm::LifecycleOp) -> Result<(), #krate::error::Error> {
-                    T::lifecycle(self, ctx, op)
-                }
-
-                fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    (**self).run(ctx)
-                }
-            )
-        };
+            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                (**self).run(ctx)
+            }
+        );
 
         quote!(
             impl<T> #handler_name for &T
@@ -121,27 +109,17 @@ pub fn handler(
             }
         )
     } else {
-        let lifecycle_run = if asynch {
-            quote!(
-                fn lifecycle(&self, _ctx: impl #krate::dm::HandlerContext, _op: #krate::dm::LifecycleOp) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    core::future::ready(Ok(()))
-                }
+        // `lifecycle` is deliberately synchronous even on the async handler
+        // trait (like `bump_dataver`) - see `AsyncHandler::lifecycle`.
+        let lifecycle_run = quote!(
+            fn lifecycle(&self, _ctx: impl #krate::dm::HandlerContext, _op: #krate::dm::LifecycleOp) -> Result<(), #krate::error::Error> {
+                Ok(())
+            }
 
-                fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    core::future::pending::<Result::<(), #krate::error::Error>>()
-                }
-            )
-        } else {
-            quote!(
-                fn lifecycle(&self, _ctx: impl #krate::dm::HandlerContext, _op: #krate::dm::LifecycleOp) -> Result<(), #krate::error::Error> {
-                    Ok(())
-                }
-
-                fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    core::future::pending::<Result::<(), #krate::error::Error>>()
-                }
-            )
-        };
+            fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                core::future::pending::<Result::<(), #krate::error::Error>>()
+            }
+        );
 
         quote!(
             #[doc = "The handler trait for the cluster."]
@@ -298,27 +276,15 @@ pub fn handler_adaptor(
         )
     };
 
-    let lifecycle_run = if asynch {
-        quote!(
-            fn lifecycle(&self, ctx: impl #krate::dm::HandlerContext, op: #krate::dm::LifecycleOp) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                self.0.lifecycle(ctx, op)
-            }
+    let lifecycle_run = quote!(
+        fn lifecycle(&self, ctx: impl #krate::dm::HandlerContext, op: #krate::dm::LifecycleOp) -> Result<(), #krate::error::Error> {
+            self.0.lifecycle(ctx, op)
+        }
 
-            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                self.0.run(ctx)
-            }
-        )
-    } else {
-        quote!(
-            fn lifecycle(&self, ctx: impl #krate::dm::HandlerContext, op: #krate::dm::LifecycleOp) -> Result<(), #krate::error::Error> {
-                self.0.lifecycle(ctx, op)
-            }
-
-            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                self.0.run(ctx)
-            }
-        )
-    };
+        fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+            self.0.run(ctx)
+        }
+    );
 
     let pasync = if asynch { quote!(async) } else { quote!() };
 
