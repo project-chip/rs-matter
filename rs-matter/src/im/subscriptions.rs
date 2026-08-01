@@ -512,7 +512,9 @@ impl<const N: usize> Subscriptions<N> {
     /// whatever lives past the range. Being a check on a generic parameter, it
     /// is only evaluated once monomorphized - i.e. it surfaces on `cargo build`
     /// / `cargo test`, not on `cargo check`.
-    const SLOTS_FIT: () = assert!(
+    // `::core::assert!` rather than the crate-wide `assert!`, which maps to
+    // `defmt::assert!` under the `defmt` feature and is not const-callable.
+    const SLOTS_FIT: () = ::core::assert!(
         N <= crate::persist::MAX_PERSISTED_SUBSCRIPTIONS,
         "the subscriptions table is larger than the reserved persisted-subscription key range"
     );

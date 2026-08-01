@@ -192,7 +192,9 @@ pub const MAX_PERSISTED_SUBSCRIPTIONS: usize = 2048;
 /// relocates [`PERSISTENT_SUBSCRIPTIONS_START`], and with it every
 /// subscription an earlier firmware already persisted. That is a deliberate,
 /// breaking key-layout migration, not a constant tweak.
-const SINGLETON_KEYS_FIT: () = assert!(
+// `::core::assert!` rather than the crate-wide `assert!`, which maps to
+// `defmt::assert!` under the `defmt` feature and is not const-callable.
+const SINGLETON_KEYS_FIT: () = ::core::assert!(
     SINGLETON_KEYS_END <= PERSISTENT_SUBSCRIPTIONS_START,
     "the rs-matter singleton keys have grown into the persisted-subscription range"
 );
@@ -204,7 +206,7 @@ const SINGLETON_KEYS_FIT: () = assert!(
 /// `PERSISTENT_SUBSCRIPTIONS_START + slot`. Deriving it from the two constants
 /// above keeps the intent readable, but the result must stay pinned to the
 /// value already shipped.
-const SUBSCRIPTION_RANGE_PINNED: () = assert!(
+const SUBSCRIPTION_RANGE_PINNED: () = ::core::assert!(
     PERSISTENT_SUBSCRIPTIONS_START == 0x0800,
     "the persisted-subscription range has moved - existing devices would look for their subscriptions under the wrong keys"
 );

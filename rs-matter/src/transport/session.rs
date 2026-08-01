@@ -996,20 +996,18 @@ pub struct Sessions {
     /// replays until the fresh value exceeded the old one.
     #[cfg(feature = "groups")]
     global_group_data_ctr: u32,
-    /// The boundary that must be held in durable storage, always at least
-    /// one epoch ahead of [`Sessions::global_group_data_ctr`]: a restart
-    /// resumes *at* the stored boundary and is therefore past every value
-    /// this run may have used. Moved forward (and flagged for persisting)
-    /// whenever the live counter reaches it.
+    /// The boundary held in durable storage: it covers exactly the values in
+    /// `[global_group_data_ctr, group_data_ctr_boundary)`, since a restart
+    /// resumes *at* the stored boundary and is therefore past all of them.
+    ///
+    /// Equal to [`Sessions::global_group_data_ctr`] when nothing is covered -
+    /// the state right after a resume or a first-use seed - which is what
+    /// makes [`Sessions::reserve_global_group_data_ctr`] extend the boundary
+    /// and demand a write before handing out a value.
     ///
     /// `0` when the counter is not yet initialized.
     #[cfg(feature = "groups")]
     group_data_ctr_boundary: u32,
-    /// Whether [`Sessions::group_data_ctr_boundary`] has moved since it was
-    /// last written to durable storage. Drained by
-    /// [`Sessions::take_group_data_ctr_to_persist`].
-    #[cfg(feature = "groups")]
-    group_data_ctr_dirty: bool,
 }
 
 /// How far ahead of the live Global Group Encrypted Data Message Counter the
@@ -1037,8 +1035,6 @@ impl Sessions {
             global_group_data_ctr: 0,
             #[cfg(feature = "groups")]
             group_data_ctr_boundary: 0,
-            #[cfg(feature = "groups")]
-            group_data_ctr_dirty: false,
         }
     }
 
@@ -1055,7 +1051,6 @@ impl Sessions {
             next_exch_id: 0,
             global_group_data_ctr: 0,
             group_data_ctr_boundary: 0,
-            group_data_ctr_dirty: false,
         });
         #[cfg(not(feature = "groups"))]
         let r = init!(Self {
@@ -1087,16 +1082,19 @@ impl Sessions {
 #[cfg(feature = "groups")]
 impl Sessions {
     /// Re-hydrate the Global Group Encrypted Data Message Counter from the
-    /// provided KV store, and immediately anchor (and store) the next epoch
-    /// boundary.
+    /// provided KV store.
     ///
     /// Resuming at the stored boundary puts the counter past every value the
     /// previous run may have used - otherwise peers tracking us in their group
     /// counter store would drop our post-restart group messages as replays.
     ///
+    /// Nothing is written here: the resumed counter covers no values yet, so
+    /// the first group send extends the boundary and stores it before its
+    /// value reaches the wire. A node that never sends a group message
+    /// therefore never writes this key.
+    ///
     /// An absent key means "first boot": the counter is instead seeded
-    /// randomly on first use, which likewise stores its boundary before
-    /// anything reaches the wire.
+    /// randomly on first use, which likewise stores its boundary first.
     pub fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
@@ -1106,10 +1104,6 @@ impl Sessions {
             let boundary = u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::InvalidData)?);
 
             self.resume_global_group_data_ctr(boundary);
-        }
-
-        if let Some(boundary) = self.take_group_data_ctr_to_persist() {
-            store.store(GROUP_DATA_COUNTER_KEY, &boundary.to_le_bytes(), buf)?;
         }
 
         Ok(())
@@ -1129,7 +1123,6 @@ impl Sessions {
     ) -> Result<(), Error> {
         self.global_group_data_ctr = 0;
         self.group_data_ctr_boundary = 0;
-        self.group_data_ctr_dirty = false;
 
         store.remove(GROUP_DATA_COUNTER_KEY, buf)?;
 
@@ -1154,23 +1147,19 @@ impl Sessions {
         Ok(self.global_group_data_ctr)
     }
 
-    /// Resume the Global Group Encrypted Data Message Counter at `start` -
-    /// the boundary read back from durable storage (see
-    /// [`Sessions::take_group_data_ctr_to_persist`]), which is past every
-    /// value the previous run may have used.
-    ///
-    /// Anchors a fresh boundary one epoch ahead and flags it for persisting,
-    /// so the *next* restart likewise resumes past this run's values.
+    /// Resume the Global Group Encrypted Data Message Counter at `start` - the
+    /// boundary read back from durable storage, which is past every value the
+    /// previous run may have used.
     pub(crate) fn resume_global_group_data_ctr(&mut self, start: u32) {
         self.set_global_group_data_ctr(if start == 0 { 1 } else { start });
     }
 
-    /// Set the live counter and (re-)anchor the persist boundary one epoch
-    /// ahead of it, flagging it to be written.
+    /// Set the live counter, with the stored boundary covering nothing beyond
+    /// it: the next reservation is what extends the boundary by an epoch and
+    /// demands it be written.
     fn set_global_group_data_ctr(&mut self, value: u32) {
         self.global_group_data_ctr = value;
-        self.group_data_ctr_boundary = Self::advance_group_data_ctr(value, GROUP_DATA_CTR_EPOCH);
-        self.group_data_ctr_dirty = true;
+        self.group_data_ctr_boundary = value;
     }
 
     /// Advance a counter value by `delta`, staying inside the Matter message
@@ -1183,24 +1172,6 @@ impl Sessions {
         } else {
             next
         }
-    }
-
-    /// Take the boundary that must be written to durable storage, if it has
-    /// moved since the last write.
-    ///
-    /// Returns `None` when the stored value is still up to date.
-    ///
-    /// The caller MUST write a returned boundary *before* any counter value
-    /// it covers reaches the wire - see
-    /// [`Sessions::reserve_global_group_data_ctr`].
-    #[must_use = "a returned boundary must be persisted"]
-    pub(crate) fn take_group_data_ctr_to_persist(&mut self) -> Option<u32> {
-        self.group_data_ctr_dirty
-            .then(|| {
-                self.group_data_ctr_dirty = false;
-                self.group_data_ctr_boundary
-            })
-            .filter(|boundary| *boundary != 0)
     }
 
     /// Reserve the counter value for one outgoing group data message,
@@ -1216,23 +1187,28 @@ impl Sessions {
         &mut self,
         crypto: C,
     ) -> Result<(u32, Option<u32>), Error> {
-        // First use: seed the counter (and its boundary) at random.
+        // First use: seed the counter at random.
         self.get_or_init_global_group_data_ctr(crypto)?;
+
+        // The stored boundary covers `[ctr, boundary)`. Once the counter has
+        // caught up with it, the value about to be handed out is not covered
+        // by anything durable: move the boundary an epoch further and have the
+        // caller store it before sending. The counter advances one at a time,
+        // so this happens exactly once per epoch.
+        let to_persist = if self.global_group_data_ctr == self.group_data_ctr_boundary {
+            self.group_data_ctr_boundary =
+                Self::advance_group_data_ctr(self.global_group_data_ctr, GROUP_DATA_CTR_EPOCH);
+
+            Some(self.group_data_ctr_boundary)
+        } else {
+            None
+        };
 
         let value = self.global_group_data_ctr;
 
         self.global_group_data_ctr = Self::advance_group_data_ctr(value, 1);
 
-        // Reaching the boundary means the stored value no longer covers what
-        // comes next: move it one epoch further. The counter advances one at
-        // a time, so it lands exactly on the boundary once per epoch.
-        if self.global_group_data_ctr == self.group_data_ctr_boundary {
-            self.group_data_ctr_boundary =
-                Self::advance_group_data_ctr(self.group_data_ctr_boundary, GROUP_DATA_CTR_EPOCH);
-            self.group_data_ctr_dirty = true;
-        }
-
-        Ok((value, self.take_group_data_ctr_to_persist()))
+        Ok((value, to_persist))
     }
 
     /// Get or create a TX group session for sending group data messages to
@@ -2127,10 +2103,7 @@ mod tests {
 
         let mut sessions = Sessions::new();
 
-        // A fresh instance has nothing to persist.
-        assert_eq!(sessions.take_group_data_ctr_to_persist(), None);
-
-        // Resuming at a stored boundary anchors the next one an epoch ahead.
+        // Resuming at a stored boundary covers nothing yet.
         sessions.resume_global_group_data_ctr(1000);
 
         // The first reservation hands out the stored boundary itself - past
@@ -2143,18 +2116,17 @@ mod tests {
         // The rest of the epoch is already covered, so no further writes are
         // demanded - and every handed-out value stays below what is durable.
         let durable = boundary.unwrap();
-        for expected in 1001..1000 + GROUP_DATA_CTR_EPOCH - 1 {
+        for expected in 1001..1000 + GROUP_DATA_CTR_EPOCH {
             let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
             assert_eq!(value, expected);
             assert_eq!(boundary, None);
             assert!(value < durable);
         }
 
-        // The reservation that exhausts the epoch (its value takes the live
-        // counter *to* the boundary) demands the next one.
+        // The first value the stored boundary does *not* cover is the boundary
+        // itself - reserving it demands the next one be written first.
         let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
-        assert_eq!(value, 1000 + GROUP_DATA_CTR_EPOCH - 1);
-        assert!(value < durable);
+        assert_eq!(value, durable);
         assert_eq!(boundary, Some(1000 + 2 * GROUP_DATA_CTR_EPOCH));
     }
 
@@ -2199,7 +2171,47 @@ mod tests {
         // A boundary that would land on 0 is likewise skipped.
         let mut sessions = Sessions::new();
         sessions.resume_global_group_data_ctr(top + 1 - GROUP_DATA_CTR_EPOCH);
-        assert_eq!(sessions.take_group_data_ctr_to_persist(), Some(1));
+        assert_eq!(
+            sessions.reserve_global_group_data_ctr(&crypto).unwrap().1,
+            Some(1)
+        );
+    }
+
+    /// The safety invariant of the epoch scheme, checked across the 28-bit
+    /// wrap: at every point, the boundary last handed out for persisting is a
+    /// value that has *not* been used yet. A restart resumes exactly there, so
+    /// this is what guarantees no counter value is ever re-issued - which for
+    /// group messages would repeat an AEAD nonce under the same group key.
+    #[cfg(all(feature = "groups", feature = "std"))]
+    #[test]
+    fn test_group_data_ctr_persist_covers_every_value_across_wrap() {
+        let crypto = test_only_crypto();
+
+        let mut sessions = Sessions::new();
+
+        // Start two epochs below the top of the range, so the walk below runs
+        // through the wrap.
+        let start = MATTER_MSG_CTR_RANGE - 2 * GROUP_DATA_CTR_EPOCH;
+        sessions.resume_global_group_data_ctr(start);
+
+        let mut used = std::collections::HashSet::new();
+        let mut last_stored = start;
+
+        for _ in 0..5 * GROUP_DATA_CTR_EPOCH {
+            let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
+
+            // `initiate_group` writes the boundary before the value is sent.
+            if let Some(boundary) = boundary {
+                last_stored = boundary;
+            }
+
+            used.insert(value);
+
+            assert!(
+                !used.contains(&last_stored),
+                "a restart would resume at an already used counter value"
+            );
+        }
     }
 
     /// A resume value of 0 (a corrupt/blank stored boundary) must not leave
@@ -2244,15 +2256,15 @@ mod tests {
     }
 
     /// The reboot-survival contract of [`crate::Matter::startup`]: it reads
-    /// the boundary the previous run stored (same key, same encoding),
-    /// resumes the counter *at* it - past everything that run could have
-    /// sent - and immediately stores the next boundary so this run is
-    /// covered too.
+    /// the boundary the previous run stored (same key, same encoding) and
+    /// resumes the counter *at* it - past everything that run could have sent.
+    ///
+    /// Startup itself writes nothing; the first reservation is what extends
+    /// the boundary and demands it be stored before its value is sent.
     #[cfg(all(feature = "groups", feature = "std"))]
     #[test]
     fn test_group_data_ctr_resumes_from_storage() {
         use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-        use crate::error::Error;
         use crate::persist::GROUP_DATA_COUNTER_KEY;
         use crate::Matter;
 
@@ -2265,26 +2277,27 @@ mod tests {
         let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
         matter.startup(matter.kv(&mut kv)).unwrap();
 
-        // The first value handed out is the stored boundary itself.
-        let first = matter
-            .with_state(|state| {
-                Ok::<_, Error>(
-                    state
-                        .sessions
-                        .reserve_global_group_data_ctr(test_only_crypto())?
-                        .0,
-                )
-            })
-            .unwrap();
-        assert_eq!(first, STORED);
-
-        // ...and startup already re-anchored and stored the next boundary,
-        // so a crash right now still resumes past `first`.
+        // Startup itself does not write - a node that never sends a group
+        // message leaves the key exactly as the previous run left it.
         let stored = kv.0.get(&GROUP_DATA_COUNTER_KEY).unwrap();
         assert_eq!(
             u32::from_le_bytes(stored.as_slice().try_into().unwrap()),
-            STORED + GROUP_DATA_CTR_EPOCH
+            STORED
         );
+
+        // The first value handed out is the stored boundary itself - past
+        // everything the previous run could have used - and it comes with the
+        // next boundary, which `initiate_group` stores before sending.
+        let (first, boundary) = matter
+            .with_state(|state| {
+                state
+                    .sessions
+                    .reserve_global_group_data_ctr(test_only_crypto())
+            })
+            .unwrap();
+
+        assert_eq!(first, STORED);
+        assert_eq!(boundary, Some(STORED + GROUP_DATA_CTR_EPOCH));
     }
 
     /// A factory reset drops the stored boundary along with the fabrics and
