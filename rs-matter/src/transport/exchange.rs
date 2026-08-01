@@ -446,6 +446,15 @@ pub(crate) struct ExchangeState {
     pub(crate) exch_id: u16,
     pub(crate) role: Role,
     pub(crate) mrp: ReliableMessage,
+    /// The Global Group Encrypted Data Message Counter value reserved for
+    /// this exchange's (single) group data message - already covered by a
+    /// durably stored boundary, see [`Exchange::initiate_group`].
+    ///
+    /// Per-exchange rather than per-session, so that two concurrent sends to
+    /// the same group cannot consume each other's reservation. `None` for
+    /// every other exchange kind.
+    #[cfg(feature = "groups")]
+    pub(crate) group_data_ctr: Option<u32>,
 }
 
 impl ExchangeState {
@@ -723,35 +732,6 @@ impl TxMessage<'_> {
         meta.set_into(&mut self.packet.header.proto);
 
         self.matter.with_state(|state| {
-            // An outgoing group DATA message is stamped with the Global Group
-            // Encrypted Data Message Counter, fetched (and advanced) up-front
-            // since the session borrow below aliases the sessions container.
-            let is_group_data = {
-                let session = state
-                    .sessions
-                    .get(self.exchange_id.session_id())
-                    .ok_or(ErrorCode::NoSession)?;
-
-                matches!(session.get_session_mode(), SessionMode::Group { .. })
-                    && !MessageMeta::from(&self.packet.header.proto).is_control_msg()
-            };
-
-            #[cfg(feature = "groups")]
-            let group_data_ctr = is_group_data
-                .then(|| state.sessions.next_global_group_data_ctr())
-                .transpose()?;
-
-            #[cfg(not(feature = "groups"))]
-            let group_data_ctr = {
-                // Group sessions are never created without the `groups`
-                // feature, so this is unreachable in practice.
-                if is_group_data {
-                    return Err(ErrorCode::InvalidState.into());
-                }
-
-                None
-            };
-
             let session = state
                 .sessions
                 .get(self.exchange_id.session_id())
@@ -766,7 +746,6 @@ impl TxMessage<'_> {
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,
-                group_data_ctr,
                 Some(session.get_peer_active_interval_ms()),
                 Some(session.get_peer_idle_interval_ms()),
             )?;
@@ -1193,25 +1172,69 @@ impl<'a> Exchange<'a> {
     /// plus its key set) must be provisioned on the fabric, else this fails
     /// with [`ErrorCode::NotFound`].
     #[cfg(feature = "groups")]
-    pub fn initiate_group<C: Crypto + Copy>(
+    pub fn initiate_group<C: Crypto, K: crate::persist::KvBlobStoreAccess>(
         matter: &'a Matter<'a>,
         crypto: C,
+        kv: K,
         fab_idx: NonZeroU8,
         group_id: u16,
     ) -> Result<Self, Error> {
-        let session_id = matter.with_state(|state| {
+        let (session_id, group_data_ctr, boundary) = matter.with_state(|state| {
             let session = state.sessions.get_or_create_for_group_tx(
-                crypto,
+                &crypto,
                 &state.fabrics,
                 fab_idx,
                 group_id,
                 matter.dev_det(),
             )?;
+            let session_id = session.id;
 
-            Ok::<_, Error>(session.id)
+            // One group data message per exchange, so exactly one counter
+            // value is reserved here.
+            let (ctr, boundary) = state.sessions.reserve_global_group_data_ctr(&crypto)?;
+
+            Ok::<_, Error>((session_id, ctr, boundary))
         })?;
 
-        Self::initiate_for_session(matter, crypto, session_id)
+        // Store the moved boundary BEFORE the reserved value can reach the
+        // wire: a restart then resumes past it, so receivers never see a
+        // counter value replayed. Writes happen once per
+        // `GROUP_DATA_CTR_EPOCH` messages, not per message.
+        if let Some(boundary) = boundary {
+            kv.access(|store, buf| {
+                store.store(
+                    crate::persist::GROUP_DATA_COUNTER_KEY,
+                    &boundary.to_le_bytes(),
+                    buf,
+                )
+            })?;
+
+            debug!(
+                "Group data message counter boundary persisted: {}",
+                boundary
+            );
+        }
+
+        let exchange = Self::initiate_for_session(matter, crypto, session_id)?;
+
+        // Stash the reservation in the per-exchange state, which is where
+        // `Session::pre_send` picks it up when stamping the message.
+        matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get(exchange.id().session_id())
+                .ok_or(ErrorCode::NoSession)?;
+
+            let exch = session.exchanges[exchange.id().exchange_index()]
+                .as_mut()
+                .ok_or(ErrorCode::NoExchange)?;
+
+            exch.group_data_ctr = Some(group_data_ctr);
+
+            Ok::<_, Error>(())
+        })?;
+
+        Ok(exchange)
     }
 
     /// Create a new initiator exchange on a new plaintext session to

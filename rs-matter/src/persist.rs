@@ -133,15 +133,85 @@ pub const CASE_RESUMPTION_KEY: u16 = ICD_CHECK_IN_COUNTER_KEY + 1;
 /// [`TimeZoneStore`](crate::dm::clusters::time_sync::TimeZoneStore).
 pub const TIME_ZONE_KEY: u16 = CASE_RESUMPTION_KEY + 1;
 
+/// The key used for storing the Global Group Encrypted Data Message Counter's
+/// epoch boundary (a 4-byte little-endian value). Written only when a new
+/// epoch is crossed, so a restart resumes past every counter value the
+/// previous run may have used - otherwise peers tracking us in their group
+/// counter store would drop our post-restart group messages as replays.
+///
+/// NOTE: the key is reserved unconditionally (not behind the `groups`
+/// feature), so that a device's key layout never depends on which Cargo
+/// features it was built with.
+pub const GROUP_DATA_COUNTER_KEY: u16 = TIME_ZONE_KEY + 1;
+
+/// The first key past the singleton keys above - i.e. the next free slot for
+/// a *new* singleton key.
+///
+/// Only used by [`SINGLETON_KEYS_FIT`] to prove that the singleton block has
+/// not grown into [`PERSISTENT_SUBSCRIPTIONS_START`]; bump the key it is
+/// derived from whenever a singleton is added.
+const SINGLETON_KEYS_END: u16 = GROUP_DATA_COUNTER_KEY + 1;
+
 /// The first key of the range reserved for persisted subscriptions.
 ///
 /// Each persisted subscription occupies its own key
 /// (`PERSISTENT_SUBSCRIPTIONS_START + slot`), so that a single record never grows
 /// the value beyond one subscribe request (already bounded to one RX packet,
 /// comfortably under the ~4 KiB per-value cap that some MCU key-value backends
-/// impose). The range runs up to (but not including) [`VENDOR_KEYS_START`], which
-/// leaves room for far more slots than any practical `Subscriptions<N>` table.
-pub const PERSISTENT_SUBSCRIPTIONS_START: u16 = TIME_ZONE_KEY + 1;
+/// impose). The range runs up to (but not including)
+/// [`PERSISTENT_SUBSCRIPTIONS_END`].
+///
+/// IMPORTANT: the range is carved *downwards* from the top of the rs-matter
+/// key space, deliberately *not* derived from the singleton keys below it.
+/// Deriving it from those would mean that adding (or feature-gating) any
+/// singleton key silently shifts every persisted subscription onto a different
+/// key, so a device upgrading to a newer firmware would read another record's
+/// bytes - or would lose its subscriptions. New singleton keys therefore grow
+/// *into the gap* below this anchor, and [`SINGLETON_KEYS_FIT`] turns
+/// exhausting that gap into a compile error rather than silent corruption.
+pub const PERSISTENT_SUBSCRIPTIONS_START: u16 =
+    PERSISTENT_SUBSCRIPTIONS_END - MAX_PERSISTED_SUBSCRIPTIONS as u16;
+
+/// The first key past the range reserved for persisted subscriptions - i.e.
+/// the top of the rs-matter key space, where the vendor keys begin.
+pub const PERSISTENT_SUBSCRIPTIONS_END: u16 = VENDOR_KEYS_START;
+
+/// How many persisted subscriptions the reserved range can hold.
+///
+/// The range is explicitly bounded (rather than running open-ended down from
+/// [`PERSISTENT_SUBSCRIPTIONS_END`]) so that a `Subscriptions<N>` table sized
+/// beyond it is caught at compile time instead of quietly overwriting the
+/// singleton keys below.
+pub const MAX_PERSISTED_SUBSCRIPTIONS: usize = 2048;
+
+/// Compile-time proof that the singleton keys have not grown into the
+/// persisted-subscription range.
+///
+/// If adding a singleton key ever breaks this, do NOT make room by shrinking
+/// [`MAX_PERSISTED_SUBSCRIPTIONS`] or by moving [`VENDOR_KEYS_START`] - either
+/// relocates [`PERSISTENT_SUBSCRIPTIONS_START`], and with it every
+/// subscription an earlier firmware already persisted. That is a deliberate,
+/// breaking key-layout migration, not a constant tweak.
+const SINGLETON_KEYS_FIT: () = assert!(
+    SINGLETON_KEYS_END <= PERSISTENT_SUBSCRIPTIONS_START,
+    "the rs-matter singleton keys have grown into the persisted-subscription range"
+);
+
+/// Compile-time proof that the persisted-subscription range has not moved.
+///
+/// [`PERSISTENT_SUBSCRIPTIONS_START`] is part of the on-device key layout:
+/// every subscription persisted by an earlier firmware lives at
+/// `PERSISTENT_SUBSCRIPTIONS_START + slot`. Deriving it from the two constants
+/// above keeps the intent readable, but the result must stay pinned to the
+/// value already shipped.
+const SUBSCRIPTION_RANGE_PINNED: () = assert!(
+    PERSISTENT_SUBSCRIPTIONS_START == 0x0800,
+    "the persisted-subscription range has moved - existing devices would look for their subscriptions under the wrong keys"
+);
+
+/// Force the assertions to be evaluated.
+const _: () = SINGLETON_KEYS_FIT;
+const _: () = SUBSCRIPTION_RANGE_PINNED;
 
 /// A trait representing a key-value BLOB storage.
 ///

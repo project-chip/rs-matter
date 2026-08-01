@@ -33,6 +33,8 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 #[cfg(feature = "groups")]
 use crate::group_keys::KeySet;
+#[cfg(feature = "groups")]
+use crate::persist::{KvBlobStore, GROUP_DATA_COUNTER_KEY};
 use crate::sc::SessionParameters;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::{self, ReliableMessage};
@@ -508,7 +510,6 @@ impl Session {
         &mut self,
         exch_index: Option<usize>,
         tx_header: &mut PacketHdr,
-        group_data_ctr: Option<u32>,
         session_active_interval_ms: Option<u32>,
         session_idle_interval_ms: Option<u32>,
     ) -> Result<(Address, bool), Error> {
@@ -518,6 +519,15 @@ impl Session {
         } else {
             None
         };
+
+        // The group data message counter value reserved (and made durable)
+        // for this exchange by `Exchange::initiate_group`.
+        #[cfg(feature = "groups")]
+        let group_data_ctr = exch_index.and_then(|exchange_index| {
+            unwrap!(self.exchanges[exchange_index].as_mut())
+                .group_data_ctr
+                .take()
+        });
 
         let retransmission = ctr.is_some();
 
@@ -537,12 +547,21 @@ impl Session {
         tx_header.plain.ctr = if let Some(ctr) = ctr {
             ctr
         } else if is_group && !is_control {
-            // Group data messages use the Global Group Encrypted Data
+            // Group data messages carry the Global Group Encrypted Data
             // Message Counter — one counter across all groups, so the
             // per-source counter tracking on the receiving side stays
-            // monotonic — supplied by the caller from
-            // `Sessions::next_global_group_data_ctr`.
-            group_data_ctr.ok_or(ErrorCode::InvalidState)?
+            // monotonic. The value was reserved by
+            // `Exchange::initiate_group`, which also made the boundary
+            // covering it durable before this send could happen.
+            #[cfg(feature = "groups")]
+            {
+                group_data_ctr.ok_or(ErrorCode::InvalidState)?
+            }
+            // Group sessions are never created without the `groups` feature.
+            #[cfg(not(feature = "groups"))]
+            {
+                Err(ErrorCode::InvalidState)?
+            }
         } else {
             self.get_msg_ctr()
         };
@@ -658,6 +677,8 @@ impl Session {
             exch_id,
             role,
             mrp: ReliableMessage::new(),
+            #[cfg(feature = "groups")]
+            group_data_ctr: None,
         });
 
         let exch_index = if self.exchanges.len() < MAX_EXCHANGES {
@@ -968,17 +989,38 @@ pub struct Sessions {
     /// [`Sessions::get_or_init_global_group_data_ctr`] to obtain a valid
     /// non-zero value.
     ///
-    /// TODO: Not persisted yet — the counter is re-randomized on each
-    /// process start, whereas the spec requires persisting it (with an
-    /// epoch/stride scheme) so it never goes backwards across reboots: a
-    /// receiver tracking our source in its group counter store may
-    /// otherwise reject our post-reboot group data messages as replays
-    /// until the fresh random value exceeds the old one. Follow the
-    /// (equally not-yet-wired) `Matter::run_persist_resumption` pattern
-    /// when addressing this.
+    /// Persisted with an epoch/stride scheme (see
+    /// [`Sessions::group_data_ctr_boundary`]) so it never goes backwards
+    /// across reboots: a receiver tracking our source in its group counter
+    /// store would otherwise reject our post-restart group data messages as
+    /// replays until the fresh value exceeded the old one.
     #[cfg(feature = "groups")]
     global_group_data_ctr: u32,
+    /// The boundary that must be held in durable storage, always at least
+    /// one epoch ahead of [`Sessions::global_group_data_ctr`]: a restart
+    /// resumes *at* the stored boundary and is therefore past every value
+    /// this run may have used. Moved forward (and flagged for persisting)
+    /// whenever the live counter reaches it.
+    ///
+    /// `0` when the counter is not yet initialized.
+    #[cfg(feature = "groups")]
+    group_data_ctr_boundary: u32,
+    /// Whether [`Sessions::group_data_ctr_boundary`] has moved since it was
+    /// last written to durable storage. Drained by
+    /// [`Sessions::take_group_data_ctr_to_persist`].
+    #[cfg(feature = "groups")]
+    group_data_ctr_dirty: bool,
 }
+
+/// How far ahead of the live Global Group Encrypted Data Message Counter the
+/// persisted boundary is kept.
+///
+/// Every crossing costs one KV write, and every restart burns up to this many
+/// counter values - so it trades flash wear against counter-space consumption.
+/// At 1000, a device sending a group message every second writes once every
+/// ~17 minutes.
+#[cfg(feature = "groups")]
+pub const GROUP_DATA_CTR_EPOCH: u32 = 1000;
 
 impl Sessions {
     /// Create a new Sessions instance.
@@ -993,6 +1035,10 @@ impl Sessions {
             next_exch_id: 0,
             #[cfg(feature = "groups")]
             global_group_data_ctr: 0,
+            #[cfg(feature = "groups")]
+            group_data_ctr_boundary: 0,
+            #[cfg(feature = "groups")]
+            group_data_ctr_dirty: false,
         }
     }
 
@@ -1008,6 +1054,8 @@ impl Sessions {
             next_sess_id: 1,
             next_exch_id: 0,
             global_group_data_ctr: 0,
+            group_data_ctr_boundary: 0,
+            group_data_ctr_dirty: false,
         });
         #[cfg(not(feature = "groups"))]
         let r = init!(Self {
@@ -1038,6 +1086,56 @@ impl Sessions {
 /// the `groups` feature — a unicast-only device never creates group sessions.
 #[cfg(feature = "groups")]
 impl Sessions {
+    /// Re-hydrate the Global Group Encrypted Data Message Counter from the
+    /// provided KV store, and immediately anchor (and store) the next epoch
+    /// boundary.
+    ///
+    /// Resuming at the stored boundary puts the counter past every value the
+    /// previous run may have used - otherwise peers tracking us in their group
+    /// counter store would drop our post-restart group messages as replays.
+    ///
+    /// An absent key means "first boot": the counter is instead seeded
+    /// randomly on first use, which likewise stores its boundary before
+    /// anything reaches the wire.
+    pub fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        if let Some(data) = store.load(GROUP_DATA_COUNTER_KEY, buf)? {
+            let boundary = u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::InvalidData)?);
+
+            self.resume_global_group_data_ctr(boundary);
+        }
+
+        if let Some(boundary) = self.take_group_data_ctr_to_persist() {
+            store.store(GROUP_DATA_COUNTER_KEY, &boundary.to_le_bytes(), buf)?;
+        }
+
+        Ok(())
+    }
+
+    /// Factory-reset the Global Group Encrypted Data Message Counter - both
+    /// in-memory and in the provided KV store.
+    ///
+    /// Unlike [`Sessions::reset`], which deliberately keeps the counter
+    /// running, a factory reset drops every fabric and group key, so no peer
+    /// can still be tracking this node's counter. The next group send seeds it
+    /// afresh at random and stores the new boundary before going on the wire.
+    pub fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.global_group_data_ctr = 0;
+        self.group_data_ctr_boundary = 0;
+        self.group_data_ctr_dirty = false;
+
+        store.remove(GROUP_DATA_COUNTER_KEY, buf)?;
+
+        Ok(())
+    }
+
     /// Return the current Global Group Encrypted Data Message Counter,
     /// lazily initialized to a random value in `[1, 2^28 - 1]` on first
     /// access. The upper 4 bits are kept zero to leave headroom for
@@ -1051,33 +1149,90 @@ impl Sessions {
             // unlikely) all-zero case; peers ignore a `MsgCounterSyncRsp`
             // whose Synchronized Counter is 0.
             let candidate = crypto.rand()?.next_u32() & MATTER_MSG_CTR_RANGE;
-            self.global_group_data_ctr = if candidate == 0 { 1 } else { candidate };
+            self.set_global_group_data_ctr(if candidate == 0 { 1 } else { candidate });
         }
         Ok(self.global_group_data_ctr)
     }
 
-    /// Return the current Global Group Encrypted Data Message Counter and
-    /// advance it — one counter across ALL outgoing group data messages, so
-    /// the per-source counter tracking on the receiving side stays monotonic
-    /// regardless of which group a message targets.
+    /// Resume the Global Group Encrypted Data Message Counter at `start` -
+    /// the boundary read back from durable storage (see
+    /// [`Sessions::take_group_data_ctr_to_persist`]), which is past every
+    /// value the previous run may have used.
     ///
-    /// Counter-initialization requires randomness, so it is done by
-    /// [`Sessions::get_or_create_for_group_tx`] (which has a crypto instance
-    /// at hand) — erroring out here on an uninitialized counter rather than
-    /// carrying a crypto parameter into the send path.
-    pub(crate) fn next_global_group_data_ctr(&mut self) -> Result<u32, Error> {
-        if self.global_group_data_ctr == 0 {
-            return Err(ErrorCode::InvalidState.into());
+    /// Anchors a fresh boundary one epoch ahead and flags it for persisting,
+    /// so the *next* restart likewise resumes past this run's values.
+    pub(crate) fn resume_global_group_data_ctr(&mut self, start: u32) {
+        self.set_global_group_data_ctr(if start == 0 { 1 } else { start });
+    }
+
+    /// Set the live counter and (re-)anchor the persist boundary one epoch
+    /// ahead of it, flagging it to be written.
+    fn set_global_group_data_ctr(&mut self, value: u32) {
+        self.global_group_data_ctr = value;
+        self.group_data_ctr_boundary = Self::advance_group_data_ctr(value, GROUP_DATA_CTR_EPOCH);
+        self.group_data_ctr_dirty = true;
+    }
+
+    /// Advance a counter value by `delta`, staying inside the Matter message
+    /// counter range and skipping 0 (the "uninitialized" marker here, and a
+    /// value peers ignore in `MsgCounterSyncRsp`).
+    fn advance_group_data_ctr(value: u32, delta: u32) -> u32 {
+        let next = value.wrapping_add(delta) & MATTER_MSG_CTR_RANGE;
+        if next == 0 {
+            1
+        } else {
+            next
+        }
+    }
+
+    /// Take the boundary that must be written to durable storage, if it has
+    /// moved since the last write.
+    ///
+    /// Returns `None` when the stored value is still up to date.
+    ///
+    /// The caller MUST write a returned boundary *before* any counter value
+    /// it covers reaches the wire - see
+    /// [`Sessions::reserve_global_group_data_ctr`].
+    #[must_use = "a returned boundary must be persisted"]
+    pub(crate) fn take_group_data_ctr_to_persist(&mut self) -> Option<u32> {
+        self.group_data_ctr_dirty
+            .then(|| {
+                self.group_data_ctr_dirty = false;
+                self.group_data_ctr_boundary
+            })
+            .filter(|boundary| *boundary != 0)
+    }
+
+    /// Reserve the counter value for one outgoing group data message,
+    /// lazily initializing the counter if this is the first use.
+    ///
+    /// Returns `(value, boundary_to_persist)`. The caller MUST durably store
+    /// `boundary_to_persist` (when `Some`) *before* putting `value` on the
+    /// wire: only then is a restart guaranteed to resume past it. Group data
+    /// messages are one-per-exchange, so exactly one value is reserved per
+    /// [`crate::transport::exchange::Exchange::initiate_group`].
+    #[must_use = "a returned boundary must be persisted before the value is sent"]
+    pub(crate) fn reserve_global_group_data_ctr<C: Crypto>(
+        &mut self,
+        crypto: C,
+    ) -> Result<(u32, Option<u32>), Error> {
+        // First use: seed the counter (and its boundary) at random.
+        self.get_or_init_global_group_data_ctr(crypto)?;
+
+        let value = self.global_group_data_ctr;
+
+        self.global_group_data_ctr = Self::advance_group_data_ctr(value, 1);
+
+        // Reaching the boundary means the stored value no longer covers what
+        // comes next: move it one epoch further. The counter advances one at
+        // a time, so it lands exactly on the boundary once per epoch.
+        if self.global_group_data_ctr == self.group_data_ctr_boundary {
+            self.group_data_ctr_boundary =
+                Self::advance_group_data_ctr(self.group_data_ctr_boundary, GROUP_DATA_CTR_EPOCH);
+            self.group_data_ctr_dirty = true;
         }
 
-        let ctr = self.global_group_data_ctr;
-
-        // Advance within the counter range, skipping 0 (the "uninitialized"
-        // marker here, and a value peers ignore in `MsgCounterSyncRsp`).
-        let next = ctr.wrapping_add(1) & MATTER_MSG_CTR_RANGE;
-        self.global_group_data_ctr = if next == 0 { 1 } else { next };
-
-        Ok(ctr)
+        Ok((value, self.take_group_data_ctr_to_persist()))
     }
 
     /// Get or create a TX group session for sending group data messages to
@@ -1959,5 +2114,210 @@ mod tests {
             "Group Session ID mismatch: got 0x{:04X}, expected 0xB9F7",
             session_id
         );
+    }
+
+    /// The persisted-boundary bookkeeping of the global group data message
+    /// counter. The invariant under test: every reserved value is covered by
+    /// a boundary the caller was told to persist BEFORE that value can be
+    /// sent - so a restart always resumes past everything handed out.
+    #[cfg(feature = "groups")]
+    #[test]
+    fn test_group_data_ctr_reserve_boundary() {
+        let crypto = test_only_crypto();
+
+        let mut sessions = Sessions::new();
+
+        // A fresh instance has nothing to persist.
+        assert_eq!(sessions.take_group_data_ctr_to_persist(), None);
+
+        // Resuming at a stored boundary anchors the next one an epoch ahead.
+        sessions.resume_global_group_data_ctr(1000);
+
+        // The first reservation hands out the stored boundary itself - past
+        // every value the previous run could have used - and returns the new
+        // boundary, to be made durable before that value is sent.
+        let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
+        assert_eq!(value, 1000);
+        assert_eq!(boundary, Some(1000 + GROUP_DATA_CTR_EPOCH));
+
+        // The rest of the epoch is already covered, so no further writes are
+        // demanded - and every handed-out value stays below what is durable.
+        let durable = boundary.unwrap();
+        for expected in 1001..1000 + GROUP_DATA_CTR_EPOCH - 1 {
+            let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
+            assert_eq!(value, expected);
+            assert_eq!(boundary, None);
+            assert!(value < durable);
+        }
+
+        // The reservation that exhausts the epoch (its value takes the live
+        // counter *to* the boundary) demands the next one.
+        let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
+        assert_eq!(value, 1000 + GROUP_DATA_CTR_EPOCH - 1);
+        assert!(value < durable);
+        assert_eq!(boundary, Some(1000 + 2 * GROUP_DATA_CTR_EPOCH));
+    }
+
+    /// A first-ever reservation seeds the counter and demands its boundary be
+    /// persisted before the value is used - no send can precede a write.
+    #[cfg(feature = "groups")]
+    #[test]
+    fn test_group_data_ctr_first_reservation_persists() {
+        let crypto = test_only_crypto();
+
+        let mut sessions = Sessions::new();
+
+        let (value, boundary) = sessions.reserve_global_group_data_ctr(&crypto).unwrap();
+
+        assert_ne!(value, 0);
+        let boundary = boundary.expect("the first reservation must demand a persist");
+        assert!(value < boundary);
+    }
+
+    /// The counter and its boundary stay inside the Matter message counter
+    /// range and never land on 0 (the "uninitialized" marker, and a value
+    /// peers ignore in `MsgCounterSyncRsp`).
+    #[cfg(feature = "groups")]
+    #[test]
+    fn test_group_data_ctr_wraps_within_range() {
+        let crypto = test_only_crypto();
+        let top = MATTER_MSG_CTR_RANGE;
+
+        let mut sessions = Sessions::new();
+        sessions.resume_global_group_data_ctr(top);
+
+        assert_eq!(
+            sessions.reserve_global_group_data_ctr(&crypto).unwrap().0,
+            top
+        );
+        // `top + 1` masks to 0 -> skipped to 1.
+        assert_eq!(
+            sessions.reserve_global_group_data_ctr(&crypto).unwrap().0,
+            1
+        );
+
+        // A boundary that would land on 0 is likewise skipped.
+        let mut sessions = Sessions::new();
+        sessions.resume_global_group_data_ctr(top + 1 - GROUP_DATA_CTR_EPOCH);
+        assert_eq!(sessions.take_group_data_ctr_to_persist(), Some(1));
+    }
+
+    /// A resume value of 0 (a corrupt/blank stored boundary) must not leave
+    /// the counter in the "uninitialized" state.
+    #[cfg(feature = "groups")]
+    #[test]
+    fn test_group_data_ctr_resume_zero() {
+        let crypto = test_only_crypto();
+
+        let mut sessions = Sessions::new();
+        sessions.resume_global_group_data_ctr(0);
+
+        assert_eq!(
+            sessions.reserve_global_group_data_ctr(&crypto).unwrap().0,
+            1
+        );
+    }
+
+    /// An in-memory [`KvBlobStore`](crate::persist::KvBlobStore) for the
+    /// counter persistence tests below.
+    #[cfg(all(feature = "groups", feature = "std"))]
+    struct MemKv(std::collections::HashMap<u16, std::vec::Vec<u8>>);
+
+    #[cfg(all(feature = "groups", feature = "std"))]
+    impl crate::persist::KvBlobStore for &mut MemKv {
+        fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            Ok(self.0.get(&key).map(|v| {
+                buf[..v.len()].copy_from_slice(v);
+                &buf[..v.len()]
+            }))
+        }
+
+        fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+            self.0.insert(key, data.to_vec());
+            Ok(())
+        }
+
+        fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+            self.0.remove(&key);
+            Ok(())
+        }
+    }
+
+    /// The reboot-survival contract of [`crate::Matter::startup`]: it reads
+    /// the boundary the previous run stored (same key, same encoding),
+    /// resumes the counter *at* it - past everything that run could have
+    /// sent - and immediately stores the next boundary so this run is
+    /// covered too.
+    #[cfg(all(feature = "groups", feature = "std"))]
+    #[test]
+    fn test_group_data_ctr_resumes_from_storage() {
+        use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+        use crate::error::Error;
+        use crate::persist::GROUP_DATA_COUNTER_KEY;
+        use crate::Matter;
+
+        /// The previous run's stored boundary.
+        const STORED: u32 = 5000;
+
+        let mut kv = MemKv(std::collections::HashMap::new());
+        kv.0.insert(GROUP_DATA_COUNTER_KEY, STORED.to_le_bytes().to_vec());
+
+        let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        matter.startup(matter.kv(&mut kv)).unwrap();
+
+        // The first value handed out is the stored boundary itself.
+        let first = matter
+            .with_state(|state| {
+                Ok::<_, Error>(
+                    state
+                        .sessions
+                        .reserve_global_group_data_ctr(test_only_crypto())?
+                        .0,
+                )
+            })
+            .unwrap();
+        assert_eq!(first, STORED);
+
+        // ...and startup already re-anchored and stored the next boundary,
+        // so a crash right now still resumes past `first`.
+        let stored = kv.0.get(&GROUP_DATA_COUNTER_KEY).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(stored.as_slice().try_into().unwrap()),
+            STORED + GROUP_DATA_CTR_EPOCH
+        );
+    }
+
+    /// A factory reset drops the stored boundary along with the fabrics and
+    /// group keys it covered, and the next use seeds a fresh counter that is
+    /// again persisted before anything can be sent.
+    #[cfg(all(feature = "groups", feature = "std"))]
+    #[test]
+    fn test_group_data_ctr_factory_reset() {
+        use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+        use crate::persist::GROUP_DATA_COUNTER_KEY;
+        use crate::Matter;
+
+        let mut kv = MemKv(std::collections::HashMap::new());
+        kv.0.insert(GROUP_DATA_COUNTER_KEY, 5000u32.to_le_bytes().to_vec());
+
+        let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        matter.startup(matter.kv(&mut kv)).unwrap();
+
+        matter.factory_reset(matter.kv(&mut kv)).unwrap();
+
+        assert!(!kv.0.contains_key(&GROUP_DATA_COUNTER_KEY));
+
+        // The counter is back to "first boot": the next reservation seeds it
+        // at random and hands back a boundary that must be stored first.
+        let (value, boundary) = matter
+            .with_state(|state| {
+                state
+                    .sessions
+                    .reserve_global_group_data_ctr(test_only_crypto())
+            })
+            .unwrap();
+
+        assert_ne!(value, 0);
+        assert_eq!(boundary, Some(value + GROUP_DATA_CTR_EPOCH));
     }
 }

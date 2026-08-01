@@ -608,7 +608,8 @@ impl<'a> Matter<'a> {
 
     /// Factory-reset the `Matter` persistable state by removing all fabrics and
     /// resetting the basic info settings, the RTC state and (if compiled in) the
-    /// CASE resumption cache - both in-memory and in the provided KV store.
+    /// CASE resumption cache and the group data message counter - both in-memory
+    /// and in the provided KV store.
     ///
     /// The counterpart of [`Matter::startup`]. Call when the node is
     /// factory-reset, alongside
@@ -626,6 +627,8 @@ impl<'a> Matter<'a> {
                 state.rtc.reset_persist(&mut store, buf)?;
                 #[cfg(feature = "case-resumption")]
                 state.resumption.reset_persist(&mut store, buf)?;
+                #[cfg(feature = "groups")]
+                state.sessions.reset_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
             })
@@ -637,8 +640,8 @@ impl<'a> Matter<'a> {
     }
 
     /// Re-hydrate the `Matter` persistable state - the fabrics, the basic info
-    /// settings, the RTC state and (if compiled in) the CASE resumption cache -
-    /// from the provided KV store.
+    /// settings, the RTC state and (if compiled in) the CASE resumption cache
+    /// and the group data message counter - from the provided KV store.
     ///
     /// Call once at startup, before the transport starts serving traffic. The
     /// Data-Model counterpart is
@@ -656,6 +659,8 @@ impl<'a> Matter<'a> {
                 state.rtc.load_persist(&mut store, buf)?;
                 #[cfg(feature = "case-resumption")]
                 state.resumption.load_persist(&mut store, buf)?;
+                #[cfg(feature = "groups")]
+                state.sessions.load_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
             })

@@ -64,7 +64,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::DirKvBlobStore;
+use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -153,9 +153,9 @@ fn main() -> Result<(), Error> {
     // The switch task: on each Enter, emit Generic Switch press events and
     // toggle every bound light. `&im` is the `EventEmitter` used to publish the
     // Generic Switch events.
-    let mut switch = pin!(run_switch(&matter, &crypto, &bindings, &im));
+    let mut switch = pin!(run_switch(&matter, &crypto, &kv, &bindings, &im));
 
-    // Combine the core Matter tasks, then add the switch task alongside.
+    // Combine the core Matter tasks, then add the switch tasks alongside.
     let mut core = pin!(select4(&mut transport, &mut mdns, &mut respond, &mut im_job,).coalesce());
 
     let all = select(&mut core, &mut switch).coalesce();
@@ -174,7 +174,8 @@ fn main() -> Result<(), Error> {
 /// timer, so a keyboard-triggered switch toggle is unambiguously observable.
 async fn run_switch<const N: usize>(
     matter: &Matter<'_>,
-    crypto: &impl Crypto,
+    crypto: impl Crypto,
+    kv: impl KvBlobStoreAccess,
     bindings: &Bindings<N>,
     emitter: impl EventEmitter,
 ) -> Result<(), Error> {
@@ -242,7 +243,7 @@ async fn run_switch<const N: usize>(
                     binding.fab_idx, group_id
                 );
 
-                match group_toggle(matter, crypto, binding.fab_idx, group_id).await {
+                match group_toggle(matter, &crypto, &kv, binding.fab_idx, group_id).await {
                     Ok(()) => info!("Switch: group toggle ok"),
                     Err(e) => warn!("Switch: group toggle failed: {:?}", e),
                 }
@@ -261,7 +262,7 @@ async fn run_switch<const N: usize>(
             );
 
             // Resolve (if needed) + CASE + invoke `OnOff::Toggle`.
-            match toggle(matter, crypto, binding.fab_idx, node, endpoint).await {
+            match toggle(matter, &crypto, binding.fab_idx, node, endpoint).await {
                 Ok(()) => info!("Switch: toggle ok"),
                 Err(e) => warn!("Switch: toggle failed: {:?}", e),
             }
@@ -274,7 +275,7 @@ async fn run_switch<const N: usize>(
 /// no session exists yet.
 async fn toggle(
     matter: &Matter<'_>,
-    crypto: &impl Crypto,
+    crypto: impl Crypto,
     fab_idx: NonZeroU8,
     node: u64,
     endpoint: u16,
@@ -287,7 +288,8 @@ async fn toggle(
 /// Multicast an encrypted, fire-and-forget `OnOff::Toggle` to `group_id`.
 async fn group_toggle(
     matter: &Matter<'_>,
-    crypto: &impl Crypto,
+    crypto: impl Crypto,
+    kv: impl KvBlobStoreAccess,
     fab_idx: NonZeroU8,
     group_id: u16,
 ) -> Result<(), Error> {
@@ -295,7 +297,7 @@ async fn group_toggle(
     use rs_matter::im::{CmdDataTag, CmdPath};
     use rs_matter::tlv::{TLVTag, TLVWrite};
 
-    let exchange = Exchange::initiate_group(matter, crypto, fab_idx, group_id)?;
+    let exchange = Exchange::initiate_group(matter, crypto, kv, fab_idx, group_id)?;
 
     exchange
         .group_invoke_with(|b| {
