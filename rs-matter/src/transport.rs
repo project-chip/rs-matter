@@ -2036,14 +2036,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         if let Some(session) = &mut session {
             packet.header.plain = Default::default();
 
-            // Group DATA messages are only ever sent through the exchange
-            // path (`ExchangeSender`), which supplies the global group data
-            // counter; this transport-level path serves the remaining
-            // (unicast and group-control) sends.
             let (peer, retransmission) = session.pre_send(
                 exchange_index,
                 &mut packet.header,
-                None,
                 self.transport().device_sai,
                 self.transport().device_sii,
             )?;

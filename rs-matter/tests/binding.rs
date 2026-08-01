@@ -858,7 +858,13 @@ async fn press_switch<C: Crypto>(
                 binding.fab_idx, group_id
             );
 
-            let exchange = Exchange::initiate_group(a_matter, a_crypto, binding.fab_idx, group_id)?;
+            let exchange = Exchange::initiate_group(
+                a_matter,
+                a_crypto,
+                a_matter.kv(DummyKvBlobStore),
+                binding.fab_idx,
+                group_id,
+            )?;
 
             exchange
                 .group_invoke_with(|b| {

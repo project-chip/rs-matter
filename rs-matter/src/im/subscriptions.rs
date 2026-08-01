@@ -503,6 +503,22 @@ impl<const N: usize> Subscriptions<N> {
 /// and key-value store traffic it pulls in — entirely.
 #[cfg(feature = "persistent-subscriptions")]
 impl<const N: usize> Subscriptions<N> {
+    /// Compile-time proof that every slot of this table maps to a key inside
+    /// the reserved persisted-subscription range - i.e. that persisting can
+    /// never run past it and into the vendor keys.
+    ///
+    /// Evaluated by every method below that maps a slot to a key, so an
+    /// oversized table is rejected at build time rather than corrupting
+    /// whatever lives past the range. Being a check on a generic parameter, it
+    /// is only evaluated once monomorphized - i.e. it surfaces on `cargo build`
+    /// / `cargo test`, not on `cargo check`.
+    // `::core::assert!` rather than the crate-wide `assert!`, which maps to
+    // `defmt::assert!` under the `defmt` feature and is not const-callable.
+    const SLOTS_FIT: () = ::core::assert!(
+        N <= crate::persist::MAX_PERSISTED_SUBSCRIPTIONS,
+        "the subscriptions table is larger than the reserved persisted-subscription key range"
+    );
+
     /// Persist the whole subscription table to `kv`, one record per key.
     ///
     /// Each subscription is written under its own key
@@ -524,6 +540,9 @@ impl<const N: usize> Subscriptions<N> {
         B: Buffers<IMBuffer> + 'a,
         S: KvBlobStore,
     {
+        // Force the slot-range assertion to be evaluated.
+        let () = Self::SLOTS_FIT;
+
         self.with(buffers, |state, buffers| {
             for (slot, (sub, rx)) in state
                 .subscriptions
@@ -592,6 +611,9 @@ impl<const N: usize> Subscriptions<N> {
         B: Buffers<IMBuffer> + 'a,
         S: KvBlobStore,
     {
+        // Force the slot-range assertion to be evaluated.
+        let () = Self::SLOTS_FIT;
+
         for slot in 0..N {
             let key = PERSISTENT_SUBSCRIPTIONS_START + slot as u16;
 
@@ -663,6 +685,9 @@ impl<const N: usize> Subscriptions<N> {
     where
         S: KvBlobStore,
     {
+        // Force the slot-range assertion to be evaluated.
+        let () = Self::SLOTS_FIT;
+
         for slot in 0..N {
             let key = PERSISTENT_SUBSCRIPTIONS_START + slot as u16;
             kv.remove(key, buf)?;
