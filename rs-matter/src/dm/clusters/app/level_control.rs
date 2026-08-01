@@ -935,20 +935,33 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             }
 
             if is_transition_end {
-                if should_notify
-                    || self.with_state(|state| {
-                        state.write_remaining_time_quietly(
-                            Duration::from_millis(0),
-                            is_transition_start,
-                        )
-                    })
-                {
+                // Always run the quiet write - it stores the new value as a
+                // side effect, so short-circuiting it on `should_notify`
+                // would leave `RemainingTime` stale.
+                let remaining_time_reportable = self.with_state(|state| {
+                    state
+                        .write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)
+                });
+
+                if should_notify {
                     ctx.notify_attr_changed(
                         self.endpoint_id,
                         Self::CLUSTER.id,
                         AttributeId::CurrentLevel as _,
                     );
                 }
+
+                // `RemainingTime` is Q-quality: reported only when the quiet
+                // write says so (App Cluster spec), and against its OWN
+                // attribute id - not `CurrentLevel`.
+                if remaining_time_reportable {
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::RemainingTime as _,
+                    );
+                }
+
                 return Ok(());
             }
 
@@ -960,15 +973,23 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 }
             }
 
-            if should_notify
-                || self.with_state(|state| {
-                    state.write_remaining_time_quietly(remaining_time, is_transition_start)
-                })
-            {
+            let remaining_time_reportable = self.with_state(|state| {
+                state.write_remaining_time_quietly(remaining_time, is_transition_start)
+            });
+
+            if should_notify {
                 ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
                     AttributeId::CurrentLevel as _,
+                );
+            }
+
+            if remaining_time_reportable {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::RemainingTime as _,
                 );
             }
 
@@ -1000,8 +1021,12 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         // the Rate field is null and the DefaultMoveRate attribute is either not supported or set to null, then
         // the device SHOULD move as fast as it is able.
         let rate = match rate {
-            // Move at a rate of zero is no move at all. Immediately succeed without touching anything.
-            Some(0) => return Ok(()),
+            // A rate of zero would be a move that never arrives: the units-per-second
+            // rate is the divisor of the movement's step interval, so zero has no
+            // meaningful interpretation. Rejected as an invalid command (per the
+            // App Cluster spec's Move / MoveWithOnOff constraints; `TC-LVL-4.1`
+            // step 4h asserts `INVALID_COMMAND`).
+            Some(0) => return Err(ErrorCode::InvalidCommand.into()),
             Some(val) => val,
             None => match state.default_move_rate.as_opt_ref() {
                 Some(val) => *val,
@@ -1204,13 +1229,22 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                     // drift, never a scene apply.
                     match self.set_level(state, current_level, true, false, false) {
                         Ok((_, should_notify)) => {
-                            if should_notify
-                                || state.write_remaining_time_quietly(Duration::from_millis(0), false)
-                            {
+                            let remaining_time_reportable = state
+                                .write_remaining_time_quietly(Duration::from_millis(0), false);
+
+                            if should_notify {
                                 ctx.notify_attr_changed(
                                     self.endpoint_id,
                                     Self::CLUSTER.id,
                                     AttributeId::CurrentLevel as _,
+                                );
+                            }
+
+                            if remaining_time_reportable {
+                                ctx.notify_attr_changed(
+                                    self.endpoint_id,
+                                    Self::CLUSTER.id,
+                                    AttributeId::RemainingTime as _,
                                 );
                             }
                         }

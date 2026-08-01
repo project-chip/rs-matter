@@ -38,6 +38,7 @@ use futures_lite::StreamExt;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::clusters::decl::level_control::{
@@ -52,7 +53,7 @@ use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
+use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
@@ -155,15 +156,29 @@ fn main() -> Result<(), Error> {
     )
     .with_scene_invalidator(scenes_state);
 
+    // ColorControl cluster setup - coupled to the same OnOff so
+    // EXECUTE_IF_OFF gating works.
+    let color_control_handler = color_control::ColorControlHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        ColorControlDeviceLogic::new(),
+        color_control::AttributeDefaults::default(),
+    )
+    .with_scene_invalidator(scenes_state);
+
     // Cluster wiring, validation and initialisation
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
+    color_control_handler.init(Some(&on_off_handler));
 
     // Scenes Management cluster setup.
     let scenes_handler = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
         scenes_state,
-        (&on_off_handler, (&level_control_handler, ())),
+        (
+            &on_off_handler,
+            (&level_control_handler, (&color_control_handler, ())),
+        ),
     );
 
     // Create the Data Model instance
@@ -175,6 +190,7 @@ fn main() -> Result<(), Error> {
             rand,
             &on_off_handler,
             &level_control_handler,
+            &color_control_handler,
             scenes_handler,
             unit_testing_data,
         ),
@@ -242,19 +258,24 @@ fn main() -> Result<(), Error> {
 
 /// The Node meta-data describing our Matter device.
 ///
-/// EP1 carries the Dimmable Light device type (so OnOff+LevelControl
-/// are auto-required) plus the Scenes Management cluster.
+/// EP1 carries the Extended Color Light device type (so OnOff +
+/// LevelControl + ColorControl are auto-required) plus the Scenes
+/// Management cluster. All three scenable clusters live here so the
+/// per-cluster Scenes-interaction tests (`TC_OO_2_7`, `TC_LVL_9_1`,
+/// `TC_CC_10_1`) - which drive ScenesManagement against the cluster
+/// under test on the SAME endpoint - have a DUT to run against.
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_DIMMABLE_LIGHT),
+            devices!(DEV_TYPE_EXTENDED_COLOR_LIGHT),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
+                ColorControlDeviceLogic::CLUSTER,
                 SCENES_FULL_CLUSTER,
                 UnitTestingHandler::CLUSTER,
             ),
@@ -262,13 +283,20 @@ const NODE: Node<'static> = Node {
     ],
 };
 
+// ---- ColorControl business logic ----
+//
+// The cluster owns all attribute state internally - reuse the bundled
+// test logic (all 5 features, stub actuator), as `light_tests` does.
+pub use rs_matter::dm::clusters::app::color_control::test::TestColorControlDeviceLogic as ColorControlDeviceLogic;
+
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the OnOff /
 /// LevelControl / Scenes handlers wired onto EP1.
-fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, R>(
+fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks, R>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
+    color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
     scenes: ScenesHandler<'a, SCENES_CAPACITY, R>,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
 ) -> impl DataModel + 'a
@@ -295,6 +323,10 @@ where
             .chain(
                 EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
                 level_control::HandlerAsyncAdaptor(level_control),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(ColorControlDeviceLogic::CLUSTER.id)),
+                color_control::HandlerAsyncAdaptor(color_control),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(SCENES_FULL_CLUSTER.id)),
