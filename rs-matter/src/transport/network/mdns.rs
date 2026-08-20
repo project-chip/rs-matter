@@ -696,16 +696,92 @@ impl ToLabelIter for DottedName<'_> {
 ///
 /// The params are carried out so the CASE initiator can seed the new session's
 /// MRP backoff from the peer's advertised values rather than local defaults.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ResolvedNode {
-    /// The resolved peer address (best-scored address + port).
-    pub addr: SocketAddr,
+    /// The resolved peer addresses, **best-scored first** (see
+    /// [`score_ip_address`]), each already carrying its IPv6 scope where one
+    /// applies. Never empty.
+    ///
+    /// More than one is carried because the best-scored address is not
+    /// necessarily the reachable one, so the CASE initiator walks the list until
+    /// a handshake completes - see [`MAX_RESOLVE_CANDIDATES`].
+    pub addrs: Vec<SocketAddr, MAX_RESOLVE_CANDIDATES>,
     /// Session Idle Interval (`SII`), milliseconds.
     pub sii: Option<u32>,
     /// Session Active Interval (`SAI`), milliseconds.
     pub sai: Option<u32>,
     /// Session Active Threshold (`SAT`), milliseconds.
     pub sat: Option<u16>,
+}
+
+impl ResolvedNode {
+    /// The best-scored candidate address.
+    ///
+    /// [`Self::addrs`] is never empty, so this only returns `None` for a
+    /// hand-constructed value.
+    pub fn addr(&self) -> Option<SocketAddr> {
+        self.addrs.first().copied()
+    }
+}
+
+/// Maximum number of candidate peer addresses kept for a single resolve.
+///
+/// A node advertises an AAAA record for every address it accepts operational
+/// messages on, and the Matter Core Specification requires support for at least
+/// three routable addresses on top of the link-local one, so a single answer can
+/// easily carry several. Keeping a few of them - rather than only the
+/// best-scored one - is what lets the CASE initiator recover when the top
+/// candidate turns out to be unreachable, which is exactly the failure mode of a
+/// link-local address relayed across a subnet boundary. See
+/// [`score_ip_address_on_link`] for why the ranking cannot decide that on its
+/// own.
+pub const MAX_RESOLVE_CANDIDATES: usize = 3;
+
+/// A single ranked candidate address for a resolved peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResolvedAddr {
+    /// The peer address.
+    pub ip: IpAddr,
+    /// IPv6 scope (zone) id for a link-local `ip`; 0 otherwise. See
+    /// [`MdnsRemoteService::scope_id`].
+    pub scope_id: u32,
+    /// The score `ip` was ranked by (see [`score_ip_address_on_link`]).
+    /// Candidates are kept in descending score order.
+    pub score: u8,
+}
+
+/// Merge one address into a ranked candidate list, keeping it sorted by
+/// descending score, free of duplicates, and bounded to
+/// [`MAX_RESOLVE_CANDIDATES`].
+///
+/// Returns `true` if the list changed. A duplicate, or an address that scores
+/// below every candidate in an already-full list, is dropped.
+pub(crate) fn merge_resolve_candidate(
+    addrs: &mut Vec<ResolvedAddr, MAX_RESOLVE_CANDIDATES>,
+    candidate: ResolvedAddr,
+) -> bool {
+    if addrs.iter().any(|c| c.ip == candidate.ip) {
+        return false;
+    }
+
+    let pos = addrs
+        .iter()
+        .position(|c| c.score < candidate.score)
+        .unwrap_or(addrs.len());
+
+    if pos >= MAX_RESOLVE_CANDIDATES {
+        // Worse than every candidate already kept, and there is no room.
+        return false;
+    }
+
+    if addrs.is_full() {
+        addrs.pop();
+    }
+
+    // `pos <= addrs.len()` and the list has room, so this cannot fail.
+    let _ = addrs.insert(pos, candidate);
+
+    true
 }
 
 /// The state of the single in-flight mDNS resolve "rendezvous" shared between
@@ -722,16 +798,18 @@ pub(crate) enum MdnsResolveState {
     Requested { service: MatterRemoteService },
     /// The responder picked up the request and sent the query; awaiting an answer.
     InFlight { service: MatterRemoteService },
-    /// The responder deposited the resolved address + MRP/session params.
+    /// The responder deposited the resolved addresses + MRP/session params.
     ///
     /// No `service` is carried: the rendezvous is single-slot, so the only waiter
     /// that can observe this is the one whose request the responder resolved.
     Resolved {
-        ip: IpAddr,
+        /// The candidate addresses, best-scored first and never empty. Further
+        /// deposits for the same in-flight target merge into this list, so a
+        /// backend that surfaces one address per callback (Avahi, zeroconf)
+        /// accumulates candidates the same way a backend that hands over a whole
+        /// packet (the builtin responder) does.
+        addrs: Vec<ResolvedAddr, MAX_RESOLVE_CANDIDATES>,
         port: u16,
-        /// IPv6 scope (zone) id for a link-local `ip`; 0 otherwise. See
-        /// [`MdnsRemoteService::scope_id`].
-        scope_id: u32,
         sii: Option<u32>,
         sai: Option<u32>,
         sat: Option<u16>,
@@ -781,40 +859,89 @@ pub(crate) enum MdnsBrowseState {
     },
 }
 
-/// Score an IP address for prioritization.
+/// Score an IP address for prioritization; higher is more preferred.
 ///
-/// Higher scores indicate more preferred addresses. The priority order follows
-/// the Matter specification:
-///
-/// 1. Link-local IPv6 (highest priority) - most likely to work for local discovery
-/// 2. Unique local IPv6 (ULA, fc00::/7) - private network addresses
-/// 3. Global unicast IPv6 - routable addresses
-/// 4. IPv4 (lowest priority)
-///
-/// This prioritization prefers IPv6 over IPv4 and local addresses over global ones,
-/// which aligns with Matter's preference for link-local communication.
+/// Convenience wrapper over [`score_ip_address_on_link`] for callers that have no
+/// knowledge of the local interface addresses.
 pub fn score_ip_address(addr: &IpAddr) -> u8 {
+    score_ip_address_on_link(addr, &[])
+}
+
+/// Score an IP address for prioritization; higher is more preferred.
+///
+/// The Matter Core Specification prescribes no ordering: it accepts a global
+/// unicast, a link-local or a unique local address equally as an operational
+/// address, and the only related requirement is that a peer must not be assumed
+/// reachable at a single address. The ladder below therefore encodes reachability
+/// heuristics rather than a spec rule, and follows the ordering the CHIP SDK
+/// resolves with, so both stacks pick the same address for the same
+/// advertisement:
+///
+/// 1. Link-local IPv6 - reachability is implied by the discovery itself: mDNS is
+///    link-scoped, so an answer received over multicast DNS proves the peer is on
+///    the link. It also never renumbers and depends on no router.
+/// 2. Global unicast sharing a prefix with a local address - provably on-link
+///    too, without depending on the answer having arrived over the link.
+/// 3. Unique local sharing a prefix with a local address - likewise on-link.
+/// 4. Global unicast - routable, but possibly only via a router.
+/// 5. Unique local - routable, but possibly only via a router.
+/// 6. IPv4 - outside the Matter operational addressing model; last resort.
+/// 7. Any other IPv6 (multicast, unspecified, IPv4-mapped) - unusable.
+///
+/// Ranking link-local first is only safe together with the candidate list the
+/// resolver keeps: an answer relayed across a subnet boundary - by an mDNS
+/// reflector, or by the DNS-SD proxy of a Thread border router - carries a
+/// link-local address that scores highest yet cannot be reached, so the initiator
+/// must be able to fall back to the next candidate. See
+/// [`MAX_RESOLVE_CANDIDATES`].
+///
+/// `local_ipv6` are the IPv6 addresses configured on the local interface, used
+/// for the two "shares a prefix" tiers. Pass `&[]` when they are unknown - which
+/// is the case for every OS-backed responder, as those delegate the host records
+/// to a daemon and never see the addresses themselves.
+pub fn score_ip_address_on_link(addr: &IpAddr, local_ipv6: &[Ipv6Addr]) -> u8 {
     match addr {
         IpAddr::V6(ipv6) => {
             if ipv6.is_unicast_link_local() {
-                // Link-local IPv6 (fe80::/10) - highest priority
-                100
-            } else if ipv6.is_unique_local() {
-                // Unique local address (fc00::/7) - second priority
-                80
+                70
             } else if is_ipv6_global_unicast(ipv6) {
-                // Global unicast - third priority
-                60
+                if shares_prefix(ipv6, local_ipv6) {
+                    60
+                } else {
+                    40
+                }
+            } else if ipv6.is_unique_local() {
+                if shares_prefix(ipv6, local_ipv6) {
+                    50
+                } else {
+                    30
+                }
             } else {
-                // Other IPv6 (multicast, etc.)
-                40
+                10
             }
         }
-        IpAddr::V4(_) => {
-            // IPv4 - lowest priority
-            20
-        }
+        IpAddr::V4(_) => 20,
     }
+}
+
+/// Whether `addr` sits in the same /64 as any of `local_ipv6` - i.e. the peer
+/// address belongs to a prefix this node is itself configured on, and is
+/// therefore reachable without traversing a router.
+///
+/// /64 is the only prefix length worth checking: both the on-link prefixes a
+/// Wi-Fi / Ethernet interface autoconfigures from a Router Advertisement and the
+/// on-mesh prefixes carried in the Thread Network Data are /64.
+///
+/// Local link-local addresses are skipped: every link-local address shares the
+/// `fe80::/64` prefix, so matching against them would promote every peer
+/// link-local address into a tier it does not belong to (and link-local is
+/// already the top tier anyway).
+fn shares_prefix(addr: &Ipv6Addr, local_ipv6: &[Ipv6Addr]) -> bool {
+    let prefix = &addr.octets()[..8];
+
+    local_ipv6
+        .iter()
+        .any(|local| !local.is_unicast_link_local() && &local.octets()[..8] == prefix)
 }
 
 /// Check if an IPv6 address is global unicast (2000::/3)
@@ -1084,10 +1211,107 @@ mod tests {
         let ula = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
         let global = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
         let ipv4 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let mapped = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xc0a8, 1));
 
-        assert!(score_ip_address(&link_local) > score_ip_address(&ula));
-        assert!(score_ip_address(&ula) > score_ip_address(&global));
-        assert!(score_ip_address(&global) > score_ip_address(&ipv4));
+        // Link-local first: an answer received over (link-scoped) mDNS proves the
+        // peer is on the link. Global unicast outranks unique local, matching how
+        // the CHIP SDK orders the same advertisement.
+        assert!(score_ip_address(&link_local) > score_ip_address(&global));
+        assert!(score_ip_address(&global) > score_ip_address(&ula));
+        assert!(score_ip_address(&ula) > score_ip_address(&ipv4));
+        assert!(score_ip_address(&ipv4) > score_ip_address(&mapped));
+    }
+
+    /// A peer address on a prefix the node is itself configured on is reachable
+    /// without a router, so it outranks one of the same kind that is not - but
+    /// never outranks link-local.
+    #[test]
+    fn score_ip_address_prefers_on_link_prefixes() {
+        let local = [
+            Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0xaa),
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 0xaa),
+            Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0, 0xaa),
+        ];
+
+        let on_link_gua = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 0xbb));
+        let off_link_gua = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 9, 0, 0, 0, 0xbb));
+        let on_link_ula = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0, 0xbb));
+        let off_link_ula = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 9, 0, 0, 0, 0xbb));
+        let link_local = IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0xbb));
+
+        assert!(
+            score_ip_address_on_link(&on_link_gua, &local)
+                > score_ip_address_on_link(&off_link_gua, &local)
+        );
+        assert!(
+            score_ip_address_on_link(&on_link_ula, &local)
+                > score_ip_address_on_link(&off_link_ula, &local)
+        );
+        // On-link ULA still ranks under any GUA that is also on-link.
+        assert!(
+            score_ip_address_on_link(&on_link_gua, &local)
+                > score_ip_address_on_link(&on_link_ula, &local)
+        );
+        assert!(
+            score_ip_address_on_link(&link_local, &local)
+                > score_ip_address_on_link(&on_link_gua, &local)
+        );
+
+        // Every link-local address shares the `fe80::/64` prefix, so the local
+        // link-local address must not promote an off-link peer ULA/GUA.
+        assert_eq!(
+            score_ip_address_on_link(&off_link_gua, &local),
+            score_ip_address(&off_link_gua)
+        );
+    }
+
+    /// The candidate list stays sorted by descending score, deduped, and bounded.
+    #[test]
+    fn merge_resolve_candidate_ranks_dedups_and_bounds() {
+        fn candidate(addr: Ipv6Addr) -> ResolvedAddr {
+            let ip = IpAddr::V6(addr);
+
+            ResolvedAddr {
+                ip,
+                scope_id: 0,
+                score: score_ip_address(&ip),
+            }
+        }
+
+        let link_local = candidate(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
+        let global = candidate(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+        let ula = candidate(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
+        let ipv4 = ResolvedAddr {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            scope_id: 0,
+            score: score_ip_address(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+        };
+
+        let mut addrs = Vec::new();
+
+        // Deposited worst-first; the list still comes out best-first.
+        assert!(merge_resolve_candidate(&mut addrs, ula));
+        assert!(merge_resolve_candidate(&mut addrs, global));
+        assert!(merge_resolve_candidate(&mut addrs, link_local));
+
+        assert_eq!(addrs.as_slice(), &[link_local, global, ula]);
+
+        // A duplicate is dropped.
+        assert!(!merge_resolve_candidate(&mut addrs, global));
+        assert_eq!(addrs.len(), 3);
+
+        // The list is full and IPv4 scores below everything in it, so it is
+        // dropped rather than evicting a better candidate.
+        assert!(!merge_resolve_candidate(&mut addrs, ipv4));
+        assert_eq!(addrs.as_slice(), &[link_local, global, ula]);
+
+        // A better candidate evicts the worst one.
+        let on_link_global = ResolvedAddr {
+            score: global.score + 1,
+            ..candidate(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1))
+        };
+        assert!(merge_resolve_candidate(&mut addrs, on_link_global));
+        assert_eq!(addrs.as_slice(), &[link_local, on_link_global, global]);
     }
 
     #[test]

@@ -77,8 +77,22 @@ bitflags! {
 
 pub struct Host<'a> {
     pub hostname: &'a str,
+    /// The host's IPv4 address, or [`Ipv4Addr::UNSPECIFIED`] for none.
     pub ip: Ipv4Addr,
-    pub ipv6: Ipv6Addr,
+    /// **Every** IPv6 address the host accepts Matter messages on - a link-local
+    /// one and, where the network provides on-link prefixes, one or more
+    /// routable (GUA / ULA) ones.
+    ///
+    /// The Matter Core Specification requires a node to publish an AAAA record
+    /// for each address it is willing to accept messages on, so all of these are
+    /// answered with. Advertising only the link-local address makes a node
+    /// unreachable to any peer that learns of it across a subnet boundary - an
+    /// mDNS reflector, or the DNS-SD proxy of a Thread border router - since the
+    /// relayed record then carries nothing the peer can route to.
+    ///
+    /// Unspecified entries are skipped, so a fixed-size array with empty slots is
+    /// fine. An empty slice publishes no AAAA record at all.
+    pub ipv6: &'a [Ipv6Addr],
 }
 
 /// How a response prepared by [`Host::respond`] should be sent.
@@ -515,12 +529,16 @@ impl Host<'_> {
         R: RecordSectionBuilder<C>,
         C: Composer,
     {
-        if !self.ipv6.is_unspecified() {
+        for ipv6 in self.ipv6 {
+            if ipv6.is_unspecified() {
+                continue;
+            }
+
             answer.push((
                 Self::host_fqdn(self.hostname),
                 Self::auth_class(flush),
                 ttl_sec,
-                Aaaa::new(self.ipv6.octets().into()),
+                Aaaa::new(ipv6.octets().into()),
             ))?;
         }
 
@@ -755,7 +773,7 @@ mod tests {
         host: Host {
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
-            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6: &[Ipv6Addr::UNSPECIFIED],
         },
         services: &[],
 
@@ -799,7 +817,7 @@ mod tests {
         host: Host {
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
-            ipv6: Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1),
+            ipv6: &[Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1)],
         },
         services: &[
             TestService {
@@ -956,7 +974,7 @@ mod tests {
         let host = Host {
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
-            ipv6: Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1),
+            ipv6: &[Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1)],
         };
 
         let services: &[TestService<'_>] = &[TestService {
@@ -1010,13 +1028,57 @@ mod tests {
         run.run();
     }
 
+    /// A host configured with several IPv6 addresses answers an AAAA question
+    /// with one record per address - a node has to publish an AAAA record for
+    /// every address it accepts Matter messages on, not just one, or a peer that
+    /// learns of it across a subnet boundary is left with nothing routable.
+    /// Unspecified entries are skipped.
+    #[test]
+    fn test_all_ipv6_addresses_are_advertised() {
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1);
+        let ula = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0, 1);
+
+        let run = TestRun {
+            host: Host {
+                hostname: "foo",
+                ip: Ipv4Addr::UNSPECIFIED,
+                ipv6: &[link_local, Ipv6Addr::UNSPECIFIED, gua, ula],
+            },
+            services: &[],
+            tests: &[(
+                &[Question {
+                    name: "foo.local",
+                    qtype: Rtype::AAAA,
+                }],
+                &[
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::Aaaa(link_local),
+                    },
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::Aaaa(gua),
+                    },
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::Aaaa(ula),
+                    },
+                ],
+                &[],
+            )],
+        };
+
+        run.run();
+    }
+
     #[test]
     fn test_response_ignored() {
         // Test that mDNS responses (QR=1) are not replied to
         let host = Host {
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
-            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6: &[Ipv6Addr::UNSPECIFIED],
         };
 
         let test_service = TestService {
@@ -1078,7 +1140,7 @@ mod tests {
         let host = Host {
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
-            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6: &[Ipv6Addr::UNSPECIFIED],
         };
 
         let test_service = TestService {

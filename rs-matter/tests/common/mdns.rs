@@ -71,7 +71,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
     use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
 
     #[inline(never)]
-    fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
+    fn initialize_network() -> Result<(Ipv4Addr, Vec<Ipv6Addr>, u32), Error> {
         use log::error;
         use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
         use rs_matter::error::ErrorCode;
@@ -107,12 +107,30 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
                 ErrorCode::StdIoError
             })?;
 
-        info!("Will use network interface {iname} with {ip}/{ipv6} for mDNS");
+        // Advertise *every* IPv6 address configured on the chosen interface, not
+        // only the one that got the interface selected: a node has to publish an
+        // AAAA record for each address it accepts Matter messages on.
+        let mut ipv6_addrs: Vec<Ipv6Addr> = vec![ipv6.octets().into()];
 
-        Ok((ip.octets().into(), ipv6.octets().into(), 0 as _))
+        for ia in interfaces().filter(|ia| ia.interface_name == iname) {
+            if let Some(other) = ia
+                .address
+                .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
+            {
+                let addr: Ipv6Addr = other.octets().into();
+
+                if !ipv6_addrs.contains(&addr) {
+                    ipv6_addrs.push(addr);
+                }
+            }
+        }
+
+        info!("Will use network interface {iname} with {ip} / {ipv6_addrs:?} for mDNS");
+
+        Ok((ip.octets().into(), ipv6_addrs, 0 as _))
     }
 
-    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
+    let (ipv4_addr, ipv6_addrs, interface) = initialize_network()?;
 
     use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
     use rs_matter::transport::network::mdns::{
@@ -147,7 +165,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
             &Host {
                 hostname: "rs-matter-test",
                 ip: ipv4_addr,
-                ipv6: ipv6_addr,
+                ipv6: &ipv6_addrs,
             },
             Some(ipv4_addr),
             Some(interface),

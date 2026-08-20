@@ -46,8 +46,9 @@ use crate::sc::SessionParameters;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
-    commissionable_instance_id, score_ip_address, BrowseExclude, CommissionableFilter,
-    MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedNode,
+    commissionable_instance_id, merge_resolve_candidate, score_ip_address,
+    score_ip_address_on_link, BrowseExclude, CommissionableFilter, MdnsBrowseState,
+    MdnsRemoteService, MdnsResolveState, ResolvedAddr, ResolvedNode,
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::cell::RefCell;
@@ -331,19 +332,29 @@ impl Transport {
         // 3. Wait for the responder to deposit our answer, or time out.
         let mut wait = pin!(self.mdns_resolve.wait(|state| match state {
             MdnsResolveState::Resolved {
-                ip,
+                addrs,
                 port,
-                scope_id,
                 sii,
                 sai,
                 sat,
             } => {
-                let node = ResolvedNode {
-                    addr: Self::scoped_socket_addr(*ip, *port, *scope_id),
+                let mut node = ResolvedNode {
+                    addrs: Vec::new(),
                     sii: *sii,
                     sai: *sai,
                     sat: *sat,
                 };
+
+                for candidate in addrs.iter() {
+                    // Bounded by the same `MAX_RESOLVE_CANDIDATES`, so this
+                    // cannot overflow.
+                    let _ = node.addrs.push(Self::scoped_socket_addr(
+                        candidate.ip,
+                        *port,
+                        candidate.scope_id,
+                    ));
+                }
+
                 *state = MdnsResolveState::Idle;
                 Some(node)
             }
@@ -404,15 +415,26 @@ impl Transport {
     /// OS-backed responders, and any third-party responder - all hand it an
     /// [`MdnsRemoteService`] (the builtin lazily over the packet, the others over
     /// their native records).
-    pub fn try_deposit_mdns_resolve<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
-    where
+    ///
+    /// **All** of the answer's addresses are kept, ranked, and bounded to
+    /// [`MAX_RESOLVE_CANDIDATES`], rather than only the best-scored one: the
+    /// top-ranked address is not necessarily the reachable one, so the CASE
+    /// initiator needs alternatives to fall back to.
+    ///
+    /// `local_ipv6` are the IPv6 addresses of the interface the responder is
+    /// running on; they let an on-link peer address outrank an off-link one of
+    /// the same kind (see [`score_ip_address_on_link`]). Pass `&[]` when they are
+    /// not known - the OS-backed responders delegate the host records to a daemon
+    /// and never see them.
+    pub fn try_deposit_mdns_resolve<'a, I, A, T>(
+        &self,
+        answer: &MdnsRemoteService<I, A, T>,
+        local_ipv6: &[Ipv6Addr],
+    ) where
         I: ToLabelIter,
         A: Iterator<Item = IpAddr> + Clone,
         T: Iterator<Item = (&'a str, &'a str)> + Clone,
     {
-        let Some(ip) = answer.addrs.clone().max_by_key(score_ip_address) else {
-            return;
-        };
         let Some(port) = answer.port else {
             return;
         };
@@ -420,14 +442,33 @@ impl Transport {
 
         let (sii, sai, sat) = answer.session_params();
 
+        let candidates = || {
+            answer.addrs.clone().map(move |ip| ResolvedAddr {
+                ip,
+                scope_id,
+                score: score_ip_address_on_link(&ip, local_ipv6),
+            })
+        };
+
         self.mdns_resolve.modify(|state| match state {
             MdnsResolveState::InFlight { service }
                 if service.matches_instance(&answer.instance_name) =>
             {
+                let mut addrs = Vec::new();
+
+                for candidate in candidates() {
+                    merge_resolve_candidate(&mut addrs, candidate);
+                }
+
+                if addrs.is_empty() {
+                    // An address-less answer (e.g. a PTR-only record) leaves the
+                    // request in flight for a later, complete one.
+                    return (false, ());
+                }
+
                 *state = MdnsResolveState::Resolved {
-                    ip,
+                    addrs,
                     port,
-                    scope_id,
                     sii,
                     sai,
                     sat,
@@ -435,9 +476,10 @@ impl Transport {
                 (true, ())
             }
             // Already resolved (same in-flight target — the rendezvous is
-            // single-slot) but not yet consumed: keep the better-scoring address
-            // so a later IPv6 deposit can upgrade an earlier IPv4 one (e.g.
-            // zeroconf surfaces one address per family at a time).
+            // single-slot) but not yet consumed: merge the new addresses into the
+            // ranked list, so a backend that surfaces one address per callback
+            // (zeroconf, Avahi) still ends up with alternatives to fall back to,
+            // and a later IPv6 deposit still outranks an earlier IPv4 one.
             //
             // Preserve any session params already resolved: a per-address deposit
             // may carry no TXT (e.g. zeroconf's `ServiceDiscovery.txt` is
@@ -445,21 +487,23 @@ impl Transport {
             // address), in which case `sii`/`sai`/`sat` are `None` here and would
             // otherwise clobber the good values from the earlier deposit.
             MdnsResolveState::Resolved {
-                ip: cur_ip,
+                addrs,
                 sii: cur_sii,
                 sai: cur_sai,
                 sat: cur_sat,
                 ..
-            } if score_ip_address(&ip) > score_ip_address(cur_ip) => {
-                *state = MdnsResolveState::Resolved {
-                    ip,
-                    port,
-                    scope_id,
-                    sii: sii.or(*cur_sii),
-                    sai: sai.or(*cur_sai),
-                    sat: sat.or(*cur_sat),
-                };
-                (true, ())
+            } => {
+                let mut changed = false;
+
+                for candidate in candidates() {
+                    changed |= merge_resolve_candidate(addrs, candidate);
+                }
+
+                *cur_sii = cur_sii.or(sii);
+                *cur_sai = cur_sai.or(sai);
+                *cur_sat = cur_sat.or(sat);
+
+                (changed, ())
             }
             _ => (false, ()),
         });
@@ -767,11 +811,42 @@ impl Transport {
         // Establish CASE over a fresh, one-shot unsecured exchange to the
         // resolved address. On success a secure session keyed at
         // `(fabric_idx, peer_node_id)` is recorded in the stack.
-        let exchange = self
-            .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
-            .await?;
+        //
+        // The candidates are walked in score order rather than only the best one
+        // being tried, because the best-scored address is not necessarily the
+        // reachable one: an answer relayed across a subnet boundary - by an mDNS
+        // reflector, or by the DNS-SD proxy of a Thread border router - carries a
+        // link-local address that ranks top and cannot be reached. Without the
+        // fallback the peer would be discoverable but unreachable.
+        let mut last_err = Some(Error::from(ErrorCode::NotFound));
 
-        CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await?;
+        for addr in resolved.addrs.iter().copied() {
+            let peer = Address::Udp(addr);
+
+            match self.initiate_plaintext(matter, &crypto, peer).await {
+                Ok(exchange) => {
+                    match CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await
+                    {
+                        Ok(()) => {
+                            last_err = None;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!("CASE to {} failed: {}", peer, err);
+                            last_err = Some(err);
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!("Unsecured session to {} failed: {}", peer, err);
+                    last_err = Some(err);
+                }
+            }
+        }
+
+        if let Some(err) = last_err {
+            return Err(err);
+        }
 
         // Seed the new CASE session's peer MRP/session params from the resolve
         // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
@@ -841,7 +916,13 @@ impl Transport {
 
         let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
 
-        self.initiate_plaintext(matter, crypto, Address::Udp(resolved.addr))
+        // Only the best-scored candidate is used here: unlike CASE, opening a
+        // plaintext session performs no round trip, so there is no failure to
+        // fall back on. A sessionless message sent over it that never reaches an
+        // unreachable candidate simply exhausts its MRP retransmissions.
+        let addr = resolved.addr().ok_or(ErrorCode::NotFound)?;
+
+        self.initiate_plaintext(matter, crypto, Address::Udp(addr))
             .await
     }
 
@@ -2643,7 +2724,7 @@ mod tests {
 
 #[cfg(test)]
 mod resolve_tests {
-    use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
     use futures_lite::future::{block_on, zip};
 
@@ -2685,7 +2766,7 @@ mod resolve_tests {
                     scope_id: 0,
                 };
 
-                matter.transport().try_deposit_mdns_resolve(&answer);
+                matter.transport().try_deposit_mdns_resolve(&answer, &[]);
             };
 
             let (node, ()) = zip(resolver, responder).await;
@@ -2694,13 +2775,129 @@ mod resolve_tests {
         .unwrap();
 
         assert_eq!(
-            resolved.addr,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)), 1234)
+            resolved.addr(),
+            Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)),
+                1234
+            ))
         );
         // The peer's MRP/session params are carried out of the resolve TXT.
         assert_eq!(resolved.sii, Some(300));
         assert_eq!(resolved.sai, Some(4000));
         assert_eq!(resolved.sat, Some(5000));
+    }
+
+    /// An answer carrying several addresses yields all of them, ranked best
+    /// first, so the CASE initiator has alternatives to fall back to when the
+    /// top-ranked one turns out to be unreachable.
+    #[test]
+    fn resolve_keeps_all_addresses_ranked() {
+        let matter = test_matter();
+        let service = op_service();
+
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1);
+        let ipv4 = Ipv4Addr::new(10, 0, 0, 5);
+
+        let resolved = block_on(async {
+            let resolver = matter.transport().resolve(service.clone(), 5_000);
+
+            let responder = async {
+                matter.transport().wait_mdns_resolve_request().await;
+
+                let mut name = heapless::String::<128>::new();
+                service.instance_name(&mut name);
+
+                // Deposited worst-first and in packet order.
+                let answer = MdnsRemoteService {
+                    instance_name: DottedName(name.as_str()),
+                    port: Some(1234),
+                    addrs: [IpAddr::V4(ipv4), IpAddr::V6(gua), IpAddr::V6(link_local)].into_iter(),
+                    txt: core::iter::empty::<(&str, &str)>(),
+                    scope_id: 7,
+                };
+
+                matter.transport().try_deposit_mdns_resolve(&answer, &[]);
+            };
+
+            let (node, ()) = zip(resolver, responder).await;
+            node
+        })
+        .unwrap();
+
+        assert_eq!(
+            resolved.addrs.as_slice(),
+            &[
+                // Only the link-local candidate carries the scope id.
+                SocketAddr::V6(SocketAddrV6::new(link_local, 1234, 0, 7)),
+                SocketAddr::new(IpAddr::V6(gua), 1234),
+                SocketAddr::new(IpAddr::V4(ipv4), 1234),
+            ]
+        );
+    }
+
+    /// A backend that surfaces one address per callback (zeroconf, Avahi) still
+    /// accumulates candidates: successive deposits against the same in-flight
+    /// target merge into the ranked list instead of replacing it, and TXT-less
+    /// deposits do not clobber session params already resolved.
+    #[test]
+    fn resolve_merges_successive_single_address_deposits() {
+        let matter = test_matter();
+        let service = op_service();
+
+        let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1);
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+
+        let resolved = block_on(async {
+            let resolver = matter.transport().resolve(service.clone(), 5_000);
+
+            let responder = async {
+                matter.transport().wait_mdns_resolve_request().await;
+
+                let mut name = heapless::String::<128>::new();
+                service.instance_name(&mut name);
+
+                // First callback: the routable address, carrying the TXT. Both
+                // deposits run back-to-back without an await in between, so they
+                // land before the resolver is polled again.
+                matter.transport().try_deposit_mdns_resolve(
+                    &MdnsRemoteService {
+                        instance_name: DottedName(name.as_str()),
+                        port: Some(1234),
+                        addrs: core::iter::once(IpAddr::V6(gua)),
+                        txt: [("SII", "300")].into_iter(),
+                        scope_id: 0,
+                    },
+                    &[],
+                );
+
+                // Second callback: the link-local address, no TXT.
+                matter.transport().try_deposit_mdns_resolve(
+                    &MdnsRemoteService {
+                        instance_name: DottedName(name.as_str()),
+                        port: Some(1234),
+                        addrs: core::iter::once(IpAddr::V6(link_local)),
+                        txt: core::iter::empty::<(&str, &str)>(),
+                        scope_id: 7,
+                    },
+                    &[],
+                );
+            };
+
+            let (node, ()) = zip(resolver, responder).await;
+            node
+        })
+        .unwrap();
+
+        assert_eq!(
+            resolved.addrs.as_slice(),
+            &[
+                SocketAddr::V6(SocketAddrV6::new(link_local, 1234, 0, 7)),
+                SocketAddr::new(IpAddr::V6(gua), 1234),
+            ]
+        );
+        // The TXT-less second deposit did not clobber the first one's params.
+        assert_eq!(resolved.sii, Some(300));
     }
 
     /// Without a responder, a resolve times out and releases the slot (drop-clean),
@@ -2731,7 +2928,7 @@ mod resolve_tests {
             txt: core::iter::empty::<(&str, &str)>(),
             scope_id: 0,
         };
-        matter.transport().try_deposit_mdns_resolve(&answer);
+        matter.transport().try_deposit_mdns_resolve(&answer, &[]);
 
         let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
         assert!(matches!(err.code(), ErrorCode::NotFound));

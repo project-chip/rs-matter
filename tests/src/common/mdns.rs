@@ -79,7 +79,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
     // Uses the cross-platform `if-addrs` crate to enumerate interfaces so the
     // examples work on Linux, macOS and Windows.
     #[inline(never)]
-    fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
+    fn initialize_network() -> Result<(Ipv4Addr, Vec<Ipv6Addr>, u32), Error> {
         use rs_matter::error::ErrorCode;
 
         let all = if_addrs::get_if_addrs().map_err(|_| ErrorCode::StdIoError)?;
@@ -157,12 +157,35 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
 
         let (iname, ip, ipv6, index) = candidate;
 
-        info!("Will use network interface {iname} with {ip}/{ipv6} for mDNS");
+        // Advertise *every* IPv6 address configured on the chosen interface, not
+        // only the one that got the interface selected. A node has to publish an
+        // AAAA record for each address it accepts Matter messages on; publishing
+        // only the link-local one leaves it unreachable to any peer that learns
+        // of it across a subnet boundary (an mDNS reflector, or the DNS-SD proxy
+        // of a Thread border router), because the relayed record then carries
+        // nothing routable.
+        let mut ipv6_addrs: Vec<Ipv6Addr> = Vec::new();
 
-        Ok((ip.octets().into(), ipv6.octets().into(), index))
+        if !ipv6.is_unspecified() {
+            ipv6_addrs.push(ipv6.octets().into());
+        }
+
+        for ia in all.iter().filter(|ia| ia.name == iname) {
+            if let if_addrs::IfAddr::V6(ref v6) = ia.addr {
+                let addr: Ipv6Addr = v6.ip.octets().into();
+
+                if !v6.ip.is_loopback() && !ipv6_addrs.contains(&addr) {
+                    ipv6_addrs.push(addr);
+                }
+            }
+        }
+
+        info!("Will use network interface {iname} with {ip} / {ipv6_addrs:?} for mDNS");
+
+        Ok((ip.octets().into(), ipv6_addrs, index))
     }
 
-    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
+    let (ipv4_addr, ipv6_addrs, interface) = initialize_network()?;
 
     use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
     use rs_matter::transport::network::mdns::{
@@ -192,7 +215,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
             &Host {
                 hostname: "001122334455", //"rs-matter-demo",
                 ip: ipv4_addr,
-                ipv6: ipv6_addr,
+                ipv6: &ipv6_addrs,
             },
             Some(ipv4_addr),
             Some(interface),

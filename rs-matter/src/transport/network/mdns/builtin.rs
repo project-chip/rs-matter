@@ -465,7 +465,9 @@ impl BuiltinMdns {
                     // browse request.
                     match parse_into_answer(packet, ipv6_interface) {
                         Ok(Some(answer)) => {
-                            matter.transport().try_deposit_mdns_resolve(&answer);
+                            matter
+                                .transport()
+                                .try_deposit_mdns_resolve(&answer, host.ipv6);
                             matter.transport().try_deposit_mdns_browse(&answer);
                         }
                         Ok(None) => {}

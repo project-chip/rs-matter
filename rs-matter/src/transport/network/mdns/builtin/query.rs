@@ -304,7 +304,7 @@ mod tests {
         Host {
             hostname: "myhost",
             ip: Ipv4Addr::new(192, 168, 1, 5),
-            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6: &[Ipv6Addr::UNSPECIFIED],
         }
     }
 
