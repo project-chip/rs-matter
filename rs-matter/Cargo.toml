@@ -196,7 +196,7 @@ case-resumption = []
 case-responder-only = []
 
 [dependencies]
-rs-matter-macros = { path = "../rs-matter-macros", version = "0.2.0" }
+rs-matter-macros = { path = "../rs-matter-macros", version = "0.3.0" }
 cfg-if = "1"
 bitflags = { version =  "2.5", default-features = false }
 embedded-io-async = "0.7"
@@ -226,7 +226,7 @@ pinned-init = { version = "0.0.8", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
-mbedtls-rs-sys = { version = "0.1", default-features = false, features = ["matter"], optional = true }
+mbedtls-rs-sys = { version = "0.2", default-features = false, features = ["matter"], optional = true }
 
 # rust-crypto
 # Generic traits and traitified structures
@@ -277,7 +277,7 @@ tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 
 [build-dependencies]
-rs-matter-codegen = { path = "../rs-matter-codegen", version = "0.2.0" }
+rs-matter-codegen = { path = "../rs-matter-codegen", version = "0.3.0" }
 
 [dev-dependencies]
 log = "0.4"

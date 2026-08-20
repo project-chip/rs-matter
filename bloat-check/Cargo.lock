@@ -2325,13 +2325,15 @@ dependencies = [
 
 [[package]]
 name = "mbedtls-rs-sys"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa97e4c01acb74882ae3376921dc76f695d5e0820646a1a09dc23c141e904a72"
+checksum = "d49d6c43db5aae2ef895972de7a9414cafb649fab288933e74bf7739c0fffe55"
 dependencies = [
+ "aes",
  "anyhow",
  "bindgen 0.72.1",
  "cc",
+ "cipher",
  "cmake",
  "critical-section",
  "defmt 1.1.1",
@@ -3135,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes",
  "bitflags 2.13.1",
@@ -3214,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-codegen"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "convert_case",
  "miette",
@@ -3232,7 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-macros"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
