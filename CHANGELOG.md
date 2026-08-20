@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.3.0] - 2026-08-20
 * Groupcast **sending** APIs (`groups` feature): `Exchange::initiate_group` and `ImClient::group_invoke_with`; the `onoff_light_switch` example and the `light_tests` switch endpoint now act on *group* binding targets
 * (Breaking) `Matter::is_commissioned` renamed to `Matter::has_fabrics` (#525)
 * New `Matter::comm_window_state` method useful downstream for figuring out if the commissioning transport should be enabled (#525)

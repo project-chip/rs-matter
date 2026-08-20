@@ -11,7 +11,7 @@ members = [
 exclude = ["bloat-check", "xtask"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
