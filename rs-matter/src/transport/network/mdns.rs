@@ -18,6 +18,8 @@
 use core::fmt::Write;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
+use cfg_if::cfg_if;
+
 use domain::base::name::{Label, ToLabelIter};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
@@ -724,18 +726,53 @@ impl ResolvedNode {
     }
 }
 
-/// Maximum number of candidate peer addresses kept for a single resolve.
-///
-/// A node advertises an AAAA record for every address it accepts operational
-/// messages on, and the Matter Core Specification requires support for at least
-/// three routable addresses on top of the link-local one, so a single answer can
-/// easily carry several. Keeping a few of them - rather than only the
-/// best-scored one - is what lets the CASE initiator recover when the top
-/// candidate turns out to be unreachable, which is exactly the failure mode of a
-/// link-local address relayed across a subnet boundary. See
-/// [`score_ip_address_on_link`] for why the ranking cannot decide that on its
-/// own.
-pub const MAX_RESOLVE_CANDIDATES: usize = 3;
+cfg_if! {
+    if #[cfg(feature = "max-resolve-candidates-8")] {
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 8;
+    } else if #[cfg(feature = "max-resolve-candidates-6")] {
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 6;
+    } else if #[cfg(feature = "max-resolve-candidates-5")] {
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 5;
+    } else if #[cfg(feature = "max-resolve-candidates-3")] {
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 3;
+    } else if #[cfg(feature = "max-resolve-candidates-2")] {
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 2;
+    } else if #[cfg(feature = "max-resolve-candidates-1")] {
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        ///
+        /// No failover: only the best-scored address is ever tried.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 1;
+    } else { // Default (`max-resolve-candidates-4`)
+        /// How many candidate peer addresses are kept for a single resolve, i.e. how
+        /// many addresses the CASE initiator can fall back through when the
+        /// best-scored one turns out to be unreachable. Configurable via the
+        /// `max-resolve-candidates-*` features.
+        pub const MAX_RESOLVE_CANDIDATES: usize = 4;
+    }
+}
 
 /// A single ranked candidate address for a resolved peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1265,53 +1302,54 @@ mod tests {
         );
     }
 
-    /// The candidate list stays sorted by descending score, deduped, and bounded.
+    /// The candidate list stays sorted by descending score, deduped, and bounded
+    /// to [`MAX_RESOLVE_CANDIDATES`], whatever that is configured to.
     #[test]
     fn merge_resolve_candidate_ranks_dedups_and_bounds() {
-        fn candidate(addr: Ipv6Addr) -> ResolvedAddr {
-            let ip = IpAddr::V6(addr);
-
+        /// A candidate with an explicit score and a distinct address.
+        fn candidate(n: u16, score: u8) -> ResolvedAddr {
             ResolvedAddr {
-                ip,
+                ip: IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, n)),
                 scope_id: 0,
-                score: score_ip_address(&ip),
+                score,
             }
         }
 
-        let link_local = candidate(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
-        let global = candidate(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-        let ula = candidate(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
-        let ipv4 = ResolvedAddr {
-            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            scope_id: 0,
-            score: score_ip_address(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
-        };
-
         let mut addrs = Vec::new();
 
-        // Deposited worst-first; the list still comes out best-first.
-        assert!(merge_resolve_candidate(&mut addrs, ula));
-        assert!(merge_resolve_candidate(&mut addrs, global));
-        assert!(merge_resolve_candidate(&mut addrs, link_local));
+        // Deposited worst-first; the list still comes out best-first, and stops
+        // accepting once full.
+        for i in 0..MAX_RESOLVE_CANDIDATES {
+            let accepted = merge_resolve_candidate(&mut addrs, candidate(i as u16, i as u8 + 1));
+            assert!(accepted);
+        }
 
-        assert_eq!(addrs.as_slice(), &[link_local, global, ula]);
+        assert_eq!(addrs.len(), MAX_RESOLVE_CANDIDATES);
+        assert!(addrs.windows(2).all(|w| w[0].score > w[1].score));
 
-        // A duplicate is dropped.
-        assert!(!merge_resolve_candidate(&mut addrs, global));
-        assert_eq!(addrs.len(), 3);
-
-        // The list is full and IPv4 scores below everything in it, so it is
-        // dropped rather than evicting a better candidate.
-        assert!(!merge_resolve_candidate(&mut addrs, ipv4));
-        assert_eq!(addrs.as_slice(), &[link_local, global, ula]);
-
-        // A better candidate evicts the worst one.
-        let on_link_global = ResolvedAddr {
-            score: global.score + 1,
-            ..candidate(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1))
+        // A duplicate address is dropped, whatever it scores.
+        let dup = ResolvedAddr {
+            score: u8::MAX,
+            ..addrs[addrs.len() - 1]
         };
-        assert!(merge_resolve_candidate(&mut addrs, on_link_global));
-        assert_eq!(addrs.as_slice(), &[link_local, on_link_global, global]);
+        assert!(!merge_resolve_candidate(&mut addrs, dup));
+        assert_eq!(addrs.len(), MAX_RESOLVE_CANDIDATES);
+
+        // The list is full and this one scores below everything in it, so it is
+        // dropped rather than evicting a better candidate.
+        let worst = *addrs.last().unwrap();
+        assert!(!merge_resolve_candidate(&mut addrs, candidate(0xfffe, 0)));
+        assert_eq!(*addrs.last().unwrap(), worst);
+
+        // A better candidate takes the top slot and evicts the worst one.
+        assert!(merge_resolve_candidate(
+            &mut addrs,
+            candidate(0xffff, u8::MAX)
+        ));
+        assert_eq!(addrs.len(), MAX_RESOLVE_CANDIDATES);
+        assert_eq!(addrs[0].score, u8::MAX);
+        assert!(!addrs.contains(&worst));
+        assert!(addrs.windows(2).all(|w| w[0].score > w[1].score));
     }
 
     #[test]

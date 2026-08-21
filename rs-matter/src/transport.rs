@@ -2730,7 +2730,7 @@ mod resolve_tests {
 
     use crate::error::ErrorCode;
     use crate::test::test_matter;
-    use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
+    use crate::transport::network::mdns::{DottedName, MdnsRemoteService, MAX_RESOLVE_CANDIDATES};
     use crate::transport::network::MatterRemoteService;
 
     fn op_service() -> MatterRemoteService {
@@ -2825,14 +2825,18 @@ mod resolve_tests {
         })
         .unwrap();
 
+        // Truncated to whatever `MAX_RESOLVE_CANDIDATES` is configured to, so
+        // this holds for every `max-resolve-candidates-*` feature.
+        let expected = [
+            // Only the link-local candidate carries the scope id.
+            SocketAddr::V6(SocketAddrV6::new(link_local, 1234, 0, 7)),
+            SocketAddr::new(IpAddr::V6(gua), 1234),
+            SocketAddr::new(IpAddr::V4(ipv4), 1234),
+        ];
+
         assert_eq!(
             resolved.addrs.as_slice(),
-            &[
-                // Only the link-local candidate carries the scope id.
-                SocketAddr::V6(SocketAddrV6::new(link_local, 1234, 0, 7)),
-                SocketAddr::new(IpAddr::V6(gua), 1234),
-                SocketAddr::new(IpAddr::V4(ipv4), 1234),
-            ]
+            &expected[..expected.len().min(MAX_RESOLVE_CANDIDATES)]
         );
     }
 
@@ -2889,12 +2893,14 @@ mod resolve_tests {
         })
         .unwrap();
 
+        let expected = [
+            SocketAddr::V6(SocketAddrV6::new(link_local, 1234, 0, 7)),
+            SocketAddr::new(IpAddr::V6(gua), 1234),
+        ];
+
         assert_eq!(
             resolved.addrs.as_slice(),
-            &[
-                SocketAddr::V6(SocketAddrV6::new(link_local, 1234, 0, 7)),
-                SocketAddr::new(IpAddr::V6(gua), 1234),
-            ]
+            &expected[..expected.len().min(MAX_RESOLVE_CANDIDATES)]
         );
         // The TXT-less second deposit did not clobber the first one's params.
         assert_eq!(resolved.sii, Some(300));

@@ -123,6 +123,19 @@ max-btp-sessions-2 = []
 # Default number of BTP sessions (Matter accessories typically need just 1 BTP session).
 max-btp-sessions-1 = []
 
+# Number of candidate peer addresses kept per mDNS resolve, for CASE failover.
+max-resolve-candidates-8 = []
+max-resolve-candidates-6 = []
+max-resolve-candidates-5 = []
+# Default number of resolve candidates: enough to hold the largest address set a
+# conformant peer can advertise on Wi-Fi / Ethernet - its link-local address plus
+# the three routable ones the Matter Core Specification requires it to support.
+max-resolve-candidates-4 = []
+max-resolve-candidates-3 = []
+max-resolve-candidates-2 = []
+# No failover: only the best-scored address is ever tried.
+max-resolve-candidates-1 = []
+
 # Size (in bytes) of the key-value persistence scratch buffer owned by `Matter`.
 kv-blob-store-65536 = []
 kv-blob-store-32768 = []
