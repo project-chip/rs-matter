@@ -146,7 +146,7 @@ impl ExchangeId {
             let mut session_removed = pin!(matter.transport().wait_session_removed());
 
             let mut timeout = pin!(Timer::after(Duration::from_millis(
-                RetransEntry::new(matter.dev_det().sai, 0).max_delay_ms() * 3 / 2
+                RetransEntry::new(matter.dev_det().sai, 0).rx_timeout_ms() * 3 / 2
             )));
 
             match select3(&mut recv, &mut session_removed, &mut timeout).await {
