@@ -36,7 +36,7 @@ use crate::utils::storage::pooled::{PooledBuffers, DEFAULT_BUFFER_POOL_SIZE};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::{Matter, MatterState};
 
-use super::mrp::{ReliableMessage, RetransEntry};
+use super::mrp::{self, ReliableMessage};
 use super::network;
 use super::network::mdns::MAX_RESOLVE_CANDIDATES;
 use super::packet::PacketHdr;
@@ -145,9 +145,16 @@ impl ExchangeId {
 
             let mut session_removed = pin!(matter.transport().wait_session_removed());
 
-            let mut timeout = pin!(Timer::after(Duration::from_millis(
-                RetransEntry::new(matter.dev_det().sai, 0).rx_timeout_ms() * 3 / 2
-            )));
+            let mut timeout = pin!(Timer::after(Duration::from_millis(self.with_state(
+                matter,
+                |state| {
+                    let sai = matter
+                        .dev_det()
+                        .sai
+                        .unwrap_or(mrp::MRP_BASE_RETRY_INTERVAL_MS);
+                    Ok(self.session(&mut state.sessions).rx_timeout_ms(sai))
+                }
+            )?)));
 
             match select3(&mut recv, &mut session_removed, &mut timeout).await {
                 Either3::First(mut packet) => {
