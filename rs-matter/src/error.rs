@@ -85,6 +85,10 @@ pub enum ErrorCode {
     Invalid,
     InvalidAAD,
     InvalidData,
+    /// An element was received on a transport that cannot carry it - a command
+    /// with the `L` (Large Message) quality over a transport that is not
+    /// large-message capable. Maps to `IMStatusCode::InvalidTransportType`.
+    InvalidTransportType,
     InvalidKeyLength,
     InvalidOpcode,
     InvalidProto,

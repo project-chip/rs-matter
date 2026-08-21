@@ -1597,6 +1597,21 @@ impl<'a> Exchange<'a> {
         self.id.accessor(self.matter, metadata.aux_acl_enabled())
     }
 
+    /// Whether this exchange runs over a transport capable of carrying **Large
+    /// Messages**, i.e. payloads that do not fit the MRP MTU.
+    ///
+    /// In practice that means TCP.
+    pub fn supports_large_payload(&self) -> Result<bool, Error> {
+        self.with_state(|state| {
+            let session = self.id().session(&mut state.sessions);
+
+            Ok(
+                !matches!(session.get_session_mode(), SessionMode::Group { .. })
+                    && session.get_peer_addr().is_tcp(),
+            )
+        })
+    }
+
     pub fn is_groupcast(&self) -> Result<bool, Error> {
         self.with_state(|state| {
             Ok(matches!(
