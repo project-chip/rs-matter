@@ -17,6 +17,8 @@
 
 //! A module containing the mDNS code used in the examples
 
+use rs_matter::transport::network::mdns::{DottedName, MdnsRemoteService};
+use rs_matter::transport::network::{IpAddr, MatterRemoteService, SocketAddrV6};
 use rs_matter::Matter;
 use rs_matter::{crypto::Crypto, error::Error};
 
@@ -79,7 +81,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
     // Uses the cross-platform `if-addrs` crate to enumerate interfaces so the
     // examples work on Linux, macOS and Windows.
     #[inline(never)]
-    fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
+    fn initialize_network() -> Result<(Ipv4Addr, Vec<Ipv6Addr>, u32), Error> {
         use rs_matter::error::ErrorCode;
 
         let all = if_addrs::get_if_addrs().map_err(|_| ErrorCode::StdIoError)?;
@@ -157,12 +159,35 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
 
         let (iname, ip, ipv6, index) = candidate;
 
-        info!("Will use network interface {iname} with {ip}/{ipv6} for mDNS");
+        // Advertise *every* IPv6 address configured on the chosen interface, not
+        // only the one that got the interface selected. A node has to publish an
+        // AAAA record for each address it accepts Matter messages on; publishing
+        // only the link-local one leaves it unreachable to any peer that learns
+        // of it across a subnet boundary (an mDNS reflector, or the DNS-SD proxy
+        // of a Thread border router), because the relayed record then carries
+        // nothing routable.
+        let mut ipv6_addrs: Vec<Ipv6Addr> = Vec::new();
 
-        Ok((ip.octets().into(), ipv6.octets().into(), index))
+        if !ipv6.is_unspecified() {
+            ipv6_addrs.push(ipv6.octets().into());
+        }
+
+        for ia in all.iter().filter(|ia| ia.name == iname) {
+            if let if_addrs::IfAddr::V6(ref v6) = ia.addr {
+                let addr: Ipv6Addr = v6.ip.octets().into();
+
+                if !v6.ip.is_loopback() && !ipv6_addrs.contains(&addr) {
+                    ipv6_addrs.push(addr);
+                }
+            }
+        }
+
+        info!("Will use network interface {iname} with {ip} / {ipv6_addrs:?} for mDNS");
+
+        Ok((ip.octets().into(), ipv6_addrs, index))
     }
 
-    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
+    let (ipv4_addr, ipv6_addrs, interface) = initialize_network()?;
 
     use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
     use rs_matter::transport::network::mdns::{
@@ -192,7 +217,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
             &Host {
                 hostname: "001122334455", //"rs-matter-demo",
                 ip: ipv4_addr,
-                ipv6: ipv6_addr,
+                ipv6: &ipv6_addrs,
             },
             Some(ipv4_addr),
             Some(interface),
@@ -200,4 +225,61 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
             crypto,
         )
         .await
+}
+
+/// Answer operational mDNS resolve requests from a fixed `node_id -> address`
+/// table, standing in for a real mDNS backend.
+///
+/// Tests drive commissioning phase 2 (and anything else that resolves a peer)
+/// against devices at addresses they already know, but the production code path
+/// deliberately goes through discovery rather than taking a known address. This
+/// closes that gap without binding port 5353 on a real interface, which would
+/// make the tests depend on the host's network and on no other responder
+/// running.
+///
+/// Never returns - run it concurrently with whatever drives the resolves, e.g.
+/// `select(work, stub_mdns_resolver(matter, &table))`.
+#[allow(unused)]
+pub async fn stub_mdns_resolver(matter: &Matter<'_>, table: &[(u64, SocketAddrV6)]) -> ! {
+    stub_mdns_resolver_txt(matter, table, "").await
+}
+
+/// [`stub_mdns_resolver`], additionally advertising a `T` TXT value.
+///
+/// `T` is the TCP-support bitmap (bit 1 = client, bit 2 = server), so `"6"`
+/// makes the stubbed peer look TCP-capable and `""` omits the key entirely, as a
+/// node without TCP support does. It gates whether a
+/// [`TransportPreference::LargePayload`](rs_matter::transport::TransportPreference)
+/// request is allowed to establish over TCP.
+#[allow(unused)]
+pub async fn stub_mdns_resolver_txt(
+    matter: &Matter<'_>,
+    table: &[(u64, SocketAddrV6)],
+    tcp: &str,
+) -> ! {
+    loop {
+        let service = matter.transport().wait_mdns_resolve_request().await;
+
+        let MatterRemoteService::Operational { node_id, .. } = &service else {
+            continue;
+        };
+
+        let Some((_, sock)) = table.iter().find(|(id, _)| id == node_id) else {
+            continue;
+        };
+
+        let mut name = heapless::String::<128>::new();
+        service.instance_name(&mut name);
+
+        matter.transport().try_deposit_mdns_resolve(
+            &MdnsRemoteService {
+                instance_name: DottedName(name.as_str()),
+                port: Some(sock.port()),
+                addrs: core::iter::once(IpAddr::V6(*sock.ip())),
+                txt: (!tcp.is_empty()).then_some(("T", tcp)).into_iter(),
+                scope_id: 0,
+            },
+            &[],
+        );
+    }
 }

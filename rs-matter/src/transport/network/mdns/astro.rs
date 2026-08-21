@@ -137,9 +137,8 @@ impl AstroMdns {
                                 }
                             }
                             // Match is by the full instance name we requested.
-                            matter
-                                .transport()
-                                .try_deposit_mdns_resolve(&MdnsRemoteService {
+                            matter.transport().try_deposit_mdns_resolve(
+                                &MdnsRemoteService {
                                     instance_name: DottedName(name_buf.as_str()),
                                     port: Some(svc.port),
                                     addrs: ips.iter().copied(),
@@ -147,7 +146,11 @@ impl AstroMdns {
                                     // DNS-SD reports the interface index; use it
                                     // as the scope id for a link-local result.
                                     scope_id: link_local_scope_id(&ips, svc.interface_index),
-                                });
+                                },
+                                // The DNS-SD daemon owns the host A/AAAA records; this
+                                // backend never sees the local interface addresses.
+                                &[],
+                            );
                         }
                     }
                     Ok(_) => {} // a different instance of the same type

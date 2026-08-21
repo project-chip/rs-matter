@@ -85,6 +85,10 @@ pub enum ErrorCode {
     Invalid,
     InvalidAAD,
     InvalidData,
+    /// An element was received on a transport that cannot carry it - a command
+    /// with the `L` (Large Message) quality over a transport that is not
+    /// large-message capable. Maps to `IMStatusCode::InvalidTransportType`.
+    InvalidTransportType,
     InvalidKeyLength,
     InvalidOpcode,
     InvalidProto,
@@ -159,6 +163,11 @@ impl Error {
 
     pub const fn code(&self) -> ErrorCode {
         self.code
+    }
+
+    /// Whether this error means the peer never answered.
+    pub const fn is_peer_unresponsive(&self) -> bool {
+        matches!(self.code, ErrorCode::TxTimeout | ErrorCode::RxTimeout)
     }
 
     #[cfg(all(feature = "std", feature = "backtrace"))]

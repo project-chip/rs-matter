@@ -530,7 +530,7 @@ fn mdns_task_fut<'a, C: Crypto + 'a>(
         &Host {
             hostname: "rs-matter-bloat-check",
             ip: Ipv4Addr::LOCALHOST,
-            ipv6: Ipv6Addr::LOCALHOST,
+            ipv6: &[Ipv6Addr::LOCALHOST],
         },
         Some(Ipv4Addr::LOCALHOST),
         Some(0),

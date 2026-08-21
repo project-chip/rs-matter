@@ -179,8 +179,14 @@ impl<'k> CheckIn<'k> {
     }
 
     /// Build a Check-In message and send it to the node `(fab_idx, node_id)`,
-    /// resolving its operational address over mDNS and sending sessionlessly
+    /// resolving its operational addresses over mDNS and sending sessionlessly
     /// (Secure Channel opcode `CheckIn`, no MRP).
+    ///
+    /// The message is sent to **every** resolved candidate address, not just the
+    /// best-scored one. A Check-In is deliberately not MRP-reliable, so there is
+    /// no acknowledgement to wait for and no retransmission to exhaust.
+    ///
+    /// Succeeds if the message went out to at least one candidate.
     ///
     /// The low-level per-message primitive: it takes the exact `counter` and
     /// `app_data` to use, and depends on nothing but this codec's key. The
@@ -202,10 +208,34 @@ impl<'k> CheckIn<'k> {
         let payload = self.generate(&crypto, counter, app_data, buf)?;
         let len = payload.len();
 
-        let mut exchange =
-            Exchange::initiate_plaintext_operational(matter, &crypto, fab_idx, node_id).await?;
+        let addrs = Exchange::resolve_operational_addrs(matter, fab_idx, node_id).await?;
 
-        exchange.send(OpCode::CheckIn, &buf[..len]).await
+        let mut sent = false;
+        let mut last_err = None;
+
+        for addr in addrs {
+            let result = match Exchange::initiate_plaintext(matter, &crypto, addr).await {
+                Ok(mut exchange) => exchange.send(OpCode::CheckIn, &buf[..len]).await,
+                Err(err) => Err(err),
+            };
+
+            match result {
+                Ok(()) => sent = true,
+                Err(err) => {
+                    // A candidate the local stack cannot even send to (no route
+                    // to a link-local address heard on another interface, say) is
+                    // not fatal while another candidate may still work.
+                    warn!("Check-In to {} failed: {}", addr, err);
+                    last_err = Some(err);
+                }
+            }
+        }
+
+        if sent {
+            Ok(())
+        } else {
+            Err(last_err.unwrap_or_else(|| ErrorCode::NotFound.into()))
+        }
     }
 }
 

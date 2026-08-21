@@ -231,15 +231,18 @@ impl AvahiMdns {
                     let txt_pairs = txt_pairs(&txt);
                     // Deposit under the full requested instance name (the transport
                     // matches on it). `name` from the browser is the bare label.
-                    matter
-                        .transport()
-                        .try_deposit_mdns_resolve(&MdnsRemoteService {
+                    matter.transport().try_deposit_mdns_resolve(
+                        &MdnsRemoteService {
                             instance_name: DottedName(name_buf.as_str()),
                             port: Some(port),
                             addrs: ips.iter().copied(),
                             txt: txt_pairs.iter().copied(),
                             scope_id,
-                        });
+                        },
+                        // The Avahi daemon owns the host A/AAAA records; this backend never
+                        // sees the local interface addresses.
+                        &[],
+                    );
                 }
             }
 

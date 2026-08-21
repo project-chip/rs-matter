@@ -18,6 +18,7 @@
 //! An example Matter Bridge that bridges two fictitious non-Matter devices as On-Off (Lamp) Matter devices.
 //! The example operates over Ethernet for simplicity, but the concrete network protocol is orthogonal to
 //! the notion of a Matter bridge anyway.
+#![recursion_limit = "256"]
 
 use core::pin::pin;
 

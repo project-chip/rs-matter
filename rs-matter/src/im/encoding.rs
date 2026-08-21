@@ -98,6 +98,7 @@ pub enum IMStatusCode {
     Timeout = 0x94,
     UnsupportedNode = 0x9b,
     Busy = 0x9c,
+    AccessRestricted = 0x9d,
     UnsupportedCluster = 0xc3,
     NoUpstreamSubscription = 0xc5,
     NeedsTimedInteraction = 0xc6,
@@ -107,8 +108,11 @@ pub enum IMStatusCode {
     FailSafeRequired = 0xca,
     InvalidInState = 0xcb,
     NoCommandResponse = 0xcc,
+    TermsAndConditionsChanged = 0xcd,
+    MaintenanceRequired = 0xce,
     DynamicConstraintError = 0xcf,
     AlreadyExists = 0xd0,
+    InvalidTransportType = 0xd1,
 }
 
 impl From<ErrorCode> for IMStatusCode {
@@ -133,6 +137,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::DynamicConstraintError => IMStatusCode::DynamicConstraintError,
             ErrorCode::NotFound => IMStatusCode::NotFound,
             ErrorCode::AlreadyExists => IMStatusCode::AlreadyExists,
+            ErrorCode::InvalidTransportType => IMStatusCode::InvalidTransportType,
             ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
         }
@@ -170,6 +175,7 @@ impl IMStatusCode {
             Self::UnsupportedEvent => Some(ErrorCode::EventNotFound),
             Self::NeedsTimedInteraction => Some(ErrorCode::NeedsTimedInteraction),
             Self::FailSafeRequired => Some(ErrorCode::FailSafeRequired),
+            Self::InvalidTransportType => Some(ErrorCode::InvalidTransportType),
             _ => Some(ErrorCode::Failure),
         }
     }

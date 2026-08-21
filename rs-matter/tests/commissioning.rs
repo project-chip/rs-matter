@@ -76,7 +76,7 @@ use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::transport::{TransportPreference, MATTER_SOCKET_BIND_ADDR};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
@@ -85,6 +85,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 
 use static_cell::StaticCell;
 
+use crate::common::mdns::stub_mdns_resolver_txt;
 use crate::common::{init_env_logger, run_device_controller, run_with_transport};
 
 #[allow(dead_code)]
@@ -295,7 +296,8 @@ async fn run_controller_flow<C: Crypto>(
     let peer_addr = discover_and_resolve_device(use_tcp)?;
 
     info!("=== Phase 2: Commissioner — commission() (incl. PASE) + complete_via_case() ===");
-    let (controller_fab_idx, device_node_id) = test_commission(matter, crypto, peer_addr).await?;
+    let (controller_fab_idx, device_node_id) =
+        test_commission(matter, crypto, peer_addr, use_tcp).await?;
 
     // Cherry on top: after `CommissioningComplete` the device has
     // committed our fabric, torn down PASE, and the only authenticated
@@ -326,6 +328,7 @@ async fn test_commission<C: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
     peer_addr: Address,
+    use_tcp: bool,
 ) -> Result<(core::num::NonZeroU8, u64), Error> {
     const FABRIC_ID: u64 = 1;
     // chip-tool's conventional admin NodeID; matches the
@@ -400,13 +403,22 @@ async fn test_commission<C: Crypto>(
     // RCAC / ICAC bytes across the async on-wire calls. One
     // `MAX_CERT_TLV_LEN` slot is enough; see `Commissioner::new`.
     let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    // Phase 2 discovers the device and defaults to UDP, as the CHIP SDK's
+    // commissioner does. This test's TCP device listens on TCP *only*, so it has
+    // to ask for TCP explicitly - which also covers the `tcp_capable` veto path,
+    // since the stub below has to advertise TCP support for this to be allowed.
     let mut commissioner = Commissioner::new(
         matter,
         crypto,
         controller_fab_idx,
         &mut noc_generator,
         &mut commissioner_buf,
-    );
+    )
+    .with_transport(if use_tcp {
+        TransportPreference::LargePayload
+    } else {
+        TransportPreference::Mrp
+    });
 
     let opts = CommissionOptions {
         // Test DAC — system_tests / TEST_DEV_ATT.
@@ -429,13 +441,33 @@ async fn test_commission<C: Crypto>(
         result.fabric_index, result.device_node_id,
     );
 
-    // Phase 2 — establish CASE against the device's operational
-    // identity at the same address we used for PASE (the device
-    // announces on the same UDP/TCP port post-AddNOC), then drive
-    // CommissioningComplete on the new CASE session.
-    commissioner.complete_via_case(peer_addr, &result).await?;
+    // Phase 2 — operational discovery, then CASE against the device's
+    // operational identity, then CommissioningComplete on the new session.
+    //
+    // No mDNS backend runs in this test, so a stub answers the resolve request
+    // with the device's known address. That covers the production path end to
+    // end; it does not exercise the *failover* across several candidates, which
+    // needs an address that times out rather than failing the send outright and
+    // is therefore too environment-dependent to pin down here.
+    let (Address::Udp(SocketAddr::V6(peer_sock)) | Address::Tcp(SocketAddr::V6(peer_sock))) =
+        peer_addr
+    else {
+        panic!("expected an IPv6 device address");
+    };
+
+    let mdns_table = [(result.device_node_id, peer_sock)];
+    // `T=6` = TCP client (bit 1) + TCP server (bit 2), which is what a
+    // TCP-capable node advertises and what the commissioner's TCP request checks
+    // against.
+    let mdns = stub_mdns_resolver_txt(matter, &mdns_table, if use_tcp { "6" } else { "" });
+
+    match select(pin!(commissioner.complete_via_case(&result)), pin!(mdns)).await {
+        Either::First(r) => r?,
+        Either::Second(_) => unreachable!("the stub resolver never returns"),
+    }
+
     info!(
-        "complete_via_case() ok: controller_fab_idx={}, CASE+CommissioningComplete done",
+        "complete_via_case() ok: controller_fab_idx={}, discovery+CASE+CommissioningComplete done",
         controller_fab_idx,
     );
 

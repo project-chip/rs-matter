@@ -54,7 +54,8 @@ pub(crate) use mrp_log;
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
 const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
-const MRP_MAX_TRANSMISSIONS: u16 = 10;
+const MRP_MAX_TRANSMISSIONS: u16 = 5;
+const MRP_RX_TIMEOUT_TRANSMISSIONS: u16 = 10;
 const MRP_BACKOFF_THRESHOLD: u16 = 1;
 const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
 const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25
@@ -133,9 +134,30 @@ impl RetransEntry {
         self.delay_ms_counter(self.counter, jitter_rand)
     }
 
-    /// Maximum delay before giving up on retransmitting the message
-    pub fn max_delay_ms(&self) -> u64 {
-        self.delay_ms_counter(MRP_MAX_TRANSMISSIONS, MRP_JITTER_RAND_MAX)
+    /// How long to wait for the peer's response before giving up with
+    /// [`ErrorCode::RxTimeout`].
+    ///
+    /// Derived from [`MRP_RX_TIMEOUT_TRANSMISSIONS`] rather than
+    /// [`MRP_MAX_TRANSMISSIONS`] - the two answer different questions, and tying
+    /// them together makes our own retransmission budget silently dictate how
+    /// patient we are with a slow peer.
+    ///
+    /// TODO: The second constant has no counterpart in the CHIP SDK, which gets
+    /// the same separation out of a better formula instead. Its
+    /// `Session::ComputeRoundTripTimeout` is a sum of three terms -
+    /// `GetAckTimeout()` (the full retransmit ladder over the *peer's* MRP
+    /// config, i.e. how long until our message reaches it), an explicit
+    /// upper-layer processing allowance, and `GetMessageReceiptTimeout()` (the
+    /// ladder again, over the *local* config, for its answer reaching us). That
+    /// is roughly two ladders plus processing time, so lowering the
+    /// retransmission budget shrinks it proportionally from a base that was
+    /// large enough to begin with, and no second constant is needed. Non-UDP
+    /// transports skip the derivation entirely there (flat 30s for TCP, the BTP
+    /// ack timeout for BLE). Worth adopting that shape - it also stops us using
+    /// our own `sai` for the outbound half, where the peer's advertised value is
+    /// the correct input - at which point this constant goes away.
+    pub fn rx_timeout_ms(&self) -> u64 {
+        self.delay_ms_counter(MRP_RX_TIMEOUT_TRANSMISSIONS, MRP_JITTER_RAND_MAX)
     }
 
     /// Return how much to delay before (re)transmitting the message

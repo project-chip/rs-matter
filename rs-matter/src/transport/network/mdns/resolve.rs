@@ -237,9 +237,8 @@ impl ResolveMdns {
             let ips = all_addresses(addresses);
             if !ips.is_empty() {
                 let txt = txt_iter(txt_data);
-                matter
-                    .transport()
-                    .try_deposit_mdns_resolve(&MdnsRemoteService {
+                matter.transport().try_deposit_mdns_resolve(
+                    &MdnsRemoteService {
                         instance_name: DottedName(instance_name),
                         port: Some(*port),
                         addrs: ips.iter().copied(),
@@ -248,7 +247,11 @@ impl ResolveMdns {
                         // address; use the link-local IPv6 one as the scope id
                         // so a `fe80::` result is routable.
                         scope_id: link_local_scope_id(addresses),
-                    });
+                    },
+                    // systemd-resolved owns the host A/AAAA records; this backend never
+                    // sees the local interface addresses.
+                    &[],
+                );
             }
         }
     }

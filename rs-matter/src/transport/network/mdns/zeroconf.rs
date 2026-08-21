@@ -137,9 +137,8 @@ impl ZeroconfMdns {
                     if let Ok(ip) = svc.address().parse::<IpAddr>() {
                         let pairs = txt_pairs(svc);
                         // Match is by the full instance name we requested.
-                        matter
-                            .transport()
-                            .try_deposit_mdns_resolve(&MdnsRemoteService {
+                        matter.transport().try_deposit_mdns_resolve(
+                            &MdnsRemoteService {
                                 instance_name: DottedName(name_buf.as_str()),
                                 port: Some(*svc.port()),
                                 addrs: core::iter::once(ip),
@@ -150,7 +149,11 @@ impl ZeroconfMdns {
                                 // (`fe80::`) results are unscoped here. Other
                                 // backends (avahi, resolve, astro) thread it.
                                 scope_id: 0,
-                            });
+                            },
+                            // The mDNS daemon owns the host A/AAAA records; this backend
+                            // never sees the local interface addresses.
+                            &[],
+                        );
                     }
                 });
 
