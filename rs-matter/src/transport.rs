@@ -48,7 +48,7 @@ use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
     commissionable_instance_id, merge_resolve_candidate, score_ip_address,
     score_ip_address_on_link, BrowseExclude, CommissionableFilter, MdnsBrowseState,
-    MdnsRemoteService, MdnsResolveState, ResolvedAddr, ResolvedNode,
+    MdnsRemoteService, MdnsResolveState, ResolvedAddr, ResolvedNode, MAX_RESOLVE_CANDIDATES,
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::cell::RefCell;
@@ -334,20 +334,20 @@ impl Transport {
             MdnsResolveState::Resolved {
                 addrs,
                 port,
+                tcp_capable,
                 sii,
                 sai,
                 sat,
             } => {
                 let mut node = ResolvedNode {
                     addrs: Vec::new(),
+                    tcp_capable: *tcp_capable,
                     sii: *sii,
                     sai: *sai,
                     sat: *sat,
                 };
 
                 for candidate in addrs.iter() {
-                    // Bounded by the same `MAX_RESOLVE_CANDIDATES`, so this
-                    // cannot overflow.
                     let _ = node.addrs.push(Self::scoped_socket_addr(
                         candidate.ip,
                         *port,
@@ -416,11 +416,6 @@ impl Transport {
     /// [`MdnsRemoteService`] (the builtin lazily over the packet, the others over
     /// their native records).
     ///
-    /// **All** of the answer's addresses are kept, ranked, and bounded to
-    /// [`MAX_RESOLVE_CANDIDATES`], rather than only the best-scored one: the
-    /// top-ranked address is not necessarily the reachable one, so the CASE
-    /// initiator needs alternatives to fall back to.
-    ///
     /// `local_ipv6` are the IPv6 addresses of the interface the responder is
     /// running on; they let an on-link peer address outrank an off-link one of
     /// the same kind (see [`score_ip_address_on_link`]). Pass `&[]` when they are
@@ -441,6 +436,7 @@ impl Transport {
         let scope_id = answer.scope_id;
 
         let (sii, sai, sat) = answer.session_params();
+        let tcp_capable = answer.supports_tcp_server();
 
         let candidates = || {
             answer.addrs.clone().map(move |ip| ResolvedAddr {
@@ -469,6 +465,7 @@ impl Transport {
                 *state = MdnsResolveState::Resolved {
                     addrs,
                     port,
+                    tcp_capable,
                     sii,
                     sai,
                     sat,
@@ -488,12 +485,18 @@ impl Transport {
             // otherwise clobber the good values from the earlier deposit.
             MdnsResolveState::Resolved {
                 addrs,
+                tcp_capable: cur_tcp,
                 sii: cur_sii,
                 sai: cur_sai,
                 sat: cur_sat,
                 ..
             } => {
                 let mut changed = false;
+
+                // A later deposit may be the one carrying the TXT (some backends
+                // surface addresses and TXT on separate callbacks), so an
+                // advertised capability is latched, never cleared.
+                *cur_tcp |= tcp_capable;
 
                 for candidate in candidates() {
                     changed |= merge_resolve_candidate(addrs, candidate);
@@ -761,6 +764,7 @@ impl Transport {
         crypto: C,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
+        transport: TransportPreference,
     ) -> Result<Exchange<'a>, Error> {
         // Reuse an existing CASE session if present.
         let existing = matter.with_state(|state| {
@@ -776,7 +780,7 @@ impl Transport {
             return self.initiate_for_session(matter, crypto, session_id);
         }
 
-        self.initiate_new_case(matter, crypto, fabric_idx, peer_node_id)
+        self.initiate_new_case(matter, crypto, fabric_idx, peer_node_id, transport)
             .await
     }
 
@@ -795,6 +799,7 @@ impl Transport {
         crypto: C,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
+        transport: TransportPreference,
     ) -> Result<Exchange<'a>, Error> {
         // No CASE session: resolve the operational address and establish one.
         let compressed_fabric_id = matter.with_state(|state| {
@@ -812,16 +817,26 @@ impl Transport {
         // resolved address. On success a secure session keyed at
         // `(fabric_idx, peer_node_id)` is recorded in the stack.
         //
-        // The candidates are walked in score order rather than only the best one
-        // being tried, because the best-scored address is not necessarily the
-        // reachable one: an answer relayed across a subnet boundary - by an mDNS
-        // reflector, or by the DNS-SD proxy of a Thread border router - carries a
-        // link-local address that ranks top and cannot be reached. Without the
-        // fallback the peer would be discoverable but unreachable.
+        // The candidates are walked in score order, because the best-scored address is not
+        // necessarily the reachable one.
+        // The peer's advertised TCP support is a veto, not a trigger: a caller
+        // that asked for a large payload gets an error rather than a UDP session
+        // that silently cannot carry it.
+        if matches!(transport, TransportPreference::LargePayload) && !resolved.tcp_capable {
+            error!(
+                "Large-payload session requested for node {:?} but it does not advertise TCP server support",
+                peer_node_id
+            );
+            return Err(ErrorCode::NoNetworkInterface.into());
+        }
+
         let mut last_err = Some(Error::from(ErrorCode::NotFound));
 
         for addr in resolved.addrs.iter().copied() {
-            let peer = Address::Udp(addr);
+            let peer = match transport {
+                TransportPreference::Mrp => Address::Udp(addr),
+                TransportPreference::LargePayload => Address::Tcp(addr),
+            };
 
             match self.initiate_plaintext(matter, &crypto, peer).await {
                 Ok(exchange) => {
@@ -831,9 +846,17 @@ impl Transport {
                             last_err = None;
                             break;
                         }
-                        Err(err) => {
-                            warn!("CASE to {} failed: {}", peer, err);
+                        Err(err) if err.is_peer_unresponsive() => {
+                            warn!("CASE to {} failed: {}; trying the next address", peer, err);
                             last_err = Some(err);
+                        }
+                        Err(err) => {
+                            // The peer answered and rejected us, so it is
+                            // reachable at this address and every remaining
+                            // candidate leads to the same node. Fail now rather
+                            // than replaying the rejection against each one.
+                            warn!("CASE to {} failed: {}", peer, err);
+                            return Err(err);
                         }
                     }
                 }
@@ -885,26 +908,19 @@ impl Transport {
         _crypto: C,
         _fabric_idx: NonZeroU8,
         _peer_node_id: NodeId,
+        _transport: TransportPreference,
     ) -> Result<Exchange<'a>, Error> {
         Err(ErrorCode::NoSession.into())
     }
 
-    /// Open an exchange over a fresh **unsecured** session to an already-
-    /// commissioned node, resolving its operational address over mDNS.
-    ///
-    /// Unlike [`initiate`](Self::initiate) this establishes no secure session; it
-    /// is for sessionless protocols that carry their own security (e.g. the
-    /// Check-In message), and it never reuses or creates a CASE session.
-    ///
-    /// Requires a running mDNS responder to service the resolve; without one the
-    /// resolve times out and this returns [`ErrorCode::NotFound`].
-    pub(crate) async fn initiate_plaintext_operational<'a, C: Crypto>(
+    /// Resolve an already-commissioned node's operational addresses over mDNS,
+    /// returning **every** ranked candidate rather than just the best-scored one.
+    pub(crate) async fn resolve_operational_addrs(
         &self,
-        matter: &'a Matter<'a>,
-        crypto: C,
+        matter: &Matter<'_>,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
-    ) -> Result<Exchange<'a>, Error> {
+    ) -> Result<Vec<Address, MAX_RESOLVE_CANDIDATES>, Error> {
         let compressed_fabric_id = matter.with_state(|state| {
             Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
         })?;
@@ -916,14 +932,15 @@ impl Transport {
 
         let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
 
-        // Only the best-scored candidate is used here: unlike CASE, opening a
-        // plaintext session performs no round trip, so there is no failure to
-        // fall back on. A sessionless message sent over it that never reaches an
-        // unreachable candidate simply exhausts its MRP retransmissions.
-        let addr = resolved.addr().ok_or(ErrorCode::NotFound)?;
+        let mut addrs = Vec::new();
 
-        self.initiate_plaintext(matter, crypto, Address::Udp(addr))
-            .await
+        for addr in resolved.addrs.iter() {
+            // Both are bounded by `MAX_RESOLVE_CANDIDATES`, so this cannot
+            // overflow.
+            let _ = addrs.push(Address::Udp(*addr));
+        }
+
+        Ok(addrs)
     }
 
     /// Open an exchange over a PASE session to a not-yet-commissioned node at the
@@ -1129,6 +1146,24 @@ impl Transport {
             _ => SocketAddr::new(ip, port),
         }
     }
+}
+
+/// Which transport a freshly established operational session should run over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TransportPreference {
+    /// UDP carrying MRP - the default operational transport, and the only one
+    /// every Matter node is required to support.
+    #[default]
+    Mrp,
+    /// TCP, for payloads too large to fit MRP.
+    ///
+    /// Requires the peer to have advertised TCP server support
+    /// ([`ResolvedNode::tcp_capable`]). If it has not, establishment fails with
+    /// [`ErrorCode::NoNetworkInterface`] rather than quietly falling back to UDP -
+    /// a silent downgrade would hand the caller a session that cannot carry what
+    /// it asked to send.
+    LargePayload,
 }
 
 /// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.

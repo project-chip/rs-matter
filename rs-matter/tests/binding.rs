@@ -105,6 +105,7 @@ use rs_matter::dm::clusters::decl::binding::BindingAttrWrites as _;
 
 use static_cell::StaticCell;
 
+use crate::common::mdns::stub_mdns_resolver;
 use crate::common::{init_env_logger, run_device_controller, run_with_transport};
 
 #[allow(dead_code)]
@@ -676,18 +677,39 @@ async fn commission_both<C: Crypto>(
         ..CommissionOptions::default()
     };
 
-    for (addr, node_id, tag) in [
-        (addr_a, NODE_ID_A, "switch-A"),
-        (addr_b, NODE_ID_B, "light-B"),
-    ] {
-        let result = commissioner
-            .commission(addr, TEST_PASSCODE, &opts, node_id, VALID_FOREVER)
-            .await?;
-        commissioner.complete_via_case(addr, &result).await?;
-        info!(
-            "Commissioned {tag} as node 0x{:016x}",
-            result.device_node_id
-        );
+    // Phase 2 goes through operational discovery rather than reusing the address
+    // PASE was driven over, so a stub resolver stands in for the mDNS backend
+    // this test does not run. It answers per node id, which is what lets both
+    // devices be commissioned against the same stub.
+    let sock_of = |addr: Address| match addr {
+        Address::Udp(SocketAddr::V6(sock)) | Address::Tcp(SocketAddr::V6(sock)) => sock,
+        _ => panic!("expected an IPv6 device address"),
+    };
+
+    let mdns_table = [(NODE_ID_A, sock_of(addr_a)), (NODE_ID_B, sock_of(addr_b))];
+    let mdns = stub_mdns_resolver(matter, &mdns_table);
+
+    let commission_both = async {
+        for (addr, node_id, tag) in [
+            (addr_a, NODE_ID_A, "switch-A"),
+            (addr_b, NODE_ID_B, "light-B"),
+        ] {
+            let result = commissioner
+                .commission(addr, TEST_PASSCODE, &opts, node_id, VALID_FOREVER)
+                .await?;
+            commissioner.complete_via_case(&result).await?;
+            info!(
+                "Commissioned {tag} as node 0x{:016x}",
+                result.device_node_id
+            );
+        }
+
+        Ok::<_, Error>(())
+    };
+
+    match select(pin!(commission_both), pin!(mdns)).await {
+        Either::First(r) => r?,
+        Either::Second(_) => unreachable!("the stub resolver never returns"),
     }
 
     Ok(ctrl_fab_idx)

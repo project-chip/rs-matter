@@ -31,13 +31,14 @@ use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::transport::session::Sessions;
-use crate::transport::TxPayloadState;
+use crate::transport::{TransportPreference, TxPayloadState};
 use crate::utils::storage::pooled::{PooledBuffers, DEFAULT_BUFFER_POOL_SIZE};
-use crate::utils::storage::WriteBuf;
+use crate::utils::storage::{Vec, WriteBuf};
 use crate::{Matter, MatterState};
 
 use super::mrp::{ReliableMessage, RetransEntry};
 use super::network;
+use super::network::mdns::MAX_RESOLVE_CANDIDATES;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
@@ -1111,9 +1112,34 @@ impl<'a> Exchange<'a> {
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
     ) -> Result<Self, Error> {
+        Self::initiate_with_transport(
+            matter,
+            crypto,
+            fabric_idx,
+            peer_node_id,
+            TransportPreference::Mrp,
+        )
+        .await
+    }
+
+    /// [`Self::initiate`], choosing the transport a newly established session
+    /// runs over.
+    ///
+    /// Only matters when no session to the peer exists yet - an existing session
+    /// is reused whatever it runs over. Pass
+    /// [`TransportPreference::LargePayload`] to require TCP; the peer must have
+    /// advertised TCP server support or establishment fails rather than silently
+    /// downgrading. See [`TransportPreference`].
+    pub async fn initiate_with_transport<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+        transport: TransportPreference,
+    ) -> Result<Self, Error> {
         matter
             .transport
-            .initiate(matter, crypto, fabric_idx, peer_node_id)
+            .initiate(matter, crypto, fabric_idx, peer_node_id, transport)
             .await
     }
 
@@ -1260,27 +1286,17 @@ impl<'a> Exchange<'a> {
             .await
     }
 
-    /// Open an exchange over a fresh plaintext session to an already-
-    /// commissioned node, resolving its operational address over mDNS.
-    ///
-    /// Like [`initiate_plaintext`](Self::initiate_plaintext) but it discovers the
-    /// peer address itself (as [`initiate`](Self::initiate) does for CASE), rather
-    /// than taking a known one. For sessionless protocols that carry their own
-    /// security and must not establish a CASE session — e.g. sending an ICD
-    /// Check-In message to a registered client.
-    ///
-    /// Requires a running mDNS responder to service the resolve; without one the
-    /// resolve times out and this returns [`ErrorCode::NotFound`].
+    /// Resolve an already-commissioned node's operational addresses over mDNS,
+    /// returning **every** ranked candidate (best-scored first).
     #[inline(always)]
-    pub async fn initiate_plaintext_operational<C: Crypto>(
+    pub async fn resolve_operational_addrs(
         matter: &'a Matter<'a>,
-        crypto: C,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
-    ) -> Result<Self, Error> {
+    ) -> Result<Vec<network::Address, MAX_RESOLVE_CANDIDATES>, Error> {
         matter
             .transport
-            .initiate_plaintext_operational(matter, crypto, fabric_idx, peer_node_id)
+            .resolve_operational_addrs(matter, fabric_idx, peer_node_id)
             .await
     }
 

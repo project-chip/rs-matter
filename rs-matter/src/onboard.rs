@@ -68,10 +68,10 @@ use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::onboard::noc::NocGenerator;
-use crate::sc::case::CaseInitiator;
 use crate::tlv::{FromTLV, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
+use crate::transport::TransportPreference;
 use crate::Matter;
 
 pub mod cac;
@@ -166,6 +166,8 @@ pub struct Commissioner<'a, C: Crypto> {
     fab_idx: NonZeroU8,
     noc_generator: &'a mut NocGenerator<'a>,
     buf: &'a mut [u8],
+    case_attempts: u8,
+    transport: TransportPreference,
 }
 
 impl<'a, C: Crypto> Commissioner<'a, C> {
@@ -194,7 +196,44 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             fab_idx,
             noc_generator,
             buf,
+            case_attempts: Self::DEFAULT_CASE_ATTEMPTS,
+            transport: TransportPreference::Mrp,
         }
+    }
+
+    /// How many times [`Self::complete_via_case`] drives the whole
+    /// phase-2 sequence before giving up. See [`Self::with_case_attempts`].
+    pub const DEFAULT_CASE_ATTEMPTS: u8 = 3;
+
+    /// Override how many times phase 2 is attempted (default
+    /// [`Self::DEFAULT_CASE_ATTEMPTS`]).
+    ///
+    /// Phase 2 runs immediately after the device has been told to join its
+    /// operational network, so the first attempt regularly races the device: it
+    /// may not have associated yet, or not yet be announcing over mDNS, and the
+    /// resolve simply finds nothing. Retrying the whole sequence - discovery
+    /// included - is what turns that race into a delay instead of a failure.
+    ///
+    /// This is deliberately scoped to commissioning. The CHIP SDK does the same:
+    /// `FindOrEstablishSession` takes an `attemptCount` that defaults to 1, and
+    /// the commissioner is the only caller that raises it (to 3).
+    ///
+    /// A value of 0 is treated as 1 (a single attempt).
+    pub const fn with_case_attempts(mut self, attempts: u8) -> Self {
+        self.case_attempts = attempts;
+        self
+    }
+
+    /// Override the transport phase 2 establishes its CASE session over
+    /// (default [`TransportPreference::Mrp`], i.e. UDP).
+    ///
+    /// Commissioning is a small-payload exchange, so UDP is the right default and
+    /// what the CHIP SDK's commissioner always uses. The knob exists for devices
+    /// that run no UDP transport at all - rs-matter permits a TCP-only node, and
+    /// such a device cannot be finalised over UDP.
+    pub const fn with_transport(mut self, transport: TransportPreference) -> Self {
+        self.transport = transport;
+        self
     }
 
     /// Index of the controller's fabric in `matter.state.fabrics`. The
@@ -326,67 +365,36 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// Phase 2 — establish CASE against the device's freshly-installed
     /// operational identity and invoke `CommissioningComplete` over it.
     ///
-    /// `peer_addr` is the device's operational endpoint. In production
-    /// it's discovered via `_matter._tcp` mDNS; in tests / examples it
-    /// can be the same address PASE used, since the device announces on
-    /// the same UDP port post-AddNOC.
+    /// The device's operational endpoint is discovered via `_matter._tcp` mDNS
+    /// from `(fabric, device_node_id)`.
     ///
-    /// Steps:
-    ///   1. Open a fresh plaintext exchange to `peer_addr` and run
-    ///      [`CaseInitiator::initiate`] (Sigma1 → Sigma2 → Sigma3 →
-    ///      StatusReport). On success the new CASE session is keyed in
-    ///      `matter.state.sessions` at `(fab_idx, device_node_id,
-    ///      secure=true)`.
-    ///   2. Open a CASE-secured exchange on that session and invoke
-    ///      `GeneralCommissioning::CommissioningComplete`. The device
-    ///      disarms its fail-safe and persists the new fabric.
-    pub async fn complete_via_case(
-        &mut self,
-        peer_addr: Address,
-        phase1: &CommissionResult,
-    ) -> Result<(), Error> {
+    /// The sequence is attempted up to [`Self::with_case_attempts`] times: it
+    /// runs immediately after the device was told to join its network, so losing
+    /// the first race against the device coming online is routine.
+    pub async fn complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
         let fab_idx = self.fab_idx;
 
-        let exchange = Exchange::initiate_plaintext(self.matter, &self.crypto, peer_addr).await?;
-        CaseInitiator::perform(exchange, &self.crypto, fab_idx, phase1.device_node_id).await?;
+        let mut last_err = None;
 
-        // CommissioningComplete on the CASE session.
-        self.commissioning_complete(fab_idx, phase1.device_node_id)
-            .await
-    }
+        for attempt in 0..self.case_attempts.max(1) {
+            match self
+                .commissioning_complete(fab_idx, phase1.device_node_id)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(err) if Self::phase2_worth_retrying(&err) => {
+                    warn!(
+                        "Commissioning phase 2 attempt {} failed: {}; retrying",
+                        attempt + 1,
+                        err
+                    );
+                    last_err = Some(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
 
-    /// Phase 2, resolving the device's operational address via mDNS.
-    ///
-    /// Identical to [`Self::complete_via_case`] except that, instead of being
-    /// handed a fixed `peer_addr`, it looks up the device's operational endpoint
-    /// via `_matter._tcp` mDNS from `(fabric, device_node_id)` (using
-    /// [`Exchange::initiate_plaintext_operational`]).
-    ///
-    /// This is the production phase-2 path: after phase 1 the device may only be
-    /// reachable at a *different* address than PASE used - most notably when the
-    /// device was commissioned over BLE and has since joined its operational
-    /// (Wi-Fi / Thread) network, where its operational IP is not known until it
-    /// announces itself. It requires the mDNS backend to be running (so the
-    /// resolve request is answered), and the device to have joined the network
-    /// and started announcing operationally.
-    pub async fn complete_via_case_operational(
-        &mut self,
-        phase1: &CommissionResult,
-    ) -> Result<(), Error> {
-        let fab_idx = self.fab_idx;
-
-        let exchange = Exchange::initiate_plaintext_operational(
-            self.matter,
-            &self.crypto,
-            fab_idx,
-            phase1.device_node_id,
-        )
-        .await?;
-        CaseInitiator::perform(exchange, &self.crypto, fab_idx, phase1.device_node_id).await?;
-
-        // CommissioningComplete on the CASE session.
-        self.commissioning_complete(fab_idx, phase1.device_node_id)
-            .await
+        Err(last_err.unwrap_or_else(|| ErrorCode::Failure.into()))
     }
 
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.
@@ -556,18 +564,29 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             .ok_or_else(|| ErrorCode::InvalidData.into())
     }
 
-    /// `GeneralCommissioning::CommissioningComplete()` over the CASE
-    /// session keyed by `(fab_idx, peer_node_id, secure=true)`.
-    ///
-    /// **Must be invoked over CASE**, not PASE — the device responder
-    /// rejects it over PASE (`Failsafe::disarm` requires a CASE
-    /// `fab_idx`). [`Self::complete_via_case`] is the only caller.
+    /// Whether a failed phase-2 attempt is worth driving the whole sequence
+    /// again.
+    fn phase2_worth_retrying(err: &Error) -> bool {
+        err.is_peer_unresponsive()
+            || matches!(
+                err.code(),
+                ErrorCode::NotFound | ErrorCode::NoSession | ErrorCode::Busy
+            )
+    }
+
     pub(crate) async fn commissioning_complete(
         &self,
         fab_idx: NonZeroU8,
         peer_node_id: NodeId,
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate(self.matter, &self.crypto, fab_idx, peer_node_id).await?;
+        let exchange = Exchange::initiate_with_transport(
+            self.matter,
+            &self.crypto,
+            fab_idx,
+            peer_node_id,
+            self.transport,
+        )
+        .await?;
 
         let handle = exchange
             .general_commissioning()

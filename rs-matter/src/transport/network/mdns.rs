@@ -463,6 +463,23 @@ where
 
         (sii, sai, sat)
     }
+
+    /// Whether the peer advertises that it accepts **TCP** connections, from the
+    /// `T` TXT key.
+    ///
+    /// `T` is a bitmap: bit 1 (value 2) marks a TCP client, bit 2 (value 4) a TCP
+    /// server. Only the server bit matters to an initiator - it is the peer's
+    /// willingness to be connected *to*. An absent or unparsable `T` means no TCP
+    /// (the key is omitted entirely by nodes without TCP support).
+    pub fn supports_tcp_server(&self) -> bool {
+        for (key, value) in self.txt.clone() {
+            if key.eq_ignore_ascii_case("T") {
+                return value.parse::<u32>().is_ok_and(|t| t & 0x04 != 0);
+            }
+        }
+
+        false
+    }
 }
 
 /// Filter criteria for discovering commissionable devices.
@@ -708,6 +725,8 @@ pub struct ResolvedNode {
     /// necessarily the reachable one, so the CASE initiator walks the list until
     /// a handshake completes - see [`MAX_RESOLVE_CANDIDATES`].
     pub addrs: Vec<SocketAddr, MAX_RESOLVE_CANDIDATES>,
+    /// Whether the peer advertised TCP server support (the `T` TXT key).
+    pub tcp_capable: bool,
     /// Session Idle Interval (`SII`), milliseconds.
     pub sii: Option<u32>,
     /// Session Active Interval (`SAI`), milliseconds.
@@ -847,6 +866,7 @@ pub(crate) enum MdnsResolveState {
         /// packet (the builtin responder) does.
         addrs: Vec<ResolvedAddr, MAX_RESOLVE_CANDIDATES>,
         port: u16,
+        tcp_capable: bool,
         sii: Option<u32>,
         sai: Option<u32>,
         sat: Option<u16>,

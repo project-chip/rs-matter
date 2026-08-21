@@ -26,6 +26,8 @@
 //!   multicast packets sent by the device are received by the controller on the
 //!   same host.
 
+use rs_matter::transport::network::mdns::{DottedName, MdnsRemoteService};
+use rs_matter::transport::network::{IpAddr, MatterRemoteService, SocketAddrV6};
 use rs_matter::Matter;
 use rs_matter::{crypto::Crypto, error::Error};
 
@@ -173,4 +175,61 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
             crypto,
         )
         .await
+}
+
+/// Answer operational mDNS resolve requests from a fixed `node_id -> address`
+/// table, standing in for a real mDNS backend.
+///
+/// Tests drive commissioning phase 2 (and anything else that resolves a peer)
+/// against devices at addresses they already know, but the production code path
+/// deliberately goes through discovery rather than taking a known address. This
+/// closes that gap without binding port 5353 on a real interface, which would
+/// make the tests depend on the host's network and on no other responder
+/// running.
+///
+/// Never returns - run it concurrently with whatever drives the resolves, e.g.
+/// `select(work, stub_mdns_resolver(matter, &table))`.
+#[allow(unused)]
+pub async fn stub_mdns_resolver(matter: &Matter<'_>, table: &[(u64, SocketAddrV6)]) -> ! {
+    stub_mdns_resolver_txt(matter, table, "").await
+}
+
+/// [`stub_mdns_resolver`], additionally advertising a `T` TXT value.
+///
+/// `T` is the TCP-support bitmap (bit 1 = client, bit 2 = server), so `"6"`
+/// makes the stubbed peer look TCP-capable and `""` omits the key entirely, as a
+/// node without TCP support does. It gates whether a
+/// [`TransportPreference::LargePayload`](rs_matter::transport::TransportPreference)
+/// request is allowed to establish over TCP.
+#[allow(unused)]
+pub async fn stub_mdns_resolver_txt(
+    matter: &Matter<'_>,
+    table: &[(u64, SocketAddrV6)],
+    tcp: &str,
+) -> ! {
+    loop {
+        let service = matter.transport().wait_mdns_resolve_request().await;
+
+        let MatterRemoteService::Operational { node_id, .. } = &service else {
+            continue;
+        };
+
+        let Some((_, sock)) = table.iter().find(|(id, _)| id == node_id) else {
+            continue;
+        };
+
+        let mut name = heapless::String::<128>::new();
+        service.instance_name(&mut name);
+
+        matter.transport().try_deposit_mdns_resolve(
+            &MdnsRemoteService {
+                instance_name: DottedName(name.as_str()),
+                port: Some(sock.port()),
+                addrs: core::iter::once(IpAddr::V6(*sock.ip())),
+                txt: (!tcp.is_empty()).then_some(("T", tcp)).into_iter(),
+                scope_id: 0,
+            },
+            &[],
+        );
+    }
 }

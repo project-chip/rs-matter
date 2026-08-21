@@ -67,6 +67,11 @@ use rs_matter::Matter;
 
 use static_cell::StaticCell;
 
+#[path = "../common/mdns.rs"]
+mod mdns;
+
+use mdns::stub_mdns_resolver;
+
 /// Defaults match rs-matter's `TEST_DEV_COMM`. Override via CLI args
 /// for chip-all-clusters-app or any other peer.
 const DEFAULT_PASSCODE: u32 = 20202021;
@@ -288,13 +293,27 @@ async fn run_commission<C: Crypto>(
         phase1.fabric_index, phase1.device_node_id,
     );
 
-    info!("=== complete_via_case (phase 2 — CASE + CommissioningComplete) ===");
+    info!("=== complete_via_case (phase 2 — discovery + CASE + CommissioningComplete) ===");
     {
-        let peer = Address::Udp(args.peer_addr);
-        let mut case_fut = pin!(commissioner.complete_via_case(peer, &phase1));
+        // Phase 2 discovers the device rather than reusing the PASE address, so a
+        // stub resolver stands in for the mDNS backend this harness does not run,
+        // answering with the address we were given on the command line.
+        let SocketAddr::V6(peer_sock) = args.peer_addr else {
+            error!("expected an IPv6 device address");
+            return Err(ErrorCode::InvalidData.into());
+        };
+
+        let mdns = stub_mdns_resolver(matter, &[(DEVICE_NODE_ID, peer_sock)]);
+        let mut case_fut = pin!(select(
+            pin!(commissioner.complete_via_case(&phase1)),
+            pin!(mdns),
+        ));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut case_fut, &mut timeout).await {
-            Either::First(r) => r?,
+            Either::First(Either::First(r)) => r?,
+            Either::First(Either::Second(_)) => {
+                unreachable!("the stub resolver never returns")
+            }
             Either::Second(_) => {
                 error!("complete_via_case() timed out after {COMMISSION_TIMEOUT_SECS}s");
                 return Err(ErrorCode::RxTimeout.into());

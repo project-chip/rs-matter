@@ -54,7 +54,7 @@ pub(crate) use mrp_log;
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
 const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
-const MRP_MAX_TRANSMISSIONS: u16 = 10;
+const MRP_MAX_TRANSMISSIONS: u16 = 5;
 const MRP_BACKOFF_THRESHOLD: u16 = 1;
 const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
 const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25

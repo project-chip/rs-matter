@@ -83,15 +83,7 @@ pub struct Host<'a> {
     /// one and, where the network provides on-link prefixes, one or more
     /// routable (GUA / ULA) ones.
     ///
-    /// The Matter Core Specification requires a node to publish an AAAA record
-    /// for each address it is willing to accept messages on, so all of these are
-    /// answered with. Advertising only the link-local address makes a node
-    /// unreachable to any peer that learns of it across a subnet boundary - an
-    /// mDNS reflector, or the DNS-SD proxy of a Thread border router - since the
-    /// relayed record then carries nothing the peer can route to.
-    ///
-    /// Unspecified entries are skipped, so a fixed-size array with empty slots is
-    /// fine. An empty slice publishes no AAAA record at all.
+    /// Unspecified entries are skipped, an empty slice publishes no AAAA record at all.
     pub ipv6: &'a [Ipv6Addr],
 }
 

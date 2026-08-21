@@ -161,6 +161,11 @@ impl Error {
         self.code
     }
 
+    /// Whether this error means the peer never answered.
+    pub const fn is_peer_unresponsive(&self) -> bool {
+        matches!(self.code, ErrorCode::TxTimeout | ErrorCode::RxTimeout)
+    }
+
     #[cfg(all(feature = "std", feature = "backtrace"))]
     pub const fn backtrace(&self) -> &std::backtrace::Backtrace {
         &self.backtrace
