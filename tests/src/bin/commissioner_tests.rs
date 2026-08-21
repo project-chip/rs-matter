@@ -303,11 +303,10 @@ async fn run_commission<C: Crypto>(
             return Err(ErrorCode::InvalidData.into());
         };
 
-        let mdns = stub_mdns_resolver(matter, &[(DEVICE_NODE_ID, peer_sock)]);
-        let mut case_fut = pin!(select(
-            pin!(commissioner.complete_via_case(&phase1)),
-            pin!(mdns),
-        ));
+        let mdns_table = [(DEVICE_NODE_ID, peer_sock)];
+        let mdns = pin!(stub_mdns_resolver(matter, &mdns_table));
+        let case = pin!(commissioner.complete_via_case(&phase1));
+        let mut case_fut = pin!(select(case, mdns));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut case_fut, &mut timeout).await {
             Either::First(Either::First(r)) => r?,

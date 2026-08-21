@@ -26,6 +26,7 @@
 //! instance's switch endpoint to the other's light endpoint, and triggers a
 //! "switch press" via the `--app-pipe` command channel, making the first
 //! instance resolve + CASE + `OnOff::Toggle` the second.
+#![recursion_limit = "256"]
 #![allow(clippy::uninlined_format_args)]
 
 use core::cell::Cell;

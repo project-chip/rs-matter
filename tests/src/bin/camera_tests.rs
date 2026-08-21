@@ -24,6 +24,7 @@
 //! - `PushAvStreamTransport` (0x0555)
 //! - `WebRTCTransportProvider` (0x0553) – stub (no real ICE/DTLS)
 //! - `Chime` (0x0556)
+#![recursion_limit = "256"]
 
 use core::pin::pin;
 
