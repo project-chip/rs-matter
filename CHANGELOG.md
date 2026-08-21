@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 * Advertise and use **all** of a node's IPv6 addresses rather than just one (#537)
 * (Breaking) Phase 2 of commissioning always goes through operational discovery now (#537)
+* Improved handling of RX and TX timeouts (#538)
 
 ## [0.3.0] - 2026-08-20
 * Groupcast **sending** APIs (`groups` feature): `Exchange::initiate_group` and `ImClient::group_invoke_with`; the `onoff_light_switch` example and the `light_tests` switch endpoint now act on *group* binding targets

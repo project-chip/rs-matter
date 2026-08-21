@@ -53,14 +53,17 @@ macro_rules! mrp_log {
 pub(crate) use mrp_log;
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
-const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
+pub(crate) const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
 const MRP_MAX_TRANSMISSIONS: u16 = 5;
-const MRP_RX_TIMEOUT_TRANSMISSIONS: u16 = 10;
 const MRP_BACKOFF_THRESHOLD: u16 = 1;
 const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
 const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25
 const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10); // 1.1
 const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
+
+/// Allowance for the peer's upper layer to actually process a request, on top of
+/// the time the message spends being retransmitted on the wire.
+pub(crate) const MRP_EXPECTED_PROCESSING_MS: u64 = 30_000;
 
 /// Fallback for `MRP_SESSION_IDLE_INTERVAL` when neither the peer nor our
 /// own `BasicInfoConfig::sii` advertised a value. Matches the docstring
@@ -134,45 +137,10 @@ impl RetransEntry {
         self.delay_ms_counter(self.counter, jitter_rand)
     }
 
-    /// How long to wait for the peer's response before giving up with
-    /// [`ErrorCode::RxTimeout`].
-    ///
-    /// Derived from [`MRP_RX_TIMEOUT_TRANSMISSIONS`] rather than
-    /// [`MRP_MAX_TRANSMISSIONS`] - the two answer different questions, and tying
-    /// them together makes our own retransmission budget silently dictate how
-    /// patient we are with a slow peer.
-    ///
-    /// TODO: The second constant has no counterpart in the CHIP SDK, which gets
-    /// the same separation out of a better formula instead. Its
-    /// `Session::ComputeRoundTripTimeout` is a sum of three terms -
-    /// `GetAckTimeout()` (the full retransmit ladder over the *peer's* MRP
-    /// config, i.e. how long until our message reaches it), an explicit
-    /// upper-layer processing allowance, and `GetMessageReceiptTimeout()` (the
-    /// ladder again, over the *local* config, for its answer reaching us). That
-    /// is roughly two ladders plus processing time, so lowering the
-    /// retransmission budget shrinks it proportionally from a base that was
-    /// large enough to begin with, and no second constant is needed. Non-UDP
-    /// transports skip the derivation entirely there (flat 30s for TCP, the BTP
-    /// ack timeout for BLE). Worth adopting that shape - it also stops us using
-    /// our own `sai` for the outbound half, where the peer's advertised value is
-    /// the correct input - at which point this constant goes away.
-    pub fn rx_timeout_ms(&self) -> u64 {
-        self.delay_ms_counter(MRP_RX_TIMEOUT_TRANSMISSIONS, MRP_JITTER_RAND_MAX)
-    }
-
     /// Return how much to delay before (re)transmitting the message
     /// based on the provided number of re-transmissions so far
     pub fn delay_ms_counter(&self, counter: u16, jitter_rand: u8) -> u64 {
-        let mut delay =
-            self.base_delay_interval_ms as u64 * MRP_BACKOFF_MARGIN.0 / MRP_BACKOFF_MARGIN.1;
-
-        if counter > MRP_BACKOFF_THRESHOLD {
-            for _ in 0..counter - MRP_BACKOFF_THRESHOLD {
-                delay = delay * MRP_BACKOFF_BASE.0 / MRP_BACKOFF_BASE.1;
-            }
-        }
-
-        delay + (delay * jitter_rand as u64 * MRP_BACKOFF_JITTER.0) / (255 * MRP_BACKOFF_JITTER.1)
+        Self::backoff_ms(self.base_delay_interval_ms, counter, jitter_rand)
     }
 
     pub fn pre_send(&mut self, ctr: u32) -> Result<(), Error> {
@@ -187,6 +155,45 @@ impl RetransEntry {
             // This indicates there was some existing entry for same sess-id/exch-id, which shouldn't happen
             panic!("Previous retrans entry for this exchange already exists");
         }
+    }
+
+    /// The delay before the `counter`-th (re)transmission of a message whose base
+    /// retry interval is `base_interval_ms`, per the Matter Core Specification's
+    /// backoff equation.
+    fn backoff_ms(base_interval_ms: u32, counter: u16, jitter_rand: u8) -> u64 {
+        let mut delay = base_interval_ms as u64 * MRP_BACKOFF_MARGIN.0 / MRP_BACKOFF_MARGIN.1;
+
+        if counter > MRP_BACKOFF_THRESHOLD {
+            for _ in 0..counter - MRP_BACKOFF_THRESHOLD {
+                delay = delay * MRP_BACKOFF_BASE.0 / MRP_BACKOFF_BASE.1;
+            }
+        }
+
+        delay + (delay * jitter_rand as u64 * MRP_BACKOFF_JITTER.0) / (255 * MRP_BACKOFF_JITTER.1)
+    }
+
+    /// How long a sender can keep retransmitting a message before it runs out of
+    /// attempts - the *sum* of the whole backoff ladder with maximum jitter, not
+    /// the length of its last step.
+    pub fn retransmission_timeout_ms(
+        active_interval_ms: u32,
+        idle_interval_ms: u32,
+        active_threshold_ms: u16,
+        active_only: bool,
+    ) -> u64 {
+        let mut timeout = 0;
+
+        for counter in 0..MRP_MAX_TRANSMISSIONS {
+            let base_interval_ms = if active_only || timeout < active_threshold_ms as u64 {
+                active_interval_ms
+            } else {
+                idle_interval_ms
+            };
+
+            timeout += Self::backoff_ms(base_interval_ms, counter, MRP_JITTER_RAND_MAX);
+        }
+
+        timeout
     }
 }
 
@@ -273,6 +280,11 @@ impl ReliableMessage {
 
                     self.retrans = None;
                     self.ack = None;
+
+                    // The error is propagated rather than swallowed: clearing
+                    // `retrans` leaves no pending retransmission, which is exactly
+                    // what a peer *acknowledging* the message also looks like.
+                    Err(ErrorCode::TxTimeout)?;
                 }
             } else {
                 self.retrans = Some(RetransEntry::new(session_active_interval_ms, tx_plain.ctr));
@@ -331,5 +343,90 @@ impl ReliableMessage {
         self.received_at = Some(Instant::now());
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sender gets exactly `MRP_MAX_TRANSMISSIONS` attempts, and the one after
+    /// that fails with `TxTimeout` rather than silently succeeding.
+    ///
+    /// The give-up used to be swallowed, which is indistinguishable from the peer
+    /// having acknowledged: the caller was told the message went out and then
+    /// waited a whole receive timeout for an answer that could never come.
+    #[test]
+    fn retrans_entry_gives_up_after_max_transmissions() {
+        const CTR: u32 = 42;
+
+        let mut entry = RetransEntry::new(Some(300), CTR);
+
+        for attempt in 0..MRP_MAX_TRANSMISSIONS {
+            assert!(
+                entry.pre_send(CTR).is_ok(),
+                "transmission {attempt} should be allowed"
+            );
+        }
+
+        let err = unwrap!(entry.pre_send(CTR).err());
+        assert_eq!(err.code(), ErrorCode::TxTimeout);
+
+        // ... and it keeps failing rather than resetting.
+        assert_eq!(
+            unwrap!(entry.pre_send(CTR).err()).code(),
+            ErrorCode::TxTimeout
+        );
+    }
+
+    /// The backoff grows: linear up to `MRP_BACKOFF_THRESHOLD`, exponential after.
+    #[test]
+    fn backoff_is_linear_then_exponential() {
+        let step = |counter| RetransEntry::backoff_ms(300, counter, MRP_JITTER_RAND_MAX);
+
+        // Up to the threshold the interval does not grow.
+        assert_eq!(step(0), step(MRP_BACKOFF_THRESHOLD));
+
+        // Beyond it, each step grows by the backoff base.
+        for counter in MRP_BACKOFF_THRESHOLD + 1..MRP_MAX_TRANSMISSIONS {
+            assert!(
+                step(counter) > step(counter - 1),
+                "step {counter} should exceed step {}",
+                counter - 1
+            );
+        }
+    }
+
+    /// The retransmission timeout is the *sum* of the ladder, not the length of
+    /// its last step - the distinction the receive timeout is built on.
+    #[test]
+    fn retransmission_timeout_sums_the_whole_ladder() {
+        let expected: u64 = (0..MRP_MAX_TRANSMISSIONS)
+            .map(|counter| RetransEntry::backoff_ms(300, counter, MRP_JITTER_RAND_MAX))
+            .sum();
+
+        let actual = RetransEntry::retransmission_timeout_ms(300, 300, 0, true);
+        assert_eq!(actual, expected);
+
+        // Strictly greater than any single step, which is what a "single step"
+        // regression would collapse it to.
+        let longest = RetransEntry::backoff_ms(300, MRP_MAX_TRANSMISSIONS - 1, MRP_JITTER_RAND_MAX);
+        assert!(actual > longest);
+    }
+
+    /// A sender that may be talking to a sleeping peer paces the ladder by the
+    /// idle interval once the accumulated wait leaves the active threshold, so it
+    /// is more patient than an always-active one.
+    #[test]
+    fn retransmission_timeout_falls_back_to_the_idle_interval() {
+        let active_only = RetransEntry::retransmission_timeout_ms(300, 5000, 4000, true);
+
+        // With a threshold of zero, every step is paced by the idle interval.
+        let idle = RetransEntry::retransmission_timeout_ms(300, 5000, 0, false);
+        assert!(idle > active_only);
+
+        // With a threshold beyond the whole ladder, none of them are.
+        let active = RetransEntry::retransmission_timeout_ms(300, 5000, u16::MAX, false);
+        assert_eq!(active, active_only);
     }
 }

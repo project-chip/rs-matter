@@ -55,6 +55,20 @@ use super::proto_hdr::ProtoHdr;
 #[cfg(feature = "groups")]
 use super::Packet;
 
+/// Receive timeout for a TCP-backed session.
+///
+/// TCP handles its own retransmission, so there is no MRP ladder to derive from;
+/// this is a flat upper bound on how long the peer may take to answer. The CHIP
+/// SDK uses the same 30 seconds for `GetAckTimeout` / `GetMessageReceiptTimeout`
+/// on TCP sessions.
+const TCP_RX_TIMEOUT_MS: u64 = 30_000;
+
+/// Receive timeout for a BTP (BLE) session.
+///
+/// BTP runs its own acknowledgement scheme underneath, so the MRP ladder does not
+/// describe it; this matches the BTP layer's own ack timeout.
+const BTP_RX_TIMEOUT_MS: u64 = 5_000;
+
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
@@ -140,7 +154,8 @@ pub struct Session {
     /// Peer's effective `MRP_SESSION_ACTIVE_THRESHOLD` (ms).
     peer_active_threshold_ms: u16,
     /// If `true` then the session is considered "expired". Session expiration happens
-    /// for the session on behalf of which a fabric is removed.
+    /// for the session on behalf of which a fabric is removed, and for a CASE session
+    /// whose peer stopped acknowledging (see [`Session::pre_send`]).
     ///
     /// Expired sessions can still process their ongoing exchanges, but do not accept any new ones.
     /// Furthermore, expired sessions are the prime candidates for eviction.
@@ -424,6 +439,59 @@ impl Session {
         self.expired
     }
 
+    /// How long to wait for the peer's answer on this session before giving up
+    /// with [`ErrorCode::RxTimeout`].
+    ///
+    /// Mirrors the CHIP SDK's `Session::ComputeRoundTripTimeout`, which is a sum
+    /// of three terms rather than a single scaled backoff step:
+    ///
+    /// - the time our message may spend being retransmitted before it reaches the
+    ///   peer, paced by the **peer's** advertised retry interval,
+    /// - an allowance for the peer's upper layer to process the request,
+    /// - the time the peer's answer may spend being retransmitted before it
+    ///   reaches us, paced by **our own** retry interval.
+    ///
+    /// The two halves deliberately use different inputs: each direction is paced
+    /// by the retry configuration of whichever side is doing the sending.
+    ///
+    /// The outbound half uses the peer's *idle* interval, because we cannot know
+    /// whether the peer is awake when we first speak to it, while the inbound half
+    /// uses the *active* interval, since the peer is by then answering a message
+    /// it has just received. That is the same asymmetry CHIP encodes through its
+    /// `isFirstMessageOnExchange` flag.
+    ///
+    /// Non-UDP transports derive nothing: TCP is a reliable stream with no MRP
+    /// ladder to account for, and BTP carries its own acknowledgement timeout.
+    pub(crate) fn rx_timeout_ms(&self, local_active_interval_ms: u32) -> u64 {
+        match self.peer_addr {
+            Address::Tcp(_) => TCP_RX_TIMEOUT_MS,
+            Address::Btp(_) => BTP_RX_TIMEOUT_MS,
+            Address::Udp(_) => {
+                // Outbound: our message reaching the peer, paced by the peer's own
+                // retry configuration, and allowed to fall back to its idle
+                // interval since we cannot know whether it is awake.
+                let outbound = mrp::RetransEntry::retransmission_timeout_ms(
+                    self.peer_active_interval_ms,
+                    self.peer_idle_interval_ms,
+                    self.peer_active_threshold_ms,
+                    false,
+                );
+
+                // Inbound: the peer's answer reaching us, paced by our own retry
+                // configuration. Always active - the peer is answering a message
+                // it just received, so it is demonstrably awake.
+                let inbound = mrp::RetransEntry::retransmission_timeout_ms(
+                    local_active_interval_ms,
+                    local_active_interval_ms,
+                    0,
+                    true,
+                );
+
+                outbound + mrp::MRP_EXPECTED_PROCESSING_MS + inbound
+            }
+        }
+    }
+
     pub fn upgrade_fabric_idx(&mut self, fabric_idx: NonZeroU8) -> Result<(), Error> {
         if let SessionMode::Pase { fab_idx } = &mut self.mode {
             if *fab_idx == 0 {
@@ -613,12 +681,41 @@ impl Session {
         if let Some(exchange_index) = exch_index {
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
 
-            exchange.pre_send(
+            let result = exchange.pre_send(
                 &tx_header.plain,
                 &mut tx_header.proto,
                 session_active_interval_ms,
                 session_idle_interval_ms,
-            )?;
+            );
+
+            if matches!(
+                result.as_ref().map_err(Error::code),
+                Err(ErrorCode::TxTimeout)
+            ) && matches!(self.mode, SessionMode::Case { .. })
+                && !self.expired
+            {
+                // The peer never acknowledged, which is the strongest evidence we
+                // get that its recorded address no longer reaches it - it may have
+                // renumbered, moved subnet, or the address picked out of the
+                // resolve was never reachable in the first place.
+                //
+                // Expiring keeps the session usable for the exchanges already on
+                // it (they fail on their own) while making `Transport::initiate`
+                // skip it, so the next attempt re-resolves the peer and builds a
+                // fresh session against the current candidate list.
+                //
+                // Only CASE sessions: PASE and plaintext are short-lived and
+                // pinned to an address the caller supplied itself, so there is
+                // nothing to re-resolve.
+                warn!(
+                    "Session {}: Peer did not acknowledge; marking the session as expired",
+                    self.id
+                );
+
+                self.expired = true;
+            }
+
+            result?;
         }
 
         Ok((self.peer_addr, retransmission))
@@ -2037,7 +2134,7 @@ pub fn derive_group_session_id<C: Crypto>(
 mod tests {
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
     use crate::dm::clusters::basic_info::BasicInfoConfig;
-    use crate::transport::network::Address;
+    use crate::transport::network::{Address, BtAddr};
 
     use super::*;
 
@@ -2067,6 +2164,66 @@ mod tests {
         assert_eq!(sm.get_next_sess_id(), 65534);
         assert_eq!(sm.get_next_sess_id(), 65535);
         assert_eq!(sm.get_next_sess_id(), 2);
+    }
+
+    /// The receive timeout is derived per transport: only UDP has an MRP ladder
+    /// to account for, while TCP and BTP carry their own reliability underneath.
+    #[test]
+    fn rx_timeout_is_per_transport() {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        let addr = |f: fn(SocketAddr) -> Address| {
+            f(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::LOCALHOST,
+                5540,
+                0,
+                0,
+            )))
+        };
+
+        let session = |peer_addr| Session::new(1, 0, false, peer_addr, None, 300, 5000, 4000);
+
+        assert_eq!(
+            session(addr(Address::Tcp)).rx_timeout_ms(300),
+            TCP_RX_TIMEOUT_MS
+        );
+        assert_eq!(
+            session(Address::Btp(BtAddr([0; 6]))).rx_timeout_ms(300),
+            BTP_RX_TIMEOUT_MS
+        );
+
+        // UDP sums both directions of the MRP ladder plus the processing
+        // allowance, and is therefore strictly larger than either ladder alone.
+        let udp = session(addr(Address::Udp)).rx_timeout_ms(300);
+        let one_ladder = mrp::RetransEntry::retransmission_timeout_ms(300, 300, 0, true);
+
+        assert_eq!(
+            udp,
+            one_ladder + mrp::MRP_EXPECTED_PROCESSING_MS + one_ladder
+        );
+        assert!(udp > one_ladder + mrp::MRP_EXPECTED_PROCESSING_MS);
+    }
+
+    /// The receive timeout must outlast the send-side give-up, or a peer that is
+    /// merely slow would be abandoned before its answer could arrive.
+    #[test]
+    fn rx_timeout_outlasts_the_send_side_give_up() {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        let peer_addr = Address::Udp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            5540,
+            0,
+            0,
+        )));
+
+        let rx = Session::new(1, 0, false, peer_addr, None, 300, 5000, 4000).rx_timeout_ms(300);
+        let give_up = mrp::RetransEntry::retransmission_timeout_ms(300, 5000, 4000, false);
+
+        assert!(
+            rx > give_up,
+            "receive timeout {rx}ms must exceed the retransmission give-up {give_up}ms"
+        );
     }
 
     #[test]
