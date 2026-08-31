@@ -2,7 +2,7 @@
 
 Matter clusters vary in their complexity and hence different implementation patterns have been developed to address different levels of complexity. What follows is a description of the different patterns, when to use them, how to implement them (for SDK contributors) and how to use them (for SDK consumers). A summary detailing the patterns used for different clusters is also provided.
 
-Note: `rs-matter` is still evolving and hence there may be needs that are not met by the patterns discussed here. One pattern of note that is currently missing is that for derived clusters.
+Note: `rs-matter` is still evolving and hence there may be needs that are not met by the patterns discussed here.
 
 # Implementation patterns
 
@@ -224,9 +224,77 @@ fn main() {
 }
 ```
 
+## Pattern D: Derived clusters
+
+**When to use**: A pseudo cluster with no cluster ID of its own, which several real cluster IDs are derived from.
+
+The Matter spec defines *base* clusters that cannot be instantiated: they have no cluster ID and exist only to be derived from. Mode Base is the example — ten real clusters (RvcRunMode, DishwasherMode, OvenMode, …) each declare "I am a Mode Base", inherit its attributes and commands unchanged, and contribute only their own mode tags and status codes on top.
+
+The IDL has no notion of this relationship, so codegen emits one full set of near-identical types per derived cluster: a `ClusterHandler` trait, `AttributeId` / `CommandId` enums, request and response types and a handler adaptor. Implementing the shared logic once per derived cluster would mean copying it ten times.
+
+### Implementation
+
+1. Implement the base cluster's logic once, as a `<Base>Handler` generic over a `<Base>Hooks` trait, exactly as in pattern B1. It must not name any derived cluster's generated types.
+2. Where the shared logic does need to touch a generated type — writing a response struct, say — abstract over it with a small trait (see `ChangeToModeResponseWriter` in `mode.rs`), implemented per derived cluster by the macro below.
+3. Write a macro that, per derived cluster, emits a submodule which:
+   - re-exports the generated items for that cluster, so its cluster-specific enums (`ModeTag`, `StatusCode`) are reachable from one place,
+   - defines a `CLUSTER` metadata constant and an `adapt()` function — the latter is needed because `<Base>Handler` implements one `ClusterHandler` trait per derived cluster and so cannot carry a single inherent `adapt`,
+   - implements that cluster's `ClusterHandler` by forwarding into the shared handler,
+   - `const`-asserts that the derived cluster still agrees with the base on any attribute ID the shared logic hardcodes.
+4. Invoke the macro once per derived cluster. Give it a second form for the derived clusters that drop part of the base surface — MicrowaveOvenMode has no `ChangeToMode` command.
+
+### Usage
+
+Identical to pattern B1, except that the derived cluster is selected by `<Base>Hooks::CLUSTER` and the handler is adapted through the matching submodule:
+
+```rust
+use rs_matter::dm::clusters::mode::{
+    rvc_run_mode, Mode, ModeChangeError, ModeHandler, ModeHooks, ModeId, ModeTag,
+};
+use rs_matter::dm::clusters::mode::rvc_run_mode::ModeTag as RunTag;
+
+const MODES: &[Mode<RunTag>] = &[
+    Mode::new(0, "Idle", &[ModeTag::Standard(RunTag::Idle)]),
+    Mode::new(1, "Cleaning", &[ModeTag::Standard(RunTag::Cleaning)]),
+];
+
+impl ModeHooks for RvcDeviceLogic {
+    // Selects *which* derived cluster this handler serves
+    const CLUSTER: Cluster<'static> = rvc_run_mode::CLUSTER;
+    type ModeTag = RunTag;
+
+    fn supported_modes(&self) -> &[Mode<'_, RunTag>] { MODES }
+    fn current_mode(&self) -> ModeId { self.mode.get() }
+
+    fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
+        if self.dust_bin_missing() {
+            return Err(ModeChangeError::derived(
+                rvc_run_mode::StatusCode::DustBinMissing as _,
+                "The dust bin is missing",
+            ));
+        }
+
+        self.start_cleaning(mode);
+        self.mode.set(mode); // CurrentMode is non-volatile
+        Ok(())
+    }
+}
+
+fn main() {
+    let handler = ModeHandler::new(Dataver::new_rand(rand), 1, RvcDeviceLogic::new());
+
+    let device_handler = EmptyHandler.chain(
+        EpClMatcher::new(Some(1), Some(rvc_run_mode::CLUSTER.id)),
+        rvc_run_mode::adapt(handler),
+    );
+}
+```
+
+
 # Cluster Support
 
 The following table summarises the implementation pattern types used for Matter v1.3 clusters.
+Pattern D applies only to clusters derived from a base (ID-less) cluster.
 Provisional clusters are not included.
 
 All clusters are supported by pattern A.
@@ -240,116 +308,123 @@ Blank entries indicate that an assessment has not yet been made to identify if t
 **Note** Events are currently not supported. See issue [#36](https://github.com/project-chip/rs-matter/issues/36).
 
 
-| Cluster                                               | A  | B  | B1 | C  | notes |
-| ----------------------------------------------------- | -- | -- | -- | -- | ----- |
-| **System Clusters** Matter Specification v1.3.0.1     |    |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **9. System Model Specification**                     |    |    |    |    |       |
-| Descriptor                                            | ✅ | ✅ | ✅ | ⚫ |       |
-| Binding                                               | ✅ | ✅ | ✅ | ⚫ |       |
-| FixedLabel                                            | ✅ | ✅ | ⚫ | ⚫ |       |
-| UserLabel                                             | ✅ | ✅ | ⚫ | ⚫ |       |
-| AccessControl                                         | ✅ | ✅ | ⚫ | ⚫ |       |
-| BridgedDeviceBasicInformation                         | ✅ | ✅ | ⚫ | ⚫ |       |
-| Actions                                               | ✅ |    |    |    |       |
-| ProxyDiscovery                                        | ✅ |    |    |    |       |
-| ProxyConfiguration                                    | ✅ |    |    |    |       |
-| ProxyValid                                            | ✅ |    |    |    |       |
-| IcdManagement                                         | ✅ | ✅ | ⚫ | ⚫ |       |
-|                                                       |    |    |    |    |       |
-| **11. Service and Device Management**                 |    |    |    |    |       |
-| BasicInformation                                      | ✅ | ✅ | ⚫ | ⚫ |       |
-| GroupKeyManagement                                    | ✅ | ✅ | ⚫ | ⚫ |       |
-| Groups                                                | ✅ | ✅ | ⚫ | ⚫ |       |
-| Identify                                              | ✅ | ⚫ | ✅ | ⚫ |       |
-| LocalizationConfiguration                             | ✅ | ✅ |    |    |       |
-| TimeFormatLocalization                                | ✅ |    |    |    |       |
-| UnitLocalization                                      | ✅ |    |    |    |       |
-| PowerSourceConfiguration (deprecated)                 | ✅ | ⚫ | ⚫ | ⚫ |       |
-| PowerSource                                           | ✅ | ⚫ | ✅ | ⚫ |       |
-| NetworkCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
-| GeneralCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
-| DiagnosticLogs                                        | ✅ | ⚫ | ✅ | ⚫ |       |
-| GeneralDiagnostics                                    | ✅ | ⚫ | ✅ | ⚫ |       |
-| SoftwareDiagnostics                                   | ✅ | ⚫ | ✅ | ⚫ |       |
-| ThreadNetworkDiagnostics                              | ✅ | ⚫ | ✅ | ⚫ |       |
-| WiFiNetworkDiagnostics                                | ✅ | ⚫ | ✅ | ⚫ |       |
-| EthernetNetworkDiagnostics                            | ✅ | ⚫ | ✅ | ⚫ |       |
-| TimeSynchronization                                   | ✅ | ✅*| ⚫*| ⚫ |       |
-| OperationalCredentials                                | ✅ | ✅ | ⚫ | ⚫ |       |
-| AdministratorCommissioning                            | ✅ | ✅ | ⚫ | ⚫ |       |
-| OtaSoftwareUpdateProvider                             | ✅ | ⚫ | ✅ | ⚫ |       |
-| OtaSoftwareUpdateRequestor                            | ✅ | ✅ | ⚫ | ⚫ |       |
-|                                                       |    |    |    |    |       |
-| **Application Clusters** (incomplete list) | | |  |    |       |
-|                                                       |    |    |    |    |       |
-| **1. General**                                        |    |    |    |    |       |
-| Switch                                                | ✅ | ⚫ | ⚫ | ⚫ |       |
-| OnOff                                                 | ✅ | ⚫ | ✅ | ✅ |       |
-| LevelControl                                          | ✅ | ⚫ | ✅ | ✅ |       |
-| BooleanState                                          | ✅ |    |    |    |       |
-| ModeSelect                                            | ✅ |    |    |    |       |
-| LowPower                                              | ✅ |    |    |    |       |
-| WakeOnLan                                             | ✅ |    |    |    |       |
-| OperationalState                                      | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **2. Measurement and Sensing**                        |    |    |    |    |       |
-| IlluminanceMeasurement                                | ✅ | ⚫ | ⚫ | ⚫ |       |
-| TemperatureMeasurement                                | ✅ | ⚫ | ⚫ | ⚫ |       |
-| PressureMeasurement                                   | ✅ | ⚫ | ⚫ | ⚫ |       |
-| FlowMeasurement                                       | ✅ | ⚫ | ⚫ | ⚫ |       |
-| RelativeHumidityMeasurement                           | ✅ | ⚫ | ⚫ | ⚫ |       |
-| OccupancySensing                                      | ✅ | ⚫ | ⚫ | ⚫ |       |
-| HepaFilterMonitoring                                  | ✅ | ⚫ | ⚫ | ⚫ |       |
-| ActivatedCarbonFilterMonitoring                       | ✅ | ⚫ | ⚫ | ⚫ |       |
-| AirQuality                                            | ✅ | ⚫ | ⚫ | ⚫ |       |
-| CarbonMonoxideConcentrationMeasurement                | ✅ | ⚫ | ⚫ | ⚫ |       |
-| CarbonDioxideConcentrationMeasurement                 | ✅ | ⚫ | ⚫ | ⚫ |       |
-| NitrogenDioxideConcentrationMeasurement               | ✅ | ⚫ | ⚫ | ⚫ |       |
-| OzoneConcentrationMeasurement                         | ✅ | ⚫ | ⚫ | ⚫ |       |
-| Pm25ConcentrationMeasurement                          | ✅ | ⚫ | ⚫ | ⚫ |       |
-| FormaldehydeConcentrationMeasurement                  | ✅ | ⚫ | ⚫ | ⚫ |       |
-| Pm1ConcentrationMeasurement                           | ✅ | ⚫ | ⚫ | ⚫ |       |
-| Pm10ConcentrationMeasurement                          | ✅ | ⚫ | ⚫ | ⚫ |       |
-| TotalVolatileOrganicCompoundsConcentrationMeasurement | ✅ | ⚫ | ⚫ | ⚫ |       |
-| RadonConcentrationMeasurement                         | ✅ | ⚫ | ⚫ | ⚫ |       |
-| SmokeCoAlarm                                          | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **3. Lighting**                                       |    |    |    |    |       |
-| ColorControl                                          | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **4. HVAC**                                           |    |    |    |    |       |
-| PumpConfigurationAndControl                           | ✅ |    |    |    |       |
-| Thermostat                                            | ✅ |    |    |    |       |
-| FanControl                                            | ✅ | ⚫ | ❌ | ⚫ |       |
-| ThermostatUserInterfaceConfiguration                  | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **5. Closures**                                       |    |    |    |    |       |
-| DoorLock                                              | ✅ |    |    |    |       |
-| WindowCovering                                        | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **6. Media**                                          |    |    |    |    |       |
-| AccountLogin                                          | ✅ |    |    |    |       |
-| ApplicationBasic                                      | ✅ |    |    |    |       |
-| ApplicationLauncher                                   | ✅ |    |    |    |       |
-| AudioOutput                                           | ✅ |    |    |    |       |
-| Channel                                               | ✅ |    |    |    |       |
-| ContentLauncher                                       | ✅ |    |    |    |       |
-| KeypadInput                                           | ✅ |    |    |    |       |
-| MediaInput                                            | ✅ |    |    |    |       |
-| MediaPlayback                                         | ✅ |    |    |    |       |
-| TargetNavigator                                       | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **7. Robots**                                         |    |    |    |    |       |
-| RvcRunMode                                            | ✅ |    |    |    |       |
-| RvcCleanMode                                          | ✅ |    |    |    |       |
-| RvcOperationalState                                   | ✅ |    |    |    |       |
-|                                                       |    |    |    |    |       |
-| **8. Home Appliances**                                |    |    |    |    |       |
-| TemperatureControl                                    | ✅ |    |    |    |       |
-| DishwasherMode                                        | ✅ |    |    |    |       |
-| DishwasherAlarm                                       | ✅ |    |    |    |       |
-| LaundryWasherMode                                     | ✅ |    |    |    |       |
-| LaundryWasherControls                                 | ✅ |    |    |    |       |
-| RefrigeratorAndTemperatureControlledCabinetMode       | ✅ |    |    |    |       |
-| RefrigeratorAlarm                                     | ✅ |    |    |    |       |
+| Cluster                                               | A  | B  | B1 | C  | D  | notes |
+| ----------------------------------------------------- | -- | -- | -- | -- | -- | ----- |
+| **System Clusters** Matter Specification v1.3.0.1     |    |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **9. System Model Specification**                     |    |    |    |    |    |       |
+| Descriptor                                            | ✅ | ✅ | ✅ | ⚫ |    |       |
+| Binding                                               | ✅ | ✅ | ✅ | ⚫ |    |       |
+| FixedLabel                                            | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| UserLabel                                             | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| AccessControl                                         | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| BridgedDeviceBasicInformation                         | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| Actions                                               | ✅ |    |    |    |    |       |
+| ProxyDiscovery                                        | ✅ |    |    |    |    |       |
+| ProxyConfiguration                                    | ✅ |    |    |    |    |       |
+| ProxyValid                                            | ✅ |    |    |    |    |       |
+| IcdManagement                                         | ✅ | ✅ | ⚫ | ⚫ |    |       |
+|                                                       |    |    |    |    |    |       |
+| **11. Service and Device Management**                 |    |    |    |    |    |       |
+| BasicInformation                                      | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| GroupKeyManagement                                    | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| Groups                                                | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| Identify                                              | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| LocalizationConfiguration                             | ✅ | ✅ |    |    |    |       |
+| TimeFormatLocalization                                | ✅ |    |    |    |    |       |
+| UnitLocalization                                      | ✅ |    |    |    |    |       |
+| PowerSourceConfiguration (deprecated)                 | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| PowerSource                                           | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| NetworkCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| GeneralCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| DiagnosticLogs                                        | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| GeneralDiagnostics                                    | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| SoftwareDiagnostics                                   | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| ThreadNetworkDiagnostics                              | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| WiFiNetworkDiagnostics                                | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| EthernetNetworkDiagnostics                            | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| TimeSynchronization                                   | ✅ | ✅*| ⚫*| ⚫ |    |       |
+| OperationalCredentials                                | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| AdministratorCommissioning                            | ✅ | ✅ | ⚫ | ⚫ |    |       |
+| OtaSoftwareUpdateProvider                             | ✅ | ⚫ | ✅ | ⚫ |    |       |
+| OtaSoftwareUpdateRequestor                            | ✅ | ✅ | ⚫ | ⚫ |    |       |
+|                                                       |    |    |    |    |    |       |
+| **Application Clusters** (incomplete list) | | |  |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **1. General**                                        |    |    |    |    |    |       |
+| Switch                                                | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| OnOff                                                 | ✅ | ⚫ | ✅ | ✅ | ⚫ |       |
+| LevelControl                                          | ✅ | ⚫ | ✅ | ✅ | ⚫ |       |
+| BooleanState                                          | ✅ |    |    |    |    |       |
+| ModeSelect                                            | ✅ | ⚫ | ✅ | ❌ | ⚫ | `OnMode` / OnOff coupling is driven by the application, see `apply_on_mode` |
+|                                                       |    |    |    |    |    |       |
+| **Mode Base derived clusters**                        |    |    |    |    |    | all served by one `ModeHandler`, see pattern D |
+| OvenMode                                              | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| LaundryWasherMode                                     | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| RefrigeratorAndTemperatureControlledCabinetMode       | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| RvcRunMode                                            | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| RvcCleanMode                                          | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| DishwasherMode                                        | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| MicrowaveOvenMode                                     | ✅ | ⚫ | ✅ | ⚫ | ✅ | no `ChangeToMode`; driven by MicrowaveOvenControl |
+| EnergyEvseMode                                        | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| WaterHeaterMode                                       | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| DeviceEnergyManagementMode                            | ✅ | ⚫ | ✅ | ⚫ | ✅ |       |
+| LowPower                                              | ✅ |    |    |    |    |       |
+| WakeOnLan                                             | ✅ |    |    |    |    |       |
+| OperationalState                                      | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **2. Measurement and Sensing**                        |    |    |    |    |    |       |
+| IlluminanceMeasurement                                | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| TemperatureMeasurement                                | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| PressureMeasurement                                   | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| FlowMeasurement                                       | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| RelativeHumidityMeasurement                           | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| OccupancySensing                                      | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| HepaFilterMonitoring                                  | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| ActivatedCarbonFilterMonitoring                       | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| AirQuality                                            | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| CarbonMonoxideConcentrationMeasurement                | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| CarbonDioxideConcentrationMeasurement                 | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| NitrogenDioxideConcentrationMeasurement               | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| OzoneConcentrationMeasurement                         | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| Pm25ConcentrationMeasurement                          | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| FormaldehydeConcentrationMeasurement                  | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| Pm1ConcentrationMeasurement                           | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| Pm10ConcentrationMeasurement                          | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| TotalVolatileOrganicCompoundsConcentrationMeasurement | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| RadonConcentrationMeasurement                         | ✅ | ⚫ | ⚫ | ⚫ |    |       |
+| SmokeCoAlarm                                          | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **3. Lighting**                                       |    |    |    |    |    |       |
+| ColorControl                                          | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **4. HVAC**                                           |    |    |    |    |    |       |
+| PumpConfigurationAndControl                           | ✅ |    |    |    |    |       |
+| Thermostat                                            | ✅ |    |    |    |    |       |
+| FanControl                                            | ✅ | ⚫ | ❌ | ⚫ |    |       |
+| ThermostatUserInterfaceConfiguration                  | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **5. Closures**                                       |    |    |    |    |    |       |
+| DoorLock                                              | ✅ |    |    |    |    |       |
+| WindowCovering                                        | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **6. Media**                                          |    |    |    |    |    |       |
+| AccountLogin                                          | ✅ |    |    |    |    |       |
+| ApplicationBasic                                      | ✅ |    |    |    |    |       |
+| ApplicationLauncher                                   | ✅ |    |    |    |    |       |
+| AudioOutput                                           | ✅ |    |    |    |    |       |
+| Channel                                               | ✅ |    |    |    |    |       |
+| ContentLauncher                                       | ✅ |    |    |    |    |       |
+| KeypadInput                                           | ✅ |    |    |    |    |       |
+| MediaInput                                            | ✅ |    |    |    |    |       |
+| MediaPlayback                                         | ✅ |    |    |    |    |       |
+| TargetNavigator                                       | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **7. Robots**                                         |    |    |    |    |    | RvcRunMode / RvcCleanMode are listed under Mode Base derived clusters |
+| RvcOperationalState                                   | ✅ |    |    |    |    |       |
+|                                                       |    |    |    |    |    |       |
+| **8. Home Appliances**                                |    |    |    |    |    | the appliance `*Mode` clusters are listed under Mode Base derived clusters |
+| TemperatureControl                                    | ✅ |    |    |    |    |       |
+| DishwasherAlarm                                       | ✅ |    |    |    |    |       |
+| LaundryWasherControls                                 | ✅ |    |    |    |    |       |
+| RefrigeratorAlarm                                     | ✅ |    |    |    |    |       |
