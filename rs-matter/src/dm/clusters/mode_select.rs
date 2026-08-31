@@ -92,8 +92,8 @@
 
 use crate::dm::types::EndptId;
 use crate::dm::{
-    ArrayAttributeRead, AttrChangeNotifier, Cluster, Dataver, HandlerContext, InvokeContext,
-    LifecycleOp, ReadContext, WriteContext,
+    ArrayAttributeRead, AttrChangeNotifier, AttrId, Cluster, ClusterId, Dataver, HandlerContext,
+    InvokeContext, LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, TLVBuilderParent, Utf8StrBuilder};
@@ -310,6 +310,37 @@ where
     }
 }
 
+/// Applies `OnMode` when the endpoint's OnOff cluster turns on.
+///
+/// This is the `ON_OFF` feature (`DEPONOFF`): when an endpoint hosts both
+/// OnOff and ModeSelect and `OnMode` is not null, an OFF -> ON transition
+/// sets `CurrentMode` to `OnMode` — a power-on default, e.g. a coffee machine
+/// whose "Sugar" instance returns to `Medium` every time it is switched on.
+/// The other three OnOff transitions leave `CurrentMode` alone.
+///
+/// Implemented by [`ModeSelectHandler`]; hand it to the OnOff handler on the
+/// same endpoint with
+/// [`OnOffHandler::with_on_mode_applier`](crate::dm::clusters::app::on_off::OnOffHandler::with_on_mode_applier).
+pub trait OnModeApplier {
+    /// Apply `OnMode`, if any.
+    ///
+    /// Returns the `(cluster, attribute)` the caller must report when the mode
+    /// actually moved, and `None` when `OnMode` is null, already selected, or
+    /// the device refused. Returning the path rather than taking a notifier
+    /// keeps this object-safe and keeps OnOff from having to know ModeSelect's
+    /// cluster and attribute IDs.
+    fn apply_on_mode(&self) -> Option<(ClusterId, AttrId)>;
+}
+
+impl<T> OnModeApplier for &T
+where
+    T: OnModeApplier + ?Sized,
+{
+    fn apply_on_mode(&self) -> Option<(ClusterId, AttrId)> {
+        (*self).apply_on_mode()
+    }
+}
+
 /// The handler for the ModeSelect Matter cluster.
 ///
 /// One instance serves one endpoint. Adapt it to the generic `rs-matter`
@@ -344,8 +375,8 @@ where
     /// The endpoint is not a constructor argument: everything this handler
     /// reports on its own behalf is reported against the operation it is
     /// serving, which already carries the path. The two entry points the
-    /// application calls from outside an operation - [`Self::apply_mode`] and
-    /// [`Self::apply_on_mode`] - take it as an argument instead.
+    /// application calls from outside an operation - [`Self::apply_mode`] -
+    /// takes it as an argument instead.
     pub const fn new(dataver: Dataver, hooks: H) -> Self {
         Self { dataver, hooks }
     }
@@ -371,36 +402,6 @@ where
             .supported_modes()
             .iter()
             .any(|option| option.id == mode)
-    }
-
-    /// Apply `OnMode` after the OnOff cluster on this endpoint went
-    /// OFF -> ON.
-    ///
-    /// This is the integration point for the `ON_OFF` feature: when the
-    /// feature is set and `OnMode` is not null, an OFF -> ON transition
-    /// changes `CurrentMode` to `OnMode`. rs-matter does not wire this up
-    /// automatically - call this from the endpoint's
-    /// [`crate::dm::clusters::app::on_off::OnOffHooks`] implementation when
-    /// it turns the device on, and only for an actual OFF -> ON transition
-    /// (the other three transitions leave `CurrentMode` alone).
-    ///
-    /// `notifier` is anything implementing [`AttrChangeNotifier`] - the Data
-    /// Model itself, or the `HandlerContext` the caller already holds. Note
-    /// that it must *not* be an [`crate::dm::OwnAttrChangeNotifier`] borrowed
-    /// from the OnOff operation that triggered this: "own" would then resolve
-    /// to the OnOff cluster's path, not ModeSelect's.
-    ///
-    /// A null `OnMode`, or one already selected, is a no-op.
-    pub fn apply_on_mode(
-        &self,
-        endpoint_id: EndptId,
-        notifier: impl AttrChangeNotifier,
-    ) -> Result<(), Error> {
-        let Some(mode) = self.hooks.on_mode().into_option() else {
-            return Ok(());
-        };
-
-        self.apply_mode(mode, endpoint_id, notifier)
     }
 
     /// Serve a read of `SupportedModes`.
@@ -601,6 +602,24 @@ where
                         index, other_index, option.id
                     );
                 }
+            }
+        }
+    }
+}
+
+impl<H> OnModeApplier for ModeSelectHandler<H>
+where
+    H: ModeSelectHooks,
+{
+    fn apply_on_mode(&self) -> Option<(ClusterId, AttrId)> {
+        let mode = self.hooks.on_mode().into_option()?;
+
+        match self.switch_to(mode) {
+            Ok(true) => Some((H::CLUSTER.id, AttributeId::CurrentMode as _)),
+            Ok(false) => None,
+            Err(e) => {
+                error!("ModeSelect: could not apply OnMode {}: {}", mode, e);
+                None
             }
         }
     }

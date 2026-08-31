@@ -39,6 +39,7 @@ use crate::dm::clusters::decl::scenes_management::{
     AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
 };
 use crate::dm::clusters::decl::{level_control, on_off};
+use crate::dm::clusters::mode_select::OnModeApplier;
 use crate::dm::clusters::scenes::{SceneClusterHandler, SceneInvalidator};
 use crate::dm::types::EndptId;
 use crate::dm::{
@@ -146,6 +147,9 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     /// Set via [`OnOffHandler::with_scene_invalidator`] when this
     /// device hosts Scenes Management on the same endpoint.
     scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
+    /// Set via [`OnOffHandler::with_on_mode_applier`] when this endpoint also
+    /// hosts a ModeSelect cluster with the `ON_OFF` feature.
+    on_mode_applier: Mutex<Cell<Option<&'a dyn OnModeApplier>>>,
     state: Mutex<RefCell<OnOffState>>,
     state_change_signal: Signal<Option<OnOffCommand>>,
 }
@@ -186,6 +190,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             hooks,
             level_control_handler: Mutex::new(Cell::new(None)),
             scene_invalidator: Mutex::new(Cell::new(None)),
+            on_mode_applier: Mutex::new(Cell::new(None)),
             state: Mutex::new(RefCell::new(OnOffState::new(state))),
             state_change_signal: Signal::new(None),
         }
@@ -306,6 +311,33 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         self
     }
 
+    /// Attach an [`OnModeApplier`] — the
+    /// [`ModeSelectHandler`](crate::dm::clusters::mode_select::ModeSelectHandler)
+    /// serving ModeSelect on this same endpoint — so an OFF -> ON transition
+    /// applies its `OnMode`, per the ModeSelect `ON_OFF` feature. No-op when
+    /// unset.
+    ///
+    /// Note that the spec's "OnMode with Power Up" variant (apply `OnMode` at
+    /// boot when `StartUpOnOff` is `On`) is not covered by this: the startup
+    /// path sets the OnOff state directly rather than going through the
+    /// OFF -> ON transition.
+    pub fn with_on_mode_applier(self, applier: &'a dyn OnModeApplier) -> Self {
+        self.on_mode_applier.lock(|cell| cell.set(Some(applier)));
+        self
+    }
+
+    /// Apply the coupled ModeSelect's `OnMode`, reporting `CurrentMode` if it
+    /// moved. No-op unless [`OnOffHandler::with_on_mode_applier`] was called.
+    fn apply_on_mode(&self, ctx: impl HandlerContext) {
+        let Some(applier) = self.on_mode_applier.lock(|cell| cell.get()) else {
+            return;
+        };
+
+        if let Some((cluster_id, attr_id)) = applier.apply_on_mode() {
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, attr_id);
+        }
+    }
+
     fn notify_scenable_changed(&self) {
         if let Some(inv) = self.scene_invalidator.lock(|cell| cell.get()) {
             inv.scenable_attribute_changed(self.endpoint_id);
@@ -369,6 +401,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 AttributeId::GlobalSceneControl as _,
             );
         }
+
+        // ModeSelect `ON_OFF` coupling: only OFF -> ON applies `OnMode`, which
+        // is exactly this path - `set_on` returned early if we were already on.
+        self.apply_on_mode(&ctx);
 
         // LevelControl coupling logic defined in the spec
         if !level_control_initiated {

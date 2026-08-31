@@ -517,7 +517,8 @@ pub trait ChangeToModeResponseWriter<P> {
 /// - between 2 and 255 entries,
 /// - `Mode` values unique across entries,
 /// - `Label` values unique across entries,
-/// - at least one tag per entry, at least one of them standard,
+/// - at least one tag per entry, no repeats within an entry, at least one of
+///   them standard,
 /// - tag sets distinct between entries,
 /// - the cluster metadata actually exposes `SupportedModes` and `CurrentMode`.
 ///
@@ -773,6 +774,20 @@ where
                     "Mode validation: SupportedModes[{}] has no mode tags, at least 1 required",
                     index
                 );
+            }
+
+            for (tag_index, tag) in option.tags.iter().enumerate() {
+                if option
+                    .tags
+                    .iter()
+                    .skip(tag_index + 1)
+                    .any(|other| other == tag)
+                {
+                    panic!(
+                        "Mode validation: SupportedModes[{}] repeats a mode tag",
+                        index
+                    );
+                }
             }
 
             if !option.tags.iter().any(ModeTag::is_standard) {
@@ -1234,6 +1249,19 @@ mod tests {
         const MODES: &[Mode<RunTag>] = &[
             Mode::new(0, "One", &[IDLE, AUTO]),
             Mode::new(1, "Two", &[AUTO, IDLE]),
+        ];
+
+        handler(MODES, 0).validate();
+    }
+
+    #[test]
+    #[should_panic(expected = "repeats a mode tag")]
+    fn a_mode_repeating_a_tag_is_rejected() {
+        // Spec: the tags within one mode must be distinct - `[Auto, Auto]` is
+        // not allowed. CHIP's `ModeBaseClusterChecks` enforces this too.
+        const MODES: &[Mode<RunTag>] = &[
+            Mode::new(0, "Idle", &[IDLE]),
+            Mode::new(1, "Cleaning", &[AUTO, AUTO]),
         ];
 
         handler(MODES, 0).validate();

@@ -117,6 +117,21 @@ pub const DEV_TYPE_GENERIC_SWITCH: DeviceType = DeviceType {
     drev: 2,
 };
 
+/// Mode Select — a Simple, endpoint-scoped device type whose only mandatory
+/// cluster is `ModeSelect` as a server. It exists so that a node can expose
+/// several independent mode choices: an endpoint hosts at most one instance of
+/// a given cluster ID, so each further choice needs its own endpoint. The
+/// Matter Application Cluster spec's own example is a coffee machine with one
+/// instance described `Milk` and another `Sugar`.
+///
+/// May be combined with another device type on the same endpoint when the
+/// mode being selected belongs to that device — e.g. an On/Off Light whose
+/// ModeSelect instance chooses its light pattern.
+pub const DEV_TYPE_MODE_SELECT: DeviceType = DeviceType {
+    dtype: 0x0027,
+    drev: 1,
+};
+
 /// Extended Color Light — mandates OnOff, LevelControl, and
 /// ColorControl with the full feature set (HUE_AND_SATURATION, XY,
 /// COLOR_TEMPERATURE, ENHANCED_HUE, COLOR_LOOP).
