@@ -63,6 +63,9 @@ use rs_matter::dm::clusters::decl::switch::{
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
+use rs_matter::dm::clusters::mode_select::{
+    self, Mode, ModeId, ModeSelectHandler, ModeSelectHooks, SemanticTag,
+};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{
     DEV_TYPE_EXTENDED_COLOR_LIGHT, DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH,
@@ -152,9 +155,18 @@ fn main() -> Result<(), Error> {
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
 
-    // OnOff cluster setup
+    // ModeSelect cluster setup - an *extra* cluster on EP1 (Core spec 9.2.1
+    // allows only one Application device type per Simple endpoint, so the
+    // endpoint keeps Extended Color Light and does not declare Mode Select).
+    let mode_select_handler =
+        ModeSelectHandler::new(Dataver::new_rand(&mut rand), ModeSelectDeviceLogic::new());
+
+    // OnOff cluster setup, coupled to ModeSelect so that an OFF -> ON
+    // transition applies `OnMode` (the ModeSelect `ON_OFF` feature) - the
+    // behaviour `Test_TC_MOD_3_1` verifies.
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new());
+        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new())
+            .with_on_mode_applier(&mode_select_handler);
 
     // LevelControl cluster setup
     let level_control_handler = level_control::LevelControlHandler::new(
@@ -198,6 +210,7 @@ fn main() -> Result<(), Error> {
             rand,
             &on_off_handler,
             &level_control_handler,
+            &mode_select_handler,
             &color_control_handler,
             &bindings,
             &switch_position,
@@ -418,6 +431,7 @@ const NODE: Node<'static> = Node {
                 OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
                 ColorControlDeviceLogic::CLUSTER,
+                ModeSelectDeviceLogic::CLUSTER,
             ),
         ),
         // The On/Off Light Switch (`0x0103`): OnOff in the *client* list plus
@@ -445,10 +459,17 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
+fn data_model<
+    'a,
+    LH: LevelControlHooks,
+    OH: OnOffHooks,
+    CH: ColorControlHooks,
+    MH: ModeSelectHooks,
+>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
+    mode_select: &'a ModeSelectHandler<MH>,
     color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
     bindings: &'a Bindings<MAX_BINDINGS>,
     switch_position: &'a Cell<u8>,
@@ -493,6 +514,10 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
                     BindingHandler::new(Dataver::new_rand(&mut rand), SWITCH_ENDPOINT, bindings)
                         .adapt(),
                 ),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(ModeSelectDeviceLogic::CLUSTER.id)),
+                Async(mode_select::HandlerAdaptor(mode_select)),
             )
             // Clusters for the Generic Switch endpoint
             .chain(
@@ -871,6 +896,105 @@ impl OnOffPersistentState {
                 _ => return Err(ErrorCode::Failure.into()),
             },
         })
+    }
+}
+
+/// The vendor ID whose namespace our semantic tags live in - the CSA test
+/// vendor, matching `TEST_DEV_DET`.
+const TEST_VENDOR: u16 = 0xFFF1;
+
+/// The light patterns the ModeSelect instance on EP1 chooses between.
+///
+/// Mode ids are deliberately non-contiguous: `Mode` is an identifier, not an
+/// index into this list, and a table like this catches any code that confuses
+/// the two. Id `4` is present because `Test_TC_MOD_2_1` defaults its `NewMode`
+/// argument to 4.
+const LIGHT_PATTERNS: &[Mode] = &[
+    Mode::new(0, "Steady", &[SemanticTag::new(TEST_VENDOR, 0x8000)]),
+    Mode::new(4, "Blink", &[SemanticTag::new(TEST_VENDOR, 0x8001)]),
+    Mode::new(7, "Pulse", &[SemanticTag::new(TEST_VENDOR, 0x8002)]),
+];
+
+/// Device logic behind the ModeSelect instance on EP1.
+///
+/// State is in-memory: the enabled ModeSelect tests
+/// (`TestModeSelectCluster`, `Test_TC_MOD_2_1`, `Test_TC_MOD_3_1`) never
+/// restart the DUT. The two that would exercise the non-volatile quality of
+/// `CurrentMode` / `StartUpMode` - `Test_TC_MOD_3_2` and `3_4` - gate their
+/// power-cycle step on `PICS_USER_PROMPT` and are not enabled, so persisting
+/// here would buy nothing testable.
+pub struct ModeSelectDeviceLogic {
+    current: Cell<ModeId>,
+    start_up: Cell<Option<ModeId>>,
+    on_mode: Cell<Option<ModeId>>,
+}
+
+impl ModeSelectDeviceLogic {
+    pub const fn new() -> Self {
+        Self {
+            current: Cell::new(0),
+            // Non-null on purpose. `StartUpMode` is nullable per the spec
+            // (quality `NX`), but `TC_MOD_1_2` asserts `isinstance(_, int)`
+            // for it with no `NullValue` branch - unlike `OnMode` two lines
+            // above in the same test, which does accept null. Ship a real
+            // start-up cycle so the attribute is meaningful either way.
+            start_up: Cell::new(Some(0)),
+            // `Test_TC_MOD_3_1` writes `OnMode` itself, then toggles OnOff and
+            // checks `CurrentMode` followed it. Start null so the test drives
+            // the whole sequence.
+            on_mode: Cell::new(None),
+        }
+    }
+}
+
+impl ModeSelectHooks for ModeSelectDeviceLogic {
+    // `StartUpMode` and `OnMode` are optional; `OnMode` is what the `ON_OFF`
+    // feature adds. `Test_TC_MOD_3_1` needs both the feature and the
+    // attribute, so opt into them explicitly.
+    const CLUSTER: Cluster<'static> = mode_select::FULL_CLUSTER
+        .with_features(mode_select::Feature::ON_OFF.bits())
+        .with_attrs(with!(
+            required;
+            mode_select::AttributeId::StartUpMode | mode_select::AttributeId::OnMode
+        ));
+
+    fn description(&self) -> &str {
+        "Light pattern"
+    }
+
+    fn supported_modes(&self) -> &[Mode<'_>] {
+        LIGHT_PATTERNS
+    }
+
+    fn current_mode(&self) -> ModeId {
+        self.current.get()
+    }
+
+    fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
+        trace!("ModeSelectDeviceLogic: light pattern -> {mode}");
+        self.current.set(mode);
+
+        Ok(())
+    }
+
+    fn start_up_mode(&self) -> Nullable<ModeId> {
+        Nullable::new(self.start_up.get())
+    }
+
+    fn set_start_up_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
+        self.start_up.set(value.into_option());
+
+        Ok(())
+    }
+
+    fn on_mode(&self) -> Nullable<ModeId> {
+        Nullable::new(self.on_mode.get())
+    }
+
+    fn set_on_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
+        self.on_mode.set(value.into_option());
+
+        Ok(())
     }
 }
 

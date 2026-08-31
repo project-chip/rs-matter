@@ -124,9 +124,15 @@ pub const DEV_TYPE_GENERIC_SWITCH: DeviceType = DeviceType {
 /// Matter Application Cluster spec's own example is a coffee machine with one
 /// instance described `Milk` and another `Sugar`.
 ///
-/// May be combined with another device type on the same endpoint when the
-/// mode being selected belongs to that device — e.g. an On/Off Light whose
-/// ModeSelect instance chooses its light pattern.
+/// This is a Simple **application** device type, so per Core spec 9.2.1 an
+/// endpoint carries exactly one of it and no other application type — use it
+/// for an endpoint dedicated to a mode choice.
+///
+/// To attach a mode choice to an existing device instead, put the ModeSelect
+/// *cluster* on that device's endpoint without declaring this device type, and
+/// leave the endpoint's own application device type in place. That is what
+/// CHIP's `all-clusters-app` does, and it is also what the `ON_OFF` feature
+/// needs, since `OnMode` couples to an OnOff cluster on the same endpoint.
 pub const DEV_TYPE_MODE_SELECT: DeviceType = DeviceType {
     dtype: 0x0027,
     drev: 1,

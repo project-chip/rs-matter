@@ -188,3 +188,20 @@ CC.C.AM-READ=0
 CC.C.AM-WRITE=0
 CC.C.AO-READ=0
 CC.C.AO-WRITE=0
+
+# ---- Mode Select Cluster ----
+# An extra cluster on EP1 (the endpoint keeps Extended Color Light as its sole
+# Application device type). `F00` is the OnOff dependency, coupling `OnMode` to
+# the OnOff cluster on the same endpoint.
+MOD.S=1
+MOD.S.F00=1
+MOD.S.A0000=1
+MOD.S.A0001=1
+MOD.S.A0002=1
+MOD.S.A0003=1
+MOD.S.A0004=1
+MOD.S.A0005=1
+MOD.S.C00.Rsp=1
+# `ChangeToModeWithStatus` (0x01) does not exist in the cluster as of Matter
+# 1.6 - the IDL declares `ChangeToMode` only.
+MOD.S.C01.Rsp=0

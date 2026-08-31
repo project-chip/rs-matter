@@ -582,6 +582,13 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // conformance (`Rev >= vN`), which the `.matter` IDL cannot express and
     // which therefore compiles clean when wrong - keep it enabled.
     "TC_DeviceConformance",
+    // Laundry Washer Mode (EP1): a Mode Base *derived* cluster, present so the
+    // shared `ModeHandler` meets a real controller. `TC_LWM_1_2` runs CHIP's
+    // `ModeBaseClusterChecks` - the generic Mode Base conformance suite the
+    // ten derived clusters share - and `Test_TC_LWM_2_1` drives `ChangeToMode`
+    // including the `UnsupportedMode` (0x01) path.
+    "TC_LWM_1_2",
+    "Test_TC_LWM_2_1",
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.
@@ -663,6 +670,30 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     // over the `--app-pipe` channel. The latching (2_2) and multi-press
     // (2_5 / 2_6) methods skip on the feature gates; 2_3 / 2_4 run.
     "TC_SWTCH",
+    // Mode Select: an extra cluster on the light endpoint (EP1), with the
+    // `ON_OFF` feature so `OnMode` couples to the OnOff cluster there.
+    //
+    // `TestModeSelectCluster` is skipped: like `TestDescriptorCluster` it
+    // hardcodes upstream `all-clusters-app`'s own configuration rather than
+    // testing conformance - it asserts `Description == "Coffee"`,
+    // `StandardNamespace == 0` and an exact `[Black/0, Cappuccino/4,
+    // Espresso/7]` SupportedModes list. Passing it would mean naming this
+    // light's patterns after coffees. The certification tests below cover the
+    // same ground and are driven by PICS/PIXITs instead.
+    "Test_TC_MOD_2_1",
+    "Test_TC_MOD_3_1",
+    "TC_MOD_1_2",
+    // Not enabled:
+    // - `Test_TC_MOD_2_2` is a "DUT as Client" procedure (`MOD.C.C00.Tx`,
+    //   endpoint 0) - we are the server.
+    // - `Test_TC_MOD_3_2` (StartUpMode) and `Test_TC_MOD_3_4` (OnMode
+    //   overwriting StartUpMode) gate their "physically power cycle the
+    //   device" step - and the assertions after it - on `PICS_USER_PROMPT`.
+    //   With that off both run but skip everything that matters, buying a
+    //   vacuous pass.
+    // - `Test_TC_MOD_3_3` (OTA mode retention) additionally needs the
+    //   `CurrentMode` to survive an OTA-triggered restart, which requires
+    //   boot-reason plumbing rs-matter does not have.
 ];
 
 /// Scenes Management YAML tests — run against the `scenes_tests` example.

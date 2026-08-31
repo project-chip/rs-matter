@@ -17,7 +17,12 @@
 
 //! An example Matter device that implements the On/Off Light cluster over Ethernet.
 //!
-//! Endpoint 1 also carries a `ModeSelect` instance, demonstrating the generic
+//! Endpoint 1 also carries a `ModeSelect` instance as an *extra* cluster - the
+//! endpoint keeps On/Off Light as its single Application device type, since
+//! Core spec 9.2.1 allows only one per Simple endpoint and Mode Select
+//! (`0x0027`) is itself an application type. This mirrors CHIP's
+//! `all-clusters-app`, which likewise carries ModeSelect on its On/Off Light
+//! endpoint without declaring the Mode Select device type. It demonstrates the generic
 //! "pick one of N vendor-defined options" cluster: it chooses the light's
 //! pattern. Because the same endpoint hosts On/Off, it also demonstrates the
 //! `ON_OFF` (`DEPONOFF`) feature - switching the light on snaps the pattern
@@ -44,7 +49,7 @@ use rs_matter::dm::clusters::mode_select::{
     self, Mode, ModeId, ModeSelectHandler, ModeSelectHooks, SemanticTag,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::devices::{DEV_TYPE_MODE_SELECT, DEV_TYPE_ON_OFF_LIGHT};
+use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
@@ -282,7 +287,7 @@ const NODE: Node<'static> = Node {
         root_endpoint!(eth),
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_MODE_SELECT),
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,

@@ -32,7 +32,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 use futures_lite::StreamExt;
 
-use log::{info, warn};
+use log::{info, trace, warn};
 
 use rand::RngCore;
 
@@ -60,6 +60,9 @@ use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::icd_mgmt::{ClusterHandler as _, Icd, IcdMgmtHandler, IcdModeConfig};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
+use rs_matter::dm::clusters::mode::{
+    laundry_washer_mode, Mode, ModeChangeError, ModeHandler, ModeHooks, ModeId, ModeTag,
+};
 use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{
@@ -82,6 +85,7 @@ const POWER_SOURCE_EP1: PowerSourceConfig = PowerSourceConfig {
     endpoint_list: &[1],
     ..PowerSourceConfig::MAINS
 };
+use core::cell::Cell;
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
 use rs_matter::dm::clusters::time_sync::{
@@ -782,6 +786,89 @@ const NODE_GROUPCAST: Node<'static> = Node {
 /// primary table here. Paired with a client-cluster declaration so
 /// `Descriptor::ClientList` truthfully advertises the intent to control OnOff
 /// bulbs.
+
+/// A Mode Base *derived* cluster on EP1: Laundry Washer Mode.
+///
+/// Present so the generic Mode Base handler
+/// ([`rs_matter::dm::clusters::mode::ModeHandler`]) is exercised by CHIP's own
+/// conformance harness - `TC_LWM_1_2` runs the shared `ModeBaseClusterChecks`
+/// (mode/label uniqueness, tag ranges, at least one standard tag per mode,
+/// `CurrentMode` within `SupportedModes`), and `Test_TC_LWM_2_1` drives
+/// `ChangeToMode` including the `UnsupportedMode` path.
+///
+/// Laundry Washer Mode is an arbitrary pick among the ten derived clusters:
+/// they share one handler, so covering one covers the shared logic. It carries
+/// no `StatusCode` enum of its own, so `change_to_mode` here never refuses -
+/// `LWM.S.M.CAN_TEST_MODE_FAILURE=0` in the `.pics` says as much, and the
+/// failure step is skipped accordingly.
+struct LaundryWasherModeLogic {
+    current: Cell<ModeId>,
+}
+
+/// The wash cycles.
+///
+/// Constrained by `Test_TC_LWM_2_1`'s PIXITs: it changes to mode `2`
+/// (`PIXIT.LWM.MODE_CHANGE_OK`) and expects mode `5` to be *absent* so the
+/// `UnsupportedMode` step has an invalid value to send. Ids are otherwise
+/// non-contiguous on purpose - `Mode` is an identifier, not an index.
+///
+/// At least one mode must carry the `Normal` tag, which both the Laundry
+/// Washer Mode spec and `TC_LWM_1_2` require.
+const WASH_CYCLES: &[Mode<laundry_washer_mode::ModeTag>] = &[
+    Mode::new(
+        0,
+        "Normal",
+        &[ModeTag::Standard(laundry_washer_mode::ModeTag::Normal)],
+    ),
+    Mode::new(
+        2,
+        "Delicate",
+        &[
+            ModeTag::Standard(laundry_washer_mode::ModeTag::Delicate),
+            ModeTag::Standard(laundry_washer_mode::ModeTag::LowNoise),
+        ],
+    ),
+    Mode::new(
+        3,
+        "Heavy",
+        &[ModeTag::Standard(laundry_washer_mode::ModeTag::Heavy)],
+    ),
+    Mode::new(
+        4,
+        "Whites",
+        &[ModeTag::Standard(laundry_washer_mode::ModeTag::Whites)],
+    ),
+];
+
+impl LaundryWasherModeLogic {
+    const fn new() -> Self {
+        Self {
+            current: Cell::new(0),
+        }
+    }
+}
+
+impl ModeHooks for LaundryWasherModeLogic {
+    const CLUSTER: Cluster<'static> = laundry_washer_mode::CLUSTER;
+
+    type ModeTag = laundry_washer_mode::ModeTag;
+
+    fn supported_modes(&self) -> &[Mode<'_, Self::ModeTag>] {
+        WASH_CYCLES
+    }
+
+    fn current_mode(&self) -> ModeId {
+        self.current.get()
+    }
+
+    fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
+        trace!("LaundryWasherModeLogic: wash cycle -> {mode}");
+        self.current.set(mode);
+
+        Ok(())
+    }
+}
+
 const EP1: Endpoint<'static> = Endpoint::new_with_clients(
     1,
     devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
@@ -796,7 +883,9 @@ const EP1: Endpoint<'static> = Endpoint::new_with_clients(
         SCENES_FULL_CLUSTER,
         UnitTestingHandler::CLUSTER,
         // Second PowerSource instance (see `POWER_SOURCE_EP1`).
-        power_source::CLUSTER
+        power_source::CLUSTER,
+        // A Mode Base derived cluster, as an extra cluster on this endpoint.
+        LaundryWasherModeLogic::CLUSTER
     ),
     &[on_off::FULL_CLUSTER.id],
 )
@@ -1061,6 +1150,13 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .chain(
                 EpClMatcher::new(Some(1), Some(SCENES_FULL_CLUSTER.id)),
                 scenes_1.adapt(),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(LaundryWasherModeLogic::CLUSTER.id)),
+                Async(laundry_washer_mode::HandlerAdaptor(ModeHandler::new(
+                    Dataver::new_rand(&mut rand),
+                    LaundryWasherModeLogic::new(),
+                ))),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
