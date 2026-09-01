@@ -163,6 +163,12 @@ bluer = ["dep:bluer", "os"]
 # Requires `std`; the image *decoding* (PNG/JPEG/camera/...) is the caller's job -
 # this only consumes 8-bit greyscale pixels. See `pairing::qr::scan`.
 qr-scan = ["std", "dep:rqrr"]
+
+# Emit the data model as JSON (`pics::NodeJson`), for deriving a PICS
+# declaration from what the device actually implements rather than by hand.
+# Rendering goes through `core::fmt` and allocates nothing; consumed by
+# `cargo xtask pics`. See `docs/pics-generation-design.md`.
+pics = []
 # Umbrella set of features for typical OS-based non-baremetal deployments.
 os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std", "dep:if-addrs"]
 # Minimal set of features for targets with support for Rust STD (narrower than `os` above).

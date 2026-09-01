@@ -83,6 +83,8 @@ pub mod im;
 pub mod onboard;
 pub mod pairing;
 pub mod persist;
+#[cfg(feature = "pics")]
+pub mod pics;
 pub mod respond;
 pub mod sc;
 pub mod tlv;

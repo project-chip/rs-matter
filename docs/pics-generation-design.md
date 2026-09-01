@@ -140,6 +140,74 @@ A proc-macro / compile-time variant is attractive but not available today: `with
 friends are `fn` pointers, not const-evaluable, so the supported set can only be
 interrogated at runtime.
 
+## 6a. Verified: what rs-matter's mDNS actually advertises
+
+Read off `rs-matter/src/transport/network/mdns.rs` (`MatterLocalService::service_internal`).
+All keys are emitted through a `.filter(|(_, v)| !v.is_empty())`, so several are conditional
+on `dev_det`.
+
+**Commissionable — `_matterc._udp`**
+
+| TXT key | Emitted when | PICS |
+| --- | --- | --- |
+| `D`, `CM` | always | — |
+| `VP` | always | `MCORE.SC.VP_KEY`, `MCORE.DD.TXT_KEY_VP` = true |
+| `PH` | always — renders the pairing-hint *bitmap*, so `"0"` (non-empty) even with no hint set | `MCORE.SC.PH_KEY`, `TXT_KEY_PH` = true |
+| `DN` | `dev_det.device_name` non-empty | `MCORE.SC.DN_KEY`, `TXT_KEY_DN` |
+| `PI` | `dev_det.pairing_instruction` non-empty | `MCORE.SC.PI_KEY`, `TXT_KEY_PI` |
+| `DT` | `dev_det.device_type.is_some()` | `MCORE.SC.DT_KEY`, `TXT_KEY_DT` |
+| `SAI` | `dev_det.sai.is_some()` | `MCORE.SC.SAI_COMM_DISCOVERY_KEY` |
+| `SII` | `dev_det.sii.is_some()` | `MCORE.SC.SII_COMM_DISCOVERY_KEY` |
+| `T` | `dev_det.tcp_supported` | `MCORE.SC.T_KEY` |
+| `ICD` | ICD device only | — |
+| **`RI`** | **never emitted** | `MCORE.SC.RI_KEY`, `TXT_KEY_RI` = **false** |
+
+Subtypes: `_L<discr>`, `_S<short>`, `_V<vid>`, `_T<devtype>` (if `device_type`), `_CM`
+-> `MCORE.SC.VENDOR_SUBTYPE` / `MCORE.DD.COMMISSIONING_SUBTYPE_V` = true;
+`DEVTYPE_SUBTYPE` / `COMMISSIONING_SUBTYPE_T` = true iff `device_type` is set.
+
+**Operational — `_matter._tcp`**: `SAI`, `SII`, `T`, `ICD`; subtype `_I<compressed-fabric>`.
+**`SAT` is never emitted** -> `MCORE.SC.SAT_OP_DISCOVERY_KEY` = **false**.
+
+Cross-check: `tests/src/bin/system_tests.pics` already carries `MCORE.SC.RI_KEY=0`, which
+agrees with the code.
+
+An earlier draft of this table listed `DN` and `PI` as unconditional. The guard test in
+`pics.rs` falsified that on its first run - `TEST_DEV_DET` leaves `pairing_instruction`
+empty, so `PI` is filtered out. Which is the argument for having the test at all.
+
+### Why interrogating both service variants is sound
+
+`MatterLocalService::service` builds a record from `dev_det`, the port, the ICD mode and the
+variant's *own* fields. It never reads the fabric table or session state - the
+`compressed_fabric_id` / `node_id` only get formatted into the instance name and the `_I`
+subtype. So a dump can describe the commissionable **and** the operational record at once,
+in any commissioning state, using placeholder ids: only key/subtype *presence* is reported,
+and no answer depends on those values.
+
+The single live input is `Matter::icd_mode`, which controls the `ICD` TXT key. No PICS item
+derives from it today (ICD is covered by `ICDM.*` cluster PICS), but a dump taken at start-up
+- before any ICD registration - would report that key absent.
+
+### Design consequence — this is *not* a static table
+
+Six of these answers depend on runtime `dev_det` (`device_type`, `sai`, `sii`,
+`tcp_supported`, ICD mode), not on rs-matter as a library. So Tier B's mDNS block cannot be a
+constant shipped with the `xtask`; the **device** has to report it, exactly like the `Node`
+dump.
+
+Two ways to do that, and they trade off differently:
+
+1. **Derive by calling** — have the dump invoke `MatterLocalService::service()` and report the
+   TXT keys and subtypes it genuinely returns. Zero duplication, so it cannot drift and needs
+   no guard test. Costs an API change: the dump then needs a `&Matter` and a scratch buffer,
+   not just a `&Node`.
+2. **Small table + guard test** — restate the rules in `pics.rs` and add a test that builds a
+   service and asserts the table matches. Keeps the `NodeJson(&node)` shape, at the price of
+   duplicated logic that only a test holds in place.
+
+(1) is the more robust design; (2) is the less invasive one. Deferred pending a decision.
+
 ## 7. Open items before implementing
 
 - The 18-item "misc" bucket in Tier C is a first-pass dumping ground. Several belong in
