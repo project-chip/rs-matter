@@ -48,7 +48,7 @@ use crate::transport::network::mdns::MdnsLocalService;
 use crate::transport::network::MatterLocalService;
 use crate::Matter;
 
-/// Version of the JSON schema emitted by [`NodeJson`].
+/// Version of the JSON schema emitted by [`Matter::write_pics_json`].
 ///
 /// Bump on any incompatible change to the emitted shape, so that the consuming
 /// `xtask` can reject a dump it does not understand rather than silently

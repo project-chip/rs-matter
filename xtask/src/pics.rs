@@ -32,7 +32,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::Path;
 
 use anyhow::{anyhow, Context};
@@ -164,7 +164,6 @@ const PICS_ROOTS: &[(&str, u32)] = &[
     ("WAKEONLAN", 0x0503),
     ("CHANNEL", 0x0504),
     ("TGTNAV", 0x0505),
-    ("CONCON", 0x0506),
     ("MEDIAPLAYBACK", 0x0506),
     ("MEDIAINPUT", 0x0507),
     ("LOWPOWER", 0x0508),
@@ -174,6 +173,7 @@ const PICS_ROOTS: &[(&str, u32)] = &[
     ("APPLAUNCHER", 0x050C),
     ("APBSC", 0x050D),
     ("ALOGIN", 0x050E),
+    ("CONCON", 0x050F),
     ("APPOBSERVER", 0x0510),
     ("ZONEMGMT", 0x0550),
     ("AVSM", 0x0551),
@@ -207,6 +207,9 @@ struct ClusterInfo {
 struct NodeInfo {
     servers: BTreeMap<u32, ClusterInfo>,
     clients: BTreeSet<u32>,
+    /// `(endpoint id, device types, server cluster ids)`, kept in declaration
+    /// order purely so the summary reads like the device does.
+    endpoints: Vec<(u16, Vec<u16>, Vec<u32>)>,
 }
 
 impl NodeInfo {
@@ -223,12 +226,29 @@ impl NodeInfo {
 
         let mut servers: BTreeMap<u32, ClusterInfo> = BTreeMap::new();
         let mut clients = BTreeSet::new();
+        let mut shape = Vec::new();
 
         let endpoints = v["endpoints"]
             .as_array()
             .ok_or_else(|| anyhow!("no `endpoints`"))?;
 
         for ep in endpoints {
+            shape.push((
+                ep["id"].as_u64().unwrap_or_default() as u16,
+                ep["device_types"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|dt| dt["dtype"].as_u64().map(|v| v as u16))
+                    .collect(),
+                ep["clusters"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c["id"].as_u64().map(|v| v as u32))
+                    .collect(),
+            ));
+
             for id in ep["client_clusters"].as_array().into_iter().flatten() {
                 clients.insert(id.as_u64().unwrap_or_default() as u32);
             }
@@ -257,7 +277,11 @@ impl NodeInfo {
             }
         }
 
-        Ok(Self { servers, clients })
+        Ok(Self {
+            servers,
+            clients,
+            endpoints: shape,
+        })
     }
 
     /// Answer a single PICS item, or `None` when it is not derivable from the
@@ -345,6 +369,9 @@ struct Report {
     derived: BTreeMap<String, bool>,
     /// Items on a served cluster that the data model cannot answer.
     left_items: Vec<String>,
+    /// PICS roots appearing in the template, used to decide whether the file is
+    /// about this device at all.
+    roots: BTreeSet<String>,
 }
 
 /// Rewrite every `<support>` this tool can answer, preserving the file
@@ -378,6 +405,10 @@ fn fill_template(xml: &str, node: &NodeInfo, report: &mut Report) -> String {
                 item = Some(n.to_string());
             } else if between(trimmed, "<support>", "</support>").is_some() {
                 if let Some(name) = item.as_deref() {
+                    report
+                        .roots
+                        .insert(name.split('.').next().unwrap_or(name).to_string());
+
                     if let Some(answer) = node.resolve(name) {
                         let indent = &line[..line.len() - line.trim_start().len()];
                         let eol = if line.ends_with("\r\n") {
@@ -583,6 +614,728 @@ const NON_CLUSTER_ROOTS: &[&str] = &[
     "MC",
 ];
 
+/// Cluster ID to human name, for the summary printed before deriving.
+///
+/// Generated from the SDK's ZAP cluster definitions, the same source as
+/// [`PICS_ROOTS`]; purely cosmetic, so an unknown ID simply prints as hex.
+const CLUSTER_NAMES: &[(u32, &str)] = &[
+    (0x0003, "Identify"),
+    (0x0004, "Groups"),
+    (0x0006, "On/Off"),
+    (0x0008, "Level Control"),
+    (0x001C, "Pulse Width Modulation"),
+    (0x001D, "Descriptor"),
+    (0x001E, "Binding"),
+    (0x001F, "Access Control"),
+    (0x0025, "Actions"),
+    (0x0028, "Basic Information"),
+    (0x0029, "OTA Software Update Provider"),
+    (0x002A, "OTA Software Update Requestor"),
+    (0x002B, "Localization Configuration"),
+    (0x002C, "Time Format Localization"),
+    (0x002D, "Unit Localization"),
+    (0x002E, "Power Source Configuration"),
+    (0x002F, "Power Source"),
+    (0x0030, "General Commissioning"),
+    (0x0031, "Network Commissioning"),
+    (0x0032, "Diagnostic Logs"),
+    (0x0033, "General Diagnostics"),
+    (0x0034, "Software Diagnostics"),
+    (0x0035, "Thread Network Diagnostics"),
+    (0x0036, "Wi-Fi Network Diagnostics"),
+    (0x0037, "Ethernet Network Diagnostics"),
+    (0x0038, "Time Synchronization"),
+    (0x0039, "Bridged Device Basic Information"),
+    (0x003B, "Switch"),
+    (0x003C, "Administrator Commissioning"),
+    (0x003E, "Operational Credentials"),
+    (0x003F, "Group Key Management"),
+    (0x0040, "Fixed Label"),
+    (0x0041, "User Label"),
+    (0x0042, "Proxy Configuration"),
+    (0x0043, "Proxy Discovery"),
+    (0x0044, "Proxy Valid"),
+    (0x0045, "Boolean State"),
+    (0x0046, "ICD Management"),
+    (0x0047, "Timer"),
+    (0x0048, "Oven Cavity Operational State"),
+    (0x0049, "Oven Mode"),
+    (0x004A, "Laundry Dryer Controls"),
+    (0x0050, "Mode Select"),
+    (0x0051, "Laundry Washer Mode"),
+    (
+        0x0052,
+        "Refrigerator And Temperature Controlled Cabinet Mode",
+    ),
+    (0x0053, "Laundry Washer Controls"),
+    (0x0054, "RVC Run Mode"),
+    (0x0055, "RVC Clean Mode"),
+    (0x0056, "Temperature Control"),
+    (0x0057, "Refrigerator Alarm"),
+    (0x0059, "Dishwasher Mode"),
+    (0x005B, "Air Quality"),
+    (0x005C, "Smoke CO Alarm"),
+    (0x005D, "Dishwasher Alarm"),
+    (0x005E, "Microwave Oven Mode"),
+    (0x005F, "Microwave Oven Control"),
+    (0x0060, "Operational State"),
+    (0x0061, "RVC Operational State"),
+    (0x0062, "Scenes Management"),
+    (0x0065, "Groupcast"),
+    (0x0071, "HEPA Filter Monitoring"),
+    (0x0072, "Activated Carbon Filter Monitoring"),
+    (0x0079, "Water Tank Level Monitoring"),
+    (0x0080, "Boolean State Configuration"),
+    (0x0081, "Valve Configuration and Control"),
+    (0x0090, "Electrical Power Measurement"),
+    (0x0091, "Electrical Energy Measurement"),
+    (0x0094, "Water Heater Management"),
+    (0x0095, "Commodity Price"),
+    (0x0097, "Messages"),
+    (0x0098, "Device Energy Management"),
+    (0x0099, "Energy EVSE"),
+    (0x009B, "Energy Preference"),
+    (0x009C, "Power Topology"),
+    (0x009D, "Energy EVSE Mode"),
+    (0x009E, "Water Heater Mode"),
+    (0x009F, "Device Energy Management Mode"),
+    (0x00A0, "Electrical Grid Conditions"),
+    (0x0101, "Door Lock"),
+    (0x0102, "Window Covering"),
+    (0x0104, "Closure Control"),
+    (0x0105, "Closure Dimension"),
+    (0x0150, "Service Area"),
+    (0x0200, "Pump Configuration and Control"),
+    (0x0201, "Thermostat"),
+    (0x0202, "Fan Control"),
+    (0x0204, "Thermostat User Interface Configuration"),
+    (0x0300, "Color Control"),
+    (0x0301, "Ballast Configuration"),
+    (0x0400, "Illuminance Measurement"),
+    (0x0402, "Temperature Measurement"),
+    (0x0403, "Pressure Measurement"),
+    (0x0404, "Flow Measurement"),
+    (0x0405, "Relative Humidity Measurement"),
+    (0x0406, "Occupancy Sensing"),
+    (0x040C, "Carbon Monoxide Concentration Measurement"),
+    (0x040D, "Carbon Dioxide Concentration Measurement"),
+    (0x0413, "Nitrogen Dioxide Concentration Measurement"),
+    (0x0415, "Ozone Concentration Measurement"),
+    (0x042A, "PM2.5 Concentration Measurement"),
+    (0x042B, "Formaldehyde Concentration Measurement"),
+    (0x042C, "PM1 Concentration Measurement"),
+    (0x042D, "PM10 Concentration Measurement"),
+    (
+        0x042E,
+        "Total Volatile Organic Compounds Concentration Measurement",
+    ),
+    (0x042F, "Radon Concentration Measurement"),
+    (0x0430, "Soil Measurement"),
+    (0x0431, "Ambient Context Sensing"),
+    (0x0451, "Wi-Fi Network Management"),
+    (0x0452, "Thread Border Router Management"),
+    (0x0453, "Thread Network Directory"),
+    (0x0503, "Wake on LAN"),
+    (0x0504, "Channel"),
+    (0x0505, "Target Navigator"),
+    (0x0506, "Media Playback"),
+    (0x0507, "Media Input"),
+    (0x0508, "Low Power"),
+    (0x0509, "Keypad Input"),
+    (0x050A, "Content Launcher"),
+    (0x050B, "Audio Output"),
+    (0x050C, "Application Launcher"),
+    (0x050D, "Application Basic"),
+    (0x050E, "Account Login"),
+    (0x050F, "Content Control"),
+    (0x0510, "Content App Observer"),
+    (0x0550, "Zone Management"),
+    (0x0551, "Camera AV Stream Management"),
+    (0x0552, "Camera AV Settings User Level Management"),
+    (0x0553, "WebRTC Transport Provider"),
+    (0x0554, "WebRTC Transport Requestor"),
+    (0x0555, "Push AV Stream Transport"),
+    (0x0556, "Chime"),
+    (0x0700, "Commodity Tariff"),
+    (0x0750, "Ecosystem Information"),
+    (0x0751, "Commissioner Control"),
+    (0x0752, "Joint Fabric Datastore"),
+    (0x0753, "Joint Fabric Administrator"),
+    (0x0801, "TLS Certificate Management"),
+    (0x0802, "TLS Client Management"),
+    (0x0B06, "Meter Identification"),
+    (0x0B07, "Commodity Metering"),
+    (0xFFF1FC05, "Unit Testing"),
+    (0xFFF1FC06, "Fault Injection"),
+    (0xFFF1FC20, "Sample MEI"),
+];
+
+/// Device type ID to name, from the SDK's `matter-devices.xml`.
+const DEVICE_TYPES: &[(u16, &str)] = &[
+    (0x000A, "Door Lock"),
+    (0x000B, "Door Lock Controller"),
+    (0x000E, "Aggregator"),
+    (0x000F, "Generic Switch"),
+    (0x0011, "Power Source"),
+    (0x0012, "OTA Requestor"),
+    (0x0013, "Bridged Node"),
+    (0x0014, "OTA Provider"),
+    (0x0015, "Contact Sensor"),
+    (0x0016, "Root Node"),
+    (0x0017, "Solar Power"),
+    (0x0018, "Battery Storage"),
+    (0x0019, "Secondary Network Interface"),
+    (0x0022, "Speaker"),
+    (0x0023, "Casting Video Player"),
+    (0x0024, "Content App"),
+    (0x0027, "Mode Select"),
+    (0x0028, "Basic Video Player"),
+    (0x0029, "Casting Video Client"),
+    (0x002A, "Video Remote Control"),
+    (0x002B, "Fan"),
+    (0x002C, "Air Quality Sensor"),
+    (0x002D, "Air Purifier"),
+    (0x0041, "Water Freeze Detector"),
+    (0x0042, "Water Valve"),
+    (0x0043, "Water Leak Detector"),
+    (0x0044, "Rain Sensor"),
+    (0x0045, "Soil Sensor"),
+    (0x0070, "Refrigerator"),
+    (0x0071, "Temperature Controlled Cabinet"),
+    (0x0072, "Room Air Conditioner"),
+    (0x0073, "Laundry Washer"),
+    (0x0074, "Robotic Vacuum Cleaner"),
+    (0x0075, "Dishwasher"),
+    (0x0076, "Smoke CO Alarm"),
+    (0x0077, "Cook Surface"),
+    (0x0078, "Cooktop"),
+    (0x0079, "Microwave Oven"),
+    (0x007A, "Extractor Hood"),
+    (0x007B, "Oven"),
+    (0x007C, "Laundry Dryer"),
+    (0x0090, "Network Infrastructure Manager"),
+    (0x0091, "Thread Border Router"),
+    (0x0100, "On/Off Light"),
+    (0x0101, "Dimmable Light"),
+    (0x0103, "On/Off Light Switch"),
+    (0x0104, "Dimmer Switch"),
+    (0x0105, "Color Dimmer Switch"),
+    (0x0106, "Light Sensor"),
+    (0x0107, "Occupancy Sensor"),
+    (0x010A, "On/Off Plug-in Unit"),
+    (0x010B, "Dimmable Plug-in Unit"),
+    (0x010C, "Color Temperature Light"),
+    (0x010D, "Extended Color Light"),
+    (0x010F, "Mounted On/Off Control"),
+    (0x0110, "Mounted Dimmable Load Control"),
+    (0x0130, "Joint Fabric Administrator"),
+    (0x0140, "Intercom"),
+    (0x0141, "Audio Doorbell"),
+    (0x0142, "Camera"),
+    (0x0143, "Video Doorbell"),
+    (0x0144, "Floodlight Camera"),
+    (0x0145, "Snapshot Camera"),
+    (0x0146, "Chime"),
+    (0x0147, "Camera Controller"),
+    (0x0148, "Doorbell"),
+    (0x0150, "Ambient Context Sensor"),
+    (0x0202, "Window Covering"),
+    (0x0203, "Window Covering Controller"),
+    (0x0230, "Closure"),
+    (0x0231, "Closure Panel"),
+    (0x023E, "Closure Controller"),
+    (0x0301, "Thermostat"),
+    (0x0302, "Temperature Sensor"),
+    (0x0303, "Pump"),
+    (0x0304, "Pump Controller"),
+    (0x0305, "Pressure Sensor"),
+    (0x0306, "Flow Sensor"),
+    (0x0307, "Humidity Sensor"),
+    (0x0309, "Heat Pump"),
+    (0x030A, "Thermostat Controller"),
+    (0x050C, "EVSE"),
+    (0x050D, "Device Energy Management"),
+    (0x050F, "Water Heater"),
+    (0x0510, "Electrical Sensor"),
+    (0x0511, "Electrical Utility Meter"),
+    (0x0512, "Meter Reference Point"),
+    (0x0513, "Electrical Energy Tariff"),
+    (0x0514, "Electrical Meter"),
+    (0x0840, "Control Bridge"),
+    (0x0850, "On/Off Sensor"),
+];
+
+/// Network Commissioning (`0x0031`) feature bits, from the SDK's own cluster
+/// definition: `WI` = Wi-Fi, `TH` = Thread, `ET` = Ethernet.
+const CNET_CLUSTER: u32 = 0x0031;
+const CNET_FEATURE_WIFI: u32 = 1 << 0;
+const CNET_FEATURE_THREAD: u32 = 1 << 1;
+const CNET_FEATURE_ETHERNET: u32 = 1 << 2;
+
+fn cluster_name(id: u32) -> Option<&'static str> {
+    CLUSTER_NAMES
+        .iter()
+        .find_map(|(cid, name)| (*cid == id).then_some(*name))
+}
+
+/// Summarise what the tool believes the device to be, before it derives
+/// anything from that belief.
+///
+/// Every answer downstream follows from this picture, so it is worth stating
+/// plainly: a stale or wrong data-model dump is otherwise invisible until the
+/// answers come out strange. (One did, during development - a dump taken
+/// before a cluster was added made a correct `.pics` look like it had nine
+/// over-claims.)
+fn describe_node(node: &NodeInfo, endpoints: &[(u16, Vec<u16>, Vec<u32>)]) {
+    info!("Device as reported by its own data model:");
+
+    for (id, device_types, clusters) in endpoints {
+        let types: Vec<&str> = device_types
+            .iter()
+            .map(|dt| {
+                DEVICE_TYPES
+                    .iter()
+                    .find_map(|(code, name)| (code == dt).then_some(*name))
+                    .unwrap_or("unknown device type")
+            })
+            .collect();
+
+        info!(
+            "  Endpoint {id}: {}",
+            if types.is_empty() {
+                "(no device type)".to_string()
+            } else {
+                types.join(", ")
+            }
+        );
+
+        let named: Vec<String> = clusters
+            .iter()
+            .map(|c| cluster_name(*c).map_or_else(|| format!("0x{c:04X}"), |n| n.to_string()))
+            .collect();
+
+        info!("    Supported clusters: {}", named.join(", "));
+    }
+
+    if !node.clients.is_empty() {
+        let named: Vec<String> = node
+            .clients
+            .iter()
+            .map(|c| cluster_name(*c).map_or_else(|| format!("0x{c:04X}"), |n| n.to_string()))
+            .collect();
+        info!("  Acts as a client for: {}", named.join(", "));
+    }
+}
+
+/// Answer the transport PICS from the data model rather than asking.
+///
+/// Which transport a node speaks is not a product question - the Network
+/// Commissioning cluster states it, and exactly one of `WI`/`TH`/`ET` is set.
+/// The matching diagnostics cluster (`0x0035`/`0x0036`/`0x0037`) corroborates
+/// it. Asking would invite an answer that contradicts the firmware.
+///
+/// Radio band (2.4 vs 5GHz) and BLE support genuinely are not in the data
+/// model, so those remain questions.
+fn derive_transports(node: &NodeInfo, report: &mut Report) {
+    let Some(cnet) = node.servers.get(&CNET_CLUSTER) else {
+        return;
+    };
+
+    let wifi = cnet.feature_map & CNET_FEATURE_WIFI != 0;
+    let thread = cnet.feature_map & CNET_FEATURE_THREAD != 0;
+    let ethernet = cnet.feature_map & CNET_FEATURE_ETHERNET != 0;
+
+    for (item, value) in [
+        ("MCORE.COM.WIFI", wifi),
+        ("MCORE.COM.THR", thread),
+        ("MCORE.COM.ETH", ethernet),
+        // "Wi-Fi or Thread", i.e. any non-Ethernet operational transport.
+        ("MCORE.COM.WIRELESS", wifi || thread),
+    ]
+    .into_iter()
+    .chain(
+        // BLE exists to commission a device that has no IP connectivity yet.
+        // An Ethernet-only node is already on the network and commissions
+        // on-network, so it has no use for it.
+        //
+        // The spec does not forbid both - the discovery-capabilities bitmask
+        // carries independent "BLE" and "on IP network" bits - so this is a
+        // default rather than a certainty. A device that really does offer BLE
+        // commissioning over Ethernet can say so in its baseline.
+        (ethernet && !wifi && !thread).then_some(("MCORE.COM.BLE", false)),
+    ) {
+        report.derived.insert(item.to_string(), value);
+        report.left_items.retain(|left| left != item);
+    }
+
+    // rs-matter's `DiscoveryCapabilities` (see `pairing.rs`) defines exactly
+    // three bits - SOFT_AP, BLE and IP. It has no NFC Transport Layer bit, so
+    // the stack cannot advertise NTL commissioning whatever the product does.
+    //
+    // This is a fact about the rs-matter version, not about the node, so it
+    // does not come from the dump. Revisit if `DiscoveryCapabilities` grows an
+    // NTL bit. Note this says nothing about `MCORE.DD.NFC` - a passive tag can
+    // carry the onboarding payload without the stack supporting NTL, which is
+    // why that one remains a question.
+    report.derived.insert("MCORE.DD.NTL".to_string(), false);
+    report.left_items.retain(|left| left != "MCORE.DD.NTL");
+
+    // Non-concurrent commissioning describes a device that cannot hold BLE and
+    // its operational network up at once. With no BLE in the picture there is
+    // no concurrency to constrain, so the question does not arise.
+    if ethernet && !wifi && !thread {
+        report
+            .derived
+            .insert("MCORE.DD.NON_CONCURRENT_CONNECTION".to_string(), false);
+        report
+            .left_items
+            .retain(|left| left != "MCORE.DD.NON_CONCURRENT_CONNECTION");
+    }
+
+    info!(
+        "Transports derived from Network Commissioning features: \
+         wifi={wifi} thread={thread} ethernet={ethernet}"
+    );
+}
+
+/// A high-level question standing in for a group of PICS items that the data
+/// model cannot answer.
+///
+/// The point is leverage: the master set has ~2800 items, of which the data
+/// model decides ~90%. Of the remainder, a handful of facts about the *product*
+/// - what it is plugged into, whether it has buttons - settle most of the rest.
+/// Answering eight questions beats ticking forty boxes in the PICS Tool, and is
+/// far harder to get quietly wrong.
+struct Question {
+    /// Asked verbatim; phrased so that "yes" always means "supported".
+    prompt: &'static str,
+    /// Items this answer settles. A trailing `*` matches by prefix.
+    items: &'static [&'static str],
+    /// PICS items that must already have been *derived as supported* for the
+    /// question to apply.
+    ///
+    /// The master templates express this themselves - `PS.S.M.ManualBatFault`
+    /// carries `cond="PS.S AND PS.S.F01"` - and the conditions are usually
+    /// feature bits, which the data model decides. Asking a mains-only device
+    /// whether it can induce a *battery* fault invites a wrong answer to a
+    /// question that never applied.
+    requires: &'static [&'static str],
+}
+
+/// Only asked when the templates in play actually contain the items, so a
+/// simple light is never asked about ovens or power-source faults.
+const QUESTIONS: &[Question] = &[
+    // ---- Transports -------------------------------------------------------
+    // Wi-Fi / Thread / Ethernet are derived in `derive_transports`; only the
+    // radio band and BLE are genuinely outside the data model.
+    Question {
+        prompt: "Does the device support communication over 2.4GHz Wi-Fi?",
+        items: &["MCORE.COM.WIFI_2P4GHZ"],
+        requires: &["MCORE.COM.WIFI"],
+    },
+    Question {
+        prompt: "Does the device support communication over 5GHz Wi-Fi?",
+        items: &["MCORE.COM.WIFI_5GHZ"],
+        requires: &["MCORE.COM.WIFI"],
+    },
+    Question {
+        // Only meaningful for a device that must be commissioned onto a network
+        // it cannot already reach; `derive_transports` settles it directly for
+        // Ethernet-only nodes.
+        prompt: "Does the device support communication over Bluetooth Low Energy (BLE)?",
+        items: &["MCORE.COM.BLE"],
+        requires: &["MCORE.COM.WIRELESS"],
+    },
+    // ---- Roles ------------------------------------------------------------
+    // Not in the data model: a node's commissioner/controller role is a
+    // property of the application, not of its published clusters.
+    Question {
+        prompt: "Does the device implement a Commissioner?",
+        items: &["MCORE.ROLE.COMMISSIONER"],
+        requires: &[],
+    },
+    Question {
+        prompt: "Does the device implement a Controller?",
+        items: &["MCORE.ROLE.CONTROLLER"],
+        requires: &[],
+    },
+    // Commissioner-side capabilities. The templates gate these on the role
+    // (`cond="MCORE.ROLE.COMMISSIONER AND MCORE.COM.BLE"` for the first), so a
+    // plain commissionee is never asked.
+    Question {
+        prompt: "Does the commissioner support Discovery Capability over BLE?",
+        items: &["MCORE.DD.DISCOVERY_BLE"],
+        requires: &["MCORE.ROLE.COMMISSIONER", "MCORE.COM.BLE"],
+    },
+    Question {
+        prompt: "Does the commissioner support scanning NFC tags containing the onboarding payload?",
+        items: &["MCORE.DD.SCAN_NFC"],
+        requires: &["MCORE.ROLE.COMMISSIONER"],
+    },
+    // ---- Onboarding payload, as physically supplied ------------------------
+    // Whether a code is actually printed on the device or its box is a
+    // packaging decision, invisible to the firmware.
+    //
+    // Deliberately *not* gated on this item's own `cond`, which reads
+    // `MCORE.DD.CONCATENATED_QR_CODE`: taken literally that would only ask
+    // about a QR code on multi-device packages, and suppress the question for
+    // every ordinary single-device product.
+    Question {
+        prompt: "Does the device or its packaging carry a QR-code onboarding payload?",
+        items: &["MCORE.DD.QR"],
+        requires: &[],
+    },
+    Question {
+        prompt: "Does the device or its packaging carry a manual pairing code?",
+        items: &["MCORE.DD.MANUAL_PC"],
+        requires: &[],
+    },
+    Question {
+        prompt: "Does the device have an NFC tag containing the onboarding payload?",
+        items: &["MCORE.DD.NFC"],
+        requires: &[],
+    },
+    // ---- Physical / product properties ------------------------------------
+    Question {
+        prompt: "Does the device support a user interface?",
+        items: &["MCORE.DD.UI"],
+        requires: &[],
+    },
+    Question {
+        // `cond="CADMIN.C"` - only meaningful where the node is an
+        // Administrator Commissioning *client*, which the data model knows.
+        prompt: "Does the device support a User Interface Display?",
+        items: &["CADMIN.C.M.UserInterfaceDisplay"],
+        requires: &["CADMIN.C"],
+    },
+    Question {
+        prompt: "Does the device support an Audio Interface?",
+        items: &["CADMIN.C.M.AudioInterface"],
+        requires: &["CADMIN.C"],
+    },
+    Question {
+        prompt: "Is the device subject to physical tampering (doorbell, camera, door lock, outdoor use)?",
+        items: &["MCORE.DD.PHYSICAL_TAMPERING"],
+        requires: &[],
+    },
+    Question {
+        prompt: "Does the device require the non-concurrent connection commissioning flow \
+                 (BLE and the operational network cannot be up at the same time)?",
+        items: &["MCORE.DD.NON_CONCURRENT_CONNECTION"],
+        requires: &["MCORE.COM.BLE"],
+    },
+    Question {
+        prompt: "Is the device a software component rather than a finished product?",
+        items: &["MCORE.DT_SW_COMP"],
+        requires: &[],
+    },
+    Question {
+        // Template wording: "Can the OnOff attribute changed by physical
+        // control at the device?". Gates the operator prompts in `TC_OO_2_2`
+        // steps 6a-6d, where a human toggles the device by hand and the
+        // harness reads `OnOff` back.
+        prompt: "Can OnOff be changed by a physical control on the device (a switch or button on the unit itself)?",
+        items: &["OO.M.ManuallyControlled"],
+        requires: &["OO.S"],
+    },
+    Question {
+        // Template wording is "Can the configuration of the DUT be changed at
+        // run-time?", which reads far broader than it is - it is not about
+        // writable attributes. `TC_BINFO_3_2` step 2 is explicit: a change
+        // "which results in functionality to be added or removed (e.g. rewire
+        // thermostat to support a new mode)", after which `ConfigurationVersion`
+        // must read strictly higher.
+        //
+        // Core spec 9.2.11 permits two causes: a change in "installation or
+        // configuration of the device", and a firmware update that adds or
+        // removes functionality. It is not firmware-only - the spec's own
+        // example of a bridge gaining or losing a bridged node is a
+        // configuration change requiring no OTA.
+        //
+        // For a typical rs-matter device the answer is nonetheless `no`, but
+        // for an implementation reason rather than a spec one: `Node` is a
+        // compile-time const, so composition cannot change without new
+        // firmware and a restart. A future bridge that gains bridged endpoints
+        // at run time would legitimately answer `yes`.
+        prompt: "Can the device's functional composition change while it is running (clusters or endpoints \
+                 added/removed without an OTA and restart), such that ConfigurationVersion must increment?",
+        items: &["BINFO.S.M.DeviceConfigurationChange"],
+        requires: &["BINFO.S"],
+    },
+    // ---- Power source faults ----------------------------------------------
+    // Three separate questions, each gated on the feature bit the template's
+    // own `cond` names. Lumping them into one would let a mains-only device
+    // claim it can induce a battery fault. Each gates the corresponding
+    // operator steps in `TC_PS_2_2` ("Bring the DUT into a ... fault state").
+    Question {
+        prompt: "Can the device be brought into a Wired Fault state on demand?",
+        items: &["PS.S.M.ManualWiredFault"],
+        requires: &["PS.S.F00"],
+    },
+    Question {
+        prompt: "Can the device be brought into a Battery Fault state on demand?",
+        items: &["PS.S.M.ManualBatFault"],
+        requires: &["PS.S.F01"],
+    },
+    Question {
+        prompt: "Can the device be brought into a Battery Charge Fault state on demand?",
+        items: &["PS.S.M.ManualBatChargeFault"],
+        requires: &["PS.S.F02"],
+    },
+    // ---- Localization ------------------------------------------------------
+    // Which units/formats are actually offered is not modelled; both are gated
+    // on their cluster being served, per the templates' `cond`.
+    Question {
+        prompt: "Does the device support the Celsius temperature unit?",
+        items: &["LUNIT.S.M.Celsius"],
+        requires: &["LUNIT.S"],
+    },
+    Question {
+        prompt: "Does the device support the Fahrenheit temperature unit?",
+        items: &["LUNIT.S.M.Fahrenheit"],
+        requires: &["LUNIT.S"],
+    },
+    Question {
+        prompt: "Does the device support the Kelvin temperature unit?",
+        items: &["LUNIT.S.M.Kelvin"],
+        requires: &["LUNIT.S"],
+    },
+    Question {
+        prompt: "Does the device support the 12-hour time format?",
+        items: &["LTIME.S.M.12Hr"],
+        requires: &["LTIME.S"],
+    },
+    Question {
+        prompt: "Does the device support the 24-hour time format?",
+        items: &["LTIME.S.M.24Hr"],
+        requires: &["LTIME.S"],
+    },
+    // ---- OTA behaviours ----------------------------------------------------
+    // `MCORE.OTA.Requestor` / `Provider` are derived from cluster presence;
+    // these are behaviours of the implementation that the data model cannot
+    // see, and only matter for a Requestor.
+    Question {
+        prompt: "Does the device obtain user consent before applying an OTA update?",
+        items: &["MCORE.OTA.RequestorConsent"],
+        requires: &["MCORE.OTA.Requestor"],
+    },
+    Question {
+        prompt: "Can the device resume an OTA transfer that was previously aborted?",
+        items: &["MCORE.OTA.Resume"],
+        requires: &["MCORE.OTA.Requestor"],
+    },
+    Question {
+        prompt: "Can the device query a different Provider from its OTA Provider List on error?",
+        items: &["MCORE.OTA.Retry"],
+        requires: &["MCORE.OTA.Requestor"],
+    },
+    Question {
+        prompt: "Does the device support the HTTPS protocol for OTA image download?",
+        items: &["MCORE.OTA.HTTPS"],
+        requires: &["MCORE.OTA.Requestor"],
+    },
+];
+
+impl Question {
+    /// Which of this question's items are still unanswered.
+    fn pending<'a>(&self, unanswered: &'a BTreeSet<String>) -> Vec<&'a String> {
+        unanswered
+            .iter()
+            .filter(|item| {
+                self.items.iter().any(|pat| {
+                    pat.strip_suffix('*')
+                        .map_or(*pat == item.as_str(), |prefix| item.starts_with(prefix))
+                })
+            })
+            .collect()
+    }
+}
+
+/// Ask the operator the handful of product questions the data model cannot
+/// answer, and fold the results into the derived set.
+///
+/// Skipped entirely when stdin is not a terminal: a CI run must not block on a
+/// prompt, and silently inventing answers would be worse than leaving them.
+fn ask_questions(report: &mut Report, baseline: Option<&BTreeMap<String, bool>>) {
+    // Candidates: items the templates carry, the data model could not decide,
+    // and no baseline already answers.
+    let unanswered: BTreeSet<String> = report
+        .left_items
+        .iter()
+        .filter(|item| baseline.is_none_or(|map| !map.contains_key(*item)))
+        .cloned()
+        .collect();
+
+    if unanswered.is_empty() {
+        return;
+    }
+
+    // Work out what is actually *askable* first. `unanswered` also holds manual
+    // `.M.` behaviours and stale keys that no question covers; counting those
+    // would report hundreds of items nobody can do anything about.
+    let applicable: Vec<(&Question, Vec<&String>)> = QUESTIONS
+        .iter()
+        .filter(|q| {
+            // Preconditions are themselves derived, so a question whose
+            // feature bit is clear is not asked at all.
+            q.requires
+                .iter()
+                .all(|item| report.derived.get(*item).copied().unwrap_or(false))
+        })
+        .map(|q| (q, q.pending(&unanswered)))
+        .filter(|(_, pending)| !pending.is_empty())
+        .collect();
+
+    if applicable.is_empty() {
+        return;
+    }
+
+    let pending_count: usize = applicable.iter().map(|(_, p)| p.len()).sum();
+
+    if !std::io::stdin().is_terminal() {
+        warn!(
+            "{} question(s) covering {pending_count} item(s) need a product-level answer, \
+             but stdin is not a terminal - leaving them as the template had them. Re-run \
+             interactively, or supply a `--baseline` that already answers them:",
+            applicable.len()
+        );
+        for (question, pending) in &applicable {
+            warn!("    {} [{}]", question.prompt, pending.len());
+        }
+        return;
+    }
+
+    info!("");
+    info!(
+        "{} question(s) about the product, settling {} PICS item(s) the data model \
+         cannot answer. Enter y or n; anything else keeps the template's value.",
+        applicable.len(),
+        pending_count
+    );
+
+    for (question, pending) in applicable {
+        print!("  {} [y/n] ", question.prompt);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            return;
+        }
+
+        let answer = match line.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => true,
+            "n" | "no" => false,
+            _ => continue,
+        };
+
+        for item in pending {
+            report.derived.insert(item.clone(), answer);
+        }
+    }
+
+    info!("");
+}
+
 /// Report how much of a baseline the tool was actually able to check.
 ///
 /// Without this, a `.pics` full of clusters absent from [`PICS_ROOTS`] lints
@@ -778,11 +1531,7 @@ pub fn run(
         fs::read_to_string(node).with_context(|| format!("reading {}", node.display()))?;
     let node = NodeInfo::parse(&node_json)?;
 
-    info!(
-        "Device serves {} clusters ({} as client)",
-        node.servers.len(),
-        node.clients.len()
-    );
+    describe_node(&node, &node.endpoints.clone());
 
     let files = load_templates(templates)?;
 
@@ -801,9 +1550,27 @@ pub fn run(
         let mut report = Report::default();
         let filled = fill_template(xml, &node, &mut report);
 
-        // Only emit templates this device has something to say about; copying
-        // the other ~100 unchanged would bury the meaningful output.
-        if report.changed + report.confirmed == 0 {
+        // Only emit templates that are about *this* device.
+        //
+        // Every template yields derivable answers now - a cluster the node does
+        // not serve makes all of its items `false` - so "did we answer
+        // anything?" no longer discriminates and would emit 123 of 126 files.
+        // What a reader wants is the handful describing clusters the device
+        // actually has, plus the general (non-cluster) PICS, which always
+        // apply.
+        // `MCORE` is the general, node-wide PICS (`Base.xml`) and always
+        // applies. The other non-cluster roots do not get this treatment: they
+        // are *about* something - `ICDB` about ICD Management, `MC` about the
+        // casting video player - and would otherwise drag in a whole template
+        // for a cluster the device does not have.
+        let relevant = report.roots.iter().any(|root| {
+            root == "MCORE"
+                || PICS_ROOTS.iter().any(|(name, id)| {
+                    name == root && (node.servers.contains_key(id) || node.clients.contains(id))
+                })
+        });
+
+        if !relevant {
             continue;
         }
 
@@ -833,9 +1600,14 @@ pub fn run(
 
     let left: usize = total.left.values().sum();
     if left > 0 {
-        warn!("{left} items left untouched - these still need a human:");
+        // Informational, not a warning: these are the items the data model was
+        // never going to answer. `warn!` overstates it, and since the xtask
+        // logger indents by severity it also drops the block out of line with
+        // everything around it. Genuine problems - unmapped clusters, baseline
+        // disagreements - keep their `warn!`.
+        info!("{left} items left untouched - these still need manual input:");
         for (root, n) in &total.left {
-            warn!("    {root:<12} {n:>4}");
+            info!("    {root:<12} {n:>4}");
         }
     }
 
@@ -850,10 +1622,18 @@ pub fn run(
     if let (Some(p), Some(map)) = (baseline, baseline_map.as_ref()) {
         report_coverage(p, map, &total);
         lint_baseline(p, map, &total);
+    }
 
-        if fix {
-            fix_baseline(p, &total)?;
-        }
+    // Ask about the items neither the data model nor a baseline can settle,
+    // before anything is written, so every output carries the same answers.
+    derive_transports(&node, &mut total);
+
+    if out.is_some() || pics.is_some() || fix {
+        ask_questions(&mut total, baseline_map.as_ref());
+    }
+
+    if let (Some(p), true) = (baseline, fix) {
+        fix_baseline(p, &total)?;
     }
 
     if let Some(pics) = pics {
@@ -869,5 +1649,80 @@ pub fn run(
         );
     }
 
+    // Deriving without asking for any output is a legitimate dry run, but it
+    // should say so - otherwise an invocation that simply forgot `--out` looks
+    // indistinguishable from one that worked.
+    if out.is_none() && pics.is_none() && !fix {
+        info!("Nothing written (no --out, --pics or --fix given); this was a dry run.");
+    }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{NON_CLUSTER_ROOTS, PICS_ROOTS};
+
+    /// The table maps PICS roots onto cluster IDs, and `resolve` looks a root up
+    /// by name. A duplicate ID therefore answers one cluster's items against
+    /// another cluster's data model - silently, and with full confidence.
+    ///
+    /// This is not hypothetical: `CONCON` (Content Control) was once mapped to
+    /// `0x0506`, which is Media Playback, so every `CONCON.*` item was answered
+    /// from the wrong cluster. It survived because the duplicate check was run
+    /// while the table had 41 entries and not again after it grew to 132.
+    #[test]
+    fn pics_roots_have_no_duplicate_ids() {
+        let mut by_id: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
+        for (root, id) in PICS_ROOTS {
+            by_id.entry(*id).or_default().push(root);
+        }
+
+        let dups: Vec<_> = by_id.iter().filter(|(_, roots)| roots.len() > 1).collect();
+
+        assert!(
+            dups.is_empty(),
+            "cluster ID(s) claimed by more than one PICS root: {dups:?}"
+        );
+    }
+
+    /// A repeated root would make the lookup order-dependent, so the second
+    /// entry would be dead code that looks authoritative.
+    #[test]
+    fn pics_roots_have_no_duplicate_names() {
+        let mut names: Vec<&str> = PICS_ROOTS.iter().map(|(root, _)| *root).collect();
+        names.sort_unstable();
+
+        let before = names.len();
+        names.dedup();
+
+        assert_eq!(before, names.len(), "PICS_ROOTS contains a repeated root");
+    }
+
+    /// Kept sorted by cluster ID purely so that additions land next to their
+    /// neighbours and a wrong ID looks wrong in review.
+    #[test]
+    fn pics_roots_are_sorted_by_id() {
+        let ids: Vec<u32> = PICS_ROOTS.iter().map(|(_, id)| *id).collect();
+
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+
+        assert_eq!(ids, sorted, "PICS_ROOTS is no longer sorted by cluster ID");
+    }
+
+    /// The two lists express opposite intents: "this root is a cluster, here is
+    /// its ID" and "this root is deliberately not a cluster". A root in both
+    /// would mean the exclusion never takes effect.
+    #[test]
+    fn non_cluster_roots_are_not_also_mapped() {
+        for root in NON_CLUSTER_ROOTS {
+            assert!(
+                !PICS_ROOTS.iter().any(|(name, _)| name == root),
+                "{root} is in NON_CLUSTER_ROOTS but also mapped in PICS_ROOTS"
+            );
+        }
+    }
 }

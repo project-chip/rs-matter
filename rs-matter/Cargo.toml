@@ -164,7 +164,7 @@ bluer = ["dep:bluer", "os"]
 # this only consumes 8-bit greyscale pixels. See `pairing::qr::scan`.
 qr-scan = ["std", "dep:rqrr"]
 
-# Emit the data model as JSON (`pics::NodeJson`), for deriving a PICS
+# Emit the data model as JSON (`Matter::write_pics_json`), for deriving a PICS
 # declaration from what the device actually implements rather than by hand.
 # Rendering goes through `core::fmt` and allocates nothing; consumed by
 # `cargo xtask pics`. See `docs/pics-generation-design.md`.

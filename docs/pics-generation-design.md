@@ -124,8 +124,7 @@ Two pieces, keeping XML and `std` out of firmware:
 2. **`cargo xtask pics`** — merges that JSON into the official templates.
 
 ```sh
-cargo xtask pics --templates <dir-or-zip> --node node.json \
-                 [--answers answers.toml] --out <dir>
+cargo xtask pics --templates <dir-or-zip> node.json --out <dir-or-zip>
 ```
 
 The templates are **always supplied on the command line** and never committed — they are
@@ -203,7 +202,7 @@ Two ways to do that, and they trade off differently:
    no guard test. Costs an API change: the dump then needs a `&Matter` and a scratch buffer,
    not just a `&Node`.
 2. **Small table + guard test** — restate the rules in `pics.rs` and add a test that builds a
-   service and asserts the table matches. Keeps the `NodeJson(&node)` shape, at the price of
+   service and asserts the table matches. Keeps the `write_pics_json(&node, ...)` shape, at the price of
    duplicated logic that only a test holds in place.
 
 (1) is the more robust design; (2) is the less invasive one. Deferred pending a decision.
@@ -227,11 +226,14 @@ $ light_tests --pics-json
 **Tool side** — `cargo xtask pics`:
 
 ```
+cargo xtask pics [OPTIONS] --templates <dir|zip> <NODE>
+
+<NODE>                  the device's data model (positional, required)
 --templates <dir|zip>   the CSA master set, as downloaded or unpacked
---node      <json>      the device's data model
 --out       <dir|zip>   filled XML templates (form chosen by extension)
 --pics      <file>      the SDK's flat KEY=1 form, as tests/src/bin/*.pics uses
 --baseline  <file>      an existing .pics to lint against and inherit from
+--fix                   rewrite --baseline in place with the derived answers
 ```
 Line-oriented rewriting rather than an XML round-trip, so output stays diffable against the
 CSA original. Templates always come from the command line and are never committed.

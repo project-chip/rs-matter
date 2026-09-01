@@ -115,7 +115,7 @@ enum Command {
         #[arg(long)]
         templates: PathBuf,
         /// The device's data model, as emitted by `Matter::write_pics_json`
-        #[arg(long)]
+        /// (e.g. `light_tests --pics-json > node.json`)
         node: PathBuf,
         /// Where to write the filled XML templates: a directory, or a `.zip`
         /// (chosen by the extension)
