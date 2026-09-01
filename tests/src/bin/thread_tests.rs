@@ -108,6 +108,21 @@ fn run() -> Result<(), Error> {
         .filter_level(::log::LevelFilter::Debug)
         .init();
 
+    // Built before the Thread attach below so that `--pics-json` works
+    // without an operational dataset or a running `otbr-agent`: the data
+    // model does not depend on either.
+    let matter = MATTER.uninit().init_with(Matter::init(
+        &TEST_DEV_DET,
+        args::comm_overrides(),
+        &TEST_DEV_ATT,
+        args::port_override(),
+    ));
+
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, &NODE_THREAD)? {
+        return Ok(());
+    }
+
     let dataset = dataset_from_env()?;
     let ext_pan_id = dataset_ext_pan_id(&dataset)?;
 
@@ -161,13 +176,6 @@ fn run() -> Result<(), Error> {
     let state = THREAD_STATE.init(WirelessInteractionModelState::new(ThreadNetworks::<
         MAX_NETWORKS,
     >::new()));
-
-    let matter = MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
-        args::comm_overrides(),
-        &TEST_DEV_ATT,
-        args::port_override(),
-    ));
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
     let kv = matter.kv(args::file_kv_store());

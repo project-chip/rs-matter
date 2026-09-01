@@ -224,7 +224,15 @@ $ light_tests --pics-json
   EP1 dt=269   5 clusters      EP3 dt=15   2 clusters
 ```
 
-**Tool side** — `cargo xtask pics --templates <dir> --node <json> --out <dir>`.
+**Tool side** — `cargo xtask pics`:
+
+```
+--templates <dir|zip>   the CSA master set, as downloaded or unpacked
+--node      <json>      the device's data model
+--out       <dir|zip>   filled XML templates (form chosen by extension)
+--pics      <file>      the SDK's flat KEY=1 form, as tests/src/bin/*.pics uses
+--baseline  <file>      an existing .pics to lint against and inherit from
+```
 Line-oriented rewriting rather than an XML round-trip, so output stays diffable against the
 CSA original. Templates always come from the command line and are never committed.
 
@@ -233,6 +241,26 @@ Derived 599 answers (267 rewritten, 332 already matching the template)
 10 items left untouched:  OO 7   APPDEVICE 1   BINFO 1   LVL 1
 22 templates written; all parse; `<pixitItem>` blocks untouched
 ```
+
+### `--baseline` is a lint on the hand-curated files
+
+Run against `tests/src/bin/light_tests.pics` it reported exactly one disagreement:
+
+```
+OO.S.C41.Rsp   claims 0 but the device serves 1
+```
+
+`0x41` is `OnWithRecallGlobalScene`, sitting between `C40=1` and `C42=1`. This is an
+*under*-claim, and that direction is the more dangerous one: the harness **skips** the gated
+steps, so CI stays green for a command the device really serves and never exercises. A lab
+would not skip them.
+
+### Flat output
+
+`--pics` emits 554 entries (against 161 hand-curated) in three labelled sections: derived,
+not-derivable (values inherited from `--baseline` so nothing such as `PICS_SDK_CI_ONLY` is
+silently dropped), and *present in the baseline but absent from the Matter 1.6 templates* -
+which is where accumulated drift like `CC.C.AM-READ` surfaces.
 
 The residue is exactly what section 5 predicted: `OO.C.*` (the device *is* an OnOff client,
 so which commands it invokes is not modelled), plus three manual `.M.` items.
@@ -257,6 +285,202 @@ The one change to `On-Off Cluster Test Plan.xml` was a single line:
 `light_tests` does not set feature-map bit 1. Shipping the template as downloaded would have
 claimed DeadFrontBehaviour and enrolled the device in `TC_OO` steps it cannot pass. That is
 the entire argument for this tool, in one line of diff.
+
+## 6c. Lint results across all seven `.pics` files
+
+Every test binary now takes `--pics-json` via `args::dump_pics_json` in
+`tests/src/common/args.rs`. For `thread_tests` this required hoisting `Matter::init` above
+the Thread attach - the data model depends on neither the operational dataset nor a running
+`otbr-agent`, so the dump now works with no Thread environment at all.
+
+| suite | derived | untouched | conflicts | over-claims | under-claims |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `light_tests` | 599 | 10 | 1 | 0 | **1** |
+| `scenes_tests` | 605 | 4 | 9 | 6 | **3** |
+| `camera_tests` | 605 | 4 | 0 | 0 | 0 |
+| `system_tests` | 599 | 10 | 251 | 247 | **4** |
+| `thread_tests` | 605 | 4 | 0 | 0 | 0 |
+| `wireless_tests_wifi` | 605 | 4 | 0 | 0 | 0 |
+| `wireless_tests_thread` | 605 | 4 | 0 | 0 | 0 |
+
+Four of the seven are already clean.
+
+### The eight under-claims
+
+The dangerous direction: the harness **skips** the gated steps, so CI stays green for
+functionality that is actually shipped.
+
+```
+light_tests    OO.S.C41.Rsp     OnWithRecallGlobalScene
+scenes_tests   G.S.A0000        Groups NameSupport
+               G.S.C05.Rsp      Groups AddGroupIfIdentifying
+               OO.S.C41.Rsp
+system_tests   BINFO.S.E01      Basic Information event
+               BINFO.S.E03      Basic Information event
+               CADMIN.S.F00     AdministratorCommissioning "Basic" feature
+               DGGEN.S.A000a    GeneralDiagnostics attribute
+```
+
+`G.S.C05.Rsp` is `AddGroupIfIdentifying`, which was implemented to replace a `todo!()`
+panic; the PICS was never updated, so nothing has exercised it since.
+
+### `system_tests`' 247 over-claims are pre-existing, known debt
+
+**181 of the 251 conflicts sit on clusters the node does not serve at all** - Color Control
+(148) and Level Control (26) dominate. That is precisely what the file's own header
+anticipates:
+
+> *"Over time, all app clusters need to be turned off, because the `rs-matter` integration
+> tests should only test the utility/system clusters..."*
+
+The lint turns "over time" into an enumerated list. The remaining **70 conflicts are on
+clusters it does serve** - `OPCREDS` 19, `DGGEN` 10, `DGSW` 8, `CADMIN` 8, `SWTCH` 7,
+`CNET` 7 - and those deserve individual review rather than bulk deletion.
+
+### Two inference rules, both found by running it
+
+1. **Client absent** - a cluster missing from `client_clusters` cannot support anything on
+   its client surface. Residue 167 -> 10 for `light_tests`.
+2. **Server absent** - a cluster the node does not serve cannot support anything on its
+   server surface. Residue 141 -> 4 for `camera_tests`, 128 -> 10 for `system_tests`.
+
+Both are sound and neither was obvious from the design; the counts made them visible.
+
+## 6d. The blind spot, and the second pass
+
+The first lint pass reported four of seven `.pics` files "clean". That was **wrong**, and the
+reason is worth recording: `PICS_ROOTS` mapped only 19 clusters, and any root outside it was
+silently *not derivable* rather than *checked*. Measured per file:
+
+| file | entries | validated | unchecked |
+| --- | ---: | ---: | ---: |
+| `camera_tests.pics` | 63 | **0** | 63 |
+| `thread_tests.pics` | 87 | 24 | 63 |
+| `wireless_tests_thread.pics` | 53 | 24 | 29 |
+| `wireless_tests_wifi.pics` | 41 | 24 | 17 |
+| `scenes_tests.pics` | 129 | 100 | 26 |
+| `system_tests.pics` | 794 | 373 | 249 |
+| `light_tests.pics` | 162 | 161 | 0 |
+
+`camera_tests` was **0% validated** - its "0 conflicts" meant "nothing was looked at".
+
+Expanding the table to **41 clusters** (each ID confirmed against the served-cluster list the
+binaries themselves report) surfaced **87 further conflicts**: `camera_tests` 21,
+`system_tests` 65, `thread_tests` 1. Among them four more under-claims:
+`PS.S.E00/E01/E02` and `DGTHREAD.S.F03`.
+
+That last one is instructive. An earlier manual pass had deduplicated a conflicting
+`DGTHREAD.S.F03=1` / `=0` pair by keeping the last-wins value, `0`. The device serves it, so
+the *discarded* value was the correct one. The lint caught a mistake made while hand-fixing
+the very file it was checking.
+
+**Totals: 348 corrections across three files; all seven now lint clean.**
+
+## 6e. Trimming dead config
+
+`system_tests.pics` carried app-cluster blocks its suite never exercises. Verified by
+resolving **164 of 169** `SYS_TESTS` entries to their YAML/Python sources (the remaining five
+are comment fragments, not tests) and extracting every PICS root they reference. Exactly two
+of the removal candidates were referenced and kept: `PWRTL` and `MEDIAPLAYBACK`.
+
+```
+system_tests.pics:  2402 -> 794 entries,  109 -> 37 roots
+                    160 blocks / 1608 entries removed
+```
+
+Removed whole blank-line-separated blocks so section comments went with their entries. Every
+runner knob survived (`PICS_SDK_CI_ONLY`, `PICS_EVENT_LIST_ENABLED`, `PICS_USER_PROMPT`,
+`MCORE.UI.FACTORYRESET`).
+
+The same analysis over the other six files finds **nothing removable**: every root in them is
+either served by the device or referenced by its own suite. `system_tests.pics` was the only
+one carrying dead weight - which is exactly what its own header had said for years.
+
+## 6f. Coverage reporting
+
+The lesson from 6d - that a "clean" result can mean "nothing was looked at" - is now enforced
+by the tool rather than left to discipline. Every `--baseline` run first accounts for all of
+its entries:
+
+```
+tests/src/bin/light_tests.pics: 138/162 entries checked, 1 out of scope (MCORE/PIXIT/knobs)
+    23 not decidable from the data model (manual items / stale keys):
+        CC   4    I   3    LVL  5    OO  11
+tests/src/bin/light_tests.pics agrees with the data model
+```
+
+Entries fall into four buckets, and every one is reported:
+
+1. **checked** - decided from the data model;
+2. **out of scope** - `MCORE.*`, `PIXIT.*` and SDK runner knobs, which are not cluster PICS;
+3. **not decidable** - the cluster is known but the item is a manual `.M.` behaviour or a key
+   no longer present in the templates;
+4. **NOT CHECKED** - the cluster is missing from `PICS_ROOTS`, so the entry was skipped
+   rather than validated. This one is a `warn!`, names the roots, and says what to do.
+
+Bucket 4 is the failure that produced the false "clean" verdicts. Verified against a
+synthetic baseline containing clusters outside the table:
+
+```
+fake.pics: 1/4 entries checked, 0 out of scope (MCORE/PIXIT/knobs)
+    3 entries NOT CHECKED - cluster missing from PICS_ROOTS ...
+        DRLK  2    TSTAT  1
+    Add these clusters to `PICS_ROOTS` to close the gap.
+fake.pics agrees with the data model
+```
+
+Note the last line. "Agrees with the data model" is still printed - but it can no longer be
+read without the coverage line directly above it.
+
+Across the seven `.pics` files in this repository, bucket 4 is now **empty**.
+
+## 6g. `PICS_ROOTS` derived for all of Matter 1.6
+
+Hand-maintaining the root->cluster table was the remaining source of blind spots, so it is
+now **derived** rather than written. Every `<name>` in the master PICS templates is matched
+against the `<name>`/`<code>` pairs in the SDK's ZAP cluster definitions
+(`sdk_runner/specifications/chip/*.xml`, 143 clusters).
+
+The table went **41 -> 132 clusters**, and the cross-check is what makes it trustworthy:
+**39 of the 41 hand-written entries came back byte-identical**. The two that did not
+(`OTAR`, `MEDIAPLAYBACK`) live in *multi-cluster* templates - `Media Cluster Test Plan.xml`
+carries `MEDIAPLAYBACK` alongside `CHANNEL`, `MEDIAINPUT` and others - which the
+one-root-per-template heuristic cannot resolve; those were mapped by name individually.
+
+### Five roots are deliberately excluded
+
+Listed in `NON_CLUSTER_ROOTS`, because mapping them would produce confidently wrong answers:
+
+| root | what it really is |
+| --- | --- |
+| `MCORE` | the general, non-cluster PICS (`Base.xml`) |
+| `PLAT` | platform certification declarations |
+| `ICDB` | ICD *behaviour*; the cluster is `ICDM` |
+| `APPDEVICE` | a device-type claim |
+| `MC` | "casting video player" - a **device type**, whose sub-items (`MC.S.M.UDC`) are manual |
+
+`MC` is the cautionary one. Name-matching happily mapped it to Media Playback (0x0506),
+which would have answered *"does the device implement the casting video player as a server?"*
+by looking up an unrelated cluster. Reading the item text caught it.
+
+The coverage report distinguishes these from genuinely unmapped clusters, so the
+`NOT CHECKED` warning stays meaningful instead of crying wolf on `APPDEVICE` every run.
+
+### Final state
+
+```
+file                          checked   conflicts  NOT CHECKED
+light_tests.pics              138/162       0           0
+scenes_tests.pics             110/129       0           0
+camera_tests.pics              51/63        0           0
+system_tests.pics             463/794       0           0
+thread_tests.pics              86/87        0           0
+wireless_tests_wifi.pics       40/41        0           0
+wireless_tests_thread.pics     52/53        0           0
+```
+
+Verified that the warning still fires for a genuinely unmapped cluster (`FOO.S` -> one
+`NOT CHECKED` entry naming `FOO`).
 
 ## 7. Open items before implementing
 

@@ -139,15 +139,8 @@ fn main() -> Result<(), Error> {
         args::port_override(),
     ));
 
-    // Dump the data model as JSON, for `cargo xtask pics`, then exit.
-    if args::arg_present("--pics-json") {
-        let mut buf = [0; 512];
-        let mut json = String::new();
-
-        matter.write_pics_json(&NODE, &mut buf, &mut json)?;
-
-        println!("{json}");
-
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, &NODE)? {
         return Ok(());
     }
 

@@ -28,9 +28,11 @@
 #![allow(dead_code)]
 
 use rs_matter::dm::devices::test::TEST_DEV_COMM;
+use rs_matter::dm::Node;
+use rs_matter::error::Error;
 use rs_matter::persist::FileKvBlobStore;
 use rs_matter::sc::pase::{Spake2pVerifierPassword, Spake2pVerifierPasswordRef};
-use rs_matter::{BasicCommData, MATTER_PORT};
+use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
 /// Look up an optional `--<opt> <value>` CLI argument, converting its value with
 /// `conv`. Returns `None` when the flag is absent. Unknown flags are ignored, so
@@ -113,4 +115,28 @@ pub fn file_kv_store() -> FileKvBlobStore {
         Some(path) => FileKvBlobStore::new(path.into()),
         None => FileKvBlobStore::new_default(),
     }
+}
+
+/// If `--pics-json` was passed, emit the device's data model - and the mDNS
+/// records it would advertise - as JSON, and report `true` so the caller can
+/// exit.
+///
+/// Call it before any persistence or networking setup: the dump must work on a
+/// pristine checkout and must not disturb a device that is mid-commissioning.
+///
+/// Consumed by `cargo xtask pics`, which merges the result into the CSA master
+/// PICS templates. See `docs/pics-generation-design.md`.
+pub fn dump_pics_json(matter: &Matter<'_>, node: &Node<'_>) -> Result<bool, Error> {
+    if !arg_present("--pics-json") {
+        return Ok(false);
+    }
+
+    let mut buf = [0; 512];
+    let mut json = String::new();
+
+    matter.write_pics_json(node, &mut buf, &mut json)?;
+
+    println!("{json}");
+
+    Ok(true)
 }

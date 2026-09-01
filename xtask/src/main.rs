@@ -116,9 +116,22 @@ enum Command {
         /// The device's data model, as emitted by `Matter::write_pics_json`
         #[arg(long)]
         node: PathBuf,
-        /// Directory to write the filled templates into
+        /// Directory to write the filled XML templates into
         #[arg(long, short = 'o')]
-        out: PathBuf,
+        out: Option<PathBuf>,
+        /// Also emit the SDK's flat `KEY=1` PICS format to this file
+        /// (the form `tests/src/bin/*.pics` uses)
+        #[arg(long)]
+        pics: Option<PathBuf>,
+        /// An existing `.pics` to check against, and to carry non-derivable
+        /// entries over from. Disagreements with the data model are reported.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Rewrite `--baseline` in place, correcting every entry the data
+        /// model can decide. Comments, ordering and undecidable entries are
+        /// preserved, so the diff shows only the corrections.
+        #[arg(long)]
+        fix: bool,
     },
 }
 
@@ -193,7 +206,17 @@ impl Command {
                 templates,
                 node,
                 out,
-            } => pics::run(templates, node, out),
+                pics,
+                baseline,
+                fix,
+            } => pics::run(
+                templates,
+                node,
+                out.as_deref(),
+                pics.as_deref(),
+                baseline.as_deref(),
+                *fix,
+            ),
             Command::Copyright { action } => {
                 copyright::run(action.unwrap_or(copyright::Action::Check))
             }

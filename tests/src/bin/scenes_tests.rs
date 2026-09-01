@@ -110,6 +110,11 @@ fn main() -> Result<(), Error> {
         args::port_override(),
     ));
 
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, &NODE)? {
+        return Ok(());
+    }
+
     // Persistence
     let store = args::file_kv_store();
 
