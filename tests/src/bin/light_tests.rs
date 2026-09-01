@@ -947,6 +947,12 @@ impl ModeSelectDeviceLogic {
     }
 }
 
+impl Default for ModeSelectDeviceLogic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModeSelectHooks for ModeSelectDeviceLogic {
     // `StartUpMode` and `OnMode` are optional; `OnMode` is what the `ON_OFF`
     // feature adds. `Test_TC_MOD_3_1` needs both the feature and the
