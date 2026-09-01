@@ -923,7 +923,7 @@ const LIGHT_PATTERNS: &[Mode] = &[
 /// `CurrentMode` / `StartUpMode` - `Test_TC_MOD_3_2` and `3_4` - gate their
 /// power-cycle step on `PICS_USER_PROMPT` and are not enabled, so persisting
 /// here would buy nothing testable.
-pub struct ModeSelectDeviceLogic {
+struct ModeSelectDeviceLogic {
     current: Cell<ModeId>,
     start_up: Cell<Option<ModeId>>,
     on_mode: Cell<Option<ModeId>>,
@@ -944,12 +944,6 @@ impl ModeSelectDeviceLogic {
             // the whole sequence.
             on_mode: Cell::new(None),
         }
-    }
-}
-
-impl Default for ModeSelectDeviceLogic {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

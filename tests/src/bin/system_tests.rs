@@ -775,36 +775,6 @@ const NODE_GROUPCAST: Node<'static> = Node {
     endpoints: &[ep0(EP0_CLUSTERS_GROUPCAST), EP1, EP2],
 };
 
-/// EP1 of all node variants.
-///
-/// `FixedLabel` (cluster ID 0x0040) is wired on EP1 because `TC_FLABEL_2_1`
-/// runs with `--endpoint 1` and skips cleanly via
-/// `has_attribute(FixedLabel.LabelList)` when the cluster is absent; adding
-/// it here turns the skip into an actual content + read-only-write check.
-///
-/// `Binding` is wired on EP1 to satisfy `TestBinding`, which writes/reads its
-/// primary table here. Paired with a client-cluster declaration so
-/// `Descriptor::ClientList` truthfully advertises the intent to control OnOff
-/// bulbs.
-
-/// A Mode Base *derived* cluster on EP1: Laundry Washer Mode.
-///
-/// Present so the generic Mode Base handler
-/// ([`rs_matter::dm::clusters::mode::ModeHandler`]) is exercised by CHIP's own
-/// conformance harness - `TC_LWM_1_2` runs the shared `ModeBaseClusterChecks`
-/// (mode/label uniqueness, tag ranges, at least one standard tag per mode,
-/// `CurrentMode` within `SupportedModes`), and `Test_TC_LWM_2_1` drives
-/// `ChangeToMode` including the `UnsupportedMode` path.
-///
-/// Laundry Washer Mode is an arbitrary pick among the ten derived clusters:
-/// they share one handler, so covering one covers the shared logic. It carries
-/// no `StatusCode` enum of its own, so `change_to_mode` here never refuses -
-/// `LWM.S.M.CAN_TEST_MODE_FAILURE=0` in the `.pics` says as much, and the
-/// failure step is skipped accordingly.
-struct LaundryWasherModeLogic {
-    current: Cell<ModeId>,
-}
-
 /// The wash cycles.
 ///
 /// Constrained by `Test_TC_LWM_2_1`'s PIXITs: it changes to mode `2`
@@ -840,6 +810,24 @@ const WASH_CYCLES: &[Mode<laundry_washer_mode::ModeTag>] = &[
     ),
 ];
 
+/// A Mode Base *derived* cluster on EP1: Laundry Washer Mode.
+///
+/// Present so the generic Mode Base handler
+/// ([`rs_matter::dm::clusters::mode::ModeHandler`]) is exercised by CHIP's own
+/// conformance harness - `TC_LWM_1_2` runs the shared `ModeBaseClusterChecks`
+/// (mode/label uniqueness, tag ranges, at least one standard tag per mode,
+/// `CurrentMode` within `SupportedModes`), and `Test_TC_LWM_2_1` drives
+/// `ChangeToMode` including the `UnsupportedMode` path.
+///
+/// Laundry Washer Mode is an arbitrary pick among the ten derived clusters:
+/// they share one handler, so covering one covers the shared logic. It carries
+/// no `StatusCode` enum of its own, so `change_to_mode` here never refuses -
+/// `LWM.S.M.CAN_TEST_MODE_FAILURE=0` in the `.pics` says as much, and the
+/// failure step is skipped accordingly.
+struct LaundryWasherModeLogic {
+    current: Cell<ModeId>,
+}
+
 impl LaundryWasherModeLogic {
     const fn new() -> Self {
         Self {
@@ -869,6 +857,17 @@ impl ModeHooks for LaundryWasherModeLogic {
     }
 }
 
+/// EP1 of all node variants.
+///
+/// `FixedLabel` (cluster ID 0x0040) is wired on EP1 because `TC_FLABEL_2_1`
+/// runs with `--endpoint 1` and skips cleanly via
+/// `has_attribute(FixedLabel.LabelList)` when the cluster is absent; adding
+/// it here turns the skip into an actual content + read-only-write check.
+///
+/// `Binding` is wired on EP1 to satisfy `TestBinding`, which writes/reads its
+/// primary table here. Paired with a client-cluster declaration so
+/// `Descriptor::ClientList` truthfully advertises the intent to control OnOff
+/// bulbs.
 const EP1: Endpoint<'static> = Endpoint::new_with_clients(
     1,
     devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),

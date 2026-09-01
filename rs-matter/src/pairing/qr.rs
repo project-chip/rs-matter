@@ -243,7 +243,7 @@ where
 
         // SHALL be restricted to the values 0x0000001 to 0x5F5E0FE (00000001 to 99999998 in decimal), excluding the invalid Passcode
         // values.
-        if setup_pin == SETUP_PINCODE_UNDEFINED_VALUE
+        !(setup_pin == SETUP_PINCODE_UNDEFINED_VALUE
             || setup_pin > SETUP_PINCODE_MAXIMUM_VALUE
             || setup_pin == 11111111
             || setup_pin == 22222222
@@ -254,12 +254,7 @@ where
             || setup_pin == 77777777
             || setup_pin == 88888888
             || setup_pin == 12345678
-            || setup_pin == 87654321
-        {
-            return false;
-        }
-
-        true
+            || setup_pin == 87654321)
     }
 
     /// Encode the QR text of this payload as a string into the provided buffer
