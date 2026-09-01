@@ -210,6 +210,18 @@ struct NodeInfo {
     /// `(endpoint id, device types, server cluster ids)`, kept in declaration
     /// order purely so the summary reads like the device does.
     endpoints: Vec<(u16, Vec<u16>, Vec<u32>)>,
+    /// What the node actually advertises, as the stack builds it. This is the
+    /// only source for the `MCORE.SC.*` and `MCORE.DD.TXT_KEY_*` items: they
+    /// ask which DNS-SD keys and subtypes appear, which no cluster reports.
+    mdns: MdnsInfo,
+}
+
+/// The TXT keys and subtypes on each of the node's two DNS-SD services.
+#[derive(Default)]
+struct MdnsInfo {
+    commissionable_txt: BTreeSet<String>,
+    commissionable_subtypes: Vec<String>,
+    operational_txt: BTreeSet<String>,
 }
 
 impl NodeInfo {
@@ -277,10 +289,33 @@ impl NodeInfo {
             }
         }
 
+        let strings = |v: &serde_json::Value| -> Vec<String> {
+            v.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s.as_str().map(str::to_string))
+                .collect()
+        };
+
+        let mdns = MdnsInfo {
+            // `DUMMY` is filler the stack adds so a TXT record is never empty
+            // (see `transport::network::mdns`); it is not a Matter key.
+            commissionable_txt: strings(&v["mdns"]["commissionable"]["txt"])
+                .into_iter()
+                .filter(|k| k != "DUMMY")
+                .collect(),
+            commissionable_subtypes: strings(&v["mdns"]["commissionable"]["subtypes"]),
+            operational_txt: strings(&v["mdns"]["operational"]["txt"])
+                .into_iter()
+                .filter(|k| k != "DUMMY")
+                .collect(),
+        };
+
         Ok(Self {
             servers,
             clients,
             endpoints: shape,
+            mdns,
         })
     }
 
@@ -380,7 +415,12 @@ struct Report {
 /// Deliberately line-oriented rather than a real XML round-trip: the output
 /// must stay diffable against the CSA original, so that what changed is
 /// reviewable.
-fn fill_template(xml: &str, node: &NodeInfo, report: &mut Report) -> String {
+fn fill_template(
+    xml: &str,
+    node: &NodeInfo,
+    answers: &BTreeMap<String, bool>,
+    report: &mut Report,
+) -> String {
     let mut out = String::with_capacity(xml.len());
     // PIXIT entries live in `<pixitItem>` and carry values rather than
     // booleans; they are never touched.
@@ -409,7 +449,13 @@ fn fill_template(xml: &str, node: &NodeInfo, report: &mut Report) -> String {
                         .roots
                         .insert(name.split('.').next().unwrap_or(name).to_string());
 
-                    if let Some(answer) = node.resolve(name) {
+                    // `answers` carries what the data model could not settle
+                    // on its own - transports derived from the CNET feature
+                    // map, and the operator's answers to the questions. It
+                    // wins over `resolve`, which returns `None` for exactly
+                    // those items.
+                    if let Some(answer) = answers.get(name).copied().or_else(|| node.resolve(name))
+                    {
                         let indent = &line[..line.len() - line.trim_start().len()];
                         let eol = if line.ends_with("\r\n") {
                             "\r\n"
@@ -969,16 +1015,23 @@ fn derive_transports(node: &NodeInfo, report: &mut Report) {
     }
 
     // rs-matter's `DiscoveryCapabilities` (see `pairing.rs`) defines exactly
-    // three bits - SOFT_AP, BLE and IP. It has no NFC Transport Layer bit, so
-    // the stack cannot advertise NTL commissioning whatever the product does.
+    // three bits - SOFT_AP, BLE and IP. It has neither an NFC Transport Layer
+    // bit nor a Wi-Fi Public Action Frame one, so the stack cannot advertise
+    // NTL or PAF commissioning whatever the product does.
     //
-    // This is a fact about the rs-matter version, not about the node, so it
-    // does not come from the dump. Revisit if `DiscoveryCapabilities` grows an
-    // NTL bit. Note this says nothing about `MCORE.DD.NFC` - a passive tag can
-    // carry the onboarding payload without the stack supporting NTL, which is
-    // why that one remains a question.
-    report.derived.insert("MCORE.DD.NTL".to_string(), false);
-    report.left_items.retain(|left| left != "MCORE.DD.NTL");
+    // These are facts about the rs-matter version, not about the node, so they
+    // do not come from the dump. Revisit if `DiscoveryCapabilities` grows the
+    // corresponding bits. Note this says nothing about `MCORE.DD.NFC` - a
+    // passive tag can carry the onboarding payload without the stack
+    // supporting NTL, which is why that one remains a question.
+    //
+    // `MCORE.COM.PAF` is gated on `MCORE.DD.DISCOVERY_PAF`, so leaving it at
+    // the template's `true` claims PAF commissioning against a discovery
+    // capability the stack cannot offer.
+    for item in ["MCORE.DD.NTL", "MCORE.DD.DISCOVERY_PAF", "MCORE.COM.PAF"] {
+        report.derived.insert(item.to_string(), false);
+        report.left_items.retain(|left| left != item);
+    }
 
     // Non-concurrent commissioning describes a device that cannot hold BLE and
     // its operational network up at once. With no BLE in the picture there is
@@ -998,14 +1051,225 @@ fn derive_transports(node: &NodeInfo, report: &mut Report) {
     );
 }
 
+/// Answer the node-wide `MCORE.*` items that no cluster's PICS root covers.
+///
+/// These sit in `Base.xml`, which is emitted for every device, and the CSA
+/// template ships almost all of them as `true`. Anything left untouched is
+/// therefore not "unanswered" but *claimed* - which is how a light with no OTA
+/// cluster came to assert `MCORE.OTA.Requestor` and pull the whole TC-SU
+/// suite into its test list.
+///
+/// Only facts the dump actually settles are derived here. Items that need a
+/// human (`MCORE.ROLE.*`, the packaging questions) stay in `QUESTIONS`.
+fn derive_node_wide(node: &NodeInfo, report: &mut Report) {
+    const OTA_PROVIDER: u32 = 0x0029;
+    const OTA_REQUESTOR: u32 = 0x002A;
+    const DIAGNOSTIC_LOGS: u32 = 0x0032;
+    const BRIDGED_DEVICE_BASIC_INFO: u32 = 0x0039;
+    const GROUPS: u32 = 0x0004;
+    const COMMISSIONER_CONTROL: u32 = 0x0751;
+    const ICD_MANAGEMENT: u32 = 0x0046;
+
+    let serves = |id: u32| node.servers.contains_key(&id);
+
+    // Collected rather than inserted as we go: the IDM block below needs to
+    // read `report.left_items` while this is still being filled.
+    let mut answers: Vec<(String, bool)> = Vec::new();
+    let mut set = |item: &str, value: bool| answers.push((item.to_string(), value));
+
+    // Device types, not clusters, in the item text - but a node implementing
+    // either OTA device type necessarily serves the matching cluster, and the
+    // cluster is what the dump reports.
+    set("MCORE.OTA.Requestor", serves(OTA_REQUESTOR));
+    set("MCORE.OTA.Provider", serves(OTA_PROVIDER));
+
+    // A commissionee that does not implement the OTA Requestor device type is
+    // required to declare a vendor-specific update path instead - the template
+    // makes it mandatory with `cond="MCORE.ROLE.COMMISSIONEE AND NOT
+    // (MCORE.OTA.Requestor)"`, which is the CSA's way of insisting every Matter
+    // device be updatable somehow. Leaving it `false` there is not a modest
+    // claim but an invalid PICS, and the tool rejects the whole file.
+    //
+    // This is a statement about the product rather than the stack, so a device
+    // that really has no update path at all should say so in its baseline.
+    set("MCORE.OTA.VendorSpecific", !serves(OTA_REQUESTOR));
+
+    // Both halves of OTA move the image over BDX: the requestor fetches with
+    // `parse_bdx_url` + `Exchange::download` (which rejects an `https://` URL
+    // outright), and the provider serves through `OtaBdxHandler`. No HTTPS
+    // download path exists in the stack, either to offer or to consume.
+    set("MCORE.OTA.HTTPS", false);
+
+    // A bridge exposes its bridged devices through Bridged Device Basic
+    // Information. Without that cluster there is nothing bridged to describe,
+    // so neither the bridge itself nor any of its per-device claims hold.
+    let bridge = serves(BRIDGED_DEVICE_BASIC_INFO);
+    set("MCORE.BRIDGE", bridge);
+    if !bridge {
+        for item in [
+            "MCORE.BRIDGE.BatInfo",
+            "MCORE.BRIDGE.OtherControl",
+            "MCORE.BRIDGE.AllowDeviceRename",
+        ] {
+            set(item, false);
+        }
+    }
+
+    // Fabric Synchronization is driven through Commissioner Control.
+    set("MCORE.FS", serves(COMMISSIONER_CONTROL));
+
+    // Both items name fields of `RetrieveLogsResponse`, which only exists if
+    // the cluster does.
+    if !serves(DIAGNOSTIC_LOGS) {
+        set("MCORE.DLOG.S.UTCTIMESTAMP", false);
+        set("MCORE.DLOG.S.TIMESINCEBOOT", false);
+    }
+
+    // Literally "multiple endpoints with a Groups cluster" - countable.
+    let group_endpoints = node
+        .endpoints
+        .iter()
+        .filter(|(_, _, clusters)| clusters.contains(&GROUPS))
+        .count();
+    set("MCORE.G.MULTIENDPOINT", group_endpoints > 1);
+
+    // The IDM client items all begin "Is the device a Client and ...". A node
+    // that binds no client clusters is not an IDM client, so every one of them
+    // is false. The converse is not derivable - which data types a client
+    // reads or writes is not in the dump - so a node that does have client
+    // clusters leaves them alone.
+    set("MCORE.IDM.S", !node.servers.is_empty());
+    let client = !node.clients.is_empty();
+    set("MCORE.IDM.C", client);
+    if !client {
+        for item in report
+            .left_items
+            .iter()
+            .filter(|i| i.starts_with("MCORE.IDM.C"))
+        {
+            set(item, false);
+        }
+    }
+
+    // BDX roles.
+    //
+    // BDX is a protocol rather than a cluster, so it never appears in the dump
+    // directly. Within rs-matter it has exactly two users, though, and each
+    // pins down which roles the node can play:
+    //
+    //   Diagnostic Logs (0x0032) server  uploads logs   -> Sender,   Initiator
+    //   Diagnostic Logs client           receives them  -> Receiver, Responder
+    //   OTA Provider    (0x0029)         serves images  -> Sender,   Responder
+    //   OTA Requestor   (0x002A)         fetches images -> Receiver, Initiator
+    //
+    // A node serving none of them has no BDX user at all, and that direction is
+    // conclusive: the template's blanket `true` becomes `false`. The positive
+    // direction is a strong default rather than a certainty - the application
+    // must also wire the handler up (`Bdx::new(OtaBdxHandler::new(..))`) - so a
+    // device that does not can say so in its baseline.
+    let dlog_client = node.clients.contains(&DIAGNOSTIC_LOGS);
+    let sender = serves(DIAGNOSTIC_LOGS) || serves(OTA_PROVIDER);
+    let receiver = serves(OTA_REQUESTOR) || dlog_client;
+    let initiator = serves(DIAGNOSTIC_LOGS) || serves(OTA_REQUESTOR);
+    let responder = serves(OTA_PROVIDER) || dlog_client;
+
+    for (item, value) in [
+        ("MCORE.BDX.Sender", sender),
+        ("MCORE.BDX.Receiver", receiver),
+        ("MCORE.BDX.Initiator", initiator),
+        ("MCORE.BDX.Responder", responder),
+        // Synchronous is the only mode rs-matter ever negotiates, so these
+        // simply mirror the roles above.
+        ("MCORE.BDX.SynchronousSender", sender),
+        ("MCORE.BDX.SynchronousReceiver", receiver),
+        // `TransferControl::async_mode` is documented "Provisional - never
+        // selected by a Responder", and negotiation proposes it as `false`.
+        ("MCORE.BDX.AsynchronousSender", false),
+        ("MCORE.BDX.AsynchronousReceiver", false),
+        // Both drive modes are proposed and both are implemented (the receiver
+        // paces with `BlockQuery` in `bdx::read`, the sender in `bdx::write`),
+        // so a node doing BDX at all can drive the transfer.
+        ("MCORE.BDX.Driver", sender || receiver),
+        // The message type is defined and parsed, but `BlockQueryWithSkip` is
+        // only ever *constructed* in `bdx.rs`'s own unit tests. Nothing in the
+        // stack sends one, which is what this item asks.
+        ("MCORE.BDX.BlockQueryWithSkip", false),
+    ] {
+        set(item, value);
+    }
+
+    // The DNS-SD items ask which optional TXT keys and subtypes the node
+    // advertises. That is exactly what the mDNS half of the dump records, so
+    // it is read off rather than asked.
+    let comm = &node.mdns.commissionable_txt;
+    let oper = &node.mdns.operational_txt;
+    let subtype = |prefix: &str| {
+        node.mdns
+            .commissionable_subtypes
+            .iter()
+            .any(|s| s.starts_with(prefix))
+    };
+
+    for (item, present) in [
+        ("MCORE.SC.VP_KEY", comm.contains("VP")),
+        ("MCORE.SC.DT_KEY", comm.contains("DT")),
+        ("MCORE.SC.DN_KEY", comm.contains("DN")),
+        ("MCORE.SC.RI_KEY", comm.contains("RI")),
+        ("MCORE.SC.PH_KEY", comm.contains("PH")),
+        ("MCORE.SC.PI_KEY", comm.contains("PI")),
+        ("MCORE.SC.SII_COMM_DISCOVERY_KEY", comm.contains("SII")),
+        ("MCORE.SC.SAI_COMM_DISCOVERY_KEY", comm.contains("SAI")),
+        ("MCORE.SC.SII_OP_DISCOVERY_KEY", oper.contains("SII")),
+        ("MCORE.SC.SAI_OP_DISCOVERY_KEY", oper.contains("SAI")),
+        ("MCORE.SC.SAT_OP_DISCOVERY_KEY", oper.contains("SAT")),
+        ("MCORE.SC.T_KEY", oper.contains("T")),
+        ("MCORE.SC.VENDOR_SUBTYPE", subtype("_V")),
+        ("MCORE.SC.DEVTYPE_SUBTYPE", subtype("_T")),
+        // The same facts, asked again under the Device Discovery root.
+        ("MCORE.DD.TXT_KEY_VP", comm.contains("VP")),
+        ("MCORE.DD.TXT_KEY_DT", comm.contains("DT")),
+        ("MCORE.DD.TXT_KEY_DN", comm.contains("DN")),
+        ("MCORE.DD.TXT_KEY_RI", comm.contains("RI")),
+        ("MCORE.DD.TXT_KEY_PH", comm.contains("PH")),
+        ("MCORE.DD.TXT_KEY_PI", comm.contains("PI")),
+        ("MCORE.DD.COMMISSIONING_SUBTYPE_V", subtype("_V")),
+        ("MCORE.DD.COMMISSIONING_SUBTYPE_T", subtype("_T")),
+        // The operational `T` key is the TCP support bitmap, and the stack
+        // emits it only when `dev_det.tcp_supported` is set (empty values are
+        // filtered out of the TXT record). Its presence is therefore exactly
+        // the question this item asks - and it gates the whole TC-SC-8 suite.
+        ("MCORE.SC.TCP", oper.contains("T")),
+        // Large-payload interactions ride on TCP, so they cannot be supported
+        // by a node that does not advertise it.
+        ("MCORE.IDM.S.LargeData", oper.contains("T")),
+        // A Short Idle Time ICD is an ICD, and an ICD serves ICD Management.
+        ("MCORE.SC.SIT_ICD", serves(ICD_MANAGEMENT)),
+    ] {
+        set(item, present);
+    }
+
+    report.derived.extend(answers);
+    report
+        .left_items
+        .retain(|left| !report.derived.contains_key(left));
+
+    info!(
+        "Node-wide PICS derived: OTA requestor={} provider={}, bridge={bridge}, \
+         IDM client={client}, mDNS commissionable TXT {:?}",
+        serves(OTA_REQUESTOR),
+        serves(OTA_PROVIDER),
+        node.mdns.commissionable_txt
+    );
+}
+
 /// A high-level question standing in for a group of PICS items that the data
 /// model cannot answer.
 ///
 /// The point is leverage: the master set has ~2800 items, of which the data
-/// model decides ~90%. Of the remainder, a handful of facts about the *product*
-/// - what it is plugged into, whether it has buttons - settle most of the rest.
-/// Answering eight questions beats ticking forty boxes in the PICS Tool, and is
-/// far harder to get quietly wrong.
+/// model decides ~90%. Of the remainder, a handful of facts about the
+/// *product* - what it is plugged into, whether it has buttons - settle most
+/// of the rest. Answering eight questions beats ticking forty boxes in the
+/// PICS Tool, and is far harder to get quietly wrong.
 struct Question {
     /// Asked verbatim; phrased so that "yes" always means "supported".
     prompt: &'static str,
@@ -1062,6 +1326,36 @@ const QUESTIONS: &[Question] = &[
     // Commissioner-side capabilities. The templates gate these on the role
     // (`cond="MCORE.ROLE.COMMISSIONER AND MCORE.COM.BLE"` for the first), so a
     // plain commissionee is never asked.
+    // ---- Controller-side claims -------------------------------------------
+    // These describe a node that *manages other devices*, not one that is
+    // managed. The templates leave them ungated and default them to `true`, so
+    // a plain device would otherwise claim it maintains a device list and holds
+    // Administer privilege on other nodes. Gating them on the Controller answer
+    // settles all six as `false` without asking a device anything.
+    Question {
+        prompt: "Does the controller maintain a list of connected devices?",
+        items: &["MCORE.DEVLIST.UseDevices"],
+        requires: &["MCORE.ROLE.CONTROLLER"],
+    },
+    Question {
+        prompt: "Does that device list track names, state and battery level?",
+        items: &[
+            "MCORE.DEVLIST.UseDeviceName",
+            "MCORE.DEVLIST.UseDeviceState",
+            "MCORE.DEVLIST.UseBatInfo",
+        ],
+        requires: &["MCORE.ROLE.CONTROLLER", "MCORE.DEVLIST.UseDevices"],
+    },
+    Question {
+        prompt: "Can the controller talk to bridged devices behind a Bridge?",
+        items: &["MCORE.BRIDGECLIENT"],
+        requires: &["MCORE.ROLE.CONTROLLER"],
+    },
+    Question {
+        prompt: "Does the device hold Administer privilege over another node's Access Control?",
+        items: &["MCORE.ACL.Administrator"],
+        requires: &["MCORE.ROLE.CONTROLLER"],
+    },
     Question {
         prompt: "Does the commissioner support Discovery Capability over BLE?",
         items: &["MCORE.DD.DISCOVERY_BLE"],
@@ -1229,11 +1523,6 @@ const QUESTIONS: &[Question] = &[
         items: &["MCORE.OTA.Retry"],
         requires: &["MCORE.OTA.Requestor"],
     },
-    Question {
-        prompt: "Does the device support the HTTPS protocol for OTA image download?",
-        items: &["MCORE.OTA.HTTPS"],
-        requires: &["MCORE.OTA.Requestor"],
-    },
 ];
 
 impl Question {
@@ -1270,56 +1559,68 @@ fn ask_questions(report: &mut Report, baseline: Option<&BTreeMap<String, bool>>)
         return;
     }
 
-    // Work out what is actually *askable* first. `unanswered` also holds manual
-    // `.M.` behaviours and stale keys that no question covers; counting those
-    // would report hundreds of items nobody can do anything about.
-    let applicable: Vec<(&Question, Vec<&String>)> = QUESTIONS
-        .iter()
-        .filter(|q| {
-            // Preconditions are themselves derived, so a question whose
-            // feature bit is clear is not asked at all.
-            q.requires
-                .iter()
-                .all(|item| report.derived.get(*item).copied().unwrap_or(false))
-        })
-        .map(|q| (q, q.pending(&unanswered)))
-        .filter(|(_, pending)| !pending.is_empty())
-        .collect();
+    // A question's `requires` mirrors the `cond` the template puts on the same
+    // items. When it does not hold, the item is not merely unasked - it is
+    // inapplicable, and the only truthful support value is `false`.
+    //
+    // Gating the *question* is therefore only half the job: leaving the
+    // *answer* at the template's `true` is what let `MCORE.DD.DISCOVERY_BLE`
+    // claim BLE discovery on a device deriving no BLE, which the CSA PICS tool
+    // reports as a dependency violation.
+    //
+    // Answering `false` is also the safe direction: an unsupported claim
+    // merely skips test cases, whereas an unbacked `true` schedules tests the
+    // device cannot pass.
+    //
+    // Whether a question applies can depend on the answer to an *earlier* one:
+    // the device-list claims only arise for a Controller, which is itself a
+    // question. So the list is walked in declaration order and `requires` is
+    // evaluated against the answers so far, rather than once up front.
+    let interactive = std::io::stdin().is_terminal();
+    let mut unasked: Vec<(&Question, usize)> = Vec::new();
+    let mut announced = false;
+    let mut asked = 0;
 
-    if applicable.is_empty() {
-        return;
-    }
-
-    let pending_count: usize = applicable.iter().map(|(_, p)| p.len()).sum();
-
-    if !std::io::stdin().is_terminal() {
-        warn!(
-            "{} question(s) covering {pending_count} item(s) need a product-level answer, \
-             but stdin is not a terminal - leaving them as the template had them. Re-run \
-             interactively, or supply a `--baseline` that already answers them:",
-            applicable.len()
-        );
-        for (question, pending) in &applicable {
-            warn!("    {} [{}]", question.prompt, pending.len());
+    for question in QUESTIONS {
+        // `unanswered` also holds manual `.M.` behaviours and stale keys that
+        // no question covers; those are nobody's to answer and are skipped.
+        let pending = question.pending(&unanswered);
+        if pending.is_empty() {
+            continue;
         }
-        return;
-    }
 
-    info!("");
-    info!(
-        "{} question(s) about the product, settling {} PICS item(s) the data model \
-         cannot answer. Enter y or n; anything else keeps the template's value.",
-        applicable.len(),
-        pending_count
-    );
+        let applies = question
+            .requires
+            .iter()
+            .all(|item| report.derived.get(*item).copied().unwrap_or(false));
 
-    for (question, pending) in applicable {
+        if !applies {
+            for item in pending {
+                report.derived.insert(item.clone(), false);
+            }
+            continue;
+        }
+
+        if !interactive {
+            unasked.push((question, pending.len()));
+            continue;
+        }
+
+        if !announced {
+            info!("");
+            info!(
+                "Questions about the product, settling PICS items the data model cannot \
+                 answer. Enter y or n; anything else keeps the template's value."
+            );
+            announced = true;
+        }
+
         print!("  {} [y/n] ", question.prompt);
         let _ = std::io::Write::flush(&mut std::io::stdout());
 
         let mut line = String::new();
         if std::io::stdin().read_line(&mut line).is_err() {
-            return;
+            break;
         }
 
         let answer = match line.trim().to_ascii_lowercase().as_str() {
@@ -1331,6 +1632,30 @@ fn ask_questions(report: &mut Report, baseline: Option<&BTreeMap<String, bool>>)
         for item in pending {
             report.derived.insert(item.clone(), answer);
         }
+        asked += 1;
+    }
+
+    // Answered items are no longer open, so they must not keep counting
+    // towards "still need manual input".
+    report
+        .left_items
+        .retain(|left| !report.derived.contains_key(left));
+
+    if !unasked.is_empty() {
+        let items: usize = unasked.iter().map(|(_, n)| n).sum();
+        warn!(
+            "{} question(s) covering {items} item(s) need a product-level answer, but stdin \
+             is not a terminal - leaving them as the template had them. Re-run interactively, \
+             or supply a `--baseline` that already answers them:",
+            unasked.len()
+        );
+        for (question, n) in &unasked {
+            warn!("    {} [{}]", question.prompt, n);
+        }
+    }
+
+    if asked > 0 {
+        info!("Answered {asked} question(s).");
     }
 
     info!("");
@@ -1409,22 +1734,77 @@ fn lint_baseline(path: &Path, baseline: &BTreeMap<String, bool>, report: &Report
     conflicts.sort();
 
     if conflicts.is_empty() {
-        info!("{} agrees with the data model", path.display());
+        info!(
+            "{} agrees with the data model on every entry it declares",
+            path.display()
+        );
+    } else {
+        warn!(
+            "{} disagrees with the data model on {} item(s):",
+            path.display(),
+            conflicts.len()
+        );
+        for (item, claimed, derived) in conflicts {
+            warn!(
+                "    {item:<28} claims {} but the device serves {}",
+                u8::from(claimed),
+                u8::from(derived)
+            );
+        }
+    }
+
+    // Agreeing on what the file says is only half an audit - see below.
+    report_omissions(baseline, report);
+}
+
+/// Report items the data model derives as *supported* that the baseline never
+/// mentions.
+///
+/// The conflict check compares only entries the file already has, which leaves
+/// it blind in the direction that actually costs coverage: in the flat format a
+/// missing key reads as unsupported, so an omitted item silently gates its own
+/// tests off. A file can therefore be "in full agreement" while declaring a
+/// fraction of the device.
+///
+/// This is the check `TC_pics_checker` performs against the live device ("An
+/// element found on the device, but the corresponding PICS ... was not found in
+/// pics list"); running it found 151 such items in `light_tests.pics` that no
+/// amount of linting here would have surfaced.
+///
+/// Informational rather than a warning, because an omission is not wrong by
+/// itself: the `tests/src/bin/*.pics` files are deliberately scoped to the
+/// suite that consumes them, and carrying the whole data model would be noise.
+/// In a PICS submitted for certification the same omission is an under-claim.
+fn report_omissions(baseline: &BTreeMap<String, bool>, report: &Report) {
+    let mut missing: BTreeMap<&str, usize> = BTreeMap::new();
+
+    for (item, derived) in &report.derived {
+        // Only a *supported* item can be under-claimed by omission. One derived
+        // `false` says the same thing whether it is written out or left out.
+        if !derived || baseline.contains_key(item) {
+            continue;
+        }
+
+        let root = item.split('.').next().unwrap_or(item);
+        *missing.entry(root).or_default() += 1;
+    }
+
+    if missing.is_empty() {
         return;
     }
 
-    warn!(
-        "{} disagrees with the data model on {} item(s):",
-        path.display(),
-        conflicts.len()
+    let n: usize = missing.values().sum();
+    info!(
+        "    {n} supported item(s) are not declared at all - a missing key reads as \
+         unsupported, so any test gated on one skips:"
     );
-    for (item, claimed, derived) in conflicts {
-        warn!(
-            "    {item:<28} claims {} but the device serves {}",
-            u8::from(claimed),
-            u8::from(derived)
-        );
+    for (root, count) in &missing {
+        info!("        {root:<14} {count:>4}");
     }
+    info!(
+        "    Expected where the file is scoped to a single suite; an under-claim in a \
+         PICS submitted for certification."
+    );
 }
 
 /// Whether a path names a ZIP archive rather than a directory.
@@ -1544,11 +1924,19 @@ pub fn run(
     }
 
     let mut total = Report::default();
-    let mut filled_files: Vec<(String, String)> = Vec::new();
+    // Retained templates are kept as their *source*, not as a rendering. The
+    // answers that `derive_transports` and `ask_questions` settle do not exist
+    // yet at this point, so anything rendered here would carry the template's
+    // own defaults for them. Rendering happens once, below, after every answer
+    // is in.
+    let mut retained: Vec<(&str, &str)> = Vec::new();
 
     for (name, xml) in &files {
         let mut report = Report::default();
-        let filled = fill_template(xml, &node, &mut report);
+        // No settled answers yet - this pass exists to work out which
+        // templates are about this device, and what the data model alone can
+        // decide.
+        let _ = fill_template(xml, &node, &BTreeMap::new(), &mut report);
 
         // Only emit templates that are about *this* device.
         //
@@ -1574,7 +1962,7 @@ pub fn run(
             continue;
         }
 
-        filled_files.push((name.clone(), filled));
+        retained.push((name.as_str(), xml.as_str()));
 
         info!(
             "{:<48} {:>4} rewritten, {:>4} already correct",
@@ -1588,6 +1976,38 @@ pub fn run(
         for (root, n) in report.left {
             *total.left.entry(root).or_default() += n;
         }
+    }
+
+    // Settle everything the templates alone could not, before any consumer
+    // looks at the answers - the linter, the flat `.pics` and the XML must all
+    // see the same set.
+    derive_transports(&node, &mut total);
+    derive_node_wide(&node, &mut total);
+
+    let baseline_map = baseline
+        .map(|p| {
+            fs::read_to_string(p)
+                .with_context(|| format!("reading baseline {}", p.display()))
+                .map(|t| parse_flat(&t))
+        })
+        .transpose()?;
+
+    if let (Some(p), Some(map)) = (baseline, baseline_map.as_ref()) {
+        report_coverage(p, map, &total);
+        lint_baseline(p, map, &total);
+    }
+
+    if out.is_some() || pics.is_some() || fix {
+        ask_questions(&mut total, baseline_map.as_ref());
+    }
+
+    // `left` was counted while filling the templates, before the two steps
+    // above answered some of what it counted. Recount from the items that are
+    // still open, or the summary reports as unanswered what was just answered.
+    total.left.clear();
+    for item in &total.left_items {
+        let root = item.split('.').next().unwrap_or(item);
+        *total.left.entry(root.to_string()).or_default() += 1;
     }
 
     info!("");
@@ -1611,27 +2031,6 @@ pub fn run(
         }
     }
 
-    let baseline_map = baseline
-        .map(|p| {
-            fs::read_to_string(p)
-                .with_context(|| format!("reading baseline {}", p.display()))
-                .map(|t| parse_flat(&t))
-        })
-        .transpose()?;
-
-    if let (Some(p), Some(map)) = (baseline, baseline_map.as_ref()) {
-        report_coverage(p, map, &total);
-        lint_baseline(p, map, &total);
-    }
-
-    // Ask about the items neither the data model nor a baseline can settle,
-    // before anything is written, so every output carries the same answers.
-    derive_transports(&node, &mut total);
-
-    if out.is_some() || pics.is_some() || fix {
-        ask_questions(&mut total, baseline_map.as_ref());
-    }
-
     if let (Some(p), true) = (baseline, fix) {
         fix_baseline(p, &total)?;
     }
@@ -1641,10 +2040,27 @@ pub fn run(
     }
 
     if let Some(out) = out {
-        write_templates(out, &filled_files)?;
+        // Render now, with every answer in hand. Doing it during the first
+        // pass would emit the template's own default for anything settled
+        // afterwards: that is how `MCORE.COM.WIFI` stayed `true` on an
+        // Ethernet-only device, contradicting the `CNET.S.F00` it gates and
+        // failing the PICS tool's dependency check in all three Network
+        // Commissioning files.
+        let filled: Vec<(String, String)> = retained
+            .iter()
+            .map(|(name, xml)| {
+                let mut rendered = Report::default();
+                (
+                    (*name).to_string(),
+                    fill_template(xml, &node, &total.derived, &mut rendered),
+                )
+            })
+            .collect();
+
+        write_templates(out, &filled)?;
         info!(
             "{} filled templates written to {}",
-            filled_files.len(),
+            filled.len(),
             out.display()
         );
     }

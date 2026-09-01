@@ -2503,6 +2503,12 @@ impl ITests {
             // `TC_DeviceConformance` likewise reads `is_pics_sdk_ci_only`
             // (in `check_conformance`), so it needs the target `.pics` too.
             | "TC_DeviceConformance"
+            // `TC_pics_checker` exists solely to cross-check the declared PICS
+            // against what the device actually exposes, in both directions.
+            // With no `--PICS` every `check_pics` answers false and it reports
+            // every cluster on the device as undeclared, so the target `.pics`
+            // is not an option for it but the whole input.
+            | "TC_pics_checker"
         )
     }
 
