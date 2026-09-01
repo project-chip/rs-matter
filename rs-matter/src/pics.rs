@@ -23,27 +23,16 @@
 //! `with_attrs` / `with_cmds` / `with_events` predicates say which of those this
 //! particular instantiation actually serves.
 //!
-//! Answering the PICS questionnaire by hand against the firmware is slow and
-//! quietly error-prone: an over-claim does not fail loudly, it enrolls the
-//! device in test cases it cannot pass, or yields a vacuous pass. This module
-//! lets a device emit its data model instead, so the answers can be derived
-//! mechanically from the same metadata it advertises over `Descriptor`.
-//!
 //! The emitted JSON is consumed by `cargo xtask pics`, which merges it into the
 //! CSA master PICS templates. Only *supported* items are listed - an item absent
 //! from a list is unsupported, which is what the merge step relies on.
 //!
 //! The dump also reports the mDNS TXT keys and subtypes the device will
 //! actually advertise. Those answer a further ~22 PICS items (`MCORE.SC.*_KEY`,
-//! `MCORE.DD.TXT_KEY_*`, the `_V` / `_T` commissioning subtypes), and they are
-//! **not** constants of the library: six of them are conditional on `dev_det`
-//! (`device_type`, `sai`, `sii`, `tcp_supported`) or on ICD mode. Rather than
-//! restate those rules here and let them drift, [`Matter::write_pics_json`] asks
-//! [`MatterLocalService::service`] and reports whatever it genuinely emits.
+//! `MCORE.DD.TXT_KEY_*`, the `_V` / `_T` commissioning subtypes).
 //!
 //! Rendering goes through [`core::fmt`] and allocates nothing, so it is usable
 //! on the smallest targets:
-//!
 //! ```ignore
 //! let mut buf = [0; 512];
 //! let mut s = heapless::String::<4096>::new();
@@ -79,19 +68,7 @@ impl Matter<'_> {
     /// distinguishes the two.
     ///
     /// The mDNS section reports **key presence only**, and is valid whatever
-    /// the device's commissioning state: `MatterLocalService::service` is a
-    /// pure function of `dev_det`, the port, the ICD mode and the variant's own
-    /// fields - it consults neither the fabric table nor session state. The
-    /// `compressed_fabric_id` / `node_id` / instance id passed below are
-    /// therefore placeholders, used only to format the instance name and the
-    /// `_I` subtype, whose *values* nothing here depends on. Both the
-    /// commissionable and the operational record can be described at once even
-    /// though a device only ever advertises one of them at a time.
-    ///
-    /// The one live input is [`Matter::icd_mode`], which governs the `ICD` TXT
-    /// key. No PICS item currently derives from it (ICD is covered by the
-    /// `ICDM.*` cluster PICS instead), but a caller dumping at start-up, before
-    /// any ICD registration, would see it reported absent.
+    /// the device's commissioning state.
     pub fn write_pics_json<W: Write>(
         &self,
         node: &Node<'_>,
