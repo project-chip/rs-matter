@@ -111,6 +111,8 @@ type SubscriptionsBuffersInner<'a, B, const N: usize> =
 pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
     state: Mutex<RefCell<SubscriptionsInner<N>>>,
     pub(crate) notification: Notification,
+    /// Signalled whenever a report could not be delivered to its subscriber.
+    report_failed: Notification,
 }
 
 impl<const N: usize> Subscriptions<N> {
@@ -120,6 +122,7 @@ impl<const N: usize> Subscriptions<N> {
         Self {
             state: Mutex::new(RefCell::new(SubscriptionsInner::new())),
             notification: Notification::new(),
+            report_failed: Notification::new(),
         }
     }
 
@@ -128,7 +131,21 @@ impl<const N: usize> Subscriptions<N> {
         init!(Self {
             state <- Mutex::init(RefCell::init(SubscriptionsInner::init())),
             notification <- Notification::init(),
+            report_failed <- Notification::init(),
         })
+    }
+
+    /// Wait until a subscription report fails to reach its subscriber.
+    ///
+    /// The report itself is retried with a back-off and the subscription is only
+    /// dropped once its maximum interval elapses, so this is not an error channel - it is
+    /// a hint that a subscriber has gone quiet.
+    ///
+    /// An Intermittently Connected Device might use it to nudge its registered clients
+    /// with a Check-In, so a client that lost the subscription comes back and
+    /// re-establishes it rather than waiting for the device to next wake up.
+    pub async fn wait_report_failed(&self) {
+        self.report_failed.wait().await
     }
 
     /// Whether subscription persistence is compiled in.
@@ -1732,6 +1749,11 @@ where
             .unwrap_or(Instant::MAX);
 
         self.keep = true;
+
+        // Let the application know a subscriber has gone quiet, so an ICD can
+        // nudge its registered clients with a Check-In. See
+        // `Subscriptions::wait_report_failed`.
+        self.subscriptions.report_failed.notify();
     }
 }
 
@@ -2645,6 +2667,49 @@ mod tests {
 
     /// A delivered report after a run of failures clears the back-off: the next
     /// wake returns to the normal liveness schedule rather than a back-off floor.
+    /// A failed report signals `wait_report_failed`, so an ICD can nudge its
+    /// registered clients with a Check-In; a delivered one does not.
+    #[test]
+    fn failed_report_signals_the_application() {
+        use core::pin::pin;
+
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        // A delivered report leaves the application undisturbed.
+        assert!(
+            futures_lite::future::block_on(futures_lite::future::poll_once(pin!(
+                subs.wait_report_failed()
+            )))
+            .is_none(),
+            "a delivered report must not signal a failure"
+        );
+
+        subs.notify_attr_changed(1, 2, 3);
+
+        // A failed one does signal.
+        let t1 = now + Duration::from_secs(2);
+        {
+            let mut rctx = unwrap!(subs.report(t1, 0, &subs_bufs));
+            rctx.set_keep_retry();
+        }
+
+        assert!(
+            futures_lite::future::block_on(futures_lite::future::poll_once(pin!(
+                subs.wait_report_failed()
+            )))
+            .is_some(),
+            "a failed report must signal the application"
+        );
+    }
+
     #[test]
     fn success_clears_the_backoff() {
         let subs: Subscriptions<1> = Subscriptions::new();
