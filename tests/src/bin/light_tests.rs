@@ -139,6 +139,18 @@ fn main() -> Result<(), Error> {
         args::port_override(),
     ));
 
+    // Dump the data model as JSON, for `cargo xtask pics`, then exit.
+    if args::arg_present("--pics-json") {
+        let mut buf = [0; 512];
+        let mut json = String::new();
+
+        matter.write_pics_json(&NODE, &mut buf, &mut json)?;
+
+        println!("{json}");
+
+        return Ok(());
+    }
+
     let store = args::file_kv_store();
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());

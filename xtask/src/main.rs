@@ -30,6 +30,7 @@ use crate::itest::{ITests, TestSuite};
 
 mod copyright;
 mod itest;
+mod pics;
 mod tlv;
 
 /// The main command-line interface for `xtask`.
@@ -103,6 +104,22 @@ enum Command {
         /// A comma-separated list of TLV octets to decode (e.g., "0x01,0x02,0x03" or "1,2,3")
         tlv: String,
     },
+    /// Fill in the CSA master PICS templates from a device's own data model.
+    ///
+    /// Feed it the JSON emitted by a binary built with the `pics` feature
+    /// (e.g. `light_tests --pics-json`). The templates are CSA member
+    /// material and are never committed here, so they must be supplied.
+    Pics {
+        /// Directory holding the unpacked CSA master PICS XML templates
+        #[arg(long)]
+        templates: PathBuf,
+        /// The device's data model, as emitted by `Matter::write_pics_json`
+        #[arg(long)]
+        node: PathBuf,
+        /// Directory to write the filled templates into
+        #[arg(long, short = 'o')]
+        out: PathBuf,
+    },
 }
 
 impl Command {
@@ -172,6 +189,11 @@ impl Command {
                     &resolved_target,
                 )
             }
+            Command::Pics {
+                templates,
+                node,
+                out,
+            } => pics::run(templates, node, out),
             Command::Copyright { action } => {
                 copyright::run(action.unwrap_or(copyright::Action::Check))
             }

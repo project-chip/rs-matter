@@ -208,6 +208,56 @@ Two ways to do that, and they trade off differently:
 
 (1) is the more robust design; (2) is the less invasive one. Deferred pending a decision.
 
+## 6b. Implemented — measured results
+
+Both halves are in and were run end to end against the real CSA master set.
+
+**Device side** — `rs-matter/src/pics.rs`, cargo feature `pics`:
+`Matter::write_pics_json` / `write_mdns_service_pics_json` / `write_node_pics_json`,
+`core::fmt`, no allocation. `tests/src/bin/light_tests.rs` gained `--pics-json`,
+which dumps and exits before any persistence or networking setup.
+
+```
+$ light_tests --pics-json
+  4 endpoints, 19 server clusters, 228 supported attributes, 64 received commands
+  EP0 dt=22   12 clusters      EP2 dt=259  3 clusters  client_clusters=[6]
+  EP1 dt=269   5 clusters      EP3 dt=15   2 clusters
+```
+
+**Tool side** — `cargo xtask pics --templates <dir> --node <json> --out <dir>`.
+Line-oriented rewriting rather than an XML round-trip, so output stays diffable against the
+CSA original. Templates always come from the command line and are never committed.
+
+```
+Derived 599 answers (267 rewritten, 332 already matching the template)
+10 items left untouched:  OO 7   APPDEVICE 1   BINFO 1   LVL 1
+22 templates written; all parse; `<pixitItem>` blocks untouched
+```
+
+The residue is exactly what section 5 predicted: `OO.C.*` (the device *is* an OnOff client,
+so which commands it invokes is not modelled), plus three manual `.M.` items.
+
+### The inference that mattered
+
+A first run left **167** items untouched, 76 of them `CC.C.*`. Those are decidable after all:
+if a cluster is absent from `client_clusters`, *nothing* on its client surface can be
+supported. Adding that rule took the residue from 167 to 10. Only when a cluster **is** a
+client does the answer become genuinely unknown - which is why `OO.C.*` survives and
+`CC.C.*` does not.
+
+### Worked example of the value
+
+The one change to `On-Off Cluster Test Plan.xml` was a single line:
+
+```diff
+-				<support>true</support>     <!-- OO.S.F01, "DeadFrontBehaviour" -->
++				<support>false</support>
+```
+
+`light_tests` does not set feature-map bit 1. Shipping the template as downloaded would have
+claimed DeadFrontBehaviour and enrolled the device in `TC_OO` steps it cannot pass. That is
+the entire argument for this tool, in one line of diff.
+
 ## 7. Open items before implementing
 
 - The 18-item "misc" bucket in Tier C is a first-pass dumping ground. Several belong in
