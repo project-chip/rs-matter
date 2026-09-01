@@ -40,6 +40,8 @@ pub mod groups;
 pub mod grp_key_mgmt;
 pub mod icd_mgmt;
 pub mod identify;
+pub mod mode;
+pub mod mode_select;
 pub mod net_comm;
 pub mod noc;
 pub mod ota_prov;

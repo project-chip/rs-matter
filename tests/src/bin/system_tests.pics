@@ -3036,3 +3036,20 @@ PWRTL.S.F00=0
 PWRTL.S.F01=0
 PWRTL.S.F02=1
 PWRTL.S.F03=1
+
+# ---- Laundry Washer Mode Cluster (a Mode Base derived cluster) ----
+# An extra cluster on EP1, present so the shared Mode Base handler is covered
+# by CHIP's conformance harness. The ten derived clusters share one handler,
+# so covering one covers the shared logic.
+LWM.S=1
+LWM.S.A0000=1
+LWM.S.A0001=1
+LWM.S.C00.Rsp=1
+LWM.S.C01.Tx=1
+# The handler never refuses a supported mode - Laundry Washer Mode defines no
+# derived `StatusCode` values, so there is no product-specific failure to
+# inject. `Test_TC_LWM_2_1` skips its failure step accordingly.
+LWM.S.M.CAN_TEST_MODE_FAILURE=0
+# No out-of-band channel to drive the wash cycle from outside Matter, so the
+# manually-controlled steps are skipped.
+LWM.S.M.CAN_MANUALLY_CONTROLLED=0

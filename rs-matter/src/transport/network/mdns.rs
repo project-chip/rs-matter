@@ -639,11 +639,7 @@ impl CommissionableFilter {
             }
         }
 
-        if self.commissioning_mode_only && !commissioning.is_commissionable() {
-            return false;
-        }
-
-        true
+        !self.commissioning_mode_only || commissioning.is_commissionable()
     }
 }
 

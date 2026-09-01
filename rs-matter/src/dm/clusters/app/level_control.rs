@@ -168,11 +168,7 @@ impl LevelControlState {
 
         self.remaining_time = remaining_time_ds;
 
-        if changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10 {
-            return true;
-        }
-
-        false
+        changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10
     }
 }
 
