@@ -1028,16 +1028,15 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
                 return Ok(());
             }
 
-            // If the GlobalSceneControl attribute is equal to FALSE, the Scene cluster server on the same endpoint
-            // SHALL recall its global scene, updating the OnOff attribute accordingly. The OnOff server SHALL
-            // then set the GlobalSceneControl attribute to TRUE.
-            // Additionally, when the OnTime and OffWaitTime attributes are both supported, if the value of the
-            // OnTime attribute is equal to 0, the server SHALL set the OffWaitTime attribute to 0.
-            // todo Implement the above statement once the Scene cluster is implemented.
-            // self.set_on(false);
+            // If the GlobalSceneControl attribute is equal to FALSE, the Scenes cluster server on the
+            // same endpoint SHALL recall its global scene, updating the OnOff attribute accordingly.
+            // The OnOff server SHALL then set the GlobalSceneControl attribute to TRUE.
+            // Additionally, when the OnTime and OffWaitTime attributes are both supported, if the
+            // value of the OnTime attribute is equal to 0, the server SHALL set the OffWaitTime
+            // attribute to 0.
+            self.state_change_signal.signal(OnOffCommand::On);
 
-            // This error is currently mapped to the IM status UnsupportedCommand.
-            Err(ErrorCode::CommandNotFound.into())
+            Ok(())
         }))
     }
 
