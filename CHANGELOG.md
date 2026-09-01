@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Support for PICS and the TH tool (#541)
+* Mode Select and Mode base clusters (#540)
+* API notifying user code on failed subscription reporting (#539)
+* Improved handling of RX and TX timeouts (#538)
 * Advertise and use **all** of a node's IPv6 addresses rather than just one (#537)
 * (Breaking) Phase 2 of commissioning always goes through operational discovery now (#537)
-* Improved handling of RX and TX timeouts (#538)
 
 ## [0.3.0] - 2026-08-20
 * Groupcast **sending** APIs (`groups` feature): `Exchange::initiate_group` and `ImClient::group_invoke_with`; the `onoff_light_switch` example and the `light_tests` switch endpoint now act on *group* binding targets
