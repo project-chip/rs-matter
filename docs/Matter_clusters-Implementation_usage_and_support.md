@@ -281,7 +281,7 @@ impl ModeHooks for RvcDeviceLogic {
 }
 
 fn main() {
-    let handler = ModeHandler::new(Dataver::new_rand(rand), 1, RvcDeviceLogic::new());
+    let handler = ModeHandler::new(Dataver::new_rand(rand), RvcDeviceLogic::new());
 
     let device_handler = EmptyHandler.chain(
         EpClMatcher::new(Some(1), Some(rvc_run_mode::CLUSTER.id)),

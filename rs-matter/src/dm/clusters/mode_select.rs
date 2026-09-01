@@ -724,3 +724,196 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the parts of [`ModeSelectHandler`] that need no `Matter`
+    //! / operation-context setup: the startup validation rules, the
+    //! `StartUpMode` / `OnMode` write guard, and `CurrentMode` repair.
+    //!
+    //! These branches are reachable only by misconfiguring the handler, so the
+    //! CHIP integration tests never touch them - a correct DUT is exactly the
+    //! one that does not trip them.
+
+    use core::cell::Cell;
+
+    use crate::dm::Dataver;
+    use crate::with;
+
+    use super::*;
+
+    const TEST_VENDOR: u16 = 0xFFF1;
+
+    const GOOD: &[Mode] = &[
+        Mode::new(0, "Steady", &[SemanticTag::new(TEST_VENDOR, 0x8000)]),
+        Mode::new(4, "Blink", &[SemanticTag::new(TEST_VENDOR, 0x8001)]),
+    ];
+
+    /// The full configuration: `ON_OFF` plus both optional attributes.
+    const FULL: Cluster<'static> = FULL_CLUSTER
+        .with_features(Feature::ON_OFF.bits())
+        .with_attrs(with!(
+            required;
+            AttributeId::StartUpMode | AttributeId::OnMode
+        ));
+
+    struct TestHooks<'a> {
+        modes: &'a [Mode<'a>],
+        current: Cell<ModeId>,
+    }
+
+    impl<'a> TestHooks<'a> {
+        fn new(modes: &'a [Mode<'a>], current: ModeId) -> Self {
+            Self {
+                modes,
+                current: Cell::new(current),
+            }
+        }
+    }
+
+    impl ModeSelectHooks for TestHooks<'_> {
+        const CLUSTER: Cluster<'static> = FULL;
+
+        fn description(&self) -> &str {
+            "Test"
+        }
+
+        fn supported_modes(&self) -> &[Mode<'_>] {
+            self.modes
+        }
+
+        fn current_mode(&self) -> ModeId {
+            self.current.get()
+        }
+
+        fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
+            self.current.set(mode);
+
+            Ok(())
+        }
+    }
+
+    fn handler<'a>(modes: &'a [Mode<'a>], current: ModeId) -> ModeSelectHandler<TestHooks<'a>> {
+        ModeSelectHandler::new(Dataver::new(0), TestHooks::new(modes, current))
+    }
+
+    /// A hooks type that exists only to carry a deliberately broken `CLUSTER`.
+    macro_rules! misconfigured {
+        ($name:ident, $cluster:expr) => {
+            struct $name;
+
+            impl ModeSelectHooks for $name {
+                const CLUSTER: Cluster<'static> = $cluster;
+
+                fn description(&self) -> &str {
+                    "Test"
+                }
+
+                fn supported_modes(&self) -> &[Mode<'_>] {
+                    GOOD
+                }
+
+                fn current_mode(&self) -> ModeId {
+                    0
+                }
+
+                fn change_to_mode(&self, _mode: ModeId) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+    }
+
+    #[test]
+    fn a_spec_compliant_table_validates() {
+        handler(GOOD, 0).validate();
+    }
+
+    #[test]
+    #[should_panic(expected = "share the Mode value")]
+    fn duplicate_mode_values_are_rejected() {
+        const MODES: &[Mode] = &[
+            Mode::new(0, "Steady", &[SemanticTag::new(TEST_VENDOR, 0x8000)]),
+            Mode::new(0, "Blink", &[SemanticTag::new(TEST_VENDOR, 0x8001)]),
+        ];
+
+        handler(MODES, 0).validate();
+    }
+
+    #[test]
+    fn an_anonymous_mode_is_allowed() {
+        // Unlike Mode Base, ModeSelect permits a mode with no tags at all - a
+        // client then has only the `Label` to go on.
+        const MODES: &[Mode] = &[
+            Mode::new(0, "Steady", &[]),
+            Mode::new(4, "Blink", &[SemanticTag::new(TEST_VENDOR, 0x8001)]),
+        ];
+
+        handler(MODES, 0).validate();
+    }
+
+    #[test]
+    #[should_panic(expected = "missing required attribute")]
+    fn a_missing_mandatory_attribute_is_rejected() {
+        misconfigured!(NoAttrs, FULL_CLUSTER.with_attrs(with!()));
+
+        ModeSelectHandler::new(Dataver::new(0), NoAttrs).validate();
+    }
+
+    #[test]
+    #[should_panic(expected = "required by the ON_OFF feature: OnMode")]
+    fn the_on_off_feature_without_the_on_mode_attribute_is_rejected() {
+        // `with!(required)` omits `OnMode`, which is optional.
+        misconfigured!(
+            FeatureNoAttr,
+            FULL_CLUSTER
+                .with_features(Feature::ON_OFF.bits())
+                .with_attrs(with!(required))
+        );
+
+        ModeSelectHandler::new(Dataver::new(0), FeatureNoAttr).validate();
+    }
+
+    #[test]
+    #[should_panic(expected = "OnMode attribute requires the ON_OFF feature")]
+    fn the_on_mode_attribute_without_the_on_off_feature_is_rejected() {
+        misconfigured!(
+            AttrNoFeature,
+            FULL_CLUSTER.with_attrs(with!(required; AttributeId::OnMode))
+        );
+
+        ModeSelectHandler::new(Dataver::new(0), AttrNoFeature).validate();
+    }
+
+    #[test]
+    fn writable_modes_must_name_a_supported_mode() {
+        let handler = handler(GOOD, 0);
+
+        // Null clears the attribute and is always allowed.
+        assert!(handler.check_writable_mode(&Nullable::none()).is_ok());
+        assert!(handler.check_writable_mode(&Nullable::some(4)).is_ok());
+
+        let err = handler.check_writable_mode(&Nullable::some(5)).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn a_dropped_current_mode_falls_back_to_the_first_entry() {
+        // What a firmware update that removes a mode leaves behind. Not a bug,
+        // so it is repaired rather than fatal.
+        let handler = handler(GOOD, 7);
+
+        handler.repair_current_mode();
+
+        assert_eq!(handler.current_mode(), 0);
+    }
+
+    #[test]
+    fn a_valid_current_mode_is_left_alone() {
+        let handler = handler(GOOD, 4);
+
+        handler.repair_current_mode();
+
+        assert_eq!(handler.current_mode(), 4);
+    }
+}
