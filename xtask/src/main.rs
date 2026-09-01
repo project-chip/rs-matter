@@ -110,13 +110,15 @@ enum Command {
     /// (e.g. `light_tests --pics-json`). The templates are CSA member
     /// material and are never committed here, so they must be supplied.
     Pics {
-        /// Directory holding the unpacked CSA master PICS XML templates
+        /// The CSA master PICS XML templates: either the downloaded `.zip`
+        /// itself, or a directory of unpacked XML
         #[arg(long)]
         templates: PathBuf,
         /// The device's data model, as emitted by `Matter::write_pics_json`
         #[arg(long)]
         node: PathBuf,
-        /// Directory to write the filled XML templates into
+        /// Where to write the filled XML templates: a directory, or a `.zip`
+        /// (chosen by the extension)
         #[arg(long, short = 'o')]
         out: Option<PathBuf>,
         /// Also emit the SDK's flat `KEY=1` PICS format to this file
