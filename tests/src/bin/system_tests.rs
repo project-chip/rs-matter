@@ -133,6 +133,9 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 #[path = "../common/pipe.rs"]
 mod pipe;
 
@@ -174,20 +177,10 @@ static DLOG_BUFFERS: StaticCell<MatterBuffers<2>> = StaticCell::new();
 static SW_FAULT_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
 fn main() -> Result<(), Error> {
-    // Enable detailed backtraces for debugging test failures
-    // (Temporarily disabled to keep TC_SC_3_4 traces readable.)
-    // std::env::set_var("RUST_BACKTRACE", "1");
-
-    // Special logging configuration compatible with ConnectedHomeIP YAML tests
-    // Log to stdout with simplified format at debug level as required by chip-tool tests
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
+    // Logs go to stdout at debug level, which is what the ConnectedHomeIP
+    // harness reads: it waits for a ready pattern in this stream, and a
+    // failing run is diagnosed by reading it beside chip-tool's own log.
+    logging::init();
 
     // Optional `--discriminator <u16>` / `--passcode <u32>` overrides for the
     // hardcoded `TEST_DEV_COMM` defaults. Used by tests like TC-SC-7.1 that

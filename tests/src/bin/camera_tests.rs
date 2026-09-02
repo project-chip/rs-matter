@@ -101,6 +101,9 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 // ---------------------------------------------------------------------------
 // Device type
 // ---------------------------------------------------------------------------
@@ -390,16 +393,7 @@ static PUSH_AV: StaticCell<PushAvStreamHandler<'static, StubPushHooks, PUSH_NC>>
 // ---------------------------------------------------------------------------
 
 fn main() -> Result<(), Error> {
-    std::env::set_var("RUST_BACKTRACE", "1");
-
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
+    logging::init();
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &BASIC_INFO,
