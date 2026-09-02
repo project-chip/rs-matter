@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Commissioning - trying to close a non-open comm window should return an error (#541)
+* Commissioning over PASE - fix a spurious SessionNotFound error (#541)
 * Support for PICS and the TH tool (#541)
 * Mode Select and Mode base clusters (#540)
 * API notifying user code on failed subscription reporting (#539)
