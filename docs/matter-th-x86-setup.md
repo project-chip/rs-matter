@@ -1,43 +1,17 @@
 # Running the Matter Test Harness on x86-64 / Ubuntu 24.04
 
-> **Status: work in progress.** Living diary of an actual install, kept so it can become
-> (a) a reusable guide and (b) a set of upstream fixes. Verified facts are marked as such;
-> anything unverified says so.
+(Status as of 2026-09-01.)
 
 The CSA Test Harness (TH) is the tool an Authorized Test Lab runs against your device.
 Its official install target is a Raspberry Pi. This document covers the **x86-64 route**,
 which the TH User Guide calls "TH installation without a Raspberry Pi" (§4.2) and which is
-noticeably rougher than the Pi path.
-
-## 0. Decoding the CSA download page
-
-The CSA site lists something like:
-
-```
-Matter 1.6
-v2.15+spring2026 - this is the latest TH version for Matter 1.4+
-Refer to Matter 1.6 TH User Guide sections 4.1.2 and 4.3
-View on Causeway
-b91b83f
-```
-
-Three things that are not obvious (all verified against the live repos on 2026-08-31):
-
-| Item | What it actually is |
-| --- | --- |
-| The TH itself | The **fully public** repo `github.com/project-chip/certification-tool`. Nothing is gated. |
-| `v2.15+spring2026` | A **branch**, not a tag: `refs/heads/v2.15+spring2026`. Older releases carried `-tag` tags (`v2.14+fall2025-tag`); v2.15 does not. |
-| `b91b83f` | **Not** a TH commit — it is the **Matter SDK pin**: `b91b83ffa967e2fffca471fb28c745ae6fd3ec9d` in `project-chip/connectedhomeip` (2026-06-05). It appears as `SDK_DOCKER_TAG` / `SDK_SHA` in `backend/test_collections/matter/config.py`. Looking for it in the certification-tool repo is a dead end (GitHub API returns 422). |
-| "View on Causeway" | Only the User Guide PDF. The same document is in the repo at `docs/Matter_TH_User_Guide/Matter_TH_User_Guide.{adoc,pdf}` — read that instead. |
-
-Also note: **since TH v2.10 there is no SD-card image**. The TH pulls Docker containers at
-install time, which is why there is no "download" button to find.
+currently rougher than the Pi path.
 
 ## 1. Prerequisites
 
 - **Ubuntu 24.04.x LTS** — required, and checked. `scripts/utils.sh::check_ubuntu_os_version`
   hard-compares `lsb_release -sr` against `24.04`. (The guide's `:ubuntu-version:` attribute
-  says the same.) Not 22.04 — earlier TH versions differed, so don't reuse old instructions.
+  says the same.)
 - Docker **< 29.x**. The TH's Traefik proxy breaks on Docker 29; CSA's own
   `scripts/fix-docker-compatibility.sh` detects >= 29 and downgrades. Installing a 28.x
   directly avoids that install-then-rip-out dance.
@@ -325,27 +299,13 @@ release and pulled forever after, so the source path is never re-exercised and u
 
 ### Why the TH pins an SVE branch and not `v1.6-branch`
 
-`v1.6-sve-branch` forked from `v1.6-branch` at merge-base `c2175a1e` (2026-03-30) and since
-then receives **only cherry-picked test content**, e.g.:
-
-```
-bdb68902ca  Cherry pick to 1.6 sve branch (#71582)
-5663ab9531  [v.1.6-sve-branch] Cherrypick several GroupCast Pull requests (#71639)
-49941293ba  Cherry-pick: Data model files for 1.6 TH cut (#72097)
-0b6b6e9994  1.6 DM files: Update to 1.6 tag (#72326)
-2d8076f93e  [Fix] Update test step numbering for BRBINFO_2_1 ...
-```
-
 This is deliberate and correct. Certification requires every ATL and every vendor to run
 **bit-identical test content** — if the TH tracked `v1.6-branch` (which has moved 796 commits
 since the fork), your pre-test and the lab's run would execute different scripts. So the
 branch is forked, has test/data-model corrections cherry-picked onto it, is qualified, and
 is then frozen.
 
-**And that freeze is exactly why the Docker build rots.** Because the branch forked on
-2026-03-30, it never received the change that removed the from-source `gn` build in favour
-of the `generate-ninja` package. The freeze that guarantees reproducible *test content* is
-the same freeze that lets the *build environment* decay.
+**And that freeze is exactly why the Docker build rots.** 
 
 **Consequence for fixing it:** bumping `SDK_DOCKER_TAG` does **not** help — `v1.6-sve-branch`
 HEAD (`c2573a13`, 2026-07-15) still carries the unpinned `git clone .../gn` at line 118, and
@@ -510,95 +470,8 @@ image by `backend/Dockerfile`, which is the correct place for it.
 | 6 | `certification-tool` | `2-machine-cofiguration.sh` — filename typo, and hardcodes `Group=ubuntu` in the systemd unit while parameterising `User=$USER`. | **Low** |
 | 7 | `certification-tool` | `backend/Dockerfile` pins Node to 20 via `setup_20.x` but installs unpinned `npm@latest` (and `cspell@latest`). npm 12 requires Node >= 22, so the backend image no longer builds. | **High** — blocks the x86 install, since amd64 backend images are not published. |
 | 8 | `certification-tool-backend` | `sdk_tests/support/sdk_container.py:51` hardcodes `/home/ubuntu/certification-tool/...` as a bind-mount source instead of deriving it (e.g. from `BACKEND_FILEPATH_ON_HOST`, which already exists and is set correctly). Docker auto-creates the missing path, so the TH silently loads **zero Python tests** with no error anywhere. | **Critical** — a TH that looks healthy but cannot run the Python certification tests. |
-| 13 | environment / `certification-tool` docs | On a Docker host, avahi-daemon registers address records for `docker0`, every `br-*` bridge and every transient `veth*`. The TH starts/stops the `th-sdk` container per test, so Avahi is near-perpetually re-registering; chip logs "Avahi re-register required" and tears down its DNS-SD layer, leaving `DiscoveryImplPlatform::mState != kInitialized`. Every `Advertise`/`RemoveServices`/`FinalizeServiceUpdate`/`ResolveNodeId` then returns `CHIP_ERROR_INCORRECT_STATE` — commissioning completes through 'Cleanup' and is *then* reported as failure. Fix: `allow-interfaces=<nic>` in `/etc/avahi/avahi-daemon.conf`. The x86 guide should say so. | **Critical** — commissioning reported as failing when it actually succeeded. |
-| 14 | `certification-tool-backend` | `LegacyPythonTestCase.setup()` prompts "Should the DUT be commissioned to run this test case?" for *every* legacy-format test (27 of them in a light DUT's set), and answering NO still triggers a second prompt. Modern tests encode this structurally via suite type. Could be asked once per run. | **Low** — operator toil. |
-| 11 | `certification-tool-backend` | TC-DD-1.1's discriminator prompt says *"enter 12-bit discriminator from the device advertisement"* but parses the answer with `int(response, 16)` (`onboarding_script_support.py:201`). The advertisement's `D=` TXT key is **decimal** per spec, so entering the value actually observed (`3840`) is read as `0x3840` = 14400 and the step fails with a misleading mismatch. Only the placeholder (`0xF00`) hints at hex. TC-DD-1.4 repeats the pattern: its device-*count* prompt is also `int(x, 16)` (placeholder `0x2`), so a 10-device answer of `10` becomes 16. | **Low** — operator trap; prompts should state the base or accept `int(x, 0)`. |
-| 10 | `certification-tool-frontend` | `src/environments/environment{,.prod}.ts` derive all REST/WebSocket URLs from `window.location.hostname`, which excludes the port, so the UI only works when served on port 80. Combined with #4 (hardcoded `80:80`) the port is effectively immovable. One-word fix: `window.location.host`. | **Medium** — UI loads but every API/WS call fails, with misleading error toasts. |
 | 9 | `certification-tool-backend` | `test_collections/matter/scripts/package-dependency-list.txt` lists `npm`, `figlet` and `toilet` as host dependencies. None are used anywhere in the repo; `npm` alone drags ~400 transitive packages (incl. X11 and an X terminal emulator) onto the host. | **Low** — pure host pollution, trivial to drop. |
-
-## 9. Diary log
-
-- **2026-08-31 ~15:00** — Established what the CSA page's version/hash actually refer to.
-  Cloned `v2.15+spring2026` (787 MB).
-- **~15:05** — Read `auto-install.sh` and its children; decided against running it verbatim.
-  Produced the reduced sudo set in §3.
-- **~15:10** — Docker 28.5.2 installed. Patched the username gate. Generated `.env`.
-- **~15:12** — First `chip-cert-bins` build launched.
-- **~15:13** — `db`/`proxy` pulled and started; port 80 conflict found and worked around by
-  moving to 8080.
-- **~15:25** — First SDK build **failed** at the `gn` stage (~13 min in). Diagnosed the
-  unpinned-gn reproducibility bug; pinned to `6f8c0328`; relaunched.
-- **~15:30** — Backend/frontend containers found exiting with `exec format error`; confirmed
-  the pulled images are arm64. Removed them; started local `build.sh`.
-- **~16:40** — SDK build healthy at `[103/784]` of the example-app compile, ~62 min in.
-- **~16:45** — `build.sh` **failed** on the backend image at `npm install -g npm@latest`
-  (EBADENGINE, npm 12 vs Node 20). Pinned to `npm@^10`; relaunched both images with
-  explicit `DOCKER_BUILD_VERSION` so the tags still match `docker-compose.yml`.
-- **~17:05** — Established that the rot is temporal, not arch-specific, and that upstream
-  already dropped the from-source `gn` build. Retargeted bug #1 from a `connectedhomeip` PR
-  to a CSA-side pin bump. Confirmed bug #7 is still live on `certification-tool-backend`
-  `main` today.
-- **~17:07** — Backend and frontend images built successfully with the `npm@^10` pin, both
-  confirmed `linux/amd64`, tagged `c1c4ed3` / `5be5818` as compose expects.
-- **~17:09** — All four containers up. **UI live at http://localhost:8080.** API still 502:
-  traced to the backend blocking on the not-yet-built `th-sdk` (SDK) image — see §6.1.
-- **~17:12** — SDK build ~95 min in, still compiling example apps, no errors. It is now the
-  critical path for everything else.
-- **(pending)** — SDK image build; matter `setup.sh`; first UI login; first test run against
-  `light_tests`.
-
-
-## 10. PICS: format, generation, and a correction
-
-**Correction (2026-08-31):** during this work it was repeatedly asserted that the official
-per-cluster PICS XML templates come from `project-chip/chip-test-plans` under `src/pics/`.
-**That is wrong** — `project-chip/chip-test-plans` returns HTTP 404, as do the obvious
-alternate names, and no official templates ship with the TH (only unit-test fixtures under
-`backend/app/tests/utils/` and one `example_pics_xml_basic_info.xml` in the SDK checkout).
-The templates appear to be member-gated; CSA's **PICS Tool** may be the only route to them.
-
-### What the TH actually parses
-
-`backend/app/pics/pics_parser.py` requires a root tag of `clusterPICS` or `generalPICS`, a
-`<name>` child, and then iterates `root.iter("picsItem")` at any depth, reading exactly two
-fields:
-
-```python
-supported   = cls.__text_for_element_child(element, "support")     # "True"/"False"
-item_number = cls.__text_for_element_child(element, "itemNumber")
-```
-
-Everything else (`itemName`, `feature`, `reference`, `status`, `clusterId`, `picsCode`,
-`clusterSide`) is decorative to the TH. So converting the SDK's flat `KEY=1` form to
-TH-acceptable XML is mechanical.
-
-### Why two formats exist
-
-The XML is the **vendor-facing certification artifact** — a formal per-cluster questionnaire
-(item number, name, conditional status, spec reference, support) that vendors fill in and
-submit as part of the certification record. The `KEY=1` form is a **flattened derivative**
-for the SDK's own runners (`yaml_tests/yaml/sdk/ci-pics-values`), which only evaluate boolean
-`check_pics("OO.S.A0000")` gates. The TH accepts the artifact format, then reduces it to the
-same booleans.
-
-### Generated set for `light_tests`
-
-`tests/pics/light_tests/{OO,LVL,CC,I,MOD,SWTCH,BIND,MCORE}.xml` — 326 items in 8 files,
-generated from `tests/src/bin/light_tests.pics`, each validated against a faithful
-reimplementation of the TH parser. Two deliberate deviations, both toward under-claiming:
-
-- **`PICS_SDK_CI_ONLY` dropped.** It is an SDK-CI behaviour switch, not a certification
-  claim; sending it to the TH would make tests take their CI shortcuts against a real DUT.
-- **18 `MCORE.*` entries corrected** where `system_tests.pics` claims capabilities
-  `light_tests` does not serve: all `MCORE.OTA.*`, `MCORE.BRIDGE*`, `MCORE.DEVLIST.*`,
-  `MCORE.BDX.*` set to 0, plus `MCORE.DD.NFC` 1 -> 0.
-
-**Open item in rs-matter itself:** `tests/src/bin/system_tests.pics` claims
-`MCORE.DD.NFC=1` while rs-matter implements no NFC. Vacuous today (the DD tests are manual)
-but it is the kind of false claim `tests/README.md` explicitly warns against.
-
-**Limitation of the mechanical conversion:** official PICS encode conditional status
-(`<status cond="OO.S">M</status>`) expressing consistency rules between feature bits and
-attributes. A mechanical conversion validates none of these, so a generated set can be
-internally inconsistent with nothing to flag it. Adequate for a self-run dry run; not a
-substitute for a tool-validated PICS before a lab submission.
+| 10 | `certification-tool-frontend` | `src/environments/environment{,.prod}.ts` derive all REST/WebSocket URLs from `window.location.hostname`, which excludes the port, so the UI only works when served on port 80. Combined with #4 (hardcoded `80:80`) the port is effectively immovable. One-word fix: `window.location.host`. | **Medium** — UI loads but every API/WS call fails, with misleading error toasts. |
+| 11 | `certification-tool-backend` | TC-DD-1.1's discriminator prompt says *"enter 12-bit discriminator from the device advertisement"* but parses the answer with `int(response, 16)` (`onboarding_script_support.py:201`). The advertisement's `D=` TXT key is **decimal** per spec, so entering the value actually observed (`3840`) is read as `0x3840` = 14400 and the step fails with a misleading mismatch. Only the placeholder (`0xF00`) hints at hex. TC-DD-1.4 repeats the pattern: its device-*count* prompt is also `int(x, 16)` (placeholder `0x2`), so a 10-device answer of `10` becomes 16. | **Low** — operator trap; prompts should state the base or accept `int(x, 0)`. |
+| 12 | environment / `certification-tool` docs | On a Docker host, avahi-daemon registers address records for `docker0`, every `br-*` bridge and every transient `veth*`. The TH starts/stops the `th-sdk` container per test, so Avahi is near-perpetually re-registering; chip logs "Avahi re-register required" and tears down its DNS-SD layer, leaving `DiscoveryImplPlatform::mState != kInitialized`. Every `Advertise`/`RemoveServices`/`FinalizeServiceUpdate`/`ResolveNodeId` then returns `CHIP_ERROR_INCORRECT_STATE` — commissioning completes through 'Cleanup' and is *then* reported as failure. Fix: `allow-interfaces=<nic>` in `/etc/avahi/avahi-daemon.conf`. The x86 guide should say so. | **Critical** — commissioning reported as failing when it actually succeeded. |
+| 13 | `certification-tool-backend` | `LegacyPythonTestCase.setup()` prompts "Should the DUT be commissioned to run this test case?" for *every* legacy-format test (27 of them in a light DUT's set), and answering NO still triggers a second prompt. Modern tests encode this structurally via suite type. Could be asked once per run. | **Low** — operator toil. |
