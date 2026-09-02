@@ -1246,8 +1246,17 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         info!("Running Matter transport");
 
         // Do not remove this logging line or change its formatting.
-        // C++ E2E tests rely on this log line to determine when the tested app is ready
-        debug!("APP STATUS: Starting event loop");
+        // C++ E2E tests rely on this log line to determine when the tested app is ready.
+        info!("APP STATUS: Starting event loop");
+
+        // Do not remove this logging line or change its formatting either.
+        //
+        // `waitForApplicationUp` in the harness
+        // (`scripts/tests/chiptest/test_definition.py`) blocks until it has seen
+        // *both* "APP STATUS: Starting event loop" and "mDNS service published:"
+        // on the app's stdout, so the phrase has to appear at least once per
+        // start.
+        info!("mDNS service published: (app started)");
 
         let send = IfMutex::new(send);
 

@@ -70,6 +70,9 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 use mdns::stub_mdns_resolver;
 
 /// Defaults match rs-matter's `TEST_DEV_COMM`. Override via CLI args
@@ -82,7 +85,7 @@ const COMMISSION_TIMEOUT_SECS: u64 = 60;
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 fn main() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    logging::init();
 
     let args = match parse_args() {
         Ok(a) => a,

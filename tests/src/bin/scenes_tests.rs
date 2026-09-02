@@ -79,6 +79,9 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
@@ -94,14 +97,7 @@ static SCENES_STATE: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new(
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
+    logging::init();
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,

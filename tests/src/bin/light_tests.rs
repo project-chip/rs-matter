@@ -104,6 +104,9 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 #[path = "../common/pipe.rs"]
 mod pipe;
 
@@ -123,14 +126,7 @@ static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
+    logging::init();
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,

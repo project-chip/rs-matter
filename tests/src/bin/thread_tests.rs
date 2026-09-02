@@ -76,6 +76,9 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 /// The env var carrying the (hex TLV) operational dataset the driver attaches
 /// to at startup. Set by `cargo xtask itest --suite thread`.
 const DATASET_ENV: &str = "RS_MATTER_THREAD_DATASET";
@@ -99,14 +102,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn run() -> Result<(), Error> {
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
+    logging::init();
 
     // Built before the Thread attach below so that `--pics-json` works
     // without an operational dataset or a running `otbr-agent`: the data

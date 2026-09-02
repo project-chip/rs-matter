@@ -104,6 +104,9 @@ mod mdns;
 #[path = "../common/args.rs"]
 mod args;
 
+#[path = "../common/logging.rs"]
+mod logging;
+
 #[path = "../common/mock_net_ctl.rs"]
 #[allow(dead_code)]
 mod mock_net_ctl;
@@ -129,14 +132,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn run() -> Result<(), Error> {
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
+    logging::init();
 
     // `--ble-controller <n>` selects `hci<n>`, matching how the CHIP harness
     // keeps the device and the commissioner on separate adapters.
