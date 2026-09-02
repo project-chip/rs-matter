@@ -114,7 +114,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     /// Consumes the exchange: on return the CASE handshake has either
     /// completed, been rejected, or aborted, and the exchange is dropped.
     pub async fn handle(&mut self, mut exchange: Exchange<'_>) -> Result<(), Error> {
-        let mut session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
+        let session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
 
         // Attempt session resumption first. If the peer's Sigma1 carries
         // both `resumptionID` and `initiatorResumeMIC`, we have a cached
@@ -128,12 +128,15 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         // is spec-compliant (resumption is optional) — a peer that offered
         // resumption fields simply gets a full Sigma2 back.
         #[cfg(feature = "case-resumption")]
-        if self
-            .try_handle_sigma1_resume(&mut exchange, &mut session)
+        let session = match self
+            .try_handle_sigma1_resume(&mut exchange, session)
             .await?
         {
-            return Ok(());
-        }
+            None => return Ok(()),
+            Some(session) => session,
+        };
+
+        let mut session = session;
 
         self.handle_casesigma1(&mut exchange, &mut session).await?;
 
@@ -508,11 +511,11 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     /// - `Err(_)` — a hard error unrelated to resumption (I/O,
     ///   cryptographic backend failure). The exchange is aborted.
     #[cfg(feature = "case-resumption")]
-    async fn try_handle_sigma1_resume(
+    async fn try_handle_sigma1_resume<'s>(
         &mut self,
         exchange: &mut Exchange<'_>,
-        session: &mut ReservedSession<'_>,
-    ) -> Result<bool, Error> {
+        mut session: ReservedSession<'s>,
+    ) -> Result<Option<ReservedSession<'s>>, Error> {
         check_opcode(exchange, OpCode::CASESigma1)?;
 
         // ---- Parse Sigma1 and copy out everything we need. -------------
@@ -533,12 +536,12 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                 req.resumption_id.as_ref(),
                 req.initiator_resume_mic.as_ref(),
             ) else {
-                return Ok(false);
+                return Ok(Some(session));
             };
 
             if rid.0.len() != CASE_RESUMPTION_ID_LEN || mic.0.len() != AEAD_TAG_LEN {
                 // Bad shape — let the full-handshake path reject it.
-                return Ok(false);
+                return Ok(Some(session));
             }
 
             let random_bytes: &[u8; CASE_RANDOM_LEN] = req
@@ -581,7 +584,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                 "CASE Sigma1 resumption: no cached record for the requested resumption id; \
                  falling back to full handshake"
             );
-            return Ok(false);
+            return Ok(Some(session));
         };
 
         // ---- Derive S1RK and verify Resume1MIC. ------------------------
@@ -609,7 +612,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                 record.peer_nodeid,
                 record.fab_idx.get()
             );
-            return Ok(false);
+            return Ok(Some(session));
         }
 
         // ---- Mint a new resumption id + derive S2RK + Resume2MIC. ------
@@ -765,7 +768,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             // `session.complete()`. Do not fall through to the full
             // handshake: this exchange has already produced Sigma2_Resume.
             exchange.acknowledge().await?;
-            return Ok(true);
+            return Ok(None);
         }
 
         // Mark the session live *before* acknowledging SigmaFinished, so
@@ -800,6 +803,6 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             record.peer_nodeid,
         );
 
-        Ok(true)
+        Ok(None)
     }
 }
