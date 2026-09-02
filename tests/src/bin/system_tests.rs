@@ -344,6 +344,11 @@ fn main() -> Result<(), Error> {
         &NODE
     };
 
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, node)? {
+        return Ok(());
+    }
+
     // Optional `--enable-key <hex32>` plumbing for `TC_TestEventTrigger`.
     // When present, the device flips `GeneralDiagnostics::TestEventTriggersEnabled`
     // to true and validates the `TestEventTrigger` invoke key against the

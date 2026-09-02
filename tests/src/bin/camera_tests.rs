@@ -408,6 +408,11 @@ fn main() -> Result<(), Error> {
         args::port_override(),
     ));
 
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, &NODE)? {
+        return Ok(());
+    }
+
     let store = args::file_kv_store();
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());

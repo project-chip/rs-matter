@@ -30,6 +30,7 @@ use crate::itest::{ITests, TestSuite};
 
 mod copyright;
 mod itest;
+mod pics;
 mod tlv;
 
 /// The main command-line interface for `xtask`.
@@ -103,6 +104,45 @@ enum Command {
         /// A comma-separated list of TLV octets to decode (e.g., "0x01,0x02,0x03" or "1,2,3")
         tlv: String,
     },
+    /// Fill in the CSA master PICS templates from a device's own data model.
+    ///
+    /// Feed it the JSON emitted by a binary built with the `pics` feature
+    /// (e.g. `light_tests --pics-json`). The templates are CSA member
+    /// material and are never committed here, so they must be supplied.
+    Pics {
+        /// The CSA master PICS XML templates: either the downloaded `.zip`
+        /// itself, or a directory of unpacked XML
+        #[arg(long)]
+        templates: PathBuf,
+        /// The device's data model, as emitted by `Matter::write_pics_json`
+        /// (e.g. `light_tests --pics-json > node.json`)
+        node: PathBuf,
+        /// Where to write the filled XML templates: a directory, or a `.zip`
+        /// (chosen by the extension)
+        #[arg(long, short = 'o')]
+        out: Option<PathBuf>,
+        /// Also emit the SDK's flat `KEY=1` PICS format to this file
+        /// (the form `tests/src/bin/*.pics` uses)
+        #[arg(long)]
+        pics: Option<PathBuf>,
+        /// An existing `.pics` to check against, and to carry non-derivable
+        /// entries over from. Disagreements with the data model are reported.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Product facts the data model cannot know, in the same flat
+        /// `KEY=1` form: BLE, packaging codes, physical controls. Answers the
+        /// questions that would otherwise be asked interactively. Unlike
+        /// `--baseline` it makes no claim to describe the device, so it is not
+        /// linted or coverage-checked. Wins over `--baseline` where both
+        /// answer an item.
+        #[arg(long)]
+        answers: Option<PathBuf>,
+        /// Rewrite `--baseline` in place, correcting every entry the data
+        /// model can decide. Comments, ordering and undecidable entries are
+        /// preserved, so the diff shows only the corrections.
+        #[arg(long)]
+        fix: bool,
+    },
 }
 
 impl Command {
@@ -172,6 +212,23 @@ impl Command {
                     &resolved_target,
                 )
             }
+            Command::Pics {
+                templates,
+                node,
+                out,
+                pics,
+                baseline,
+                answers,
+                fix,
+            } => pics::run(
+                templates,
+                node,
+                out.as_deref(),
+                pics.as_deref(),
+                baseline.as_deref(),
+                answers.as_deref(),
+                *fix,
+            ),
             Command::Copyright { action } => {
                 copyright::run(action.unwrap_or(copyright::Action::Check))
             }

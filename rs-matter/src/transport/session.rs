@@ -987,7 +987,10 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    pub fn complete(&mut self) {
+    /// Consumes `self`, so the session is un-reserved by `Drop` before this
+    /// returns rather than whenever the caller's binding happens to go out of
+    /// scope.
+    pub fn complete(mut self) {
         self.complete = true;
     }
 }

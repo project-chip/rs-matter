@@ -43,7 +43,12 @@
 //! `CaseInitiator::perform` — the same building blocks
 //! `Transport::initiate_new_case` composes after an mDNS resolve.
 
-#![cfg(all(feature = "std", feature = "async-io", target_os = "linux"))]
+#![cfg(all(
+    feature = "std",
+    feature = "async-io",
+    feature = "groups",
+    target_os = "linux"
+))]
 
 use core::num::NonZeroU8;
 use core::pin::pin;

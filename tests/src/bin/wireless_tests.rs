@@ -154,6 +154,11 @@ fn run_wifi() -> Result<(), Error> {
         args::port_override(),
     ));
 
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, &NODE_WIFI)? {
+        return Ok(());
+    }
+
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
     let kv = matter.kv(args::file_kv_store());
 
@@ -254,6 +259,11 @@ fn run_thread() -> Result<(), Error> {
         &TEST_DEV_ATT,
         args::port_override(),
     ));
+
+    // Dump the data model as JSON for `cargo xtask pics`, then exit.
+    if args::dump_pics_json(matter, &NODE_THREAD)? {
+        return Ok(());
+    }
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
     let kv = matter.kv(args::file_kv_store());
