@@ -129,6 +129,14 @@ enum Command {
         /// entries over from. Disagreements with the data model are reported.
         #[arg(long)]
         baseline: Option<PathBuf>,
+        /// Product facts the data model cannot know, in the same flat
+        /// `KEY=1` form: BLE, packaging codes, physical controls. Answers the
+        /// questions that would otherwise be asked interactively. Unlike
+        /// `--baseline` it makes no claim to describe the device, so it is not
+        /// linted or coverage-checked. Wins over `--baseline` where both
+        /// answer an item.
+        #[arg(long)]
+        answers: Option<PathBuf>,
         /// Rewrite `--baseline` in place, correcting every entry the data
         /// model can decide. Comments, ordering and undecidable entries are
         /// preserved, so the diff shows only the corrections.
@@ -210,6 +218,7 @@ impl Command {
                 out,
                 pics,
                 baseline,
+                answers,
                 fix,
             } => pics::run(
                 templates,
@@ -217,6 +226,7 @@ impl Command {
                 out.as_deref(),
                 pics.as_deref(),
                 baseline.as_deref(),
+                answers.as_deref(),
                 *fix,
             ),
             Command::Copyright { action } => {

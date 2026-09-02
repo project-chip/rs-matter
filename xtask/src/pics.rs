@@ -1361,6 +1361,19 @@ const QUESTIONS: &[Question] = &[
         items: &["MCORE.DD.DISCOVERY_BLE"],
         requires: &["MCORE.ROLE.COMMISSIONER", "MCORE.COM.BLE"],
     },
+    // Mandatory for a commissioner (`cond="MCORE.ROLE.COMMISSIONER"`), so the
+    // answer is only ever "yes" when it is asked at all. It exists as a
+    // question purely so the gate settles it to `false` for everything that is
+    // not a commissioner - otherwise the template's `true` stands and
+    // contradicts its own condition.
+    //
+    // Upstream CHIP deleted this item from its test gates (#72043), but the
+    // Matter 1.6 templates still carry it, so it still has to be answered.
+    Question {
+        prompt: "Does the commissioner support Discovery Capability over an IP network?",
+        items: &["MCORE.DD.DISCOVERY_IP"],
+        requires: &["MCORE.ROLE.COMMISSIONER"],
+    },
     Question {
         prompt: "Does the commissioner support scanning NFC tags containing the onboarding payload?",
         items: &["MCORE.DD.SCAN_NFC"],
@@ -1540,6 +1553,41 @@ impl Question {
     }
 }
 
+/// Fold the baseline's answers for items the data model cannot decide into the
+/// derived set.
+///
+/// `--baseline` is documented as carrying non-derivable entries over, and
+/// `ask_questions` already treats a baseline answer as reason not to ask. That
+/// only removed the *question* though: without this the answer reached the flat
+/// `.pics` (which merges the baseline itself) but never the XML, so a template
+/// default of `true` survived a baseline saying `0` - silently, and only for the
+/// `false` answers, since a `true` one happened to match the default.
+///
+/// Only items the data model could not answer are taken. A baseline that
+/// disagrees with the device about a *derivable* item is a mistake to report,
+/// not a value to adopt, which is `lint_baseline`'s job.
+fn apply_baseline_answers(report: &mut Report, source: &str, baseline: &BTreeMap<String, bool>) {
+    let answered: Vec<(String, bool)> = report
+        .left_items
+        .iter()
+        .filter_map(|item| baseline.get(item).map(|v| (item.clone(), *v)))
+        .collect();
+
+    if answered.is_empty() {
+        return;
+    }
+
+    info!(
+        "Took {} answer(s) for non-derivable items from the {source}",
+        answered.len()
+    );
+
+    report.derived.extend(answered);
+    report
+        .left_items
+        .retain(|left| !report.derived.contains_key(left));
+}
+
 /// Ask the operator the handful of product questions the data model cannot
 /// answer, and fold the results into the derived set.
 ///
@@ -1646,7 +1694,7 @@ fn ask_questions(report: &mut Report, baseline: Option<&BTreeMap<String, bool>>)
         warn!(
             "{} question(s) covering {items} item(s) need a product-level answer, but stdin \
              is not a terminal - leaving them as the template had them. Re-run interactively, \
-             or supply a `--baseline` that already answers them:",
+             or supply an `--answers` file that settles them:",
             unasked.len()
         );
         for (question, n) in &unasked {
@@ -1904,6 +1952,7 @@ pub fn run(
     out: Option<&Path>,
     pics: Option<&Path>,
     baseline: Option<&Path>,
+    answers: Option<&Path>,
     fix: bool,
 ) -> anyhow::Result<()> {
     let node_path = node;
@@ -1995,6 +2044,26 @@ pub fn run(
     if let (Some(p), Some(map)) = (baseline, baseline_map.as_ref()) {
         report_coverage(p, map, &total);
         lint_baseline(p, map, &total);
+    }
+
+    // Answers go first so they win where both files answer an item: an answers
+    // file states product facts deliberately, whereas a baseline carries
+    // whatever the test suite happened to need. Each pass retires what it
+    // answers, so the earlier one takes precedence and the later only fills
+    // what is still open.
+    //
+    // Deliberately not linted, coverage-checked or scanned for omissions - an
+    // answers file describes the product, not the device's data model, so
+    // "entries checked" and "items not declared" would both measure the wrong
+    // thing.
+    if let Some(answers) = answers {
+        let text = fs::read_to_string(answers)
+            .with_context(|| format!("reading answers {}", answers.display()))?;
+        apply_baseline_answers(&mut total, "answers file", &parse_flat(&text));
+    }
+
+    if let Some(map) = baseline_map.as_ref() {
+        apply_baseline_answers(&mut total, "baseline", map);
     }
 
     if out.is_some() || pics.is_some() || fix {
