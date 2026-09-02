@@ -315,6 +315,10 @@ impl ClusterHandler for AdminCommHandler {
             state
                 .pase
                 .close_comm_window(notify_mdns, notify_change)
+                // `close_comm_window` reports "there was no window" as
+                // `Ok(false)` rather than an error, because its other callers
+                // legitimately close an already-closed window.
+                .and_then(|was_open| was_open.then_some(()).ok_or(ErrorCode::Invalid.into()))
                 .map_err(|err| map_revoke_err(&ctx, err))
         })?;
 
@@ -337,7 +341,8 @@ fn map_open_window_err(ctx: &impl InvokeContext, err: Error) -> Error {
 
 /// Same idea for `RevokeCommissioning`: per spec, attempting to revoke when
 /// no window is open SHALL return `WindowNotOpen`. `Pase::close_comm_window`
-/// reports this as `ErrorCode::Invalid`.
+/// signals that as `Ok(false)`, which the caller lifts to `ErrorCode::Invalid`
+/// so it arrives here alongside the transport-level errors.
 fn map_revoke_err(ctx: &impl InvokeContext, err: Error) -> Error {
     if matches!(err.code(), ErrorCode::Invalid) {
         cluster_status_err(ctx, StatusCode::WindowNotOpen)
