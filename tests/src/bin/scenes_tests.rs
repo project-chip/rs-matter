@@ -24,10 +24,7 @@
 use core::cell::Cell;
 use core::pin::pin;
 
-use std::fs;
-use std::io::{Read, Write};
 use std::net::UdpSocket;
-use std::path::PathBuf;
 
 use embassy_futures::select::select3;
 
@@ -73,14 +70,19 @@ use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
 
-#[path = "../common/mdns.rs"]
-mod mdns;
+use vendor_kv::VendorKv;
 
 #[path = "../common/args.rs"]
 mod args;
 
 #[path = "../common/logging.rs"]
 mod logging;
+
+#[path = "../common/mdns.rs"]
+mod mdns;
+
+#[path = "../common/vendor_kv.rs"]
+mod vendor_kv;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -141,7 +143,7 @@ fn main() -> Result<(), Error> {
 
     // OnOff cluster setup
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new())
+        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new(&kv))
             .with_scene_invalidator(scenes_state);
 
     // LevelControl cluster setup
@@ -472,61 +474,45 @@ impl OnOffPersistentState {
     }
 }
 
-#[derive(Default)]
-pub struct OnOffDeviceLogic {
+pub struct OnOffDeviceLogic<'a> {
     on_off: Cell<bool>,
     start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
-    storage_path: PathBuf,
+    kv: &'a dyn VendorKv,
 }
 
-const STORAGE_FILE_NAME: &str = "rs-matter-on-off-state";
+impl<'a> OnOffDeviceLogic<'a> {
+    pub fn new(kv: &'a dyn VendorKv) -> Self {
+        let mut buf: [u8; 1] = [0];
 
-impl OnOffDeviceLogic {
-    pub fn new() -> Self {
-        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
-        info!(
-            "OnOffDeviceLogic using storage path: {}",
-            storage_path.as_path().to_str().unwrap_or("none")
-        );
-
-        let persisted_state = match fs::File::open(storage_path.as_path()) {
-            Ok(mut file) => {
-                let mut buf: [u8; 1] = [0];
-                file.read_exact(&mut buf).unwrap();
-
+        let persisted_state = match kv.load_blob(vendor_kv::ON_OFF_STATE_KEY, &mut buf) {
+            Ok(Some(1)) => {
                 trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
 
                 OnOffPersistentState::from_bytes(buf[0]).unwrap()
             }
-            Err(_) => OnOffPersistentState::default(),
+            _ => OnOffPersistentState::default(),
         };
 
         Self {
             on_off: Cell::new(persisted_state.on_off),
             start_up_on_off: Cell::new(persisted_state.start_up_on_off),
-            storage_path,
+            kv,
         }
     }
 
     fn save_state(&self) -> Result<(), Error> {
-        let mut file = fs::File::create(self.storage_path.as_path())?;
-
         let value = OnOffPersistentState::to_bytes_from_values(
             self.on_off.get(),
             self.start_up_on_off.get(),
         );
 
-        let buf = &[value];
-
         trace!("save_storage: wrote {:0x}", value);
 
-        file.write_all(buf)?;
-
-        Ok(())
+        self.kv.store_blob(vendor_kv::ON_OFF_STATE_KEY, &[value])
     }
 }
 
-impl OnOffHooks for OnOffDeviceLogic {
+impl OnOffHooks for OnOffDeviceLogic<'_> {
     const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
         .with_revision(6)
         .with_features(on_off_cluster::Feature::LIGHTING.bits())

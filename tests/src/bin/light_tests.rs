@@ -33,10 +33,7 @@ use core::cell::Cell;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use std::fs;
-use std::io::{Read, Write};
 use std::net::UdpSocket;
-use std::path::PathBuf;
 
 use embassy_futures::select::{select3, select4};
 
@@ -98,8 +95,7 @@ use rs_matter::im::client::ImClient as _;
 
 use static_cell::StaticCell;
 
-#[path = "../common/mdns.rs"]
-mod mdns;
+use vendor_kv::VendorKv;
 
 #[path = "../common/args.rs"]
 mod args;
@@ -107,8 +103,14 @@ mod args;
 #[path = "../common/logging.rs"]
 mod logging;
 
+#[path = "../common/mdns.rs"]
+mod mdns;
+
 #[path = "../common/pipe.rs"]
 mod pipe;
+
+#[path = "../common/vendor_kv.rs"]
+mod vendor_kv;
 
 /// The local endpoint hosting the On/Off Light Switch (OnOff client + Binding).
 const SWITCH_ENDPOINT: u16 = 2;
@@ -166,7 +168,7 @@ fn main() -> Result<(), Error> {
     // transition applies `OnMode` (the ModeSelect `ON_OFF` feature) - the
     // behaviour `Test_TC_MOD_3_1` verifies.
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new())
+        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new(&kv))
             .with_on_mode_applier(&mode_select_handler);
 
     // LevelControl cluster setup
@@ -190,7 +192,7 @@ fn main() -> Result<(), Error> {
     let color_control_handler = color_control::ColorControlHandler::new(
         Dataver::new_rand(&mut rand),
         1,
-        ColorControlDeviceLogic::new(),
+        ColorControlDeviceLogic::new(&kv),
         color_control::AttributeDefaults::default(),
     );
     color_control_handler.init(Some(&on_off_handler));
@@ -710,48 +712,27 @@ fn json_u64(line: &str, key: &str) -> Option<u64> {
 // persisted value to `ColorTemperatureMireds` at power-up - see
 // `ColorControlHandler::init`.)
 
-pub struct ColorControlDeviceLogic {
+pub struct ColorControlDeviceLogic<'a> {
     inner: TestColorControlDeviceLogic,
-    storage_path: PathBuf,
+    kv: &'a dyn VendorKv,
 }
 
-const CT_STORAGE_FILE_NAME: &str = "rs-matter-light-tests-start-up-ct";
-
-impl Default for ColorControlDeviceLogic {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ColorControlDeviceLogic {
-    pub fn new() -> Self {
-        // Tie the state file to `--KVS` when given, so concurrent
-        // instances don't clobber each other (same reasoning as
-        // `OnOffDeviceLogic`).
-        let storage_path = match args::kvs_override() {
-            Some(kvs) => PathBuf::from(format!("{kvs}-start-up-ct")),
-            None => std::env::temp_dir().join(CT_STORAGE_FILE_NAME),
-        };
-
+impl<'a> ColorControlDeviceLogic<'a> {
+    pub fn new(kv: &'a dyn VendorKv) -> Self {
         let inner = TestColorControlDeviceLogic::new();
 
         // Re-hydrate: a 2-byte little-endian value, or absent for null.
-        if let Ok(mut file) = fs::File::open(storage_path.as_path()) {
-            let mut buf = [0u8; 2];
-            if file.read_exact(&mut buf).is_ok() {
-                let value = u16::from_le_bytes(buf);
-                let _ = inner.set_start_up_color_temperature_mireds(Nullable::some(value));
-            }
+        let mut buf = [0u8; 2];
+        if let Ok(Some(2)) = kv.load_blob(vendor_kv::START_UP_CT_KEY, &mut buf) {
+            let value = u16::from_le_bytes(buf);
+            let _ = inner.set_start_up_color_temperature_mireds(Nullable::some(value));
         }
 
-        Self {
-            inner,
-            storage_path,
-        }
+        Self { inner, kv }
     }
 }
 
-impl ColorControlHooks for ColorControlDeviceLogic {
+impl ColorControlHooks for ColorControlDeviceLogic<'_> {
     const CLUSTER: Cluster<'static> = TestColorControlDeviceLogic::CLUSTER;
     const COLOR_CAPABILITIES: color_control::ColorCapabilitiesBitmap =
         TestColorControlDeviceLogic::COLOR_CAPABILITIES;
@@ -776,12 +757,12 @@ impl ColorControlHooks for ColorControlDeviceLogic {
 
         match value.into_option() {
             Some(mireds) => {
-                let mut file = fs::File::create(self.storage_path.as_path())?;
-                file.write_all(&mireds.to_le_bytes())?;
+                self.kv
+                    .store_blob(vendor_kv::START_UP_CT_KEY, &mireds.to_le_bytes())?;
             }
-            // Null: drop the file so the next boot starts with no value.
+            // Null: drop the blob so the next boot starts with no value.
             None => {
-                let _ = fs::remove_file(self.storage_path.as_path());
+                self.kv.remove_blob(vendor_kv::START_UP_CT_KEY)?;
             }
         }
 
@@ -1000,52 +981,42 @@ impl ModeSelectHooks for ModeSelectDeviceLogic {
     }
 }
 
-#[derive(Default)]
-pub struct OnOffDeviceLogic {
+pub struct OnOffDeviceLogic<'a> {
     on_off: Cell<bool>,
     start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
-    storage_path: PathBuf,
+    kv: &'a dyn VendorKv,
 }
 
-const STORAGE_FILE_NAME: &str = "rs-matter-light-tests-on-off-state";
+impl<'a> OnOffDeviceLogic<'a> {
+    pub fn new(kv: &'a dyn VendorKv) -> Self {
+        let mut buf: [u8; 1] = [0];
 
-impl OnOffDeviceLogic {
-    pub fn new() -> Self {
-        // Tie the OnOff state file to the `--KVS` path when one is given, so
-        // multiple simultaneous instances (the two-node `switch` itest suite)
-        // don't clobber each other's persisted OnOff state.
-        let storage_path = match args::kvs_override() {
-            Some(kvs) => PathBuf::from(format!("{kvs}-on-off-state")),
-            None => std::env::temp_dir().join(STORAGE_FILE_NAME),
-        };
-        let persisted_state = match fs::File::open(storage_path.as_path()) {
-            Ok(mut file) => {
-                let mut buf: [u8; 1] = [0];
-                file.read_exact(&mut buf).unwrap();
+        let persisted_state = match kv.load_blob(vendor_kv::ON_OFF_STATE_KEY, &mut buf) {
+            Ok(Some(1)) => {
                 trace!("OnOffDeviceLogic::new: read {:0x}", buf[0]);
                 OnOffPersistentState::from_bytes(buf[0]).unwrap()
             }
-            Err(_) => OnOffPersistentState::default(),
+            _ => OnOffPersistentState::default(),
         };
+
         Self {
             on_off: Cell::new(persisted_state.on_off),
             start_up_on_off: Cell::new(persisted_state.start_up_on_off),
-            storage_path,
+            kv,
         }
     }
 
     fn save_state(&self) -> Result<(), Error> {
-        let mut file = fs::File::create(self.storage_path.as_path())?;
         let value = OnOffPersistentState::to_bytes_from_values(
             self.on_off.get(),
             self.start_up_on_off.get(),
         );
-        file.write_all(&[value])?;
-        Ok(())
+
+        self.kv.store_blob(vendor_kv::ON_OFF_STATE_KEY, &[value])
     }
 }
 
-impl OnOffHooks for OnOffDeviceLogic {
+impl OnOffHooks for OnOffDeviceLogic<'_> {
     const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
         .with_revision(6)
         .with_features(on_off_cluster::Feature::LIGHTING.bits())
