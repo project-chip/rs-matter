@@ -281,6 +281,65 @@ where
         Ok((str, remaining_buf))
     }
 
+    /// Encode this payload as the NDEF message an NFC tag carries, into the
+    /// provided buffer.
+    ///
+    /// An NFC tag is an alternative carrier for the *same* onboarding payload
+    /// as the QR code - "The data contained in the NFC tag SHALL be formatted
+    /// as specified in QR Code Format" - wrapped in a single NDEF URI record.
+    /// This is passive-tag onboarding only: it says nothing about the NFC
+    /// Transport Layer (PASE over NFC), which rs-matter does not implement and
+    /// which needs no payload of this kind.
+    ///
+    /// The record layout is fixed by the Matter Core spec:
+    ///
+    /// ```text
+    /// 0: 0xD1   TNF=0x01 (well-known), SR=1, MB=1, ME=1
+    /// 1: 0x01   length of the record type
+    /// 2: <len>  URI payload size in bytes
+    /// 3: 0x55   record name, "U"
+    /// 4: 0x00   URI identifier code: no abbreviation
+    /// 5: MT:<base-38 content>
+    /// ```
+    ///
+    /// # Arguments
+    /// - `buf` - Buffer to store the NDEF message
+    ///
+    /// # Returns
+    /// - On success, a tuple of the NDEF message and the remaining buffer
+    /// - On failure, an error
+    pub fn as_ndef<'b>(&self, buf: &'b mut [u8]) -> Result<(&'b [u8], &'b mut [u8]), Error> {
+        /// `0xD1`, `0x01`, payload length, `0x55`, `0x00`.
+        const HEADER_LEN: usize = 5;
+
+        let uri_len = self.emit_chars().count();
+
+        // `SR=1` in the header byte makes this a Short Record, whose payload
+        // length is a single byte. The payload is the URI identifier code plus
+        // the text, and `MT:` has no NFC Forum abbreviation, so all of it
+        // counts.
+        let payload_len = uri_len + 1;
+        if payload_len > u8::MAX as usize {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        if buf.len() < HEADER_LEN + uri_len {
+            Err(ErrorCode::BufferTooSmall)?;
+        }
+
+        let (ndef_buf, remaining_buf) = buf.split_at_mut(HEADER_LEN + uri_len);
+        let (header, uri_buf) = ndef_buf.split_at_mut(HEADER_LEN);
+
+        header.copy_from_slice(&[0xd1, 0x01, payload_len as u8, 0x55, 0x00]);
+
+        let mut wb = WriteBuf::new(uri_buf);
+        for ch in self.emit_chars() {
+            wb.le_u8(ch? as u8)?;
+        }
+
+        Ok((ndef_buf, remaining_buf))
+    }
+
     /// Emit the QR text of this payload as an iterator of characters
     pub fn emit_chars(&self) -> impl Iterator<Item = Result<char, Error>> + '_ {
         struct PackedBitsIterator<I>(I);
@@ -1348,6 +1407,90 @@ mod tests {
         let mut buf = [0; 1024];
         let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
+    }
+
+    /// The bit positions are fixed by the Matter Core spec's Discovery
+    /// Capabilities Bitmask, and a payload carrying PAF or NTL has to survive a
+    /// round-trip: `parse` uses `from_bits_truncate`, so any bit the type does
+    /// not define is silently dropped off a peer's payload.
+    #[test]
+    fn discovery_capability_bits_round_trip() {
+        assert_eq!(DiscoveryCapabilities::BLE.bits(), 1 << 1);
+        assert_eq!(DiscoveryCapabilities::IP.bits(), 1 << 2);
+        assert_eq!(DiscoveryCapabilities::PAF.bits(), 1 << 3);
+        assert_eq!(DiscoveryCapabilities::NTL.bits(), 1 << 4);
+
+        let comm_data = BasicCommData {
+            password: 20202021_u32.to_le_bytes().into(),
+            discriminator: 3840,
+        };
+        let dev_det = BasicInfoConfig {
+            vid: 65521,
+            pid: 32769,
+            ..Default::default()
+        };
+
+        let caps = DiscoveryCapabilities::BLE | DiscoveryCapabilities::NTL;
+
+        let payload = QrPayload::new_from_basic_info(
+            caps,
+            CommFlowType::Standard,
+            comm_data,
+            &dev_det,
+            no_optional_data,
+        );
+
+        let mut buf = [0; 1024];
+        let (text, buf) = unwrap!(payload.as_str(&mut buf), "Failed to encode");
+
+        let mut parse_buf = [0; 1024];
+        let parsed = unwrap!(QrPayload::parse(text, &mut parse_buf), "Failed to parse");
+
+        assert_eq!(parsed.discovery_capabilities, caps);
+
+        let _ = buf;
+    }
+
+    /// The NFC tag carries the same onboarding payload as the QR code, wrapped
+    /// in the single NDEF URI record the Matter Core spec fixes byte for byte.
+    #[test]
+    fn encodes_the_nfc_ndef_record() {
+        const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
+
+        let comm_data = BasicCommData {
+            password: 34567890_u32.to_le_bytes().into(),
+            discriminator: 2976,
+        };
+        let dev_det = BasicInfoConfig {
+            vid: 9050,
+            pid: 65279,
+            ..Default::default()
+        };
+
+        let qr_code_data = QrPayload::new_from_basic_info(
+            DiscoveryCapabilities::BLE,
+            CommFlowType::Standard,
+            comm_data,
+            &dev_det,
+            no_optional_data,
+        );
+
+        let mut buf = [0; 1024];
+        let ndef = unwrap!(qr_code_data.as_ndef(&mut buf), "Failed to encode").0;
+
+        // Header, then the URI text verbatim.
+        assert_eq!(
+            ndef,
+            [
+                &[0xd1, 0x01, (QR_CODE.len() + 1) as u8, 0x55, 0x00][..],
+                QR_CODE.as_bytes(),
+            ]
+            .concat()
+        );
+
+        // The URI data is exactly what the QR code carries: one payload, two
+        // carriers.
+        assert_eq!(&ndef[5..], QR_CODE.as_bytes());
     }
 
     #[test]

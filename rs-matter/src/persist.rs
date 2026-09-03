@@ -144,13 +144,16 @@ pub const TIME_ZONE_KEY: u16 = CASE_RESUMPTION_KEY + 1;
 /// features it was built with.
 pub const GROUP_DATA_COUNTER_KEY: u16 = TIME_ZONE_KEY + 1;
 
+/// The node's reboot counter, backing `GeneralDiagnostics::RebootCount`.
+pub const REBOOT_COUNT_KEY: u16 = GROUP_DATA_COUNTER_KEY + 1;
+
 /// The first key past the singleton keys above - i.e. the next free slot for
 /// a *new* singleton key.
 ///
 /// Only used by [`SINGLETON_KEYS_FIT`] to prove that the singleton block has
 /// not grown into [`PERSISTENT_SUBSCRIPTIONS_START`]; bump the key it is
 /// derived from whenever a singleton is added.
-const SINGLETON_KEYS_END: u16 = GROUP_DATA_COUNTER_KEY + 1;
+const SINGLETON_KEYS_END: u16 = REBOOT_COUNT_KEY + 1;
 
 /// The first key of the range reserved for persisted subscriptions.
 ///

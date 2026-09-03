@@ -16,6 +16,40 @@
  */
 
 //! A module for running Chip integration tests on the `rs-matter` project.
+//!
+//! # Functional YAML suites that are deliberately not listed
+//!
+//! Besides the certification suites, upstream ships a set of functional
+//! YAML suites under `src/app/tests/suites/`. The ones absent from every
+//! list below are absent for one of four reasons:
+//!
+//! - **No rs-matter test node exposes the cluster.** The suites drive
+//!   device types we do not model: `DL_*` (Door Lock),
+//!   `TV_*` (the twelve media clusters), `TestOperationalState` and
+//!   `TestRVCOperationalState`, `TestActivatedCarbonFilterMonitoring`,
+//!   `TestHepaFilterMonitoring`, `TestDishwasherAlarm`, `TestFanControl`,
+//!   `TestTemperatureControl` and `TestThermostat`. Each would need its
+//!   own example binary with a simulated appliance behind it, not just
+//!   the cluster.
+//! - **The suite tests the harness, not a DUT.**
+//!   `TestPurposefulFailureEqualities`,
+//!   `TestPurposefulFailureExtraReportingOnToggle` and
+//!   `TestPurposefulFailureNotNullConstraint` are required to fail —
+//!   upstream keeps them to check that the runner notices a failure.
+//!   `TestExampleCluster` drives a chip-tool-side pseudo-cluster and
+//!   never puts a message on the wire. `TestGroupDemoCommand` and
+//!   `TestGroupDemoConfig` are demo scaffolding, listed in
+//!   `manualTests.json` rather than `ciTests.json`.
+//! - **chip-tool cannot run it.** `TestDiagnosticLogsDownloadCommand`
+//!   pulls the log over BDX with a `Bdx`/`Download` pseudo-command that
+//!   only darwin-framework-tool implements; upstream skips it for
+//!   chip-tool for exactly this reason. The rs-matter side of that
+//!   transfer is covered by `TestDiagnosticLogs`, which is enabled.
+//! - **It duplicates an enabled certification suite.**
+//!   `TestColorControl_9_1` and `TestColorControl_9_2` are copies of
+//!   `Test_TC_CC_9_1` / `Test_TC_CC_9_2` with the PICS gates stripped.
+//!   Our PICS answers `1` to every item those two gate on, so the
+//!   certification versions already execute all of their steps.
 
 use core::iter::once;
 
@@ -63,6 +97,137 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestCommandsById",
     "TestCommissionerNodeId",
     "TestCommissioningWindow",
+    "Test_TC_CADMIN_1_6",
+    "Test_TC_CADMIN_1_16",
+    // Every remaining `Test_TC_CADMIN_*` YAML ships with *every* step
+    // `disabled: true` upstream. They are written as procedures for a human to
+    // adapt rather than as runnable suites - "Chip-tool command used below are
+    // an example to verify the functionality. For certification test, we expect
+    // DUT should have a capability or way to run the equivalent command" - so
+    // enabling them here would only buy a vacuous pass.
+    //
+    // They exercise the DUT-as-commissioner role (`CADMIN.C`), which rs-matter
+    // does support - see `TestSuite::Commissioner` and `commissioner_tests`.
+    // Should upstream ever enable their steps, they belong to that suite and
+    // not here: `SYS_TESTS` runs against the commissionee (`system_tests`).
+    // "Test_TC_CADMIN_1_1",
+    // "Test_TC_CADMIN_1_2",
+    // "Test_TC_CADMIN_1_7",
+    // "Test_TC_CADMIN_1_8",
+    // "Test_TC_CADMIN_1_12",
+    // "Test_TC_CADMIN_1_13",
+    // "Test_TC_CADMIN_1_14",
+    // "Test_TC_CADMIN_1_17",
+    // "Test_TC_CADMIN_1_18",
+    //
+    // Certification YAMLs that ship with *every* step `disabled: true`
+    // upstream: procedures for a human to adapt, not runnable suites, so
+    // enabling any of them buys only a vacuous pass. Listed so the next audit
+    // does not have to re-derive why they are absent.
+    //
+    // Secure Channel — MRP, CASE/PASE and session-establishment procedures.
+    // "Test_TC_SC_1_1",
+    // "Test_TC_SC_1_2",
+    // "Test_TC_SC_1_3",
+    // "Test_TC_SC_1_4",
+    // "Test_TC_SC_2_1",
+    // "Test_TC_SC_2_2",
+    // "Test_TC_SC_2_3",
+    // "Test_TC_SC_2_4",
+    // "Test_TC_SC_3_1",
+    // "Test_TC_SC_3_2",
+    // "Test_TC_SC_3_3",
+    // "Test_TC_SC_4_2",
+    // "Test_TC_SC_4_4",
+    // "Test_TC_SC_4_6",
+    // "Test_TC_SC_4_7",
+    // "Test_TC_SC_4_8",
+    // "Test_TC_SC_4_9",
+    // "Test_TC_SC_5_3",
+    // "Test_TC_SC_6_1",
+    // Device Discovery — commissioner-side and onboarding-payload procedures.
+    // "Test_TC_DD_1_6",
+    // "Test_TC_DD_1_7",
+    // "Test_TC_DD_1_8",
+    // "Test_TC_DD_1_9",
+    // "Test_TC_DD_1_10",
+    // "Test_TC_DD_1_11",
+    // "Test_TC_DD_2_1",
+    // "Test_TC_DD_2_2",
+    // "Test_TC_DD_3_3",
+    // "Test_TC_DD_3_4",
+    // "Test_TC_DD_3_5",
+    // "Test_TC_DD_3_6",
+    // "Test_TC_DD_3_7",
+    // "Test_TC_DD_3_8",
+    // "Test_TC_DD_3_9",
+    // "Test_TC_DD_3_10",
+    // "Test_TC_DD_3_11",
+    // "Test_TC_DD_3_12",
+    // "Test_TC_DD_3_13",
+    // "Test_TC_DD_3_14",
+    // "Test_TC_DD_3_15",
+    // "Test_TC_DD_3_16",
+    // "Test_TC_DD_3_17",
+    // "Test_TC_DD_3_18",
+    // "Test_TC_DD_3_19",
+    // "Test_TC_DD_3_20",
+    // "Test_TC_DD_3_21",
+    // "Test_TC_DD_3_22",
+    // Interaction Model — DUT-as-client message-format procedures.
+    // "Test_TC_IDM_1_1",
+    // "Test_TC_IDM_1_3",
+    // "Test_TC_IDM_2_1",
+    // "Test_TC_IDM_3_1",
+    // "Test_TC_IDM_4_1",
+    // "Test_TC_IDM_4_4",
+    // "Test_TC_IDM_5_1",
+    // "Test_TC_IDM_6_1",
+    // "Test_TC_IDM_6_2",
+    // "Test_TC_IDM_6_3",
+    // "Test_TC_IDM_6_4",
+    // "Test_TC_IDM_7_1",
+    // "Test_TC_IDM_8_1",
+    // Device Attestation, Network/Operational Commissioning, Groups, and
+    // diagnostics variants that are likewise fully disabled.
+    // "Test_TC_DA_1_3",
+    // "Test_TC_DA_1_4",
+    // "Test_TC_DA_1_6",
+    // "Test_TC_DA_1_8",
+    // "Test_TC_CNET_4_12",
+    // "Test_TC_CNET_4_13",
+    // "Test_TC_CNET_4_14",
+    // "Test_TC_CNET_4_20",
+    // "Test_TC_CNET_4_21",
+    // "Test_TC_OPCREDS_3_3",
+    // "Test_TC_OPCREDS_3_6",
+    // "Test_TC_G_2_3",
+    // "Test_TC_G_3_2",
+    // "Test_TC_GRPKEY_5_4",
+    // "Test_TC_BRBINFO_2_2",
+    // "Test_TC_PS_2_2",
+    // "Test_TC_DGGEN_2_2",
+    // "Test_TC_DGSW_2_3",
+    //
+    // Certification YAMLs with runnable steps, audited and verified against
+    // `system_tests`.
+    //
+    "Test_TC_ACE_1_1",
+    "Test_TC_ACL_2_1",
+    "Test_TC_DGGEN_2_3",
+    "Test_TC_DGGEN_3_1",
+    "Test_TC_ICDM_4_1",
+    "Test_TC_OPCREDS_3_7",
+    "Test_TC_TIMESYNC_2_3",
+    "Test_TC_DGGEN_2_1",
+    // Six manual `verification:` steps: chiptool rejects step 4 and runs none
+    // of them. Also Wi-Fi-only (`PIXIT.CNET.WIFI_1ST_ACCESSPOINT_SSID`), while
+    // `system_tests` is Ethernet.
+    // "Test_TC_CNET_4_11",
+    // Not registered as targets by `run_test_suite.py` ("Unknown target"), so
+    // unreachable through the YAML runner whatever the DUT supports.
+    // "Test_TC_DGETH_3_2_Simulated",
+    // "Test_TC_DGSW_3_2_Simulated",
     "TestConfigVariables",
     "TestConstraints",
     "TestDelayCommands",
@@ -101,7 +266,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestLogCommands",
     "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
-    // "TestOperationalState", // TODO: Operational State cluster not yet implemented
     "TestReadNoneSubscribeNone",
     // `nullable_boolean` must default to `false` (not null) per the upstream
     // test-cluster XML - see the note in `unit_testing.rs`; everything else
@@ -204,34 +368,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — General & Administrator Commissioning (system clusters)
     //
     "TC_CADMIN_1_3_4",
-    // The CHIP-framework cleanup bug that used to break this test is another
-    // chip-master-only regression absent from the pinned `v1.6-branch`
-    // framework. Needs the raised timeouts in `per_test_timeout_secs` /
-    // `per_test_framework_timeout_secs` (a ~180s window-expiry wait).
     "TC_CADMIN_1_5",
-    //                  // from the device side. Step 7 (commission after the
-    //                  // window has been revoked) expects exactly
-    //                  // `CHIP_ERROR_TIMEOUT (0x32)`. To produce 0x32 the
-    //                  // device must NOT reply to the PBKDFParamRequest —
-    //                  // any status-report response surfaces as
-    //                  // `INVALID_PASE_PARAMETER (0x38)`. The PASE responder
-    //                  // (`pase/responder.rs`) does drop closed-window PASE
-    //                  // attempts silently, which is CHIP-style behavior; with
-    //                  // that, the controller's mDNS browse for the device's
-    //                  // discriminator times out at 30 s, mapped to
-    //                  // `CHIP_ERROR_TIMEOUT`, and step 7 *does* pass.
-    //                  // However, `DeviceCommissioner::EstablishPASEConnection`
-    //                  // (`CHIPDeviceController.cpp:734`) sets
-    //                  // `mDeviceInPASEEstablishment` at the start of step 7
-    //                  // and only clears it on the PASE-failure paths
-    //                  // (`OnSessionEstablishmentError`); the
-    //                  // mDNS-discovery-timeout path leaves it non-null.
-    //                  // Step 15's `CommissionOnNetwork` then hits the
-    //                  // `VerifyOrExit(mDeviceInPASEEstablishment == nullptr,
-    //                  // INCORRECT_STATE)` guard and fails with 0x03 before
-    //                  // ever leaving the controller. The other CADMIN tests
-    //                  // (1_3_4, 1_9, 1_11, 1_15, 1_19, 1_22, 1_25) pass with
-    //                  // the silent-drop change.
     "TC_CADMIN_1_9",
     // Repeated OpenCommissioningWindow / PASE-attempt handling; reads
     // `SpecificationVersion` on EP0, hence the `--endpoint 0` extra arg.
@@ -243,6 +380,20 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_CADMIN_1_25",
     // "TC_CADMIN_1_27",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
     // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
+    // Python system tests upstream that we do not run:
+    // "TC_BRBINFO_2_1",  // Skipped: driven against CHIP's `${BRIDGE_APP}`; rs-matter has no bridge DUT.
+    // "TC_BRBINFO_3_1",  // Skipped: bridged devices, and it carries no CI runner metadata at all - not wired for automated runs.
+    // "TC_DD_1_5",       // Skipped: NFC onboarding. `DiscoveryCapabilities` (see `pairing.rs`) has no NFC/NTL bit.
+    // "TC_DD_3_24",      // Skipped: NFC commissioning of an unpowered DUT - needs NFC plus physical power control.
+    "TC_SC_5_1",
+    "TC_SC_5_2",
+    // Upstream's `run1` half: the same two tests against the Groupcast-enabled
+    // composition, where `AUXILIARY` is advertised and wildcard-target
+    // Group-auth ACL entries no longer reach the root endpoint - so group
+    // messaging is exercised under the ACL semantics a groupcast-capable
+    // device actually has.
+    "TC_SC_5_1@groupcast",
+    "TC_SC_5_2@groupcast",
     "TC_CGEN_2_1",
     "TC_CGEN_2_2",
     "TC_CGEN_2_4",
@@ -629,6 +780,17 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     "Test_TC_LVL_5_1",
     "Test_TC_LVL_6_1",
     "Test_TC_LVL_7_1",
+    // LevelControl <-> OnOff coupling: writes `OnLevel`, then checks that
+    // `On` drives `CurrentLevel` to it over `OnOffTransitionTime`. Only an
+    // OFF -> ON edge applies `OnLevel`, and the suite never turns the light
+    // off itself, so it relies on the DUT coming up off - which it does,
+    // because the runner factory-resets it and `light_tests` keeps its OnOff
+    // state in the Matter KVS. No certification suite covers this.
+    "TestLevelControlWithOnOffDependency",
+    // Drives a timed `MoveToLevel` and waits for the reported
+    // `CurrentLevel` to reach its target, exercising transition reporting
+    // rather than a single read-back.
+    "Test_WaitForAttributeValue",
     // `Test_TC_LVL_8_1` is a "DUT as Client" test whose single step is
     // `disabled: true` - enabling it would only buy a vacuous pass.
     // `TC_LVL_9_1` is a Scenes-interaction test - see `SCENES_TESTS`.
@@ -1326,7 +1488,11 @@ impl ITests {
                     }
                 }
 
-                self.run_yaml_batch(&batch, test_timeout_secs, profile, target, &chip_env)?;
+                // Every member shares a key, so they share the override too.
+                let batch_timeout_secs =
+                    Self::per_test_timeout_secs(tests[i]).unwrap_or(test_timeout_secs);
+
+                self.run_yaml_batch(&batch, batch_timeout_secs, profile, target, &chip_env)?;
             }
         }
 
@@ -1341,13 +1507,18 @@ impl ITests {
     /// - the `.pics` file and the `RS_MATTER_WIRELESS_THREAD` device-flavour
     ///   selection, both determined by [`WirelessFlavour::of`];
     /// - the OTA app-path wiring, which is role-specific - so `OTA_*` tests
-    ///   stay singleton batches, keyed by their own (role-suffixed) name.
-    fn yaml_batch_key(test_name: &str) -> (Option<WirelessFlavour>, Option<&str>) {
+    ///   stay singleton batches, keyed by their own (role-suffixed) name;
+    /// - the per-test timeout, which `run_test_suite.py` takes once per
+    ///   invocation as `--test-timeout-seconds`. A test needing longer than the
+    ///   suite default therefore batches only with others needing exactly the
+    ///   same, rather than dragging the whole batch's ceiling up with it.
+    fn yaml_batch_key(test_name: &str) -> (Option<WirelessFlavour>, Option<&str>, Option<u32>) {
         let real_name = test_name.strip_suffix("@requestor").unwrap_or(test_name);
 
         (
             WirelessFlavour::of(test_name),
             real_name.starts_with("OTA_").then_some(test_name),
+            Self::per_test_timeout_secs(test_name),
         )
     }
 
@@ -1528,13 +1699,48 @@ impl ITests {
         Ok(())
     }
 
+    /// Fail early when the kernel forbids unprivileged user namespaces.
+    ///
+    /// The YAML runner puts the app, chip-tool and the management interface in
+    /// separate network namespaces (`scripts/tests/chiptest/linux.py`), created
+    /// with `unshare` as an unprivileged user. Ubuntu restricts that by
+    /// default, and the failure surfaces deep inside the runner as
+    /// `unshare: write failed /proc/self/uid_map: Operation not permitted`
+    /// with no run summary written - leaving xtask able to report only
+    /// `exit status: 1`.
+    ///
+    /// The knob resets on every reboot, so this is a recurring trap rather
+    /// than a one-time setup step. Python (`TC_*`) tests do not use namespaces
+    /// and are deliberately not gated on it.
+    fn check_unprivileged_userns() -> anyhow::Result<()> {
+        const KNOB: &str = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+
+        // Absent on non-Ubuntu kernels, where the restriction does not exist.
+        let Ok(value) = fs::read_to_string(KNOB) else {
+            return Ok(());
+        };
+
+        if value.trim() != "1" {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "unprivileged user namespaces are restricted, but the YAML tests need them for \
+             their per-test network namespaces.\n\n    \
+             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n\n\
+             To survive a reboot:\n\n    \
+             echo 'kernel.apparmor_restrict_unprivileged_userns=0' \
+             | sudo tee /etc/sysctl.d/99-rs-matter-itest.conf"
+        )
+    }
+
     /// Run a batch of YAML tests in a single `run_test_suite.py` invocation.
     ///
     /// All batch members share one per-invocation configuration - guaranteed
-    /// by [`Self::yaml_batch_key`] - and none of them has a
-    /// [`Self::per_test_timeout_secs`] override (those are all `TC_*` Python
-    /// tests), so the suite default applies to every member, enforced
-    /// per-test by the runner itself via `--test-timeout-seconds`.
+    /// by [`Self::yaml_batch_key`], which folds in
+    /// [`Self::per_test_timeout_secs`] - so `timeout_secs` applies to every
+    /// member, enforced per-test by the runner itself via
+    /// `--test-timeout-seconds`.
     fn run_yaml_batch(
         &self,
         batch: &[&str],
@@ -1543,6 +1749,8 @@ impl ITests {
         target: &str,
         chip_env: &HashMap<String, String>,
     ) -> anyhow::Result<()> {
+        Self::check_unprivileged_userns()?;
+
         info!(
             "=> Running YAML test batch of {} test(s) with per-test timeout {timeout_secs}s: {batch:?}...",
             batch.len()
@@ -2030,6 +2238,16 @@ impl ITests {
             None => (test_name, false),
         };
 
+        // Likewise `@groupcast`, which re-runs a test against the
+        // Groupcast-enabled app composition (`NODE_GROUPCAST`). Upstream
+        // expresses this as a second `run` entry in a test's CI metadata
+        // against a different app binary; here the two compositions are one
+        // binary and a flag, so the variant rides on the test name.
+        let (test_name, groupcast) = match test_name.strip_suffix("@groupcast") {
+            Some(name) => (name, true),
+            None => (test_name, false),
+        };
+
         let script_path = chip_dir
             .join("src/python_testing")
             .join(format!("{test_name}.py"));
@@ -2158,14 +2376,37 @@ impl ITests {
         // tests like TC_SC_7_1 that require non-default discriminator /
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
-        let backend = if bluer { " --bluer" } else { "" };
-        let app_args_clause = match (ble, Self::app_args_override(test_name, target)) {
-            (true, Some(args)) => {
-                format!(" --app-args '--ble-controller 0{backend} {args}'")
+        // Built up rather than enumerated: BLE backend, app composition and
+        // per-test overrides are independent, and a match over every
+        // combination grows with each new one.
+        let mut app_args = String::new();
+
+        let mut push = |arg: &str| {
+            if !app_args.is_empty() {
+                app_args.push(' ');
             }
-            (true, None) => format!(" --app-args '--ble-controller 0{backend}'"),
-            (false, Some(args)) => format!(" --app-args '{args}'"),
-            (false, None) => String::new(),
+            app_args.push_str(arg);
+        };
+
+        if ble {
+            push("--ble-controller 0");
+            if bluer {
+                push("--bluer");
+            }
+        }
+
+        if groupcast {
+            push("--groupcast");
+        }
+
+        if let Some(args) = Self::app_args_override(test_name, target) {
+            push(args);
+        }
+
+        let app_args_clause = if app_args.is_empty() {
+            String::new()
+        } else {
+            format!(" --app-args '{app_args}'")
         };
 
         // Some tests need a vendored Python wrapper substituted in place of
@@ -2330,6 +2571,11 @@ impl ITests {
             "TC_ACE_1_6" => Some(360),
             "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11" | "TC_CADMIN_1_15"
             | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(360),
+            // The YAML twin of the above: step 7 is a literal
+            // "Wait for PIXIT.CADMIN.CwDuration + 10" and `CwDuration` defaults
+            // to 180s in the test's own PIXIT block, so the suite's 120s
+            // ceiling cannot fit it. Measured at ~295s end to end.
+            "Test_TC_CADMIN_1_6" => Some(600),
             // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
             // 1.4): it sets a 400-byte VVSC and an 85-byte
             // VIDVerificationStatement on a fabric and then issues

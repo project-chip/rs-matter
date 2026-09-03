@@ -220,6 +220,12 @@ fn main() -> Result<(), Error> {
     // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
     matter.startup(&kv)?;
 
+    // Persist the reboot count this boot established. A real product would
+    // defer this until the boot looks healthy, so a boot loop never writes;
+    // a test binary that is about to be driven by the harness has no such
+    // concern.
+    matter.persist_reboot_count(&kv)?;
+
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
@@ -1295,14 +1301,6 @@ static ICD_COUNTER_PERSIST_NOTIFY: Notification<CriticalSectionRawMutex> = Notif
 impl rs_matter::utils::sync::DynBase for TestEventTriggerDiag {}
 
 impl GenDiag for TestEventTriggerDiag {
-    fn reboot_count(&self) -> Result<u16, Error> {
-        ().reboot_count()
-    }
-
-    fn uptime_ms(&self) -> Result<u64, Error> {
-        ().uptime_ms()
-    }
-
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
         Ok(true)
     }
