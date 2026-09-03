@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2023-2025 Project CHIP Authors
+ *    Copyright (c) 2023-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -28,10 +28,23 @@ pub mod qr;
 bitflags! {
     #[repr(transparent)]
     #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    /// The Discovery Capabilities Bitmask carried in the machine-readable
+    /// onboarding payloads (QR code, NFC tag).
     pub struct DiscoveryCapabilities: u8 {
+        /// Soft Access Point (AP) discovery.
+        ///
+        /// Note bit 0 is reserved and SHALL be zero as of Matter 1.6;
+        /// `SOFT_AP` predates that and is kept only for backwards
+        /// compatibility - do not set it on a 1.6 device.
         const SOFT_AP = 0x01;
+        /// BLE discovery
         const BLE = 0x02;
+        /// IP-based discovery (e.g. mDNS or DNS-SD with Thread)
         const IP = 0x04;
+        /// Wi-Fi Public Action Frame
+        const PAF = 0x08;
+        /// NFC Transport Layer (NTL) commissioning
+        const NTL = 0x10;
     }
 }
 

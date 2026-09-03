@@ -1409,6 +1409,48 @@ mod tests {
         assert_eq!(data_str, QR_CODE)
     }
 
+    /// The bit positions are fixed by the Matter Core spec's Discovery
+    /// Capabilities Bitmask, and a payload carrying PAF or NTL has to survive a
+    /// round-trip: `parse` uses `from_bits_truncate`, so any bit the type does
+    /// not define is silently dropped off a peer's payload.
+    #[test]
+    fn discovery_capability_bits_round_trip() {
+        assert_eq!(DiscoveryCapabilities::BLE.bits(), 1 << 1);
+        assert_eq!(DiscoveryCapabilities::IP.bits(), 1 << 2);
+        assert_eq!(DiscoveryCapabilities::PAF.bits(), 1 << 3);
+        assert_eq!(DiscoveryCapabilities::NTL.bits(), 1 << 4);
+
+        let comm_data = BasicCommData {
+            password: 20202021_u32.to_le_bytes().into(),
+            discriminator: 3840,
+        };
+        let dev_det = BasicInfoConfig {
+            vid: 65521,
+            pid: 32769,
+            ..Default::default()
+        };
+
+        let caps = DiscoveryCapabilities::BLE | DiscoveryCapabilities::NTL;
+
+        let payload = QrPayload::new_from_basic_info(
+            caps,
+            CommFlowType::Standard,
+            comm_data,
+            &dev_det,
+            no_optional_data,
+        );
+
+        let mut buf = [0; 1024];
+        let (text, buf) = unwrap!(payload.as_str(&mut buf), "Failed to encode");
+
+        let mut parse_buf = [0; 1024];
+        let parsed = unwrap!(QrPayload::parse(text, &mut parse_buf), "Failed to parse");
+
+        assert_eq!(parsed.discovery_capabilities, caps);
+
+        let _ = buf;
+    }
+
     /// The NFC tag carries the same onboarding payload as the QR code, wrapped
     /// in the single NDEF URI record the Matter Core spec fixes byte for byte.
     #[test]

@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Add PAF and NTL options to `DiscoveryCapabilities`; `QrPayload::as_ndef` (#543)
 * Streamline the logging of the E2E test drivers (#542)
 * Commissioning - trying to close a non-open comm window should return an error (#541)
 * Commissioning over PASE - fix a spurious SessionNotFound error (#541)
