@@ -235,6 +235,7 @@ fn main() -> Result<(), Error> {
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
+    matter.print_standard_nfc_ndef(DiscoveryCapabilities::IP)?;
 
     if !matter.has_fabrics() {
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;

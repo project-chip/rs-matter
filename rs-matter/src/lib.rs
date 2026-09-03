@@ -317,7 +317,7 @@ impl<'a> Matter<'a> {
         self.dev_att = dev_att;
     }
 
-    /// Print the standard QR code text to the console
+    /// Log the standard QR code text.
     ///
     /// The printed QR code text corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
     /// and contains no optional data.
@@ -344,7 +344,48 @@ impl<'a> Matter<'a> {
         Ok(())
     }
 
-    /// Print the standard QR code to the console
+    /// Log the NDEF message an NFC tag should carry for this device.
+    ///
+    /// # Arguments
+    /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    pub fn print_standard_nfc_ndef(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
+        let rx_buf = self.transport().rx_buffer();
+
+        let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
+        let buf = &mut *buf;
+
+        let payload = self.standard_qr_payload(disc_caps)?;
+
+        let (ndef, remaining) = payload.as_ndef(buf)?;
+
+        // Hex, because bytes are what get written to the tag, and as one
+        // contiguous string so it can be compared against a tag reader's dump.
+        // (`fmt::Bytes` pretty-prints across lines, which is unusable here.)
+        // The buffer `as_ndef` hands back is where it goes - two characters per
+        // byte.
+        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+        let hex_len = ndef.len() * 2;
+        if remaining.len() < hex_len {
+            Err(ErrorCode::BufferTooSmall)?;
+        }
+
+        for (index, byte) in ndef.iter().enumerate() {
+            remaining[index * 2] = HEX[(byte >> 4) as usize];
+            remaining[index * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+
+        // Cannot fail: every byte written above is an ASCII hex digit.
+        let hex = unwrap!(
+            core::str::from_utf8(&remaining[..hex_len]).map_err(|_| ErrorCode::InvalidData)
+        );
+
+        info!("SetupNFCTagNDEF: [{}]", hex);
+
+        Ok(())
+    }
+
+    /// Log the standard QR code text.
     ///
     /// The printed QR code corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
     /// and contains no optional data.
