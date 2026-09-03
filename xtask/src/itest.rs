@@ -63,6 +63,28 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestCommandsById",
     "TestCommissionerNodeId",
     "TestCommissioningWindow",
+    "Test_TC_CADMIN_1_6",
+    "Test_TC_CADMIN_1_16",
+    // Every remaining `Test_TC_CADMIN_*` YAML ships with *every* step
+    // `disabled: true` upstream. They are written as procedures for a human to
+    // adapt rather than as runnable suites - "Chip-tool command used below are
+    // an example to verify the functionality. For certification test, we expect
+    // DUT should have a capability or way to run the equivalent command" - so
+    // enabling them here would only buy a vacuous pass.
+    //
+    // They exercise the DUT-as-commissioner role (`CADMIN.C`), which rs-matter
+    // does support - see `TestSuite::Commissioner` and `commissioner_tests`.
+    // Should upstream ever enable their steps, they belong to that suite and
+    // not here: `SYS_TESTS` runs against the commissionee (`system_tests`).
+    // "Test_TC_CADMIN_1_1",
+    // "Test_TC_CADMIN_1_2",
+    // "Test_TC_CADMIN_1_7",
+    // "Test_TC_CADMIN_1_8",
+    // "Test_TC_CADMIN_1_12",
+    // "Test_TC_CADMIN_1_13",
+    // "Test_TC_CADMIN_1_14",
+    // "Test_TC_CADMIN_1_17",
+    // "Test_TC_CADMIN_1_18",
     "TestConfigVariables",
     "TestConstraints",
     "TestDelayCommands",
@@ -1326,7 +1348,11 @@ impl ITests {
                     }
                 }
 
-                self.run_yaml_batch(&batch, test_timeout_secs, profile, target, &chip_env)?;
+                // Every member shares a key, so they share the override too.
+                let batch_timeout_secs =
+                    Self::per_test_timeout_secs(tests[i]).unwrap_or(test_timeout_secs);
+
+                self.run_yaml_batch(&batch, batch_timeout_secs, profile, target, &chip_env)?;
             }
         }
 
@@ -1341,13 +1367,18 @@ impl ITests {
     /// - the `.pics` file and the `RS_MATTER_WIRELESS_THREAD` device-flavour
     ///   selection, both determined by [`WirelessFlavour::of`];
     /// - the OTA app-path wiring, which is role-specific - so `OTA_*` tests
-    ///   stay singleton batches, keyed by their own (role-suffixed) name.
-    fn yaml_batch_key(test_name: &str) -> (Option<WirelessFlavour>, Option<&str>) {
+    ///   stay singleton batches, keyed by their own (role-suffixed) name;
+    /// - the per-test timeout, which `run_test_suite.py` takes once per
+    ///   invocation as `--test-timeout-seconds`. A test needing longer than the
+    ///   suite default therefore batches only with others needing exactly the
+    ///   same, rather than dragging the whole batch's ceiling up with it.
+    fn yaml_batch_key(test_name: &str) -> (Option<WirelessFlavour>, Option<&str>, Option<u32>) {
         let real_name = test_name.strip_suffix("@requestor").unwrap_or(test_name);
 
         (
             WirelessFlavour::of(test_name),
             real_name.starts_with("OTA_").then_some(test_name),
+            Self::per_test_timeout_secs(test_name),
         )
     }
 
@@ -1531,10 +1562,10 @@ impl ITests {
     /// Run a batch of YAML tests in a single `run_test_suite.py` invocation.
     ///
     /// All batch members share one per-invocation configuration - guaranteed
-    /// by [`Self::yaml_batch_key`] - and none of them has a
-    /// [`Self::per_test_timeout_secs`] override (those are all `TC_*` Python
-    /// tests), so the suite default applies to every member, enforced
-    /// per-test by the runner itself via `--test-timeout-seconds`.
+    /// by [`Self::yaml_batch_key`], which folds in
+    /// [`Self::per_test_timeout_secs`] - so `timeout_secs` applies to every
+    /// member, enforced per-test by the runner itself via
+    /// `--test-timeout-seconds`.
     fn run_yaml_batch(
         &self,
         batch: &[&str],
@@ -2330,6 +2361,11 @@ impl ITests {
             "TC_ACE_1_6" => Some(360),
             "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11" | "TC_CADMIN_1_15"
             | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(360),
+            // The YAML twin of the above: step 7 is a literal
+            // "Wait for PIXIT.CADMIN.CwDuration + 10" and `CwDuration` defaults
+            // to 180s in the test's own PIXIT block, so the suite's 120s
+            // ceiling cannot fit it. Measured at ~295s end to end.
+            "Test_TC_CADMIN_1_6" => Some(600),
             // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
             // 1.4): it sets a 400-byte VVSC and an 85-byte
             // VIDVerificationStatement on a fabric and then issues
