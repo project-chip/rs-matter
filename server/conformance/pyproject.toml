@@ -1,0 +1,27 @@
+[project]
+name = "matter-fast-conformance"
+version = "0.1.0"
+description = "Conformance suite: runs the real python-matter-server client against a live matter-fast (or matterjs-server) instance over the WS wire protocol."
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "aiohttp>=3.10",
+    "matter-python-client",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# Home Assistant's own Matter client, pulled straight from matterjs-server so
+# the suite tests against the client HA actually ships rather than a copy.
+# Point this at a local checkout while iterating:
+#   matter-python-client = { path = "../../matterjs-server/python_client" }
+matter-python-client = { git = "https://github.com/matter-js/matterjs-server", subdirectory = "python_client" }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "live: requires a real Matter lamp; set LAMP_CODE and run with -m live",
+]

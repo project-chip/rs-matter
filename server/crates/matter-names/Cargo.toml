@@ -1,0 +1,9 @@
+[package]
+name = "matter-names"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Matter IDL name table: command/event field names for the HA WebSocket wire format"
+
+[dependencies]
+serde_json = { workspace = true }

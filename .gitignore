@@ -6,6 +6,10 @@ Cargo.lock
 # whatever PR happens to be measured next. Bump it consciously (and expect
 # the size report to move when you do).
 !bloat-check/Cargo.lock
+# rs-matter-server (server/) is an application workspace: its lockfile is
+# committed deliberately, unlike the library lockfiles ignored above.
+!server/Cargo.lock
+.DS_Store
 .vscode
 .idea
 .claude

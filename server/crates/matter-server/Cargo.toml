@@ -1,0 +1,21 @@
+[package]
+name = "matter-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "matter-server"
+path = "src/main.rs"
+
+[dependencies]
+ws-protocol = { path = "../ws-protocol" }
+backend-mc = { path = "../backend-mc" }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
