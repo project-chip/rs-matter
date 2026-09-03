@@ -1,9 +1,18 @@
 name: PublishTagDryRun
 
-# Dry run of `PublishTag`: prints the `v<version>` tag that would be created,
-# without pushing anything.
+# Dry run of `PublishTag`: prints the tag that would be created and the commit
+# it would point at, without pushing anything.
 on:
-  workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create (defaults to `v<workspace version>` as read from the tagged commit)"
+        required: false
+        type: string
+      commit:
+        description: "Commit to tag (defaults to the tip of the default branch)"
+        required: false
+        type: string
 
 env:
   CRATE_NAME: rs-matter
@@ -15,12 +24,27 @@ jobs:
     steps:
       - name: Setup | Checkout
         uses: actions/checkout@v4
-      - name: Get the release version from cargo
+        with:
+          # An empty `ref` checks out the default branch. Checking out the
+          # commit that is about to be tagged is what makes the version derived
+          # below the version of THAT commit rather than of the branch tip.
+          ref: ${{inputs.commit}}
+      - name: Get the release tag
+        env:
+          # Passed via the environment rather than interpolated into the script,
+          # so that the tag is data and never shell syntax.
+          TAG: ${{inputs.tag}}
         run: |
-          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
-          echo "crate_version=$version" >> $GITHUB_ENV
-          echo "release version: $version"
+          tag="$TAG"
+          if [ -z "$tag" ]; then
+            version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
+            tag="v$version"
+          fi
+          echo "release_tag=$tag" >> $GITHUB_ENV
+          echo "release_commit=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "release tag: $tag"
       - name: Tag the new release (dry run)
         run: |
-          echo "Would create tag: v${{env.crate_version}}"
-          echo "Would use message: Release v${{env.crate_version}}"
+          echo "Would create tag: ${{env.release_tag}}"
+          echo "Would use message: Release ${{env.release_tag}}"
+          echo "Would tag commit: ${{env.release_commit}}"
