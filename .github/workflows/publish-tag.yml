@@ -9,7 +9,16 @@ name: PublishTag
 # fails); run THIS workflow once, after all three have been published to
 # crates.io, to tag the release.
 on:
-  workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create (defaults to `v<workspace version>` as read from the tagged commit)"
+        required: false
+        type: string
+      commit:
+        description: "Commit to tag (defaults to the tip of the default branch)"
+        required: false
+        type: string
 
 env:
   # The three crates share the workspace version; the main crate is the natural
@@ -28,13 +37,29 @@ jobs:
     steps:
       - name: Setup | Checkout
         uses: actions/checkout@v4
-      - name: Get the release version from cargo
+        with:
+          # An empty `ref` checks out the default branch. Checking out the
+          # commit that is about to be tagged is what makes the version derived
+          # below the version of THAT commit rather than of the branch tip.
+          ref: ${{inputs.commit}}
+      - name: Get the release tag
+        env:
+          # Passed via the environment rather than interpolated into the script,
+          # so that the tag is data and never shell syntax.
+          TAG: ${{inputs.tag}}
         run: |
-          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
-          echo "crate_version=$version" >> $GITHUB_ENV
-          echo "release version: $version"
+          tag="$TAG"
+          if [ -z "$tag" ]; then
+            version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
+            tag="v$version"
+          fi
+          echo "release_tag=$tag" >> $GITHUB_ENV
+          echo "release tag: $tag"
+          echo "commit: $(git rev-parse HEAD)"
       - name: Tag the new release
         uses: rickstaa/action-create-tag@v1
         with:
-          tag: v${{env.crate_version}}
-          message: "Release v${{env.crate_version}}"
+          tag: ${{env.release_tag}}
+          message: "Release ${{env.release_tag}}"
+          # An empty `commit_sha` tags the checked out commit.
+          commit_sha: ${{inputs.commit}}
