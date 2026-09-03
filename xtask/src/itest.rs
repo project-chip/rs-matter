@@ -185,12 +185,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "Test_TC_ICDM_4_1",
     "Test_TC_OPCREDS_3_7",
     "Test_TC_TIMESYNC_2_3",
-    // `RebootCount` must survive a restart and increment; the default
-    // `impl GenDiag for ()` that `system_tests` uses returns a constant 0, so
-    // step 9's constraint check fails after the harness reboots the DUT.
-    // Enable once the counter is persisted (a real conformance gap, not a
-    // harness artefact - an ATL would fail this too).
-    // "Test_TC_DGGEN_2_1",
+    "Test_TC_DGGEN_2_1",
     // Six manual `verification:` steps: chiptool rejects step 4 and runs none
     // of them. Also Wi-Fi-only (`PIXIT.CNET.WIFI_1ST_ACCESSPOINT_SSID`), while
     // `system_tests` is Ethernet.
@@ -237,7 +232,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestLogCommands",
     "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
-    // "TestOperationalState", // TODO: Operational State cluster not yet implemented
     "TestReadNoneSubscribeNone",
     // `nullable_boolean` must default to `false` (not null) per the upstream
     // test-cluster XML - see the note in `unit_testing.rs`; everything else
@@ -340,34 +334,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — General & Administrator Commissioning (system clusters)
     //
     "TC_CADMIN_1_3_4",
-    // The CHIP-framework cleanup bug that used to break this test is another
-    // chip-master-only regression absent from the pinned `v1.6-branch`
-    // framework. Needs the raised timeouts in `per_test_timeout_secs` /
-    // `per_test_framework_timeout_secs` (a ~180s window-expiry wait).
     "TC_CADMIN_1_5",
-    //                  // from the device side. Step 7 (commission after the
-    //                  // window has been revoked) expects exactly
-    //                  // `CHIP_ERROR_TIMEOUT (0x32)`. To produce 0x32 the
-    //                  // device must NOT reply to the PBKDFParamRequest —
-    //                  // any status-report response surfaces as
-    //                  // `INVALID_PASE_PARAMETER (0x38)`. The PASE responder
-    //                  // (`pase/responder.rs`) does drop closed-window PASE
-    //                  // attempts silently, which is CHIP-style behavior; with
-    //                  // that, the controller's mDNS browse for the device's
-    //                  // discriminator times out at 30 s, mapped to
-    //                  // `CHIP_ERROR_TIMEOUT`, and step 7 *does* pass.
-    //                  // However, `DeviceCommissioner::EstablishPASEConnection`
-    //                  // (`CHIPDeviceController.cpp:734`) sets
-    //                  // `mDeviceInPASEEstablishment` at the start of step 7
-    //                  // and only clears it on the PASE-failure paths
-    //                  // (`OnSessionEstablishmentError`); the
-    //                  // mDNS-discovery-timeout path leaves it non-null.
-    //                  // Step 15's `CommissionOnNetwork` then hits the
-    //                  // `VerifyOrExit(mDeviceInPASEEstablishment == nullptr,
-    //                  // INCORRECT_STATE)` guard and fails with 0x03 before
-    //                  // ever leaving the controller. The other CADMIN tests
-    //                  // (1_3_4, 1_9, 1_11, 1_15, 1_19, 1_22, 1_25) pass with
-    //                  // the silent-drop change.
     "TC_CADMIN_1_9",
     // Repeated OpenCommissioningWindow / PASE-attempt handling; reads
     // `SpecificationVersion` on EP0, hence the `--endpoint 0` extra arg.

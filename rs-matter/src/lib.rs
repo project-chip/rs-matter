@@ -45,11 +45,12 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, REBOOT_COUNT_KEY};
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::{CommWindowState, Pase};
+use crate::tlv::{TLVElement, TLVTag, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
@@ -59,6 +60,7 @@ use crate::transport::{
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 
 use rand_core::RngCore;
@@ -256,6 +258,61 @@ impl<'a> Matter<'a> {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Persist the reboot count established by [`Matter::startup`], so the
+    /// next boot counts from it.
+    ///
+    /// Separate from `startup` on purpose. The counter needs one write per
+    /// boot - there is exactly one increment per boot, so unlike the event
+    /// counter there is nothing to batch - and putting that write in the boot
+    /// path means a device stuck in a boot loop rewrites flash on every
+    /// iteration. Calling this once the boot looks healthy (the transport is
+    /// up, or some device-specific milestone) leaves a boot loop writing
+    /// nothing at all.
+    ///
+    /// The cost of deferring is that a crash before this call leaves that boot
+    /// uncounted, which the spec's "best-effort" wording allows.
+    ///
+    /// Idempotent: a call that would rewrite the value already on record does
+    /// nothing, so it is safe to call repeatedly (per milestone, or on a
+    /// timer).
+    ///
+    /// A device that never calls this reports a plausible count for the current
+    /// boot but never advances across reboots.
+    pub fn persist_reboot_count<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+        let reboot_count = self.with_state(|state| state.reboot_count);
+
+        kv.access(|store, buf| {
+            let stored = store
+                .load(REBOOT_COUNT_KEY, buf)?
+                .map(|data| TLVElement::new(data).u16())
+                .transpose()?;
+
+            // Nothing to do if this boot's count is already on record, so
+            // calling this more than once per boot costs no writes.
+            if stored == Some(reboot_count) {
+                return Ok(());
+            }
+
+            let mut wb = WriteBuf::new(buf);
+
+            reboot_count.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+
+            let len = wb.get_tail();
+            let (data, buf) = buf.split_at_mut(len);
+
+            store.store(REBOOT_COUNT_KEY, data, buf)
+        })
+    }
+
+    /// The node's reboot count, as reported by
+    /// `GeneralDiagnostics::RebootCount`.
+    ///
+    /// Bumped once per [`Matter::startup`] and persisted, so it survives
+    /// reboots and resets only on a factory reset.
+    pub fn reboot_count(&self) -> u16 {
+        self.with_state(|state| state.reboot_count)
     }
 
     /// The ICD operating mode to advertise in the operational `ICD` DNS-SD TXT
@@ -705,6 +762,27 @@ impl<'a> Matter<'a> {
                 #[cfg(feature = "groups")]
                 state.sessions.load_persist(&mut store, buf)?;
 
+                // `RebootCount` for *this* boot: the persisted value plus one.
+                //
+                // Only loaded here - the matching write is
+                // [`Matter::persist_reboot_count`], which the device calls once
+                // it considers the boot healthy. Writing it here instead would
+                // put one flash write in the boot path, so a device stuck in a
+                // boot loop would churn its write-endurance budget while
+                // already broken.
+                //
+                // Reaching `startup` *is* a boot, so no platform support is
+                // needed to detect one, and the spec asks only for a
+                // "best-effort" count - it deliberately does not distinguish a
+                // crash from a power cut. A wake from sleep does not re-enter
+                // startup, which is the one case the spec excludes.
+                state.reboot_count = store
+                    .load(REBOOT_COUNT_KEY, buf)?
+                    .map(|data| TLVElement::new(data).u16())
+                    .transpose()?
+                    .unwrap_or(0)
+                    .saturating_add(1);
+
                 Ok::<_, Error>(())
             })
         })?;
@@ -816,6 +894,8 @@ pub struct MatterState {
     /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT key.
     /// The ICD Management handler keeps this in sync with its registration set.
     icd_mode: Option<OperatingModeEnum>,
+    /// The node's reboot counter, bumped and persisted by `Matter::startup`.
+    reboot_count: u16,
 }
 
 impl MatterState {
@@ -832,6 +912,7 @@ impl MatterState {
             basic_info_settings: BasicInfoSettings::new(),
             rtc: Rtc::new(),
             icd_mode: None,
+            reboot_count: 0,
         }
     }
 
@@ -849,6 +930,7 @@ impl MatterState {
             basic_info_settings <- BasicInfoSettings::init(),
             rtc <- Rtc::init(),
             icd_mode: None,
+            reboot_count: 0,
         })
     }
 
@@ -863,6 +945,7 @@ impl MatterState {
             basic_info_settings <- BasicInfoSettings::init(),
             rtc <- Rtc::init(),
             icd_mode: None,
+            reboot_count: 0,
         })
     }
 }

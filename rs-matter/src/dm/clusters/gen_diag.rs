@@ -102,12 +102,6 @@ pub use crate::im::DeviceLoad;
 /// A trait to which the system implementation of the General Diagnostics Matter cluster
 /// delegates for information.
 pub trait GenDiag: DynBase {
-    /// Get the reboot count of the node.
-    fn reboot_count(&self) -> Result<u16, Error>;
-
-    /// Get the uptime of the node in milliseconds.
-    fn uptime_ms(&self) -> Result<u64, Error>;
-
     /// Whether the test event triggers are enabled.
     /// Check the Matter Core spec for more info.
     fn test_event_triggers_enabled(&self) -> Result<bool, Error>;
@@ -121,14 +115,6 @@ impl<T> GenDiag for &T
 where
     T: GenDiag,
 {
-    fn reboot_count(&self) -> Result<u16, Error> {
-        (**self).reboot_count()
-    }
-
-    fn uptime_ms(&self) -> Result<u64, Error> {
-        (**self).uptime_ms()
-    }
-
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
         (**self).test_event_triggers_enabled()
     }
@@ -146,14 +132,6 @@ where
 /// semantics the spec asks for, and what `TimeSnapshot::SystemTimeMs` needs
 /// to advance with real wall time between calls.
 impl GenDiag for () {
-    fn reboot_count(&self) -> Result<u16, Error> {
-        Ok(0)
-    }
-
-    fn uptime_ms(&self) -> Result<u64, Error> {
-        Ok(embassy_time::Instant::now().as_millis())
-    }
-
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
         Ok(false)
     }
@@ -275,12 +253,12 @@ impl ClusterHandler for GenDiagHandler<'_> {
         }
     }
 
-    fn reboot_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.diag.reboot_count()
+    fn reboot_count(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(ctx.exchange().matter().reboot_count())
     }
 
     fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        self.diag.uptime_ms().map(|uptime| uptime / 1000)
+        Ok(embassy_time::Instant::now().as_secs())
     }
 
     fn device_load_status<P: TLVBuilderParent>(
@@ -324,9 +302,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
         ctx: impl InvokeContext,
         response: TimeSnapshotResponseBuilder<P>,
     ) -> Result<P, Error> {
-        // `SystemTimeMs` is the monotonic since-boot timestamp; we delegate
-        // to `GenDiag::uptime_ms`.
-        let system_time_ms = self.diag.uptime_ms()?;
+        let system_time_ms = embassy_time::Instant::now().as_millis();
 
         // `PosixTimeMs` (Matter Core spec): SHALL be null only
         // when the device doesn't support the TimeSynchronization cluster
