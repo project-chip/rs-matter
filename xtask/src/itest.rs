@@ -381,11 +381,18 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
     // Python system tests upstream that we do not run:
     // "TC_BRBINFO_2_1",  // Skipped: driven against CHIP's `${BRIDGE_APP}`; rs-matter has no bridge DUT.
-    // "TC_BRBINFO_3_1",  // Skipped: same - bridged-device composition behind an Aggregator.
+    // "TC_BRBINFO_3_1",  // Skipped: bridged devices, and it carries no CI runner metadata at all - not wired for automated runs.
     // "TC_DD_1_5",       // Skipped: NFC onboarding. `DiscoveryCapabilities` (see `pairing.rs`) has no NFC/NTL bit.
     // "TC_DD_3_24",      // Skipped: NFC commissioning of an unpowered DUT - needs NFC plus physical power control.
-    // "TC_SC_5_1",       // Skipped: needs `ALL_CLUSTERS_APP` *and* `ALL_CLUSTERS_NO_GROUPCAST_APP` in one run. We
-    // "TC_SC_5_2",       // have both compositions (`system_tests --groupcast`), but one binary per role per run.
+    "TC_SC_5_1",
+    "TC_SC_5_2",
+    // Upstream's `run1` half: the same two tests against the Groupcast-enabled
+    // composition, where `AUXILIARY` is advertised and wildcard-target
+    // Group-auth ACL entries no longer reach the root endpoint - so group
+    // messaging is exercised under the ACL semantics a groupcast-capable
+    // device actually has.
+    "TC_SC_5_1@groupcast",
+    "TC_SC_5_2@groupcast",
     "TC_CGEN_2_1",
     "TC_CGEN_2_2",
     "TC_CGEN_2_4",
@@ -2219,6 +2226,16 @@ impl ITests {
             None => (test_name, false),
         };
 
+        // Likewise `@groupcast`, which re-runs a test against the
+        // Groupcast-enabled app composition (`NODE_GROUPCAST`). Upstream
+        // expresses this as a second `run` entry in a test's CI metadata
+        // against a different app binary; here the two compositions are one
+        // binary and a flag, so the variant rides on the test name.
+        let (test_name, groupcast) = match test_name.strip_suffix("@groupcast") {
+            Some(name) => (name, true),
+            None => (test_name, false),
+        };
+
         let script_path = chip_dir
             .join("src/python_testing")
             .join(format!("{test_name}.py"));
@@ -2347,14 +2364,37 @@ impl ITests {
         // tests like TC_SC_7_1 that require non-default discriminator /
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
-        let backend = if bluer { " --bluer" } else { "" };
-        let app_args_clause = match (ble, Self::app_args_override(test_name, target)) {
-            (true, Some(args)) => {
-                format!(" --app-args '--ble-controller 0{backend} {args}'")
+        // Built up rather than enumerated: BLE backend, app composition and
+        // per-test overrides are independent, and a match over every
+        // combination grows with each new one.
+        let mut app_args = String::new();
+
+        let mut push = |arg: &str| {
+            if !app_args.is_empty() {
+                app_args.push(' ');
             }
-            (true, None) => format!(" --app-args '--ble-controller 0{backend}'"),
-            (false, Some(args)) => format!(" --app-args '{args}'"),
-            (false, None) => String::new(),
+            app_args.push_str(arg);
+        };
+
+        if ble {
+            push("--ble-controller 0");
+            if bluer {
+                push("--bluer");
+            }
+        }
+
+        if groupcast {
+            push("--groupcast");
+        }
+
+        if let Some(args) = Self::app_args_override(test_name, target) {
+            push(args);
+        }
+
+        let app_args_clause = if app_args.is_empty() {
+            String::new()
+        } else {
+            format!(" --app-args '{app_args}'")
         };
 
         // Some tests need a vendored Python wrapper substituted in place of
