@@ -16,6 +16,49 @@
  */
 
 //! A module for running Chip integration tests on the `rs-matter` project.
+//!
+//! # Functional YAML suites that are deliberately not listed
+//!
+//! Besides the certification suites, upstream ships a set of functional
+//! YAML suites under `src/app/tests/suites/`. The ones absent from every
+//! list below are absent for one of five reasons:
+//!
+//! - **No rs-matter test node exposes the cluster.** The suites drive
+//!   device types we do not model: `DL_*` (Door Lock),
+//!   `TV_*` (the twelve media clusters), `TestOperationalState` and
+//!   `TestRVCOperationalState`, `TestActivatedCarbonFilterMonitoring`,
+//!   `TestHepaFilterMonitoring`, `TestDishwasherAlarm`, `TestFanControl`,
+//!   `TestTemperatureControl` and `TestThermostat`. Each would need its
+//!   own example binary with a simulated appliance behind it, not just
+//!   the cluster.
+//! - **The suite tests the harness, not a DUT.**
+//!   `TestPurposefulFailureEqualities`,
+//!   `TestPurposefulFailureExtraReportingOnToggle` and
+//!   `TestPurposefulFailureNotNullConstraint` are required to fail —
+//!   upstream keeps them to check that the runner notices a failure.
+//!   `TestExampleCluster` drives a chip-tool-side pseudo-cluster and
+//!   never puts a message on the wire. `TestGroupDemoCommand` and
+//!   `TestGroupDemoConfig` are demo scaffolding, listed in
+//!   `manualTests.json` rather than `ciTests.json`.
+//! - **chip-tool cannot run it.** `TestDiagnosticLogsDownloadCommand`
+//!   pulls the log over BDX with a `Bdx`/`Download` pseudo-command that
+//!   only darwin-framework-tool implements; upstream skips it for
+//!   chip-tool for exactly this reason. The rs-matter side of that
+//!   transfer is covered by `TestDiagnosticLogs`, which is enabled.
+//! - **The suite assumes a DUT state it never establishes.**
+//!   `TestLevelControlWithOnOffDependency` writes `OnLevel`, sends
+//!   `On`, and expects `CurrentLevel` to follow `OnLevel` — but only an
+//!   OFF -> ON edge applies `OnLevel`, and the suite never turns the
+//!   light off first. `light_tests` persists its OnOff state across
+//!   restarts, so whether that edge happens depends on what the previous
+//!   test left behind: the suite passes or fails according to its
+//!   position in the batch. Upstream's app starts off every time, which
+//!   is why the gap does not show there.
+//! - **It duplicates an enabled certification suite.**
+//!   `TestColorControl_9_1` and `TestColorControl_9_2` are copies of
+//!   `Test_TC_CC_9_1` / `Test_TC_CC_9_2` with the PICS gates stripped.
+//!   Our PICS answers `1` to every item those two gate on, so the
+//!   certification versions already execute all of their steps.
 
 use core::iter::once;
 
@@ -746,6 +789,10 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     "Test_TC_LVL_5_1",
     "Test_TC_LVL_6_1",
     "Test_TC_LVL_7_1",
+    // Drives a timed `MoveToLevel` and waits for the reported
+    // `CurrentLevel` to reach its target, exercising transition reporting
+    // rather than a single read-back.
+    "Test_WaitForAttributeValue",
     // `Test_TC_LVL_8_1` is a "DUT as Client" test whose single step is
     // `disabled: true` - enabling it would only buy a vacuous pass.
     // `TC_LVL_9_1` is a Scenes-interaction test - see `SCENES_TESTS`.
