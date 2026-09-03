@@ -85,6 +85,120 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "Test_TC_CADMIN_1_14",
     // "Test_TC_CADMIN_1_17",
     // "Test_TC_CADMIN_1_18",
+    //
+    // Certification YAMLs that ship with *every* step `disabled: true`
+    // upstream: procedures for a human to adapt, not runnable suites, so
+    // enabling any of them buys only a vacuous pass. Listed so the next audit
+    // does not have to re-derive why they are absent.
+    //
+    // Secure Channel — MRP, CASE/PASE and session-establishment procedures.
+    // "Test_TC_SC_1_1",
+    // "Test_TC_SC_1_2",
+    // "Test_TC_SC_1_3",
+    // "Test_TC_SC_1_4",
+    // "Test_TC_SC_2_1",
+    // "Test_TC_SC_2_2",
+    // "Test_TC_SC_2_3",
+    // "Test_TC_SC_2_4",
+    // "Test_TC_SC_3_1",
+    // "Test_TC_SC_3_2",
+    // "Test_TC_SC_3_3",
+    // "Test_TC_SC_4_2",
+    // "Test_TC_SC_4_4",
+    // "Test_TC_SC_4_6",
+    // "Test_TC_SC_4_7",
+    // "Test_TC_SC_4_8",
+    // "Test_TC_SC_4_9",
+    // "Test_TC_SC_5_3",
+    // "Test_TC_SC_6_1",
+    // Device Discovery — commissioner-side and onboarding-payload procedures.
+    // "Test_TC_DD_1_6",
+    // "Test_TC_DD_1_7",
+    // "Test_TC_DD_1_8",
+    // "Test_TC_DD_1_9",
+    // "Test_TC_DD_1_10",
+    // "Test_TC_DD_1_11",
+    // "Test_TC_DD_2_1",
+    // "Test_TC_DD_2_2",
+    // "Test_TC_DD_3_3",
+    // "Test_TC_DD_3_4",
+    // "Test_TC_DD_3_5",
+    // "Test_TC_DD_3_6",
+    // "Test_TC_DD_3_7",
+    // "Test_TC_DD_3_8",
+    // "Test_TC_DD_3_9",
+    // "Test_TC_DD_3_10",
+    // "Test_TC_DD_3_11",
+    // "Test_TC_DD_3_12",
+    // "Test_TC_DD_3_13",
+    // "Test_TC_DD_3_14",
+    // "Test_TC_DD_3_15",
+    // "Test_TC_DD_3_16",
+    // "Test_TC_DD_3_17",
+    // "Test_TC_DD_3_18",
+    // "Test_TC_DD_3_19",
+    // "Test_TC_DD_3_20",
+    // "Test_TC_DD_3_21",
+    // "Test_TC_DD_3_22",
+    // Interaction Model — DUT-as-client message-format procedures.
+    // "Test_TC_IDM_1_1",
+    // "Test_TC_IDM_1_3",
+    // "Test_TC_IDM_2_1",
+    // "Test_TC_IDM_3_1",
+    // "Test_TC_IDM_4_1",
+    // "Test_TC_IDM_4_4",
+    // "Test_TC_IDM_5_1",
+    // "Test_TC_IDM_6_1",
+    // "Test_TC_IDM_6_2",
+    // "Test_TC_IDM_6_3",
+    // "Test_TC_IDM_6_4",
+    // "Test_TC_IDM_7_1",
+    // "Test_TC_IDM_8_1",
+    // Device Attestation, Network/Operational Commissioning, Groups, and
+    // diagnostics variants that are likewise fully disabled.
+    // "Test_TC_DA_1_3",
+    // "Test_TC_DA_1_4",
+    // "Test_TC_DA_1_6",
+    // "Test_TC_DA_1_8",
+    // "Test_TC_CNET_4_12",
+    // "Test_TC_CNET_4_13",
+    // "Test_TC_CNET_4_14",
+    // "Test_TC_CNET_4_20",
+    // "Test_TC_CNET_4_21",
+    // "Test_TC_OPCREDS_3_3",
+    // "Test_TC_OPCREDS_3_6",
+    // "Test_TC_G_2_3",
+    // "Test_TC_G_3_2",
+    // "Test_TC_GRPKEY_5_4",
+    // "Test_TC_BRBINFO_2_2",
+    // "Test_TC_PS_2_2",
+    // "Test_TC_DGGEN_2_2",
+    // "Test_TC_DGSW_2_3",
+    //
+    // Certification YAMLs with runnable steps, audited and verified against
+    // `system_tests`.
+    //
+    "Test_TC_ACE_1_1",
+    "Test_TC_ACL_2_1",
+    "Test_TC_DGGEN_2_3",
+    "Test_TC_DGGEN_3_1",
+    "Test_TC_ICDM_4_1",
+    "Test_TC_OPCREDS_3_7",
+    "Test_TC_TIMESYNC_2_3",
+    // `RebootCount` must survive a restart and increment; the default
+    // `impl GenDiag for ()` that `system_tests` uses returns a constant 0, so
+    // step 9's constraint check fails after the harness reboots the DUT.
+    // Enable once the counter is persisted (a real conformance gap, not a
+    // harness artefact - an ATL would fail this too).
+    // "Test_TC_DGGEN_2_1",
+    // Six manual `verification:` steps: chiptool rejects step 4 and runs none
+    // of them. Also Wi-Fi-only (`PIXIT.CNET.WIFI_1ST_ACCESSPOINT_SSID`), while
+    // `system_tests` is Ethernet.
+    // "Test_TC_CNET_4_11",
+    // Not registered as targets by `run_test_suite.py` ("Unknown target"), so
+    // unreachable through the YAML runner whatever the DUT supports.
+    // "Test_TC_DGETH_3_2_Simulated",
+    // "Test_TC_DGSW_3_2_Simulated",
     "TestConfigVariables",
     "TestConstraints",
     "TestDelayCommands",
@@ -265,6 +379,13 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_CADMIN_1_25",
     // "TC_CADMIN_1_27",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
     // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
+    // Python system tests upstream that we do not run:
+    // "TC_BRBINFO_2_1",  // Skipped: driven against CHIP's `${BRIDGE_APP}`; rs-matter has no bridge DUT.
+    // "TC_BRBINFO_3_1",  // Skipped: same - bridged-device composition behind an Aggregator.
+    // "TC_DD_1_5",       // Skipped: NFC onboarding. `DiscoveryCapabilities` (see `pairing.rs`) has no NFC/NTL bit.
+    // "TC_DD_3_24",      // Skipped: NFC commissioning of an unpowered DUT - needs NFC plus physical power control.
+    // "TC_SC_5_1",       // Skipped: needs `ALL_CLUSTERS_APP` *and* `ALL_CLUSTERS_NO_GROUPCAST_APP` in one run. We
+    // "TC_SC_5_2",       // have both compositions (`system_tests --groupcast`), but one binary per role per run.
     "TC_CGEN_2_1",
     "TC_CGEN_2_2",
     "TC_CGEN_2_4",
@@ -1559,6 +1680,41 @@ impl ITests {
         Ok(())
     }
 
+    /// Fail early when the kernel forbids unprivileged user namespaces.
+    ///
+    /// The YAML runner puts the app, chip-tool and the management interface in
+    /// separate network namespaces (`scripts/tests/chiptest/linux.py`), created
+    /// with `unshare` as an unprivileged user. Ubuntu restricts that by
+    /// default, and the failure surfaces deep inside the runner as
+    /// `unshare: write failed /proc/self/uid_map: Operation not permitted`
+    /// with no run summary written - leaving xtask able to report only
+    /// `exit status: 1`.
+    ///
+    /// The knob resets on every reboot, so this is a recurring trap rather
+    /// than a one-time setup step. Python (`TC_*`) tests do not use namespaces
+    /// and are deliberately not gated on it.
+    fn check_unprivileged_userns() -> anyhow::Result<()> {
+        const KNOB: &str = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+
+        // Absent on non-Ubuntu kernels, where the restriction does not exist.
+        let Ok(value) = fs::read_to_string(KNOB) else {
+            return Ok(());
+        };
+
+        if value.trim() != "1" {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "unprivileged user namespaces are restricted, but the YAML tests need them for \
+             their per-test network namespaces.\n\n    \
+             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n\n\
+             To survive a reboot:\n\n    \
+             echo 'kernel.apparmor_restrict_unprivileged_userns=0' \
+             | sudo tee /etc/sysctl.d/99-rs-matter-itest.conf"
+        )
+    }
+
     /// Run a batch of YAML tests in a single `run_test_suite.py` invocation.
     ///
     /// All batch members share one per-invocation configuration - guaranteed
@@ -1574,6 +1730,8 @@ impl ITests {
         target: &str,
         chip_env: &HashMap<String, String>,
     ) -> anyhow::Result<()> {
+        Self::check_unprivileged_userns()?;
+
         info!(
             "=> Running YAML test batch of {} test(s) with per-test timeout {timeout_secs}s: {batch:?}...",
             batch.len()
