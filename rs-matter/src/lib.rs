@@ -385,7 +385,7 @@ impl<'a> Matter<'a> {
         Ok(())
     }
 
-    /// Log the standard QR code text.
+    /// Log the standard QR code.
     ///
     /// The printed QR code corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
     /// and contains no optional data.
