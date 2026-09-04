@@ -225,7 +225,7 @@ impl ResumableSessions {
     /// Drop every record belonging to `fab_idx`. Call this from the
     /// fabric-removal path so removed-fabric peers cannot resume onto
     /// a fabric that no longer exists.
-    fn remove_for_fabric(&mut self, fab_idx: NonZeroU8) {
+    pub(crate) fn remove_for_fabric(&mut self, fab_idx: NonZeroU8) {
         self.records.retain(|r| r.fab_idx != fab_idx);
     }
 

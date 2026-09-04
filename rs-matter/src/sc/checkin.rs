@@ -277,7 +277,9 @@ impl CheckInCounter {
     ///
     /// `epoch` must be non-zero.
     pub(crate) const fn new(start: u32, epoch: u32) -> Self {
-        assert!(epoch != 0, "the Check-In counter epoch must be non-zero");
+        // `::core::assert!` rather than the crate-wide `assert!`, which maps to
+        // `defmt::assert!` under the `defmt` feature and is not const-callable.
+        ::core::assert!(epoch != 0, "the Check-In counter epoch must be non-zero");
 
         Self {
             value: start,

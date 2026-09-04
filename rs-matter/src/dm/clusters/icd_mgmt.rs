@@ -1137,12 +1137,10 @@ mod tests {
         assert_eq!(nodes(&icd, Some(fab(1))), [100]);
     }
 
-    /// A minimal in-memory single-key store, enough to test the counter
-    /// persist/reload roundtrip.
-    #[derive(Default)]
     /// A key-aware in-memory store. The ICD state spans two keys
     /// (registrations and the Check-In counter), so a single-slot stub would
     /// hand one key's blob back for the other.
+    #[derive(Default)]
     struct MemKv {
         entries: alloc::vec::Vec<(u16, alloc::vec::Vec<u8>)>,
     }
