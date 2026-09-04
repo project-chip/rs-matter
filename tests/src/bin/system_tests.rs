@@ -114,7 +114,6 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::{ChainedExchangeHandler, Responder};
-use rs_matter::sc::checkin::CheckInCounter;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
@@ -354,12 +353,12 @@ fn main() -> Result<(), Error> {
     // Shared ICD state for the ICD Management cluster. The ICD Management
     // handler re-hydrates the registrations and the Check-In counter from
     // `im.startup()` (and seeds the advertised operating mode from them), so
-    // both survive a reboot. A fixed start keeps the itests deterministic; the
-    // persisted boundary replaces it when there is one.
-    let icd: &'static Icd = ICD.uninit().init_with(Icd::init(
-        CheckInCounter::new(0, ICD_COUNTER_EPOCH),
-        ICD_MODE,
-    ));
+    // both survive a reboot. Only the persistence epoch is ours to pick: the
+    // counter's starting value is the stored boundary, or a random one on a
+    // first boot.
+    let icd: &'static Icd = ICD
+        .uninit()
+        .init_with(Icd::init(ICD_COUNTER_EPOCH, ICD_MODE));
 
     let gen_diag: &'static dyn GenDiag = if let Some(key) = parse_enable_key_override() {
         info!("TestEventTrigger enabled with configured 16-byte key");

@@ -276,7 +276,7 @@ impl CheckInCounter {
     /// resumes past every value this run might use.
     ///
     /// `epoch` must be non-zero.
-    pub fn new(start: u32, epoch: u32) -> Self {
+    pub(crate) const fn new(start: u32, epoch: u32) -> Self {
         assert!(epoch != 0, "the Check-In counter epoch must be non-zero");
 
         Self {
