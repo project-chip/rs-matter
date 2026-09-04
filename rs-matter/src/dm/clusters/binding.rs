@@ -150,7 +150,7 @@ impl<const N: usize> Bindings<N> {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`BindingHandler`] instance(s) borrowing this registry.
-    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(BINDINGS_KEY, buf)? else {
             self.state.lock(|cell| cell.borrow_mut().clear());
             return Ok(());
@@ -169,7 +169,7 @@ impl<const N: usize> Bindings<N> {
     /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
     /// operation delivered to the [`BindingHandler`] instance(s) borrowing this
     /// registry.
-    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         self.state.lock(|cell| cell.borrow_mut().clear());
 
         store.remove(BINDINGS_KEY, buf)
@@ -182,7 +182,7 @@ impl<const N: usize> Bindings<N> {
     /// lifecycle operation delivered to the [`BindingHandler`] instance(s)
     /// borrowing this registry. Idempotent, since each borrowing handler
     /// instance receives the (broadcast) lifecycle operation.
-    pub fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
+    fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
         self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
             let before = state.len();

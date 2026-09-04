@@ -1162,7 +1162,7 @@ impl Sessions {
         r
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.sessions.clear();
         #[cfg(feature = "groups")]
         {
@@ -1195,7 +1195,7 @@ impl Sessions {
     ///
     /// An absent key means "first boot": the counter is instead seeded
     /// randomly on first use, which likewise stores its boundary first.
-    pub fn load_persist<S: KvBlobStore>(
+    pub(crate) fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -1216,7 +1216,7 @@ impl Sessions {
     /// running, a factory reset drops every fabric and group key, so no peer
     /// can still be tracking this node's counter. The next group send seeds it
     /// afresh at random and stores the new boundary before going on the wire.
-    pub fn reset_persist<S: KvBlobStore>(
+    pub(crate) fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -1883,7 +1883,7 @@ impl Sessions {
 
     /// This assumes that the higher layer has taken care of doing anything required
     /// as per the spec before the sessions are removed or expired
-    pub fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8, expire_sess_id: Option<u32>) {
+    pub(crate) fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8, expire_sess_id: Option<u32>) {
         while let Some(index) = self.sessions.iter().position(|sess| {
             sess.get_local_fabric_idx() == fabric_idx.get() && Some(sess.id) != expire_sess_id
         }) {

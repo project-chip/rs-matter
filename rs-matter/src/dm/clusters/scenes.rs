@@ -584,7 +584,7 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`ScenesHandler`] borrowing this state.
-    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(SCENES_KEY, buf)? else {
             // Reset to empty so a `load_persist` after a key
             // `remove` is deterministic.
@@ -614,7 +614,7 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
     ///
     /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
     /// operation delivered to the [`ScenesHandler`] borrowing this state.
-    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         self.with(|inner| {
             inner.table.clear();
             inner.current_per_fabric.clear();
@@ -631,7 +631,7 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
     /// lifecycle operation delivered to the [`ScenesHandler`] instance(s)
     /// borrowing this state. Idempotent, since each borrowing handler
     /// instance receives the (broadcast) lifecycle operation.
-    pub fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
+    fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
         self.with(|inner| {
             let before = inner.table.len() + inner.current_per_fabric.len();
 

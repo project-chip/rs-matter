@@ -286,7 +286,7 @@ impl Providers {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`OtaRequestorHandler`] borrowing this registry.
-    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(OTA_PROVIDERS_KEY, buf)? else {
             self.state.lock(|cell| cell.borrow_mut().default.clear());
             return Ok(());
@@ -306,7 +306,7 @@ impl Providers {
     ///
     /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
     /// operation delivered to the [`OtaRequestorHandler`] borrowing this registry.
-    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
 
@@ -324,7 +324,7 @@ impl Providers {
     /// Called on fabric removal via the [`LifecycleOp::FabricRemoval`]
     /// lifecycle operation delivered to the [`OtaRequestorHandler`] borrowing
     /// this registry. Idempotent.
-    pub fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
+    fn remove_for_fabric(&self, fab_idx: NonZeroU8) -> bool {
         let removed = self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
             let before = state.default.len() + state.announced.len();

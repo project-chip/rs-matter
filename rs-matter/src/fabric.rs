@@ -1122,7 +1122,7 @@ impl Fabrics {
     }
 
     /// Remove all fabrics
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.fabrics.clear();
     }
 
@@ -1131,7 +1131,7 @@ impl Fabrics {
     /// # Arguments
     /// - `store`: the BLOB store to remove the fabrics from
     /// - `buf`: a temporary buffer to use for removing the fabrics
-    pub fn reset_persist<S: KvBlobStore>(
+    pub(crate) fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -1152,7 +1152,7 @@ impl Fabrics {
     /// # Arguments
     /// - `store`: the BLOB store to load the fabrics from
     /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub fn load_persist<S: KvBlobStore>(
+    pub(crate) fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -1409,7 +1409,7 @@ where
     }
 
     /// Return a reference to the underlying `Persist` instance.
-    pub fn persist_mut(&mut self) -> &mut Persist<S> {
+    pub(crate) fn persist_mut(&mut self) -> &mut Persist<S> {
         &mut self.0
     }
 
