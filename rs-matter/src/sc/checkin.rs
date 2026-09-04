@@ -344,8 +344,17 @@ impl CheckInCounter {
     ///
     /// Persist this right after [`new`](Self::new), so a restart resumes past
     /// every value this run may use.
-    pub fn persist_value(&self) -> u32 {
+    pub(crate) fn persist_value(&self) -> u32 {
         self.next_epoch
+    }
+
+    /// How far ahead of the live value the persisted boundary is kept - the
+    /// `epoch` this counter was constructed with.
+    ///
+    /// Lets a re-hydration path rebuild the counter from a stored `start`
+    /// without the caller having to thread the epoch through again.
+    pub(crate) fn epoch(&self) -> u32 {
+        self.epoch
     }
 }
 

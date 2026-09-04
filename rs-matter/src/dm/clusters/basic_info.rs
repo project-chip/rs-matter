@@ -460,7 +460,7 @@ impl BasicInfoSettings {
     ///
     /// # Arguments
     /// - `flag_changed`: whether to mark the basic info settings as changed
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.node_label.clear();
         self.location = None;
         self.location_type = None;
@@ -495,7 +495,7 @@ impl BasicInfoSettings {
     /// # Arguments
     /// - `store`: the BLOB store to remove the settings from
     /// - `buf`: a temporary buffer to use for removing the settings
-    pub fn reset_persist<S: KvBlobStore>(
+    pub(crate) fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -510,7 +510,7 @@ impl BasicInfoSettings {
     }
 
     /// Load basic info settings from the provided byte slice
-    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub(crate) fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let info = Self::from_tlv(&TLVElement::new(data))?;
 
         self.node_label = info.node_label;
@@ -534,7 +534,7 @@ impl BasicInfoSettings {
     /// ends with this call - sharing a single copy keeps it out of each
     /// attribute-dispatch path (flash size).
     #[inline(never)]
-    pub fn store_persist<S: KvBlobStoreAccess>(
+    pub(crate) fn store_persist<S: KvBlobStoreAccess>(
         &self,
         persist: &mut Persist<S>,
     ) -> Result<(), Error> {
@@ -546,7 +546,7 @@ impl BasicInfoSettings {
     /// # Arguments
     /// - `store`: the BLOB store to load the fabrics from
     /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub fn load_persist<S: KvBlobStore>(
+    pub(crate) fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],

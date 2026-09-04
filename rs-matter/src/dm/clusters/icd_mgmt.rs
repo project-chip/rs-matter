@@ -44,7 +44,9 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
 use crate::im::encoding::GenericPath;
-use crate::persist::{KvBlobStore, Persist, ICD_REGISTERED_CLIENTS_KEY};
+use crate::persist::{
+    KvBlobStore, KvBlobStoreAccess, Persist, ICD_CHECK_IN_COUNTER_KEY, ICD_REGISTERED_CLIENTS_KEY,
+};
 use crate::sc::checkin::{CheckIn, CheckInCounter};
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, ToTLV};
 use crate::utils::cell::RefCell;
@@ -179,9 +181,11 @@ pub struct Icd {
 impl Icd {
     /// Create the ICD state from a starting Check-In counter and mode timings.
     ///
-    /// `counter` should be constructed from the persisted counter value (or a
-    /// random one on first use); persist [`CheckInCounter::persist_value`] right
-    /// after, as its docs describe.
+    /// `counter` supplies the starting value and the persistence epoch. Pass a
+    /// freshly random start: [`LifecycleOp::Startup`] replaces it with the
+    /// persisted boundary (keeping this counter's epoch) when there is one, and
+    /// re-persists the new boundary either way, so the caller does not have to
+    /// drive [`CheckInCounter::persist_value`] itself.
     pub const fn new(counter: CheckInCounter, mode: IcdModeConfig) -> Self {
         Self {
             state: Mutex::new(RefCell::new(IcdState {
@@ -338,7 +342,7 @@ impl Icd {
     /// Drop every registration belonging to `fab_idx`.
     ///
     /// Call when a fabric is removed. Returns whether anything was removed.
-    pub fn remove_fabric(&self, fab_idx: NonZeroU8) -> bool {
+    fn remove_fabric(&self, fab_idx: NonZeroU8) -> bool {
         let removed = self.state.lock(|s| {
             let clients = &mut s.borrow_mut().clients;
             let before = clients.len();
@@ -366,25 +370,8 @@ impl Icd {
         self.registrations_changed.wait().await;
     }
 
-    /// Re-hydrate the registrations from `kv`. Call once at startup, before
-    /// exposing the data model.
-    pub fn load_registrations<S: KvBlobStore>(
-        &self,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        let clients = match kv.load(ICD_REGISTERED_CLIENTS_KEY, buf)? {
-            Some(data) => Vec::from_tlv(&TLVElement::new(data))?,
-            None => Vec::new(),
-        };
-
-        self.state.lock(|s| s.borrow_mut().clients = clients);
-
-        Ok(())
-    }
-
     /// Persist the current registrations to `ctx.kv()`.
-    pub fn store_registrations<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
+    fn store_registrations<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
         let mut persist = Persist::new(ctx.kv());
 
         self.state
@@ -454,11 +441,7 @@ impl Icd {
         let to_persist = self.state.lock(|s| s.borrow_mut().counter.advance());
 
         if let Some(value) = to_persist {
-            kv.store(
-                crate::persist::ICD_CHECK_IN_COUNTER_KEY,
-                &value.to_le_bytes(),
-                buf,
-            )?;
+            kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)?;
         }
 
         Ok(())
@@ -481,29 +464,75 @@ impl Icd {
     /// Persist the current Check-In counter boundary to `kv`.
     pub fn persist_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
         let value = self.state.lock(|s| s.borrow().counter.persist_value());
-        kv.store(
-            crate::persist::ICD_CHECK_IN_COUNTER_KEY,
-            &value.to_le_bytes(),
-            buf,
-        )
+        kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)
     }
 
-    /// Load the persisted Check-In counter epoch and reset the counter to resume
-    /// from it. Call once at startup, before any Check-In is sent.
-    pub fn load_counter<S: KvBlobStore>(
-        &self,
-        mut kv: S,
-        epoch: u32,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        let start = match kv.load(crate::persist::ICD_CHECK_IN_COUNTER_KEY, buf)? {
+    /// Re-hydrate the ICD state from `kv` - the registrations and the Check-In
+    /// counter boundary.
+    ///
+    /// Driven by [`LifecycleOp::Startup`], before the data model starts
+    /// serving operations and before any Check-In is sent.
+    ///
+    /// The counter's epoch comes from the counter the application supplied at
+    /// construction, so the persisted blob only has to carry the boundary. The
+    /// new boundary is written straight back: [`CheckInCounter::new`] resumes
+    /// *at* the stored value, so the values this run may use (`start + 1 ..=
+    /// start + epoch`) are only guaranteed unique once `start + epoch` is
+    /// durable. A crash before the next boundary crossing would otherwise
+    /// reload `start` and hand out the same values a second time.
+    fn load_persist<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+        let clients = match kv.load(ICD_REGISTERED_CLIENTS_KEY, buf)? {
+            Some(data) => Vec::from_tlv(&TLVElement::new(data))?,
+            None => Vec::new(),
+        };
+
+        self.state.lock(|s| s.borrow_mut().clients = clients);
+
+        let start = match kv.load(ICD_CHECK_IN_COUNTER_KEY, buf)? {
             Some(data) => u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::Invalid)?),
             // No persisted value yet: the caller's initial (random) counter stands.
             None => return Ok(()),
         };
 
-        self.state
-            .lock(|s| s.borrow_mut().counter = CheckInCounter::new(start, epoch));
+        let boundary = self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            let epoch = s.counter.epoch();
+            s.counter = CheckInCounter::new(start, epoch);
+
+            s.counter.persist_value()
+        });
+
+        kv.store(ICD_CHECK_IN_COUNTER_KEY, &boundary.to_le_bytes(), buf)
+    }
+
+    /// Reset the ICD state to factory defaults and remove both persisted blobs
+    /// (the registrations and the Check-In counter boundary) from `kv`.
+    ///
+    /// Driven by [`LifecycleOp::FactoryReset`].
+    ///
+    /// The in-memory counter is deliberately left running rather than reset:
+    /// it only ever moves forward, which is strictly safer than restarting it
+    /// at a fixed value, and every key it was ever used with is gone along
+    /// with the registrations.
+    fn reset_persist<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+        let had_registrations = self.state.lock(|s| {
+            let clients = &mut s.borrow_mut().clients;
+
+            let had = !clients.is_empty();
+            clients.clear();
+
+            had
+        });
+
+        kv.remove(ICD_REGISTERED_CLIENTS_KEY, buf)?;
+        kv.remove(ICD_CHECK_IN_COUNTER_KEY, buf)?;
+
+        // Dropping the last registration flips the operating mode to SIT, so
+        // let the application re-advertise mDNS.
+        if had_registrations {
+            self.registrations_changed.notify();
+        }
 
         Ok(())
     }
@@ -693,10 +722,26 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            // Registration re-hydration and factory reset are app-driven
-            // (`Icd::load_registrations` / KV wipe), since the `Icd` state is
-            // owned by the application and shared with the Check-In machinery.
-            LifecycleOp::Startup | LifecycleOp::FactoryReset => Ok(()),
+            LifecycleOp::Startup => {
+                ctx.kv()
+                    .access(|store, buf| self.icd.load_persist(store, buf))?;
+
+                // Seed the advertised operating mode from the reloaded
+                // registration set, so a client registered before the reboot
+                // keeps the device advertising as LIT.
+                self.sync_icd_mode(&ctx);
+
+                Ok(())
+            }
+            LifecycleOp::FactoryReset => {
+                ctx.kv()
+                    .access(|store, buf| self.icd.reset_persist(store, buf))?;
+
+                // Every registration is gone, so the device drops back to SIT.
+                self.sync_icd_mode(&ctx);
+
+                Ok(())
+            }
             LifecycleOp::FabricRemoval { fab_idx } => {
                 let mode_before = self.icd.operating_mode();
 
@@ -1057,25 +1102,43 @@ mod tests {
     /// A minimal in-memory single-key store, enough to test the counter
     /// persist/reload roundtrip.
     #[derive(Default)]
+    /// A key-aware in-memory store. The ICD state spans two keys
+    /// (registrations and the Check-In counter), so a single-slot stub would
+    /// hand one key's blob back for the other.
     struct MemKv {
-        value: Option<alloc::vec::Vec<u8>>,
+        entries: alloc::vec::Vec<(u16, alloc::vec::Vec<u8>)>,
+    }
+
+    impl MemKv {
+        fn get(&self, key: u16) -> Option<&[u8]> {
+            self.entries
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.as_slice())
+        }
     }
 
     impl KvBlobStore for &mut MemKv {
-        fn load<'a>(&mut self, _key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-            Ok(self.value.as_ref().map(|v| {
-                buf[..v.len()].copy_from_slice(v);
-                &buf[..v.len()]
-            }))
+        fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            let Some(v) = self.get(key) else {
+                return Ok(None);
+            };
+
+            buf[..v.len()].copy_from_slice(v);
+
+            Ok(Some(&buf[..v.len()]))
         }
 
-        fn store(&mut self, _key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
-            self.value = Some(data.to_vec());
+        fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+            self.entries.retain(|(k, _)| *k != key);
+            self.entries.push((key, data.to_vec()));
+
             Ok(())
         }
 
-        fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
-            self.value = None;
+        fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+            self.entries.retain(|(k, _)| *k != key);
+
             Ok(())
         }
     }
@@ -1142,18 +1205,69 @@ mod tests {
         for _ in 0..9 {
             icd.advance_counter(&mut kv, &mut buf).unwrap();
         }
-        assert_eq!(kv.value, None, "no persist before the boundary");
+        assert_eq!(
+            kv.get(ICD_CHECK_IN_COUNTER_KEY),
+            None,
+            "no persist before the boundary"
+        );
 
         // Crossing the boundary persists the next one (120).
         let last_used = icd.next_counter();
         icd.advance_counter(&mut kv, &mut buf).unwrap();
         assert_eq!(last_used, 110);
-        assert!(kv.value.is_some(), "boundary crossing must persist");
+        assert!(
+            kv.get(ICD_CHECK_IN_COUNTER_KEY).is_some(),
+            "boundary crossing must persist"
+        );
 
         // Session 2 (a restart): a fresh Icd whose counter resumes from the
         // persisted boundary. Every value it hands out is past session 1's.
+        // The epoch comes from the counter this `Icd` was built with, not from
+        // the blob.
         let icd2 = Icd::new(CheckInCounter::new(0, EPOCH), mode());
-        icd2.load_counter(&mut kv, EPOCH, &mut buf).unwrap();
+        icd2.load_persist(&mut kv, &mut buf).unwrap();
         assert!(icd2.next_counter() > last_used);
+
+        // Re-hydrating must itself persist the boundary it resumes from, or a
+        // crash before the next crossing would hand out these values twice.
+        let boundary = u32::from_le_bytes(
+            kv.get(ICD_CHECK_IN_COUNTER_KEY)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        assert!(boundary >= icd2.next_counter() + EPOCH - 1);
+
+        // Session 3 (a second restart, no traffic in session 2): still strictly
+        // past every value session 2 could have used.
+        let icd3 = Icd::new(CheckInCounter::new(0, EPOCH), mode());
+        icd3.load_persist(&mut kv, &mut buf).unwrap();
+        assert!(icd3.next_counter() > icd2.next_counter() + EPOCH - 1);
+    }
+
+    #[test]
+    fn factory_reset_clears_registrations_and_both_keys() {
+        let mut kv = MemKv::default();
+        let mut buf = [0u8; 256];
+
+        let icd = Icd::new(CheckInCounter::new(100, 10), mode());
+
+        icd.register(reg(1, 0x1234)).unwrap();
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::LIT);
+
+        // Seed both persisted blobs the way a running node would.
+        (&mut kv)
+            .store(ICD_REGISTERED_CLIENTS_KEY, b"whatever", &mut buf)
+            .unwrap();
+        (&mut kv)
+            .store(ICD_CHECK_IN_COUNTER_KEY, &110u32.to_le_bytes(), &mut buf)
+            .unwrap();
+
+        icd.reset_persist(&mut kv, &mut buf).unwrap();
+
+        assert!(icd.registrations_is_empty());
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
+        assert_eq!(kv.get(ICD_REGISTERED_CLIENTS_KEY), None);
+        assert_eq!(kv.get(ICD_CHECK_IN_COUNTER_KEY), None);
     }
 }

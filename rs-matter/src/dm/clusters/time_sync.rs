@@ -62,7 +62,7 @@ use embassy_futures::select::select;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     ArrayAttributeRead, AttrChangeNotifier, Attribute, Cluster, Command, Dataver, EndptId,
-    EventEmitter, HandlerContext, InvokeContext, NodeId, Quality, ReadContext,
+    EventEmitter, HandlerContext, InvokeContext, LifecycleOp, NodeId, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{
@@ -204,7 +204,7 @@ impl Rtc {
         self.trusted_time_source = None;
     }
 
-    pub fn reset_persist<S: KvBlobStore>(
+    pub(crate) fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -216,7 +216,11 @@ impl Rtc {
         Ok(())
     }
 
-    pub fn load_persist<S: KvBlobStore>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+    pub(crate) fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
         self.reset();
 
         // Load the persisted Last-Known-Good UTC Time, if any.
@@ -285,7 +289,7 @@ impl Rtc {
     /// Updates in-memory state, persists under
     /// [`crate::persist::TRUSTED_TIME_SOURCE_KEY`], and notifies
     /// subscribers of the `TrustedTimeSource` attribute change.
-    pub fn set_trusted_time_source_persist<S: KvBlobStoreAccess, E: EventEmitter>(
+    pub(crate) fn set_trusted_time_source_persist<S: KvBlobStoreAccess, E: EventEmitter>(
         &mut self,
         source: Option<TrustedTimeSource>,
         persist: &mut Persist<S>,
@@ -407,7 +411,7 @@ impl Rtc {
         changed
     }
 
-    pub fn set_utc_time_persist<S: KvBlobStoreAccess>(
+    pub(crate) fn set_utc_time_persist<S: KvBlobStoreAccess>(
         &mut self,
         utc_us: u64,
         granularity: GranularityEnum,
@@ -820,10 +824,12 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
         self.changed.notify();
     }
 
-    /// Re-hydrate both lists from `store` under [`TIME_ZONE_KEY`]. Call at
-    /// startup, before the store is shared with the handler. A missing key
-    /// (first boot / cleared persistence) leaves the defaults.
-    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    /// Re-hydrate both lists from `store` under [`TIME_ZONE_KEY`].
+    ///
+    /// Driven by [`LifecycleOp::Startup`], before the data model starts
+    /// serving operations. A missing key (first boot / cleared persistence)
+    /// leaves the defaults.
+    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(TIME_ZONE_KEY, buf)? else {
             return Ok(());
         };
@@ -838,6 +844,32 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
         });
 
         info!("Loaded TimeZone / DSTOffset lists from storage");
+
+        Ok(())
+    }
+
+    /// Reset both lists to their factory defaults - an empty `TimeZone` list
+    /// (which reads back as the implicit `{offset: 0, valid_at: 0}` entry) and
+    /// an empty `DSTOffset` list - and remove [`TIME_ZONE_KEY`] from `store`.
+    ///
+    /// Driven by [`LifecycleOp::FactoryReset`]. The counterpart of
+    /// [`Self::load_persist`]: both lists are `nonVolatile` quality, so a
+    /// factory reset has to clear them here as well as in memory.
+    fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            state.data = TimeZoneStoreData::new();
+            state.generation = state.generation.wrapping_add(1);
+        });
+
+        store.remove(TIME_ZONE_KEY, buf)?;
+
+        // A factory reset can land while the node is running, so wake the
+        // transition timer to re-evaluate against the now-empty lists.
+        self.changed.notify();
+
+        info!("Removed TimeZone / DSTOffset lists from storage");
 
         Ok(())
     }
@@ -1449,6 +1481,22 @@ impl ClusterHandler for TimeSyncHandler<'_> {
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        // Only the batteries-included `TimeZoneStore` shape persists anything
+        // of its own; custom `TimeZones` providers own their storage, and the
+        // Matter-wide RTC half of this cluster (`UTCTime` / `TrustedTimeSource`)
+        // is driven by `Matter::startup` / `Matter::factory_reset`.
+        let Some(store) = self.tz_store else {
+            return Ok(());
+        };
+
+        match op {
+            LifecycleOp::Startup => ctx.kv().access(|kv, buf| store.load_persist(kv, buf)),
+            LifecycleOp::FactoryReset => ctx.kv().access(|kv, buf| store.reset_persist(kv, buf)),
+            LifecycleOp::FabricRemoval { .. } => Ok(()),
+        }
     }
 
     // ---- Always-on reads (served from Matter-wide LKG state, not

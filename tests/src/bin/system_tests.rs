@@ -280,12 +280,10 @@ fn main() -> Result<(), Error> {
         BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
 
     // TimeZone / DSTOffset storage for the TimeSync cluster's `TIME_ZONE`
-    // feature. Both lists are `nonVolatile` quality, so they are re-hydrated
-    // before the data model accepts traffic, like the labels and bindings
-    // above.
+    // feature. Both lists are `nonVolatile` quality; the TimeSync handler
+    // re-hydrates them from `im.startup()`, like the labels and bindings above.
     static TIME_ZONE_STORE: StaticCell<TimeZoneStore> = StaticCell::new();
     let time_zone_store: &TimeZoneStore = TIME_ZONE_STORE.init(TimeZoneStore::new());
-    kv.access(|store, buf| time_zone_store.load_persist(store, buf))?;
 
     let time_sync_handler =
         TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), time_zone_store);
@@ -353,23 +351,15 @@ fn main() -> Result<(), Error> {
     // to true and validates the `TestEventTrigger` invoke key against the
     // supplied bytes. Without it, the default `()` `GenDiag` impl reports
     // disabled and rejects every trigger.
-    // Shared ICD state for the ICD Management cluster. Registrations and the
-    // Check-In counter are re-hydrated from KV before the data model accepts
-    // traffic, so both survive a reboot.
+    // Shared ICD state for the ICD Management cluster. The ICD Management
+    // handler re-hydrates the registrations and the Check-In counter from
+    // `im.startup()` (and seeds the advertised operating mode from them), so
+    // both survive a reboot. A fixed start keeps the itests deterministic; the
+    // persisted boundary replaces it when there is one.
     let icd: &'static Icd = ICD.uninit().init_with(Icd::init(
         CheckInCounter::new(0, ICD_COUNTER_EPOCH),
         ICD_MODE,
     ));
-    kv.access(|store, buf| icd.load_registrations(store, buf))?;
-    kv.access(|store, buf| icd.load_counter(store, ICD_COUNTER_EPOCH, buf))?;
-    // Persist the boundary the counter now resumes from, so the *next* restart
-    // resumes one epoch further on (even on first boot, where nothing was stored
-    // yet). Without this the counter would not advance across a reboot.
-    kv.access(|store, buf| icd.persist_counter(store, buf))?;
-    // Seed the advertised ICD operating mode from the (possibly reloaded)
-    // registration set, so a client registered before a reboot keeps the device
-    // advertising as LIT.
-    matter.set_icd_mode(Some(icd.operating_mode()));
 
     let gen_diag: &'static dyn GenDiag = if let Some(key) = parse_enable_key_override() {
         info!("TestEventTrigger enabled with configured 16-byte key");

@@ -170,7 +170,7 @@ impl ResumableSessions {
     }
 
     /// Drop every record — in memory only, does not touch storage.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.records.clear();
     }
 
@@ -225,7 +225,7 @@ impl ResumableSessions {
     /// Drop every record belonging to `fab_idx`. Call this from the
     /// fabric-removal path so removed-fabric peers cannot resume onto
     /// a fabric that no longer exists.
-    pub fn remove_for_fabric(&mut self, fab_idx: NonZeroU8) {
+    fn remove_for_fabric(&mut self, fab_idx: NonZeroU8) {
         self.records.retain(|r| r.fab_idx != fab_idx);
     }
 
@@ -253,7 +253,7 @@ impl ResumableSessions {
     /// - The `ResumableSession` layout gains or loses a required
     ///   field in a future release.
     /// - The KV backend served corrupted bytes.
-    pub fn load_persist<S: KvBlobStore>(
+    pub(crate) fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -297,7 +297,11 @@ impl ResumableSessions {
     /// [`CASE_RESUMPTION_KEY`]. Called from the background snapshot
     /// task whenever the in-memory cache diverges from what was last
     /// persisted.
-    pub fn store_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    pub(crate) fn store_persist<S: KvBlobStore>(
+        &self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
         // Serialise into `buf` first; then split it so the remainder
         // can serve as the KV store's own scratch space. This mirrors
         // the same split-and-lend pattern that [`Persist::store`] uses
@@ -314,7 +318,7 @@ impl ResumableSessions {
 
     /// Remove the persisted cache from `store` and wipe the in-memory
     /// copy. Used from [`crate::Matter::reset_persist`].
-    pub fn reset_persist<S: KvBlobStore>(
+    pub(crate) fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],

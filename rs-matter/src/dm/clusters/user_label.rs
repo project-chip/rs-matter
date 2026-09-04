@@ -196,7 +196,7 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     ///
     /// Missing key (first boot, or persistence cleared) is not an
     /// error — the registry simply stays empty.
-    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(USER_LABELS_KEY, buf)? else {
             // No prior persistence — reset to empty so re-calling
             // `load_persist` after a `remove` of the key behaves
@@ -220,7 +220,7 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
     /// operation delivered to the [`UserLabelHandler`] instance(s) borrowing
     /// this registry.
-    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         self.state.lock(|cell| cell.borrow_mut().clear());
 
         store.remove(USER_LABELS_KEY, buf)
