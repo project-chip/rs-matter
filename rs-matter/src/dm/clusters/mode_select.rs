@@ -85,7 +85,7 @@
 //! let handler = ModeSelectHandler::new(Dataver::new_rand(rand), SwitchWiring::new());
 //!
 //! let device_handler = EmptyHandler.chain(
-//!     EpClMatcher::new(Some(1), Some(CLUSTER.id)),
+//!     |e, c| e == 1 && c == CLUSTER.id,
 //!     handler.adapt(),
 //! );
 //! ```

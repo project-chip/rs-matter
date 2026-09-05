@@ -58,7 +58,7 @@ fn main() {
 	// Build endpoint handler for device clusters
 	let device_handler = EmptyHandler
 		.chain(
-			EpClMatcher::new(Some(1), Some(AirQualityHandler::CLUSTER.id)),
+			|e, c| e == 1 && c == AirQualityHandler::CLUSTER.id,
 			air_quality::HandlerAdaptor(air_quality_handler),
 		)
 		// Continue chaining device clusters
@@ -99,7 +99,7 @@ fn main() {
 	// Build endpoint handler for device clusters
 	let device_handler = EmptyHandler
 		.chain(
-			EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
+			|e, c| e == 1 && c == DescHandler::CLUSTER.id,
 			Async(descriptor_handler.adapt()),
 		)
 		// Continue chaining device clusters
@@ -284,7 +284,7 @@ fn main() {
     let handler = ModeHandler::new(Dataver::new_rand(rand), RvcDeviceLogic::new());
 
     let device_handler = EmptyHandler.chain(
-        EpClMatcher::new(Some(1), Some(rvc_run_mode::CLUSTER.id)),
+        |e, c| e == 1 && c == rvc_run_mode::CLUSTER.id,
         rvc_run_mode::adapt(handler),
     );
 }

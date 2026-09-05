@@ -39,7 +39,7 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
+    Async, Cluster, DataModel, Dataver, Endpoint, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
@@ -222,7 +222,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // not yet supported by Google home and Apple, as per
             // https://www.1home.io/docs/en/server/configure-devices#manage-rooms
             .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new_aggregator(Dataver::new_rand(&mut rand)).adapt()),
             )
             // The following chains are the handlers for the bridged devices corresponding to ep 2 and ep3.
@@ -235,35 +235,35 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // which is likely to do remote calls over a proprietary protocol so as to e.g. retrieve the state of
             // the lamp, or to switch it on/off.
             .chain(
-                EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 2 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 2 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 2 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off_ep2),
             )
             .chain(
-                EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
+                |e, c| e == 2 && c == BridgedHandler::CLUSTER.id,
                 Async(BridgedHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 3 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(3), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 3 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 3 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off_ep3),
             )
             .chain(
-                EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),
+                |e, c| e == 3 && c == BridgedHandler::CLUSTER.id,
                 Async(BridgedHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             ),
     )

@@ -76,7 +76,7 @@ use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks,
 };
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::{Async, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Dataver, Endpoint, FnMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
@@ -189,8 +189,8 @@ impl<'a> MatterStack<'a> {
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, FakeWifi>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppDmHandler<'a> = handler_chain_type!(
-    EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
-    EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
+    FnMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
+    FnMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | WifiSysHandler<'a, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
@@ -633,11 +633,11 @@ fn data_model<'a>(
     endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
         .build(rand)
         .chain(
-            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+            |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
         )
         .chain(
-            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+            |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
             on_off::HandlerAsyncAdaptor(on_off),
         )
 }

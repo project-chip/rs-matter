@@ -78,7 +78,7 @@ pub use crate::persist::BINDINGS_KEY;
 /// Cluster metadata exposed by [`BindingHandler`].
 ///
 /// Exposed as a free constant so callers can spell out
-/// `EpClMatcher::new(Some(ep), Some(binding::CLUSTER.id))` without
+/// `|e, c| e == ep && c == binding::CLUSTER.id` without
 /// reaching for the lifetime-parameterised handler type.
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 

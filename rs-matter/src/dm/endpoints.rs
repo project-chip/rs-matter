@@ -15,9 +15,37 @@
  *    limitations under the License.
  */
 
+//! Handler chains for the root endpoint (Endpoint 0).
+//!
+//! The mandatory system clusters of the root endpoint come in two groups:
+//!
+//! - The clusters that do not depend on the operational network: Descriptor,
+//!   Basic Information, Administrator Commissioning, Operational Credentials,
+//!   Access Control, Group Key Management, Software Diagnostics and Time
+//!   Synchronization. [`root_handler`] returns a chain with all of them.
+//!
+//! - The operational network clusters: Network Commissioning, General
+//!   Commissioning, General Diagnostics and the network-type diagnostics cluster
+//!   (Ethernet, Wifi or Thread). Their inputs are the network controller, the
+//!   network interface and the commissioning policy. [`eth_net_handler`],
+//!   [`wifi_net_handler`] and [`thread_net_handler`] return a chain with these,
+//!   chained on top of a caller-provided handler.
+//!
+//! [`eth_sys_handler`], [`wifi_sys_handler`] and [`thread_sys_handler`] combine
+//! the two groups into a single chain for the whole root endpoint. Use the split
+//! form when the two groups have different lifetimes or owners - as with a
+//! non-concurrent commissioning flow, where the network clusters are re-created
+//! on every BLE to Wifi/Thread handover while the rest of the root endpoint
+//! stays - or when extra clusters need to be chained into the root endpoint
+//! next to the system ones.
+//!
+//! The root endpoint metadata is the same in all cases: [`root_endpoint!`] lists
+//! all clusters, as the Descriptor cluster and the Interaction Model dispatch
+//! are driven by the metadata rather than by the shape of the handler chain.
+
 use rand_core::RngCore;
 
-use crate::dm::{ClusterId, EmptyHandler};
+use crate::dm::{EmptyHandler, FnMatcher};
 use crate::handler_chain_type;
 
 use super::clusters::acl::{self, AclHandler, ClusterHandler as _};
@@ -39,7 +67,7 @@ use super::clusters::wifi_diag::{
     self, AlwaysConnected, ClusterHandler as _, WifiDiag, WifiDiagHandler, WirelessDiag,
 };
 use super::networks::eth::EthNetCtl;
-use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
+use super::types::{Async, ChainedHandler, Dataver, EndptId};
 
 /// A macro to generate the meta-data for the root endpoint (Endpoint 0).
 ///
@@ -86,6 +114,61 @@ macro_rules! root_endpoint {
     }
 }
 
+/// The ID of the root endpoint (Endpoint 0)
+pub const ROOT_ENDPOINT_ID: EndptId = 0;
+
+/// A type alias for the handler chain returned by `root_handler()`:
+/// the root endpoint system clusters that do not depend on the operational network.
+///
+/// A non-async chain; wrap it in `Async` to chain it with async handlers.
+/// `T` is the handler at the end of the chain.
+pub type RootHandler<'a, T = EmptyHandler> = handler_chain_type!(
+    FnMatcher => desc::HandlerAdaptor<DescHandler<'a>>,
+    FnMatcher => basic_info::HandlerAdaptor<BasicInfoHandler>,
+    FnMatcher => adm_comm::HandlerAdaptor<AdminCommHandler>,
+    FnMatcher => noc::HandlerAdaptor<NocHandler>,
+    FnMatcher => acl::HandlerAdaptor<AclHandler>,
+    FnMatcher => grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>,
+    FnMatcher => sw_diag::HandlerAdaptor<SwDiagHandler<'a>>,
+    FnMatcher => time_sync::HandlerAdaptor<TimeSyncHandler<'a>>
+    | T
+);
+
+/// A type alias for the non-async operational network clusters of the root endpoint:
+/// General Commissioning, General Diagnostics and the network-type diagnostics
+/// cluster `N`, on top of the handler `T`.
+///
+/// The three are kept in one non-async chain behind a single `Async` wrapper
+/// (see `NetHandler` and `SysHandler`), so that the async-to-sync adaptation
+/// is monomorphized once rather than once per cluster.
+pub type OperNetHandler<'a, N, T = EmptyHandler> = handler_chain_type!(
+    FnMatcher => gen_comm::HandlerAdaptor<GenCommHandler<'a>>,
+    FnMatcher => gen_diag::HandlerAdaptor<GenDiagHandler<'a>>,
+    FnMatcher => N
+    | T
+);
+
+/// A type alias for the handler chain returned by `eth_net_handler()`.
+pub type EthNetHandler<'a, H> =
+    NetHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler>, H>;
+
+/// A type alias for the handler chain returned by `wifi_net_handler()`.
+pub type WifiNetHandler<'a, T, H> =
+    NetHandler<'a, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>, H>;
+
+/// A type alias for the handler chain returned by `thread_net_handler()`.
+pub type ThreadNetHandler<'a, T, H> =
+    NetHandler<'a, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>, H>;
+
+/// A type alias for the handler chain returned by `net_handler()`:
+/// the operational network clusters of the root endpoint, on top of the handler `H`,
+/// which receives everything the network clusters do not match.
+pub type NetHandler<'a, T, N, H> = handler_chain_type!(
+    FnMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>,
+    FnMatcher => Async<OperNetHandler<'a, N>>
+    | H
+);
+
 /// A type alias for the handler chain returned by `eth_sys_handler()`.
 pub type EthSysHandler<'a> =
     SysHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler>>;
@@ -97,26 +180,150 @@ pub type WifiSysHandler<'a, T> = SysHandler<'a, T, wifi_diag::HandlerAdaptor<Wif
 pub type ThreadSysHandler<'a, T> =
     SysHandler<'a, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>;
 
-/// A type alias for the handler chain returned by `sys_handler()`.
+/// A type alias for the handler chain returned by `sys_handler()`:
+/// all system clusters of the root endpoint.
 pub type SysHandler<'a, T, N> = handler_chain_type!(
-    EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>
-    | Async<handler_chain_type!(
-        EpClMatcher => desc::HandlerAdaptor<DescHandler<'a>>,
-        EpClMatcher => basic_info::HandlerAdaptor<BasicInfoHandler>,
-        EpClMatcher => gen_comm::HandlerAdaptor<GenCommHandler<'a>>,
-        EpClMatcher => adm_comm::HandlerAdaptor<AdminCommHandler>,
-        EpClMatcher => noc::HandlerAdaptor<NocHandler>,
-        EpClMatcher => acl::HandlerAdaptor<acl::AclHandler>,
-        EpClMatcher => grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>,
-        EpClMatcher => sw_diag::HandlerAdaptor<SwDiagHandler<'a>>,
-        EpClMatcher => time_sync::HandlerAdaptor<TimeSyncHandler<'a>>,
-        EpClMatcher => gen_diag::HandlerAdaptor<GenDiagHandler<'a>>,
-        EpClMatcher => N
-    )>
+    FnMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>
+    | Async<OperNetHandler<'a, N, RootHandler<'a>>>
 );
 
-/// The ID of the root endpoint (Endpoint 0)
-pub const ROOT_ENDPOINT_ID: EndptId = 0;
+/// Return a handler for the root endpoint system clusters that do not depend on the
+/// operational network: Descriptor, Basic Information, Administrator Commissioning,
+/// Operational Credentials, Access Control, Group Key Management, Software Diagnostics
+/// and Time Synchronization.
+///
+/// Chain the operational network clusters on top of it with `eth_net_handler()`,
+/// `wifi_net_handler()` or `thread_net_handler()`, or use `eth_sys_handler()` & co.
+/// for a chain with all root endpoint system clusters.
+///
+/// # Arguments:
+/// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the
+///   no-op default: heap counters report `0`).
+/// - `rand`: A random number generator.
+pub fn root_handler<'a, R: RngCore>(sw_diag: &'a dyn SwDiag, rand: R) -> RootHandler<'a> {
+    root_handler_chained(sw_diag, EmptyHandler, rand)
+}
+
+/// Return a handler for the root endpoint operational network clusters,
+/// chained on top of `next`.
+/// Use this handler for devices that use Ethernet as the Matter Operational Network.
+///
+/// # Arguments:
+/// - `comm_policy`: The `CommPolicy` implementation.
+/// - `gen_diag`: The `GenDiag` implementation.
+/// - `netif_diag`: The `NetifDiag` implementation.
+/// - `next`: The handler to chain on top of; receives everything not matched here.
+/// - `rand`: A random number generator.
+pub fn eth_net_handler<'a, R: RngCore, H>(
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    next: H,
+    mut rand: R,
+) -> EthNetHandler<'a, H> {
+    net_handler(
+        comm_policy,
+        gen_diag,
+        netif_diag,
+        EthNetCtl::new_default(),
+        &AlwaysConnected,
+        |e, c| {
+            e == ROOT_ENDPOINT_ID
+                && (c == GenCommHandler::CLUSTER.id
+                    || c == GenDiagHandler::CLUSTER.id
+                    || c == EthDiagHandler::CLUSTER.id)
+        },
+        EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+        next,
+        rand,
+    )
+}
+
+/// Return a handler for the root endpoint operational network clusters,
+/// chained on top of `next`.
+/// Use this handler for devices that use Wifi as the Matter Operational Network.
+///
+/// # Arguments:
+/// - `comm_policy`: The `CommPolicy` implementation.
+/// - `gen_diag`: The `GenDiag` implementation.
+/// - `netif_diag`: The `NetifDiag` implementation.
+/// - `wifi_diag`: The `WifiDiag` implementation.
+/// - `net_ctl`: The `NetCtl` implementation.
+/// - `next`: The handler to chain on top of; receives everything not matched here.
+/// - `rand`: A random number generator.
+#[allow(clippy::too_many_arguments)]
+pub fn wifi_net_handler<'a, R: RngCore, T, H>(
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    wifi_diag: &'a dyn WifiDiag,
+    net_ctl: T,
+    next: H,
+    mut rand: R,
+) -> WifiNetHandler<'a, T, H>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    net_handler(
+        comm_policy,
+        gen_diag,
+        netif_diag,
+        net_ctl,
+        wifi_diag,
+        |e, c| {
+            e == ROOT_ENDPOINT_ID
+                && (c == GenCommHandler::CLUSTER.id
+                    || c == GenDiagHandler::CLUSTER.id
+                    || c == WifiDiagHandler::CLUSTER.id)
+        },
+        WifiDiagHandler::new(Dataver::new_rand(&mut rand), wifi_diag).adapt(),
+        next,
+        rand,
+    )
+}
+
+/// Return a handler for the root endpoint operational network clusters,
+/// chained on top of `next`.
+/// Use this handler for devices that use Thread as the Matter Operational Network.
+///
+/// # Arguments:
+/// - `comm_policy`: The `CommPolicy` implementation.
+/// - `gen_diag`: The `GenDiag` implementation.
+/// - `netif_diag`: The `NetifDiag` implementation.
+/// - `thread_diag`: The `ThreadDiag` implementation.
+/// - `net_ctl`: The `NetCtl` implementation.
+/// - `next`: The handler to chain on top of; receives everything not matched here.
+/// - `rand`: A random number generator.
+#[allow(clippy::too_many_arguments)]
+pub fn thread_net_handler<'a, R: RngCore, T, H>(
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    thread_diag: &'a dyn ThreadDiag,
+    net_ctl: T,
+    next: H,
+    mut rand: R,
+) -> ThreadNetHandler<'a, T, H>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    net_handler(
+        comm_policy,
+        gen_diag,
+        netif_diag,
+        net_ctl,
+        thread_diag,
+        |e, c| {
+            e == ROOT_ENDPOINT_ID
+                && (c == GenCommHandler::CLUSTER.id
+                    || c == GenDiagHandler::CLUSTER.id
+                    || c == ThreadDiagHandler::CLUSTER.id)
+        },
+        ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt(),
+        next,
+        rand,
+    )
+}
 
 /// Return a system handler for the root endpoint (Endpoint 0).
 /// Use this handler for devices that use Ethernet as the Matter Operational Network.
@@ -143,7 +350,7 @@ pub fn eth_sys_handler<'a, R: RngCore>(
         sw_diag,
         EthNetCtl::new_default(),
         &AlwaysConnected,
-        EthDiagHandler::CLUSTER.id,
+        |e, c| e == ROOT_ENDPOINT_ID && c == EthDiagHandler::CLUSTER.id,
         EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
         rand,
     )
@@ -180,7 +387,7 @@ where
         sw_diag,
         net_ctl,
         wifi_diag,
-        WifiDiagHandler::CLUSTER.id,
+        |e, c| e == ROOT_ENDPOINT_ID && c == WifiDiagHandler::CLUSTER.id,
         WifiDiagHandler::new(Dataver::new_rand(&mut rand), wifi_diag).adapt(),
         rand,
     )
@@ -217,26 +424,127 @@ where
         sw_diag,
         net_ctl,
         thread_diag,
-        ThreadDiagHandler::CLUSTER.id,
+        |e, c| e == ROOT_ENDPOINT_ID && c == ThreadDiagHandler::CLUSTER.id,
         ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt(),
         rand,
     )
 }
 
-/// Return a system handler for the root endpoint (Endpoint 0).
-/// Note that this handler does not include the Network Diagnostic handler, which is dependent on
-/// the network type and thus is not included in this function.
+/// The `root_handler()` chain on top of `next`.
+fn root_handler_chained<'a, R: RngCore, T>(
+    sw_diag: &'a dyn SwDiag,
+    next: T,
+    mut rand: R,
+) -> RootHandler<'a, T> {
+    ChainedHandler::new(
+        |e, c| e == ROOT_ENDPOINT_ID && c == TimeSyncHandler::CLUSTER.id,
+        TimeSyncHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+        next,
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == SwDiagHandler::CLUSTER.id,
+        SwDiagHandler::new(Dataver::new_rand(&mut rand), sw_diag).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == GrpKeyMgmtHandler::CLUSTER.id,
+        GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == AclHandler::CLUSTER.id,
+        AclHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == NocHandler::CLUSTER.id,
+        NocHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == AdminCommHandler::CLUSTER.id,
+        AdminCommHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == BasicInfoHandler::CLUSTER.id,
+        BasicInfoHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == DescHandler::CLUSTER.id,
+        DescHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+    )
+}
+
+/// The non-async operational network clusters on top of `next`.
 ///
-/// Use `eth_sys_handler()`, `wifi_sys_handler()` or `thread_sys_handler()` instead to get the appropriate
-/// Network Diagnostic handler included in the handler.
+/// `netw_diag_matcher` is the matcher of the network diagnostics link, which sits
+/// at the bottom of the chain, right above `next`.
+#[allow(clippy::too_many_arguments)]
+fn oper_net_handler<'a, R: RngCore, N, T>(
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    netw_diag_matcher: FnMatcher,
+    netw_diag: N,
+    next: T,
+    mut rand: R,
+) -> OperNetHandler<'a, N, T> {
+    ChainedHandler::new(netw_diag_matcher, netw_diag, next)
+        .chain(
+            |e, c| e == ROOT_ENDPOINT_ID && c == GenDiagHandler::CLUSTER.id,
+            GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt(),
+        )
+        .chain(
+            |e, c| e == ROOT_ENDPOINT_ID && c == GenCommHandler::CLUSTER.id,
+            GenCommHandler::new(Dataver::new_rand(&mut rand), comm_policy).adapt(),
+        )
+}
+
+/// Return a handler for the root endpoint operational network clusters,
+/// chained on top of `next`.
+///
+/// Use `eth_net_handler()`, `wifi_net_handler()` or `thread_net_handler()` instead to get the
+/// appropriate Network Diagnostic handler included in the handler.
 ///
 /// # Arguments:
-/// - `comm_policy`: The `CommPolicy` implementation.
-/// - `gen_diag`: The `GenDiag` implementation.
-/// - `netif_diag`: The `NetifDiag` implementation.
-/// - `networks`: The `Networks` implementation.
-/// - `net_ctl`: The `NetCtl` implementation.
-/// - `rand`: A random number generator.
+/// - `net_matcher`: A matcher for exactly the General Commissioning, General Diagnostics and
+///   `netw_diag` clusters on the root endpoint. It guards the `Async` sub-chain with the three,
+///   and - as the network diagnostics link is at the bottom of that sub-chain - also serves
+///   as the matcher of that link.
+#[allow(clippy::too_many_arguments)]
+fn net_handler<'a, R: RngCore, T, N, H>(
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    net_ctl: T,
+    wireless_diag: &'a dyn WirelessDiag,
+    net_matcher: FnMatcher,
+    netw_diag: N,
+    next: H,
+    mut rand: R,
+) -> NetHandler<'a, T, N, H>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    ChainedHandler::new(
+        |e, c| e == ROOT_ENDPOINT_ID && c == NetCommHandler::<T>::CLUSTER.id,
+        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl, wireless_diag).adapt(),
+        ChainedHandler::new(
+            net_matcher,
+            Async(oper_net_handler(
+                comm_policy,
+                gen_diag,
+                netif_diag,
+                net_matcher,
+                netw_diag,
+                EmptyHandler,
+                &mut rand,
+            )),
+            next,
+        ),
+    )
+}
+
+/// Return a system handler for the root endpoint (Endpoint 0) with all system clusters.
+///
+/// Use `eth_sys_handler()`, `wifi_sys_handler()` or `thread_sys_handler()` instead to get the
+/// appropriate Network Diagnostic handler included in the handler.
 #[allow(clippy::too_many_arguments)]
 fn sys_handler<'a, R: RngCore, T, N>(
     comm_policy: &'a dyn CommPolicy,
@@ -245,7 +553,7 @@ fn sys_handler<'a, R: RngCore, T, N>(
     sw_diag: &'a dyn SwDiag,
     net_ctl: T,
     wireless_diag: &'a dyn WirelessDiag,
-    netw_diag_cluster_id: ClusterId,
+    netw_diag_matcher: FnMatcher,
     netw_diag: N,
     mut rand: R,
 ) -> SysHandler<'a, T, N>
@@ -253,58 +561,17 @@ where
     T: NetCtl + NetCtlStatus,
 {
     ChainedHandler::new(
-        EpClMatcher::new(
-            Some(ROOT_ENDPOINT_ID),
-            Some(NetCommHandler::<T>::CLUSTER.id),
-        ),
+        |e, c| e == ROOT_ENDPOINT_ID && c == NetCommHandler::<T>::CLUSTER.id,
         NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl, wireless_diag).adapt(),
-        Async(
-            ChainedHandler::new(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(netw_diag_cluster_id)),
-                netw_diag,
-                EmptyHandler,
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-                GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(TimeSyncHandler::CLUSTER.id)),
-                TimeSyncHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(SwDiagHandler::CLUSTER.id)),
-                SwDiagHandler::new(Dataver::new_rand(&mut rand), sw_diag).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
-                GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AclHandler::CLUSTER.id)),
-                AclHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(NocHandler::CLUSTER.id)),
-                NocHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AdminCommHandler::CLUSTER.id)),
-                AdminCommHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenCommHandler::CLUSTER.id)),
-                GenCommHandler::new(Dataver::new_rand(&mut rand), comm_policy).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(BasicInfoHandler::CLUSTER.id)),
-                BasicInfoHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
-                DescHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-            ),
-        ),
+        Async(oper_net_handler(
+            comm_policy,
+            gen_diag,
+            netif_diag,
+            netw_diag_matcher,
+            netw_diag,
+            root_handler_chained(sw_diag, EmptyHandler, &mut rand),
+            &mut rand,
+        )),
     )
 }
 

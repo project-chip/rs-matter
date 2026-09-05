@@ -35,7 +35,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _, GenCommHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::{
-    Async, ChainedHandler, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, ChainedHandler, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, Node,
 };
 use rs_matter::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
 use rs_matter::tlv::{Nullable, ToTLV, Utf8Str};
@@ -72,16 +72,16 @@ fn dm_handler() -> impl DataModel {
     (
         NODE,
         ChainedHandler::new(
-            EpClMatcher::new(Some(0), Some(basic_info::CLUSTER_DEVICE_LOCATION.id)),
+            |e, c| e == 0 && c == basic_info::CLUSTER_DEVICE_LOCATION.id,
             Async(BasicInfoHandler::new(Dataver::new(1)).adapt()),
             EmptyHandler,
         )
         .chain(
-            EpClMatcher::new(Some(0), Some(DescHandler::CLUSTER.id)),
+            |e, c| e == 0 && c == DescHandler::CLUSTER.id,
             Async(DescHandler::new(Dataver::new(2)).adapt()),
         )
         .chain(
-            EpClMatcher::new(Some(1), Some(desc::CLUSTER_ENDPOINT_UNIQUE_ID.id)),
+            |e, c| e == 1 && c == desc::CLUSTER_ENDPOINT_UNIQUE_ID.id,
             Async(DescHandler::new(Dataver::new(3)).adapt()),
         ),
     )
@@ -422,7 +422,7 @@ fn nr_dm_handler() -> impl DataModel {
     (
         NODE_NR,
         ChainedHandler::new(
-            EpClMatcher::new(Some(0), Some(gen_comm::CLUSTER_NETWORK_RECOVERY.id)),
+            |e, c| e == 0 && c == gen_comm::CLUSTER_NETWORK_RECOVERY.id,
             Async(GenCommHandler::new(Dataver::new(1), &true).adapt()),
             EmptyHandler,
         ),
@@ -443,7 +443,7 @@ fn gc_dm_handler() -> impl DataModel {
     (
         NODE_GC,
         ChainedHandler::new(
-            EpClMatcher::new(Some(0), Some(GenCommHandler::CLUSTER.id)),
+            |e, c| e == 0 && c == GenCommHandler::CLUSTER.id,
             Async(GenCommHandler::new(Dataver::new(1), &true).adapt()),
             EmptyHandler,
         ),

@@ -25,9 +25,7 @@ use rs_matter::dm::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
-use rs_matter::dm::{
-    Async, ChainedHandler, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
-};
+use rs_matter::dm::{Async, ChainedHandler, Cluster, Dataver, EmptyHandler, Endpoint, Node};
 use rs_matter::im::{AttrPath, AttrStatus, CmdPath, CmdStatus, GenericPath, IMStatusCode};
 use rs_matter::tlv::{Nullable, ToTLV};
 
@@ -121,13 +119,13 @@ fn test_add_group_if_identifying() {
     let dm = (
         NODE,
         ChainedHandler::new(
-            EpClMatcher::new(Some(0), Some(GrpKeyMgmtHandler::CLUSTER.id)),
+            |e, c| e == 0 && c == GrpKeyMgmtHandler::CLUSTER.id,
             Async(GrpKeyMgmtHandler::new(Dataver::new(2)).adapt()),
             ChainedHandler::new(
-                EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
+                |e, c| e == 1 && c == identify::CLUSTER.id,
                 Async(identify::HandlerAdaptor(&identify_handler)),
                 ChainedHandler::new(
-                    EpClMatcher::new(Some(1), Some(GroupsHandler::CLUSTER.id)),
+                    |e, c| e == 1 && c == GroupsHandler::CLUSTER.id,
                     Async(
                         GroupsHandler::new_with_identify(Dataver::new(3), &identify_handler)
                             .adapt(),

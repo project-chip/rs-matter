@@ -104,8 +104,7 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, DeviceType, Endpoint, EpClMatcher,
-    Node, SemanticTag,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, DeviceType, Endpoint, Node, SemanticTag,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -614,7 +613,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// "extra cluster". That test is not on `system_tests`'s active
 /// run list (see the `TC_DeviceConformance` skip comment in
 /// `xtask/src/itest.rs`). The library-level `g*` macro variants and
-/// the Groups EpClMatcher in `with_sys()` were dropped to keep
+/// the Groups matcher in `with_sys()` were dropped to keep
 /// device-type-pure compositions the *default* — having Groups on
 /// EP0 here is a deliberate per-fixture exception.
 ///
@@ -1047,7 +1046,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // transition-event timer and list persistence. The shadowed
             // handler's own background task is inert.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(TimeSyncHandler::CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == TimeSyncHandler::CLUSTER.id,
                 Async(time_sync::HandlerAdaptor(time_sync_handler)),
             )
             // Groups handler at the root endpoint. The library-level
@@ -1063,19 +1062,13 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // (App Cluster Spec). The matching metadata entry
             // is in `NODE` and `NODE_BINFO_PROVISIONAL` above.
             .chain(
-                EpClMatcher::new(
-                    Some(ROOT_ENDPOINT_ID),
-                    Some(groups::GroupsHandler::CLUSTER.id),
-                ),
+                |e, c| e == ROOT_ENDPOINT_ID && c == groups::GroupsHandler::CLUSTER.id,
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             // Groupcast at the root endpoint - the unified group-management
             // interface over the same per-fabric group table Groups uses.
             .chain(
-                EpClMatcher::new(
-                    Some(ROOT_ENDPOINT_ID),
-                    Some(groupcast::GroupcastHandler::CLUSTER.id),
-                ),
+                |e, c| e == ROOT_ENDPOINT_ID && c == groupcast::GroupcastHandler::CLUSTER.id,
                 Async(
                     GroupcastHandler::new(Dataver::new_rand(&mut rand), groupcast::Feature::all())
                         .adapt(),
@@ -1090,30 +1083,30 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // `user_label::HandlerAdaptor` (rather than the
             // owning-`.adapt()`) so the chain doesn't take ownership.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == user_label::CLUSTER.id,
                 Async(user_label::HandlerAdaptor(user_label_handler)),
             )
             // Binding handler at the root endpoint — owned by main,
             // borrowed by reference into the chain.
             // `TestBinding` exercises writes against EP0.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(binding::CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == binding::CLUSTER.id,
                 Async(binding::HandlerAdaptor(binding_handler_ep0)),
             )
             // Clusters for Endpoint 1
             .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             // Identify at EP1 — owned by `main`, borrowed by reference into
             // the chain, because the EP1 Groups handler below also borrows
             // it for `AddGroupIfIdentifying`.
             .chain(
-                EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
+                |e, c| e == 1 && c == identify::CLUSTER.id,
                 Async(identify::HandlerAdaptor(identify_handler_ep1)),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(
                     groups::GroupsHandler::new_with_identify(
                         Dataver::new_rand(&mut rand),
@@ -1123,7 +1116,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 ),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
+                |e, c| e == 1 && c == fixed_label::CLUSTER.id,
                 Async(
                     FixedLabelHandler::new(Dataver::new_rand(&mut rand), FIXED_LABELS_EP1).adapt(),
                 ),
@@ -1132,26 +1125,26 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // separate facade so the per-cluster-instance Dataver
             // stays granular per Matter Core Spec.
             .chain(
-                EpClMatcher::new(Some(1), Some(binding::CLUSTER.id)),
+                |e, c| e == 1 && c == binding::CLUSTER.id,
                 Async(binding::HandlerAdaptor(binding_handler_ep1)),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off_1),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(SCENES_FULL_CLUSTER.id)),
+                |e, c| e == 1 && c == SCENES_FULL_CLUSTER.id,
                 scenes_1.adapt(),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(LaundryWasherModeLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == LaundryWasherModeLogic::CLUSTER.id,
                 Async(laundry_washer_mode::HandlerAdaptor(ModeHandler::new(
                     Dataver::new_rand(&mut rand),
                     LaundryWasherModeLogic::new(),
                 ))),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == UnitTestingHandler::CLUSTER.id,
                 Async(
                     UnitTestingHandler::new(Dataver::new_rand(&mut rand), unit_testing_data)
                         .adapt(),
@@ -1159,16 +1152,16 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             // (mostly) Similar Clusters for Endpoint 2
             .chain(
-                EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 2 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             // Identify + Groups at EP2, coupled the same way as EP1 above.
             .chain(
-                EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
+                |e, c| e == 2 && c == identify::CLUSTER.id,
                 Async(identify::HandlerAdaptor(identify_handler_ep2)),
             )
             .chain(
-                EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 2 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(
                     groups::GroupsHandler::new_with_identify(
                         Dataver::new_rand(&mut rand),
@@ -1178,18 +1171,18 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 ),
             )
             .chain(
-                EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 2 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off_2),
             )
             .chain(
-                EpClMatcher::new(Some(2), Some(SCENES_FULL_CLUSTER.id)),
+                |e, c| e == 2 && c == SCENES_FULL_CLUSTER.id,
                 scenes_2.adapt(),
             )
             // OTA Software Update Provider on the root endpoint (OTA role). The
             // handler is always present but only matched when `NODE` declares
             // the cluster (gated behind `--filepath`), so it is inert otherwise.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(OTA_PROVIDER_CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == OTA_PROVIDER_CLUSTER.id,
                 OtaProviderHandler::new(Dataver::new_rand(&mut rand), ota_images).adapt(),
             )
             // OTA Software Update Requestor on the root endpoint (OTA role).
@@ -1197,7 +1190,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // `AnnounceOTAProvider` arrives; the actual download is driven by
             // `run_ota_requestor` in `main`.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(OTA_REQUESTOR_CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == OTA_REQUESTOR_CLUSTER.id,
                 Async(
                     OtaRequestorHandler::new(
                         Dataver::new_rand(&mut rand),
@@ -1210,18 +1203,18 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // Diagnostic Logs on the root endpoint. The handler's `run` hook (BDX
             // streaming) is driven as part of this chain by `im.run()`.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == DIAGNOSTIC_LOGS_CLUSTER.id,
                 DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
                     .adapt(),
             )
             // ICD Management (Check-In Protocol) on the root endpoint.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ICD_MGMT_CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == ICD_MGMT_CLUSTER.id,
                 Async(IcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
             )
             // PowerSource on the root endpoint; the fixture is mains-powered.
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(power_source::CLUSTER.id)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == power_source::CLUSTER.id,
                 Async(
                     PowerSourceHandler::new(
                         Dataver::new_rand(&mut rand),
@@ -1232,7 +1225,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             // Second PowerSource instance on EP1 (see `POWER_SOURCE_EP1`).
             .chain(
-                EpClMatcher::new(Some(1), Some(power_source::CLUSTER.id)),
+                |e, c| e == 1 && c == power_source::CLUSTER.id,
                 Async(
                     PowerSourceHandler::new(Dataver::new_rand(&mut rand), &POWER_SOURCE_EP1)
                         .adapt(),

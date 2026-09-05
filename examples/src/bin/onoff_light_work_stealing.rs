@@ -35,7 +35,7 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Dataver, Endpoint, FnMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
@@ -54,8 +54,8 @@ use static_cell::StaticCell;
 mod mdns;
 
 type AppDmHandler<'a> = handler_chain_type!(
-    EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
-    EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
+    FnMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
+    FnMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EthSysHandler<'a>
 );
 
@@ -187,8 +187,8 @@ fn main() -> Result<(), Error> {
     // 229 |     executor.spawn(respond).detach();
     //     |     ^^^^^^^^^^^^^^^^^^^^^^^ implementation of `Send` is not general enough
     //     |
-    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
-    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
+    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
+    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
     //```
     //executor.spawn(respond).detach();
 
@@ -219,11 +219,11 @@ fn data_model<'a>(
         .netif_diag(&SysNetifs)
         .build(rand)
         .chain(
-            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+            |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
         )
         .chain(
-            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+            |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
             on_off::HandlerAsyncAdaptor(on_off),
         )
 }

@@ -56,7 +56,7 @@ pub use crate::dm::clusters::decl::identify::*;
 /// Equivalent to `<IdentifyHandler<H> as ClusterHandler>::CLUSTER` for
 /// any `H: IdentifyHooks`, exposed here as a free constant so callers
 /// don't have to spell out the generic parameter when they just want the
-/// cluster ID for an `EpClMatcher` or a `clusters!(...)` literal.
+/// cluster ID for a handler chain matcher or a `clusters!(...)` literal.
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
 /// The kind of identification action requested by a controller, dispatched

@@ -1212,7 +1212,35 @@ where
     }
 }
 
-pub trait DataModel: Metadata + AsyncHandler {}
+pub trait DataModel: Metadata + AsyncHandler {
+    /// Bump the dataver of every cluster on the endpoint `endpoint_id` - as listed
+    /// in the node metadata - by invoking `bump_dataver` once per cluster, with a
+    /// fully-specified (endpoint, cluster) context.
+    ///
+    /// Matchers are functions of both IDs, so a single bump with the cluster left out
+    /// could not be routed to just this endpoint's handlers.
+    ///
+    /// The metadata is not held while the handlers are invoked.
+    fn bump_endpoint_dataver(&self, endpoint_id: EndptId) {
+        let mut index = 0;
+
+        while let Some(cluster_id) = self.access(|node| {
+            node.endpoints
+                .iter()
+                .find(|endpoint| endpoint.id == endpoint_id)
+                .and_then(|endpoint| endpoint.clusters.get(index))
+                .map(|cluster| cluster.id)
+        }) {
+            self.bump_dataver(MatchContextInstance::new(
+                Some(endpoint_id),
+                Some(cluster_id),
+            ));
+
+            index += 1;
+        }
+    }
+}
+
 impl<T> DataModel for T where T: Metadata + AsyncHandler {}
 
 /// A lifecycle operation delivered to a handler via [`Handler::lifecycle`] /
@@ -1407,43 +1435,36 @@ pub trait Matcher {
     fn matches(&self, ctx: impl MatchContext) -> bool;
 }
 
-impl<T> Matcher for &T
+/// The default matcher: a plain function of the endpoint ID and the cluster ID of the operation.
+///
+/// A function pointer rather than a closure type, so that handler chains built with it are
+/// nameable (see `handler_chain_type!`). Non-capturing closures coerce to it, and constants
+/// (endpoint IDs, `CLUSTER.id`) are not captures:
+///
+/// ```ignore
+/// EmptyHandler.chain(|e, c| e == LIGHT_ENDPOINT_ID && c == OnOffHandler::CLUSTER.id, handler)
+/// ```
+///
+/// A closure that does capture (e.g. an endpoint ID computed at runtime) is a `Matcher` too,
+/// via `ChainedHandler::new_with_matcher`; the resulting chain is just not nameable.
+pub type FnMatcher = fn(EndptId, ClusterId) -> bool;
+
+impl<F> Matcher for F
 where
-    T: Matcher,
+    F: Fn(EndptId, ClusterId) -> bool,
 {
     fn matches(&self, ctx: impl MatchContext) -> bool {
-        T::matches(self, ctx)
-    }
-}
+        // A matcher is a function of both IDs, so a context that lacks one cannot be
+        // routed by it and is let through as a global one. The Interaction Model only
+        // ever produces a fully-specified context or a fully-unspecified one: an
+        // endpoint-scoped dataver bump is expanded to one bump per cluster of that
+        // endpoint (see `DataModel::bump_endpoint_dataver`) rather than sent with the cluster
+        // left out, as the latter would reach every handler on every endpoint.
+        let (Some(endpt_id), Some(cluster_id)) = (ctx.endpt(), ctx.cluster()) else {
+            return true;
+        };
 
-/// A matcher that matches a specific endpoint ID and cluster ID.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct EpClMatcher {
-    endpoint_id: Option<EndptId>,
-    cluster_id: Option<ClusterId>,
-}
-
-impl EpClMatcher {
-    /// Create a new `EpClMatcher` instance.
-    ///
-    /// # Arguments:
-    /// - `endpoint_id`: The endpoint ID to match. If `None`, matches any endpoint ID.
-    /// - `cluster_id`: The cluster ID to match. If `None`, matches any cluster ID.
-    pub const fn new(endpoint_id: Option<EndptId>, cluster_id: Option<ClusterId>) -> Self {
-        Self {
-            endpoint_id,
-            cluster_id,
-        }
-    }
-}
-
-impl Matcher for EpClMatcher {
-    fn matches(&self, ctx: impl MatchContext) -> bool {
-        (self.endpoint_id.is_none() || ctx.endpt().is_none() || self.endpoint_id == ctx.endpt())
-            && (self.cluster_id.is_none()
-                || ctx.cluster().is_none()
-                || self.cluster_id == ctx.cluster())
+        self(endpt_id, cluster_id)
     }
 }
 
@@ -1466,7 +1487,11 @@ impl EmptyHandler {
     /// Arguments:
     /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
     /// - `handler`: The handler to be invoked if the matcher returns `true`.
-    pub const fn chain<M, H>(self, matcher: M, handler: H) -> ChainedHandler<M, H, Self> {
+    pub const fn chain<H>(
+        self,
+        matcher: FnMatcher,
+        handler: H,
+    ) -> ChainedHandler<FnMatcher, H, Self> {
         ChainedHandler {
             matcher,
             handler,
@@ -1515,8 +1540,8 @@ pub struct ChainedHandler<M, H, T> {
     pub next: T,
 }
 
-impl<M, H, T> ChainedHandler<M, H, T> {
-    /// Construct a chained handler that works as follows:
+impl<H, T> ChainedHandler<FnMatcher, H, T> {
+    /// Construct a chained handler with the default `FnMatcher` matcher that works as follows:
     /// - It will call the provided `handler` instance if the provided matcher returns `true`
     ///   for the `ReadContext`/`WriteContext`/`InvokeContext` of the incoming operation
     /// - Otherwise, it will call the `next` handler
@@ -1525,7 +1550,22 @@ impl<M, H, T> ChainedHandler<M, H, T> {
     /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
     /// - `handler`: The handler to be invoked if the matcher returns `true`.
     /// - `next`: The next handler to be invoked if the matcher returns `false`.
-    pub const fn new(matcher: M, handler: H, next: T) -> Self {
+    pub const fn new(matcher: FnMatcher, handler: H, next: T) -> Self {
+        Self::new_with_matcher(matcher, handler, next)
+    }
+}
+
+impl<M, H, T> ChainedHandler<M, H, T> {
+    /// Construct a chained handler with a custom matcher that works as follows:
+    /// - It will call the provided `handler` instance if the provided matcher returns `true`
+    ///   for the `ReadContext`/`WriteContext`/`InvokeContext` of the incoming operation
+    /// - Otherwise, it will call the `next` handler
+    ///
+    /// Arguments:
+    /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
+    /// - `handler`: The handler to be invoked if the matcher returns `true`.
+    /// - `next`: The next handler to be invoked if the matcher returns `false`.
+    pub const fn new_with_matcher(matcher: M, handler: H, next: T) -> Self {
         Self {
             matcher,
             handler,
@@ -1543,7 +1583,11 @@ impl<M, H, T> ChainedHandler<M, H, T> {
     /// Arguments:
     /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
     /// - `handler`: The handler to be invoked if the matcher returns `true`.
-    pub const fn chain<M2, H2>(self, matcher: M2, handler: H2) -> ChainedHandler<M2, H2, Self> {
+    pub const fn chain<H2>(
+        self,
+        matcher: FnMatcher,
+        handler: H2,
+    ) -> ChainedHandler<FnMatcher, H2, Self> {
         ChainedHandler::new(matcher, handler, self)
     }
 }
@@ -1616,16 +1660,16 @@ where
 /// Use with type aliases:
 /// ```ignore
 /// pub type RootEndpointHandler<'a> = handler_chain_type!(
-///     EpClMatcher => DescriptorCluster<'static>,
-///     EpClMatcher => BasicInfoCluster<'a>,
-///     EpClMatcher => GenCommCluster<'a>,
-///     EpClMatcher => NwCommCluster,
-///     EpClMatcher => AdminCommCluster<'a>,
-///     EpClMatcher => NocCluster<'a>,
-///     EpClMatcher => AccessControlCluster<'a>,
-///     EpClMatcher => GenDiagCluster,
-///     EpClMatcher => EthNwDiagCluster,
-///     EpClMatcher => GrpKeyMgmtCluster
+///     FnMatcher => DescriptorCluster<'static>,
+///     FnMatcher => BasicInfoCluster<'a>,
+///     FnMatcher => GenCommCluster<'a>,
+///     FnMatcher => NwCommCluster,
+///     FnMatcher => AdminCommCluster<'a>,
+///     FnMatcher => NocCluster<'a>,
+///     FnMatcher => AccessControlCluster<'a>,
+///     FnMatcher => GenDiagCluster,
+///     FnMatcher => EthNwDiagCluster,
+///     FnMatcher => GrpKeyMgmtCluster
 /// );
 /// ```
 #[allow(unused_macros)]
@@ -2208,4 +2252,72 @@ mod asynch {
     }
 
     impl<T> NonBlockingHandler for Async<T> where T: NonBlockingHandler {}
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+
+    use crate::dm::clusters::basic_info::{BasicInfoHandler, ClusterHandler as _};
+    use crate::dm::clusters::desc::{ClusterHandler as _, DescHandler};
+    use crate::dm::{Async, Endpoint, Node};
+    use crate::error::{Error, ErrorCode};
+
+    use super::{
+        DataModel, EmptyHandler, Handler, MatchContext, NonBlockingHandler, ReadContext, ReadReply,
+    };
+
+    /// A handler that only counts its dataver bumps.
+    struct Counting(Cell<u32>);
+
+    impl Handler for Counting {
+        fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
+            Err(ErrorCode::AttributeNotFound.into())
+        }
+
+        fn bump_dataver(&self, _ctx: impl MatchContext) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl NonBlockingHandler for Counting {}
+
+    const NODE: Node<'static> = Node {
+        endpoints: &[
+            Endpoint::new(0, &[], &[DescHandler::CLUSTER, BasicInfoHandler::CLUSTER]),
+            Endpoint::new(1, &[], &[DescHandler::CLUSTER]),
+        ],
+    };
+
+    #[test]
+    fn endpoint_bump_reaches_only_the_clusters_of_that_endpoint() {
+        let ep0_desc = Counting(Cell::new(0));
+        let ep0_basic_info = Counting(Cell::new(0));
+        let ep1_desc = Counting(Cell::new(0));
+
+        let dm = (
+            NODE,
+            Async(
+                EmptyHandler
+                    .chain(|e, c| e == 0 && c == DescHandler::CLUSTER.id, &ep0_desc)
+                    .chain(
+                        |e, c| e == 0 && c == BasicInfoHandler::CLUSTER.id,
+                        &ep0_basic_info,
+                    )
+                    .chain(|e, c| e == 1 && c == DescHandler::CLUSTER.id, &ep1_desc),
+            ),
+        );
+
+        let counts = || (ep0_desc.0.get(), ep0_basic_info.0.get(), ep1_desc.0.get());
+
+        dm.bump_endpoint_dataver(0);
+        assert_eq!(counts(), (1, 1, 0));
+
+        dm.bump_endpoint_dataver(1);
+        assert_eq!(counts(), (1, 1, 1));
+
+        // An endpoint that is not in the metadata bumps nothing
+        dm.bump_endpoint_dataver(2);
+        assert_eq!(counts(), (1, 1, 1));
+    }
 }

@@ -57,7 +57,7 @@ pub use crate::dm::clusters::decl::globals::{
 /// Cluster metadata exposed by [`FixedLabelHandler`].
 ///
 /// Exposed as a free constant so callers can spell out
-/// `EpClMatcher::new(Some(ep), Some(fixed_label::CLUSTER.id))` without
+/// `|e, c| e == ep && c == fixed_label::CLUSTER.id` without
 /// reaching for the lifetime-parameterised handler type.
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 

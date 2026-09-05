@@ -72,7 +72,7 @@ pub use crate::persist::USER_LABELS_KEY;
 ///
 /// Exposed as a free constant so callers don't have to spell out the
 /// generic parameters of [`UserLabelHandler`] when they just want the
-/// cluster ID for an `EpClMatcher` or a `clusters!(...)` literal.
+/// cluster ID for a handler chain matcher or a `clusters!(...)` literal.
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
 /// Maximum length of a single `label` string, in characters.

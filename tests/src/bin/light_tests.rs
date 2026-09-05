@@ -71,8 +71,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EventEmitter,
-    Node, ReadContext,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EventEmitter, Node,
+    ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
@@ -484,58 +484,52 @@ fn data_model<
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == LevelControlDeviceLogic::CLUSTER.id,
                 level_control::HandlerAsyncAdaptor(level_control),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(ColorControlDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == ColorControlDeviceLogic::CLUSTER.id,
                 color_control::HandlerAsyncAdaptor(color_control),
             )
             // Clusters for the switch endpoint
             .chain(
-                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(identify::CLUSTER.id)),
+                |e, c| e == SWITCH_ENDPOINT && c == identify::CLUSTER.id,
                 Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(binding::CLUSTER.id)),
+                |e, c| e == SWITCH_ENDPOINT && c == binding::CLUSTER.id,
                 Async(
                     BindingHandler::new(Dataver::new_rand(&mut rand), SWITCH_ENDPOINT, bindings)
                         .adapt(),
                 ),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(ModeSelectDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == ModeSelectDeviceLogic::CLUSTER.id,
                 Async(mode_select::HandlerAdaptor(mode_select)),
             )
             // Clusters for the Generic Switch endpoint
             .chain(
-                EpClMatcher::new(
-                    Some(GENERIC_SWITCH_ENDPOINT),
-                    Some(desc::DescHandler::CLUSTER.id),
-                ),
+                |e, c| e == GENERIC_SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(
-                    Some(GENERIC_SWITCH_ENDPOINT),
-                    Some(SwitchHandler::CLUSTER.id),
-                ),
+                |e, c| e == GENERIC_SWITCH_ENDPOINT && c == SwitchHandler::CLUSTER.id,
                 Async(SwitchHandler::new(Dataver::new_rand(&mut rand), switch_position).adapt()),
             ),
     )
