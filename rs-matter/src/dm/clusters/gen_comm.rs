@@ -21,7 +21,7 @@ use core::fmt::Debug;
 
 use either::Either;
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;

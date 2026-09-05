@@ -42,7 +42,7 @@ use log::{error, info, trace};
 
 use futures_lite::StreamExt;
 
-use rand::RngCore;
+use rand::Rng;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::color_control::test::TestColorControlDeviceLogic;
 use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
@@ -155,7 +155,7 @@ fn main() -> Result<(), Error> {
     // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
     matter.startup(&kv)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
 
     // ModeSelect cluster setup - an *extra* cluster on EP1 (Core spec 9.2.1
@@ -470,7 +470,7 @@ fn data_model<
     CH: ColorControlHooks,
     MH: ModeSelectHooks,
 >(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     mode_select: &'a ModeSelectHandler<MH>,

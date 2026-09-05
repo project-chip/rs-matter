@@ -19,7 +19,7 @@
 
 use crate::error::Error;
 
-pub use rand_core::{CryptoRng, CryptoRngCore, RngCore};
+pub use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
 pub use canon::*;
 pub use rand::*;
@@ -36,11 +36,11 @@ mod rand;
 /// swapping out its out of the box algorithms with custom (potentially HW-accelerated) ones,
 /// by decorating the original implementation and replacing only the required types and methods.
 pub trait Crypto {
-    type Rand<'a>: CryptoRngCore + Copy
+    type Rand<'a>: CryptoRng + Copy
     where
         Self: 'a;
 
-    type WeakRand<'a>: RngCore + Copy
+    type WeakRand<'a>: Rng + Copy
     where
         Self: 'a;
 
@@ -655,7 +655,7 @@ pub fn default_crypto<'s, R>(
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 ) -> impl Crypto + 's
 where
-    R: CryptoRngCore + 's,
+    R: CryptoRng + 's,
 {
     #[cfg(feature = "openssl")]
     let crypto = backend::openssl::OpenSslCrypto::new(singleton_secret_key);

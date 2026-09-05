@@ -18,7 +18,7 @@
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
 #[cfg(feature = "case-resumption")]
-use rand_core::RngCore;
+use rand_core::Rng;
 
 #[cfg(feature = "case-resumption")]
 use super::casep::{

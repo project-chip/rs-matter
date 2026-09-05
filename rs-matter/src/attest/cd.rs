@@ -76,8 +76,10 @@ struct ContentInfo<'a> {
 }
 
 impl<'a> DecodeValue<'a> for ContentInfo<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // contentType OBJECT IDENTIFIER
             let content_type = ObjectIdentifier::decode(reader)?;
 
@@ -90,14 +92,14 @@ impl<'a> DecodeValue<'a> for ContentInfo<'a> {
             // Read the [0] context tag (should be context-specific, constructed, number 0)
             let context_header = Header::decode(reader)?;
             // Check for context-specific tag [0] constructed (0xA0)
-            if context_header.tag.number() != TagNumber::new(0)
-                || !context_header.tag.is_constructed()
+            if context_header.tag().number() != TagNumber(0)
+                || !context_header.tag().is_constructed()
             {
                 return Err(der::ErrorKind::Failed.into());
             }
 
             // The content inside [0] is the SignedData SEQUENCE (the whole TLV)
-            let signed_data_bytes = reader.read_slice(context_header.length)?;
+            let signed_data_bytes = reader.read_slice(context_header.length())?;
 
             Ok(Self {
                 content_type,
@@ -132,7 +134,7 @@ impl<'a> EncodeValue for ContentInfo<'a> {
 struct EncapsulatedContentInfo<'a> {
     econtent_type: ObjectIdentifier,
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
-    econtent: OctetStringRef<'a>,
+    econtent: &'a OctetStringRef,
 }
 
 /// SignedData ::= SEQUENCE {
@@ -153,8 +155,10 @@ struct SignedData<'a> {
 }
 
 impl<'a> DecodeValue<'a> for SignedData<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // version INTEGER (v3 = 3)
             let version = u8::decode(reader)?;
             if version != 3 {
@@ -222,12 +226,14 @@ struct SignerInfo<'a> {
     subject_key_identifier: &'a [u8],
     digest_algorithm: AlgorithmIdentifier<'a>,
     signature_algorithm: AlgorithmIdentifier<'a>,
-    signature: OctetStringRef<'a>,
+    signature: &'a OctetStringRef,
 }
 
 impl<'a> DecodeValue<'a> for SignerInfo<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // version INTEGER (v3 = 3)
             let version = u8::decode(reader)?;
             if version != 3 {
@@ -238,11 +244,11 @@ impl<'a> DecodeValue<'a> for SignerInfo<'a> {
             let ski_header = Header::decode(reader)?;
 
             // Check for context-specific tag [0] primitive
-            if ski_header.tag.number() != TagNumber::new(0) || ski_header.tag.is_constructed() {
+            if ski_header.tag().number() != TagNumber(0) || ski_header.tag().is_constructed() {
                 return Err(der::ErrorKind::Failed.into());
             }
 
-            let subject_key_identifier = reader.read_slice(ski_header.length)?;
+            let subject_key_identifier = reader.read_slice(ski_header.length())?;
 
             // Validate SKI is exactly 20 bytes
             if subject_key_identifier.len() != KEY_IDENTIFIER_LEN {
@@ -266,7 +272,7 @@ impl<'a> DecodeValue<'a> for SignerInfo<'a> {
             }
 
             // signature OCTET STRING (contains DER-encoded ECDSA signature)
-            let signature = OctetStringRef::decode(reader)?;
+            let signature = <&OctetStringRef>::decode(reader)?;
 
             Ok(Self {
                 version,

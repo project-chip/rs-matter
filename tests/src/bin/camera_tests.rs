@@ -36,7 +36,7 @@ use embassy_futures::select::select3;
 
 use futures_lite::StreamExt;
 
-use rand::RngCore;
+use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::cam_av_settings::{
@@ -420,7 +420,7 @@ fn main() -> Result<(), Error> {
     // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
     matter.startup(&kv)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
 
     const CAM_AV_STREAM_USAGES: &[StreamUsageEnum] = &[StreamUsageEnum::LiveView];
@@ -686,7 +686,7 @@ const NODE: Node<'static> = Node {
 // ---------------------------------------------------------------------------
 
 fn data_model<'a>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CamAv,
     cam_av_settings: &'a CamAvSettingsHandler<

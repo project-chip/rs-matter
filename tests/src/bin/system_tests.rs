@@ -34,7 +34,7 @@ use futures_lite::StreamExt;
 
 use log::{info, trace, warn};
 
-use rand::RngCore;
+use rand::Rng;
 
 use rs_matter::bdx::{Bdx, BdxDownloadInitiator, PROTO_ID_BDX};
 use rs_matter::crypto::{default_crypto, Crypto};
@@ -225,7 +225,7 @@ fn main() -> Result<(), Error> {
     matter.persist_reboot_count(&kv)?;
 
     // Create the crypto instance
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 
@@ -1015,7 +1015,7 @@ const NODE_BINFO_PROVISIONAL: Node<'static> = Node {
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,

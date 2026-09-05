@@ -62,7 +62,7 @@ use embassy_time::{Duration, Timer};
 
 use log::info;
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
@@ -184,7 +184,7 @@ const SWITCH_NODE: Node<'static> = Node {
 };
 
 fn switch_data_model<'a>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     bindings: &'a Bindings<MAX_BINDINGS>,
 ) -> impl DataModel + 'a {
     (
@@ -226,7 +226,7 @@ const LIGHT_NODE: Node<'static> = Node {
 };
 
 fn light_data_model<'a, OH: OnOffHooks>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, on_off::NoLevelControl>,
 ) -> impl DataModel + 'a {
     (

@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* (Breaking) Update to `rand_core` 0.10 (`RngCore`/`CryptoRngCore` are now `Rng`/`CryptoRng`; custom RNGs implement `TryRng` + `TryCryptoRng` with an `Infallible` error) and to the current RustCrypto releases (`digest`/`sha1`/`sha2` 0.11, `aes` 0.9, `cipher` 0.5, `ccm` 0.6, `hmac`/`hkdf`/`pbkdf2` 0.13, `elliptic-curve`/`p256` 0.14, `ecdsa` 0.17, `x509-cert` 0.3, `der` 0.8, `crypto-bigint` 0.7); `rand` 0.10 in the examples
 * (Breaking) Retire `EpClMatcher` in favor of `FnMatcher` - a plain `fn(EndptId, ClusterId) -> bool`
 * (Breaking) Split the root endpoint system handler chain in two, so that the operational network clusters (Network Commissioning, General Commissioning, General Diagnostics, Ethernet/Wifi/Thread Diagnostics) can be chained on top of a user handler that provides the rest; useful with non-concurrent commissioning
 * (Breaking) Retire `GenDiag::reboot_count` and `GenDiag::uptime_ms` as they are now implemented directly in `rs-matter` (#543)

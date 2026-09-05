@@ -73,9 +73,11 @@ impl<'a> der::FixedTag for Name<'a> {
     const TAG: Tag = Tag::Sequence;
 }
 impl<'a> DecodeValue<'a> for Name<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         // Read the entire SEQUENCE content (the RDNSequence) as a byte slice
-        let raw_bytes = reader.read_slice(header.length)?;
+        let raw_bytes = reader.read_slice(header.length())?;
 
         // Parse the Matter-specific attributes from the RDNSequence
         let attrs = MatterDnAttrs::parse(raw_bytes)?;
@@ -147,7 +149,7 @@ struct ParsedExtension<T> {
 struct ParsedExtensionFields<'a> {
     basic_constraints: Option<ParsedExtension<BasicConstraints>>,
     key_usage: Option<ParsedExtension<KeyUsage>>,
-    subject_key_id: Option<ParsedExtension<OctetStringRef<'a>>>,
+    subject_key_id: Option<ParsedExtension<&'a OctetStringRef>>,
     authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>>,
 }
 
@@ -156,7 +158,7 @@ impl<'a> ParsedExtensionFields<'a> {
     fn parse<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
         let mut basic_constraints: Option<ParsedExtension<BasicConstraints>> = None;
         let mut key_usage: Option<ParsedExtension<KeyUsage>> = None;
-        let mut subject_key_id: Option<ParsedExtension<OctetStringRef<'a>>> = None;
+        let mut subject_key_id: Option<ParsedExtension<&'a OctetStringRef>> = None;
         let mut authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>> = None;
 
         // Iterate through SEQUENCE OF Extension
@@ -169,14 +171,14 @@ impl<'a> ParsedExtensionFields<'a> {
             let extn_id = ObjectIdentifier::decode(&mut ext_reader)?;
 
             // critical BOOLEAN DEFAULT FALSE
-            let critical = if !ext_reader.is_finished() && ext_reader.peek_tag()? == Tag::Boolean {
+            let critical = if !ext_reader.is_finished() && Tag::peek(&ext_reader)? == Tag::Boolean {
                 bool::decode(&mut ext_reader)?
             } else {
                 false
             };
 
             // extnValue OCTET STRING
-            let extn_value = OctetStringRef::decode(&mut ext_reader)?;
+            let extn_value = <&OctetStringRef>::decode(&mut ext_reader)?;
             let value_bytes = extn_value.as_bytes();
 
             if extn_id == OID_BASIC_CONSTRAINTS {
@@ -192,7 +194,7 @@ impl<'a> ParsedExtensionFields<'a> {
                     value: bs.into(),
                 });
             } else if extn_id == OID_SUBJECT_KEY_ID {
-                let skid = OctetStringRef::from_der(value_bytes)?;
+                let skid = <&OctetStringRef>::from_der(value_bytes)?;
                 subject_key_id = Some(ParsedExtension {
                     critical,
                     value: skid,
@@ -234,7 +236,9 @@ impl<'a> ParsedExtensionFields<'a> {
 /// - Validate requirements during parsing (fail if invalid)
 /// - Provide access to Subject Key Identifier and Authority Key Identifier
 /// - Validate issuer and subject fields
-pub trait CertType<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue {
+pub trait CertType<'a>:
+    DecodeValue<'a, Error = der::Error> + der::FixedTag + der::EncodeValue + 'a
+{
     /// Get subject key identifier if present for this certificate type
     fn subject_key_id(&self) -> Option<&'a [u8]>;
 
@@ -266,14 +270,16 @@ pub trait CertType<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue {
 pub struct DacExtensions<'a> {
     basic_constraints: ParsedExtension<BasicConstraints>,
     key_usage: ParsedExtension<KeyUsage>,
-    subject_key_id: ParsedExtension<OctetStringRef<'a>>,
+    subject_key_id: ParsedExtension<&'a OctetStringRef>,
     authority_key_id: ParsedExtension<AuthorityKeyIdentifier<'a>>,
 }
 
 // DAC Extensions parsing with validation
 impl<'a> DecodeValue<'a> for DacExtensions<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // Parse all extension fields
             let fields = ParsedExtensionFields::parse(reader)?;
 
@@ -392,14 +398,16 @@ impl<'a> CertType<'a> for DacExtensions<'a> {
 pub struct PaiExtensions<'a> {
     basic_constraints: ParsedExtension<BasicConstraints>,
     key_usage: ParsedExtension<KeyUsage>,
-    subject_key_id: ParsedExtension<OctetStringRef<'a>>,
+    subject_key_id: ParsedExtension<&'a OctetStringRef>,
     authority_key_id: ParsedExtension<AuthorityKeyIdentifier<'a>>,
 }
 
 // PAI Extensions parsing with validation
 impl<'a> DecodeValue<'a> for PaiExtensions<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // Parse all extension fields
             let fields = ParsedExtensionFields::parse(reader)?;
 
@@ -510,14 +518,16 @@ impl<'a> CertType<'a> for PaiExtensions<'a> {
 pub struct PaaExtensions<'a> {
     basic_constraints: ParsedExtension<BasicConstraints>,
     key_usage: ParsedExtension<KeyUsage>,
-    subject_key_id: ParsedExtension<OctetStringRef<'a>>,
+    subject_key_id: ParsedExtension<&'a OctetStringRef>,
     authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>>,
 }
 
 // PAA Extensions parsing with validation
 impl<'a> DecodeValue<'a> for PaaExtensions<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // Parse all extension fields
             let fields = ParsedExtensionFields::parse(reader)?;
 
@@ -657,10 +667,12 @@ struct TbsCertificate<'a, E: CertType<'a>> {
 }
 
 impl<'a, E: CertType<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             let version = reader
-                .context_specific::<UintRef<'a>>(TagNumber::new(0), der::TagMode::Explicit)?
+                .context_specific::<UintRef<'a>>(TagNumber(0), der::TagMode::Explicit)?
                 .ok_or(der::ErrorKind::Failed)?;
 
             // Validate that version is 2 (v3 certificate)
@@ -706,7 +718,7 @@ impl<'a, E: CertType<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
 
             // Decode extensions [3] EXPLICIT
             let extensions = reader
-                .context_specific::<E>(TagNumber::new(3), der::TagMode::Explicit)?
+                .context_specific::<E>(TagNumber(3), der::TagMode::Explicit)?
                 .ok_or(der::ErrorKind::Failed)?;
 
             // Validate issuer and subject fields according to certificate type requirements

@@ -20,7 +20,7 @@
 //! This module implements the initiator side of the PASE (Passcode-Authenticated Session Establishment)
 //! protocol, used by commissioners to establish secure sessions with Matter devices.
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::{
     CanonEcPointRef, Crypto, HmacHash, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,

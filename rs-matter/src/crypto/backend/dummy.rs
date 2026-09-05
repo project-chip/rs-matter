@@ -24,7 +24,9 @@
 //! pulling in any crypto dependencies. Note that this module might be retired in future
 //! and `rustcrypto` might be used as the default backend.
 
-use rand_core::{CryptoRng, RngCore};
+use core::convert::Infallible;
+
+use rand_core::{TryCryptoRng, TryRng};
 
 use crate::crypto::{Crypto, CryptoSensitive, CryptoSensitiveRef};
 use crate::error::Error;
@@ -353,22 +355,20 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::crypto::EcPoint<'a, L
     }
 }
 
-impl RngCore for DummyCrypto {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for DummyCrypto {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         unimplemented!()
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         unimplemented!()
     }
 
-    fn fill_bytes(&mut self, _dest: &mut [u8]) {
-        unimplemented!()
-    }
-
-    fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), Self::Error> {
         unimplemented!()
     }
 }
 
-impl CryptoRng for DummyCrypto {}
+impl TryCryptoRng for DummyCrypto {}

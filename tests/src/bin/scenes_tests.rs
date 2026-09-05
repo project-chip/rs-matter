@@ -33,7 +33,7 @@ use log::{error, info, trace};
 
 use futures_lite::StreamExt;
 
-use rand::RngCore;
+use rand::Rng;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
@@ -129,7 +129,7 @@ fn main() -> Result<(), Error> {
     matter.startup(&kv)?;
 
     // Create the crypto instance
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 
@@ -296,7 +296,7 @@ pub use rs_matter::dm::clusters::app::color_control::test::TestColorControlDevic
 /// The handler is the root endpoint 0 handler plus the OnOff /
 /// LevelControl / Scenes handlers wired onto EP1.
 fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks, R>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,

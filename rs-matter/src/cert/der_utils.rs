@@ -61,7 +61,7 @@ pub fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; RAW_SIGNATURE_LEN], Error> {
     // Read the SEQUENCE header
     let seq_header = Header::decode(&mut reader).map_err(|_| Error::from(ErrorCode::Invalid))?;
 
-    if seq_header.tag != Tag::Sequence {
+    if seq_header.tag() != Tag::Sequence {
         return Err(ErrorCode::Invalid.into());
     }
 

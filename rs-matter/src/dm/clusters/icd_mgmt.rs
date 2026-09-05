@@ -35,7 +35,7 @@ use core::num::NonZeroU8;
 use embassy_time::{Duration, Instant};
 
 use crate::acl::AccessReq;
-use crate::crypto::{CanonAeadKey, Crypto, RngCore};
+use crate::crypto::{CanonAeadKey, Crypto, Rng};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     Access, ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, LifecycleOp,

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::crypto::{Crypto, RngCore};
+use rs_matter::crypto::{Crypto, Rng};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
@@ -66,7 +66,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         ],
     };
 
-    pub fn new(mut rand: impl RngCore + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
+    pub fn new(mut rand: impl Rng + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
         let handler = EthSysHandlerBuilder::new()
             .build(rand)
             .chain(

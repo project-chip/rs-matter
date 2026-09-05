@@ -17,7 +17,7 @@
 
 //! This module contains the implementation of the Administrative Commissioning cluster and its handler.
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::Crypto;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};

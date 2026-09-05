@@ -33,7 +33,7 @@ use log::{error, info, trace};
 
 use futures_lite::StreamExt;
 
-use rand::RngCore;
+use rand::Rng;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
     matter.startup(&kv)?;
 
     // Create the crypto instance
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 
@@ -198,7 +198,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
 ) -> impl DataModel + 'a {

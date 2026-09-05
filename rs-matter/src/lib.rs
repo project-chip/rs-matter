@@ -63,7 +63,7 @@ use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

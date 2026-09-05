@@ -68,7 +68,7 @@ blocking = "1"
 futures-lite = "2"
 heapless = "0.9"
 rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "pics", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
-rand = { version = "0.8", features = ["std", "std_rng"] }
+rand = { version = "0.10", features = ["std", "std_rng", "thread_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"
 async-compat = { version = "0.2", optional = true }

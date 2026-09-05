@@ -26,7 +26,7 @@ embassy-futures = "0.1"
 embassy-time = { version = "0.5", features = ["std"] }
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 futures-lite = "2"
-rand = { version = "0.8", features = ["std", "std_rng"] }
+rand = { version = "0.10", features = ["std", "std_rng", "thread_rng"] }
 static_cell = "1"
 socket2 = { version = "0.5", features = ["all"] }
 nix = { version = "0.30", features = ["net"] }

@@ -43,9 +43,9 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder};
 // We directly use the hmac crate here, there was a self-referential structure
 // problem while using OpenSSL's Signer
 // TODO: Use proper OpenSSL method for this
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{TryCryptoRng, TryRng};
 
 use crate::crypto::{CanonPkcSecretKeyRef, CanonUint320Ref, CryptoSensitive, CryptoSensitiveRef};
 use crate::error::{Error, ErrorCode};
@@ -301,27 +301,25 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
 #[derive(Copy, Clone)]
 pub struct Rand(());
 
-impl RngCore for Rand {
-    fn next_u32(&mut self) -> u32 {
-        rand_core::impls::next_u32_via_fill(self)
+impl TryRng for Rand {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        rand_core::utils::next_word_via_fill(self)
     }
 
-    fn next_u64(&mut self) -> u64 {
-        rand_core::impls::next_u64_via_fill(self)
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        rand_core::utils::next_word_via_fill(self)
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         openssl::rand::rand_bytes(dest).unwrap();
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
 
         Ok(())
     }
 }
 
-impl CryptoRng for Rand {}
+impl TryCryptoRng for Rand {}
 
 /// A hash implementation
 #[derive(Clone)]

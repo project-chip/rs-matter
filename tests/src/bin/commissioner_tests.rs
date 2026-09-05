@@ -53,8 +53,7 @@ use log::{error, info};
 use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use rs_matter::crypto::{
-    default_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, RngCore as _, SecretKey,
-    SigningSecretKey,
+    default_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, Rng as _, SecretKey, SigningSecretKey,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
@@ -148,7 +147,7 @@ async fn run(args: Args) -> Result<CommissionResult, Error> {
         socket.get_ref().local_addr().unwrap()
     );
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let matter = CTRL_MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,

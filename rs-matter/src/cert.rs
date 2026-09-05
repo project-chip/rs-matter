@@ -947,19 +947,19 @@ fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, Error> {
         let mut inner = SliceReader::new(any.value()).map_err(|_| ErrorCode::InvalidData)?;
 
         // Skip the OID.
-        ObjectIdentifier::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
+        <ObjectIdentifier>::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
 
         // OPTIONAL critical BOOLEAN before the mandatory OCTET STRING
         // `extnValue`.
         if !inner.is_finished()
-            && inner.peek_tag().map_err(|_| ErrorCode::InvalidData)? == Tag::Boolean
+            && Tag::peek(&inner).map_err(|_| ErrorCode::InvalidData)? == Tag::Boolean
             && bool::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?
         {
             return Ok(true);
         }
         // Consume `extnValue` so we land on the next `Extension`
         // SEQUENCE (or the end of the blob).
-        let _ = OctetStringRef::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
+        let _ = <&OctetStringRef>::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
     }
     Ok(false)
 }

@@ -48,8 +48,8 @@
 use crate::cert::gen::{CertGenerator, CertType, IssuerDN, SubjectDN, Validity};
 use crate::cert::CertRef;
 use crate::crypto::{
-    CanonPkcPublicKey, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, RngCore,
-    SecretKey, SigningSecretKey,
+    CanonPkcPublicKey, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, Rng, SecretKey,
+    SigningSecretKey,
 };
 use crate::error::Error;
 use crate::tlv::TLVElement;

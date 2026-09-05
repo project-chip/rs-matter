@@ -20,7 +20,7 @@
 //! This module implements the responder side of the PASE (Passcode-Authenticated Session Establishment)
 //! protocol, used by Matter devices to accept secure session establishment from commissioners.
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::{
     CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,

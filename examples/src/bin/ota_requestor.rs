@@ -36,7 +36,7 @@ use embassy_time::{Duration, Timer};
 
 use log::{info, warn};
 
-use rand::RngCore;
+use rand::Rng;
 
 use rs_matter::bdx::BdxDownloadInitiator;
 use rs_matter::crypto::{default_crypto, Crypto};
@@ -108,7 +108,7 @@ fn main() -> Result<(), Error> {
     // Re-hydrate persisted state.
     matter.startup(&kv)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
 
     let rand = crypto.rand()?;
 
@@ -170,7 +170,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler: the root endpoint 0 handler plus the OTA Requestor
 /// cluster (and its descriptor) on endpoint 1.
 fn data_model<'a>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     providers: &'a Providers,
     ota_state: &'a OtaState,
 ) -> impl DataModel + 'a {

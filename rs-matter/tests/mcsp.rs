@@ -40,8 +40,8 @@ use log::info;
 use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::MAX_CERT_TLV_AND_ASN1_LEN;
 use rs_matter::crypto::{
-    test_only_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, RngCore, SecretKey,
-    SigningSecretKey, AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED,
+    test_only_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, Rng, SecretKey, SigningSecretKey,
+    AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED,
 };
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::Error;
@@ -426,7 +426,7 @@ fn decode_mcsp_rsp<C: Crypto>(
 /// A fresh non-zero 28-bit message counter for the peer's outbound
 /// frames. Kept in the 28-bit range to leave the top four bits clear
 /// (matching how the transport itself allocates counters).
-fn fresh_ctr(rand: &mut impl RngCore) -> u32 {
+fn fresh_ctr(rand: &mut impl Rng) -> u32 {
     loop {
         let v = rand.next_u32() & 0x0fff_ffff;
         if v != 0 {

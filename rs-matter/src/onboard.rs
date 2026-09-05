@@ -61,7 +61,7 @@
 use core::num::NonZeroU8;
 
 use crate::cert::gen::Validity;
-use crate::crypto::{Crypto, RngCore, AEAD_CANON_KEY_LEN};
+use crate::crypto::{Crypto, Rng, AEAD_CANON_KEY_LEN};
 use crate::dm::clusters::gen_comm::{CommissioningErrorEnum, GeneralCommissioningClient};
 use crate::dm::clusters::noc::{NodeOperationalCertStatusEnum, OperationalCredentialsClient};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
