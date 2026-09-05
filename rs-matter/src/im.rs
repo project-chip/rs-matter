@@ -1809,8 +1809,7 @@ where
     }
 
     fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
-        self.handler
-            .bump_dataver(MatchContextInstance::new(Some(endpoint_id), None));
+        self.handler.bump_endpoint_dataver(endpoint_id);
         self.state
             .subscriptions
             .notify_endpoint_changed(endpoint_id)
