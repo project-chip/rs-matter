@@ -1283,7 +1283,6 @@ impl defmt::Format for TLVSequenceIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use core::{f32, f64};
 
     use super::TLVElement;
     use crate::{

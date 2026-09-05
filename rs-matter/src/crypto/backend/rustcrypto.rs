@@ -38,7 +38,6 @@ use core::convert::TryInto;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ops::{Add, Mul, Neg};
-use core::str::FromStr;
 
 use ccm::{Ccm, NonceSize, TagSize};
 
@@ -61,9 +60,9 @@ use rand_core::CryptoRng;
 
 use sec1::point::ModulusSize;
 
-use x509_cert::attr::AttributeType;
+use x509_cert::attr::{AttributeType, AttributeTypeAndValue};
 use x509_cert::der::{asn1::BitString, Any, Encode, Writer};
-use x509_cert::name::Name;
+use x509_cert::name::{Name, RdnSequence, RelativeDistinguishedName};
 use x509_cert::request::CertReq;
 use x509_cert::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 
@@ -634,7 +633,27 @@ where
         }
 
         // `O=CSR` (organizationName, encoded as a UTF-8 string)
-        let subject = unwrap!(Name::from_str("O=CSR"), "x509 Name creation failed");
+        //
+        // Assembled by hand rather than via `Name::from_str("O=CSR")`: the latter resolves the
+        // attribute name through the `const-oid` OID name database, which the linker then has to
+        // keep - ~100KB of flash on embedded targets.
+        let mut rdn = RelativeDistinguishedName::default();
+        unwrap!(
+            rdn.insert(AttributeTypeAndValue {
+                // organizationName http://www.oid-info.com/get/2.5.4.10
+                oid: attr_type("2.5.4.10"),
+                value: unwrap!(
+                    Any::new(x509_cert::der::Tag::Utf8String, "CSR".as_bytes()),
+                    "x509 attribute value creation failed"
+                ),
+            }),
+            "x509 RDN creation failed"
+        );
+
+        let mut rdn_sequence = RdnSequence::default();
+        rdn_sequence.push(rdn);
+
+        let subject = Name::hazmat_from_rdn_sequence(rdn_sequence);
 
         let mut public_key = MaybeUninit::uninit();
         let public_key = public_key.init_with(CryptoSensitive::<PUB_KEY_LEN>::init()); // TODO MEDIUM BUFFER

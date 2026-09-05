@@ -36,7 +36,7 @@ log = []
 
 [dependencies]
 embassy-futures = "0.1"
-static_cell = "1"
+static_cell = "2"
 critical-section = "1"
 embassy-executor = { version = "0.10", features = ["executor-thread"] }
 rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto", "case-responder-only"] }
@@ -69,6 +69,8 @@ embassy-executor = { version = "0.10", features = ["platform-cortex-m"] }
 hal = { package = "embassy-nrf", version = "0.10", default-features = false, features = ["defmt", "time-driver-rtc1", "time", "nrf52840"] }
 
 [target.thumbv6m-none-eabi.dependencies]
+# `static_cell` 2 needs atomic CAS via `portable-atomic`; thumbv6m has none, so fall back to critical sections
+portable-atomic = { version = "1", features = ["critical-section"] }
 hal = { package = "embassy-rp", version = "0.10", features = ["defmt", "unstable-pac", "time-driver", "rp2040"] }
 
 [target.riscv32imac-unknown-none-elf.dependencies]

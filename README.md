@@ -327,6 +327,18 @@ The TL;DR is, rather than building with `--features zeroconf` everywhere, you ca
 - On MacOSX: `--features astro-dnssd` is known to work fine;
 - On Windows: try the built-in mDNS resolver.
 
+### Flash size on embedded targets (`rustcrypto` backend)
+
+The RustCrypto `sha2` and `aes` crates select their software backend with a `--cfg` flag rather than with a Cargo feature,
+and the default is the *unrolled* (faster, ~5KB larger) SHA-256.On flash-constrained MCUs, put in your `.cargo/config.toml`:
+
+```toml
+[build]
+rustflags = ["--cfg", "sha2_backend_soft=\"compact\"", "--cfg", "aes_backend_soft=\"compact\""]
+```
+
+This is what the `bloat-check` project (the CI flash-size gate) does.
+
 ### Unit tests and internal E2E tests
 ```sh
 cargo test -- --test-threads 1

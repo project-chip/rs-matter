@@ -61,7 +61,7 @@ embassy-futures = "0.1"
 embassy-sync = "0.8"
 embassy-time = { version = "0.5", features = ["std"] }
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
-static_cell = "1"
+static_cell = "2"
 if-addrs = "0.15"
 async-io = "2"
 blocking = "1"
@@ -70,7 +70,7 @@ heapless = "0.9"
 rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "pics", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
 rand = { version = "0.10", features = ["std", "std_rng", "thread_rng"] }
 async-signal = "0.2"
-socket2 = "0.5"
+socket2 = "0.6"
 async-compat = { version = "0.2", optional = true }
 
 [[bin]]

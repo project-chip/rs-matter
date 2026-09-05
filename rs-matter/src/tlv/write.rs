@@ -605,7 +605,6 @@ impl WriteBuf<'_> {
 
 #[cfg(test)]
 mod tests {
-    use core::f32;
 
     use super::{TLVTag, TLVWrite};
     use crate::{tlv::TLVValue, utils::storage::WriteBuf};
