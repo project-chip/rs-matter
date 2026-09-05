@@ -54,7 +54,7 @@ use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
@@ -312,31 +312,28 @@ where
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == LevelControlDeviceLogic::CLUSTER.id,
                 level_control::HandlerAsyncAdaptor(level_control),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(ColorControlDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == ColorControlDeviceLogic::CLUSTER.id,
                 color_control::HandlerAsyncAdaptor(color_control),
             )
+            .chain(|e, c| e == 1 && c == SCENES_FULL_CLUSTER.id, scenes.adapt())
             .chain(
-                EpClMatcher::new(Some(1), Some(SCENES_FULL_CLUSTER.id)),
-                scenes.adapt(),
-            )
-            .chain(
-                EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == UnitTestingHandler::CLUSTER.id,
                 Async(
                     UnitTestingHandler::new(Dataver::new_rand(&mut rand), unit_testing_data)
                         .adapt(),

@@ -66,7 +66,7 @@ pub use crate::dm::clusters::decl::power_source::*;
 /// Cluster metadata exposed by [`PowerSourceHandler`].
 ///
 /// Exposed as a free constant so callers can spell out
-/// `EpClMatcher::new(Some(ep), Some(power_source::CLUSTER.id))` without
+/// `|e, c| e == ep && c == power_source::CLUSTER.id` without
 /// naming the lifetime-parameterised handler type.
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
     .with_features(Feature::WIRED.bits())

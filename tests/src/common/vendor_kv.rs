@@ -44,7 +44,7 @@ pub const START_UP_CT_KEY: u16 = VENDOR_KEYS_START + 1;
 /// [`KvBlobStoreAccess::access`] is generic over its closure, so there is no
 /// `&dyn KvBlobStoreAccess`. The device-logic structs need to hold a handle to
 /// the store without becoming generic themselves - they are named bare in
-/// `EpClMatcher` expressions, as `OnOffDeviceLogic::CLUSTER` - so this narrows
+/// `FnMatcher` expressions, as `OnOffDeviceLogic::CLUSTER` - so this narrows
 /// the store down to the three whole-blob operations they actually use.
 pub trait VendorKv {
     /// Read the blob at `key` into `out`, returning how many bytes were

@@ -27,7 +27,7 @@
 use rs_matter::dm::clusters::acl::{self, AclHandler};
 use rs_matter::dm::devices::DEV_TYPE_ROOT_NODE;
 use rs_matter::dm::{
-    Async, ChainedHandler, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, ChainedHandler, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, Node,
 };
 use rs_matter::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
 use rs_matter::tlv::Nullable;
@@ -52,7 +52,7 @@ fn dm_handler() -> impl DataModel {
     (
         NODE,
         ChainedHandler::new(
-            EpClMatcher::new(Some(0), Some(acl::CLUSTER_AUX.id)),
+            |e, c| e == 0 && c == acl::CLUSTER_AUX.id,
             Async(AclHandler::new(Dataver::new(1)).adapt()),
             EmptyHandler,
         ),

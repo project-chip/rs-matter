@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#![recursion_limit = "256"]
+
 //! In-process device-to-device binding integration test — the automated
 //! equivalent of the certification test plan's (manual) TC-BIND-2.1
 //! "DUT as controller" procedure.
@@ -82,7 +84,7 @@ use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
 use rs_matter::im::client::ImClient;
 use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
@@ -191,11 +193,11 @@ fn switch_data_model<'a>(
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(SWITCH_ENDPOINT), Some(binding::CLUSTER.id)),
+                |e, c| e == SWITCH_ENDPOINT && c == binding::CLUSTER.id,
                 Async(
                     BindingHandler::new(Dataver::new_rand(&mut rand), SWITCH_ENDPOINT, bindings)
                         .adapt(),
@@ -233,18 +235,15 @@ fn light_data_model<'a, OH: OnOffHooks>(
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(LIGHT_ENDPOINT), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == LIGHT_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(
-                    Some(LIGHT_ENDPOINT),
-                    Some(groups::GroupsHandler::CLUSTER.id),
-                ),
+                |e, c| e == LIGHT_ENDPOINT && c == groups::GroupsHandler::CLUSTER.id,
                 Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(LIGHT_ENDPOINT), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == LIGHT_ENDPOINT && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             ),
     )

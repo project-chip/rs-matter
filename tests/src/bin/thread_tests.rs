@@ -53,7 +53,7 @@ use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, ThreadNetworks};
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
@@ -341,15 +341,15 @@ where
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             ),
     )

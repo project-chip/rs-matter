@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* (Breaking) Retire `EpClMatcher` in favor of `FnMatcher` - a plain `fn(EndptId, ClusterId) -> bool`
+* (Breaking) Split the root endpoint system handler chain in two, so that the operational network clusters (Network Commissioning, General Commissioning, General Diagnostics, Ethernet/Wifi/Thread Diagnostics) can be chained on top of a user handler that provides the rest; useful with non-concurrent commissioning
 * (Breaking) Retire `GenDiag::reboot_count` and `GenDiag::uptime_ms` as they are now implemented directly in `rs-matter` (#543)
 * Add PAF and NTL options to `DiscoveryCapabilities`; `QrPayload::as_ndef` (#543)
 * Streamline the logging of the E2E test drivers (#542)

@@ -58,8 +58,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, InvokeContext,
-    Node, ReadContext,
+    ArrayAttributeRead, Async, Cluster, DataModel, Dataver, Endpoint, InvokeContext, Node,
+    ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
@@ -191,23 +191,23 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == MediaHandler::CLUSTER.id,
                 MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == ContentHandler::CLUSTER.id,
                 ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == KeypadInputHandler::CLUSTER.id,
                 KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             ),
     )

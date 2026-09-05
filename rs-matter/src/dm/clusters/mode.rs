@@ -115,7 +115,7 @@
 //! let handler = ModeHandler::new(Dataver::new_rand(rand), Vacuum::new());
 //!
 //! let device_handler = EmptyHandler.chain(
-//!     EpClMatcher::new(Some(1), Some(rvc_run_mode::CLUSTER.id)),
+//!     |e, c| e == 1 && c == rvc_run_mode::CLUSTER.id,
 //!     rvc_run_mode::adapt(handler),
 //! );
 //! ```

@@ -25,7 +25,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{EthSysHandler, EthSysHandlerBuilder, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
-    Async, AsyncHandler, ChainedHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    Async, AsyncHandler, ChainedHandler, Dataver, EmptyHandler, Endpoint, FnMatcher,
     HandlerContext, InvokeContext, InvokeReply, LifecycleOp, MatchContext, Metadata, Node,
     ReadContext, ReadReply, WriteContext,
 };
@@ -39,10 +39,10 @@ use super::echo_cluster::{self, EchoHandler};
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     handler_chain_type!(
-        EpClMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
-        EpClMatcher => Async<EchoHandler>,
-        EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
-        EpClMatcher => Async<EchoHandler>
+        FnMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
+        FnMatcher => Async<EchoHandler>,
+        FnMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
+        FnMatcher => Async<EchoHandler>
         | EthSysHandler<'a>),
 );
 
@@ -70,19 +70,19 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         let handler = EthSysHandlerBuilder::new()
             .build(rand)
             .chain(
-                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
+                |e, c| e == ROOT_ENDPOINT_ID && c == echo_cluster::ID,
                 Async(EchoHandler::new(2, Dataver::new_rand(&mut rand))),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
+                |e, c| e == 1 && c == DescHandler::CLUSTER.id,
                 Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(echo_cluster::ID)),
+                |e, c| e == 1 && c == echo_cluster::ID,
                 Async(EchoHandler::new(3, Dataver::new_rand(&mut rand))),
             )
             .chain(
-                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             );
 
