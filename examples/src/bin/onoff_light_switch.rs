@@ -45,7 +45,7 @@ use futures_lite::io::{AsyncBufReadExt, BufReader};
 
 use log::{info, warn};
 
-use rand::RngCore;
+use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::on_off;
@@ -117,7 +117,7 @@ fn main() -> Result<(), Error> {
     // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info).
     matter.startup(&kv)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
 
     let im = InteractionModel::new(
@@ -401,7 +401,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
 /// on the switch endpoint.
 fn data_model<'a, const N: usize>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     bindings: &'a Bindings<N>,
 ) -> impl DataModel + 'a {
     (

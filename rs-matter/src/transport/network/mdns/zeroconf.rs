@@ -33,7 +33,7 @@ use zeroconf::browser::TMdnsBrowser;
 use zeroconf::prelude::TEventLoop;
 use zeroconf::service::TMdnsService;
 use zeroconf::txt_record::TTxtRecord;
-use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
+use zeroconf::{BrowserEvent, MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
@@ -208,9 +208,10 @@ impl ZeroconfMdns {
 
         let _ = std::thread::spawn(move || {
             let mut browser = MdnsBrowser::new(service_type);
-            browser.set_service_discovered_callback(Box::new(
-                move |result: zeroconf::Result<ServiceDiscovery>, _context| {
-                    if let Ok(service) = result {
+            browser.set_service_callback(Box::new(
+                move |result: zeroconf::Result<BrowserEvent>, _context| {
+                    // Removals are not tracked: entries are drained (and re-resolved) on each poll
+                    if let Ok(BrowserEvent::Add(service)) = result {
                         if let Ok(mut guard) = discovered_thread.lock() {
                             guard.push(service);
                         }

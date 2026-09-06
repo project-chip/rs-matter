@@ -47,7 +47,7 @@ use embassy_time::{Duration, Timer};
 
 use log::{debug, info, warn};
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
@@ -127,7 +127,7 @@ const NODE: Node<'static> = Node {
 };
 
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl DataModel + 'a {
     (

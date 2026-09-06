@@ -28,7 +28,7 @@ use domain::base::Message;
 use embassy_futures::select::{select, select4};
 use embassy_time::{Duration, Timer};
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::Crypto;
 use crate::error::{Error, ErrorCode};

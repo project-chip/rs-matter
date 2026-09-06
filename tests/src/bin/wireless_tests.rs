@@ -38,7 +38,7 @@ use async_signal::{Signal, Signals};
 
 use futures_lite::StreamExt;
 
-use rand::RngCore;
+use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
@@ -162,7 +162,7 @@ fn run_wifi() -> Result<(), Error> {
 
     seed_networks(&kv, &seed)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
 
     let on_off = on_off::OnOffHandler::new_standalone(
@@ -268,7 +268,7 @@ fn run_thread() -> Result<(), Error> {
 
     seed_networks(&kv, &seed)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
 
     let on_off = on_off::OnOffHandler::new_standalone(
@@ -367,7 +367,7 @@ const NODE_THREAD: Node<'static> = Node {
 };
 
 fn data_model_wifi<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
@@ -396,7 +396,7 @@ where
 }
 
 fn data_model_thread<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     thread_diag: &'a dyn ThreadDiag,
     net_ctl: T,

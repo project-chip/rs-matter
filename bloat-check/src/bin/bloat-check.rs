@@ -58,7 +58,7 @@ use embassy_executor::Executor;
 use esp_rtos::embassy::Executor;
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
-use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
+use rs_matter::crypto::{Crypto, Rng, WeakTestOnlyRand};
 use rs_matter::dm::clusters::app::on_off::NoLevelControl;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
@@ -625,7 +625,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: &'a AppNetCtl,

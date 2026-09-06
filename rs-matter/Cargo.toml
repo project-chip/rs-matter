@@ -221,15 +221,15 @@ bitflags = { version =  "2.5", default-features = false }
 embedded-io-async = "0.7"
 heapless = "0.9"
 num = { version = "0.4", default-features = false }
-num-derive = "0.4"
+num-derive = "0.5"
 num_enum = { version = "0.7.5", default-features = false }
 num-traits = { version = "0.2", default-features = false }
-strum = { version = "0.26", features = ["derive"], default-features = false }
+strum = { version = "0.28", features = ["derive"], default-features = false }
 log = { version = "0.4", optional = true }
 defmt = { version = "1", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
 time = { version = "0.3", default-features = false }
-rand_core = { version = "0.6", default-features = false }
+rand_core = { version = "0.10", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1.2"
 embassy-time = "0.5"
@@ -238,9 +238,9 @@ either = { version = "1", default-features = false }
 critical-section = "1.1"
 domain = { version = "0.12", default-features = false, features = ["heapless"] }
 qrcodegen-no-heap = "1.8"
-rqrr = { version = "0.10", default-features = false, optional = true }
+rqrr = { version = "0.11", default-features = false, optional = true }
 scopeguard = { version = "1", default-features = false }
-pinned-init = { version = "0.0.8", default-features = false }
+pinned-init = { version = "0.0.10", default-features = false }
 
 # crypto
 openssl = { version = "0.10", optional = true }
@@ -249,28 +249,28 @@ mbedtls-rs-sys = { version = "0.2", default-features = false, features = ["matte
 
 # rust-crypto
 # Generic traits and traitified structures
-digest = { version = "0.10", default-features = false, optional = true }
-cipher = { version = "0.4.4", default-features = false, optional = true }
-ccm = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
-elliptic-curve = { version = "0.13", default-features = false, optional = true }
-primeorder = { version = "0.13", default-features = false, optional = true }
-ecdsa = { version = "0.16", default-features = false, features = ["der"], optional = true }
-sec1 = { version = "0.7", default-features = false, optional = true }
-signature = { version = "2.2", default-features = false, optional = true }
-hmac = { version = "0.12", optional = true }
+digest = { version = "0.11", default-features = false, optional = true }
+cipher = { version = "0.5", default-features = false, optional = true }
+ccm = { version = "0.6", default-features = false, features = ["alloc"], optional = true }
+elliptic-curve = { version = "0.14", default-features = false, optional = true }
+primeorder = { version = "0.14", default-features = false, optional = true }
+ecdsa = { version = "0.17", default-features = false, features = ["der"], optional = true }
+sec1 = { version = "0.8", default-features = false, optional = true }
+signature = { version = "3", default-features = false, optional = true }
+hmac = { version = "0.13", optional = true }
 # Concrete algorithms
-hkdf = { version = "0.12", optional = true }
-pbkdf2 = { version = "0.12", optional = true }
-crypto-bigint = { version = "0.6", default-features = false, optional = true }
-sha1 = { version = "0.10", default-features = false, optional = true }
-sha2 = { version = "0.10", default-features = false, optional = true }
-aes = { version = "0.8", optional = true }
-p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
-x509-cert = { version = "0.2", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
-der = { version = "0.7", features = ["derive", "oid"] }
+hkdf = { version = "0.13", optional = true }
+pbkdf2 = { version = "0.13", optional = true }
+crypto-bigint = { version = "0.7", default-features = false, optional = true }
+sha1 = { version = "0.11", default-features = false, optional = true }
+sha2 = { version = "0.11", default-features = false, optional = true }
+aes = { version = "0.9", optional = true }
+p256 = { version = "0.14", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
+x509-cert = { version = "0.3", default-features = false, features = ["hazmat"], optional = true } # TODO: requires `alloc`
+der = { version = "0.8", features = ["derive", "oid"] }
 
 # STD
-rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }
+rand = { version = "0.10", optional = true, default-features = false, features = ["std", "std_rng", "thread_rng"] }
 async-io = { version = "2", optional = true, default-features = false }
 async-compat = { version = "0.2", optional = true, default-features = false }
 
@@ -283,12 +283,12 @@ uuid = { version = "1", optional = true, features = ["v4"] }
 libc = { version = "0.2", optional = true }
 futures-lite = { version = "2", optional = true }
 astro-dnssd = { version = "0.3", optional = true }
-zeroconf = { version = "0.15", optional = true }
+zeroconf = { version = "0.18", optional = true }
 if-addrs = { version = "0.15", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"
-nix = { version = "0.30", features = ["net"] }
+nix = { version = "0.31", features = ["net"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", features = ["bluetoothd"], optional = true }
@@ -301,12 +301,12 @@ rs-matter-codegen = { path = "../rs-matter-codegen", version = "0.3.0" }
 [dev-dependencies]
 log = "0.4"
 env_logger = "0.11"
-nix = { version = "0.30", features = ["net"] }
-socket2 = { version = "0.5", features = ["all"] }
+nix = { version = "0.31", features = ["net"] }
+socket2 = { version = "0.6", features = ["all"] }
 futures-lite = "2"
 async-channel = "2"
 static_cell = "2"
-similar = "2.6"
+similar = "3"
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 trybuild = "1"
 tempfile = "3"

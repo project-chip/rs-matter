@@ -34,14 +34,10 @@
 //! and those implementations do implement the corresponding RustCrypto traits, so in that case it should be possible
 //! to reuse those implementations with a variation of this backend with no or minimal adaptation.
 
-#![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
-
 use core::convert::TryInto;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ops::{Add, Mul, Neg};
-
-use alloc::vec;
 
 use ccm::{Ccm, NonceSize, TagSize};
 
@@ -49,28 +45,26 @@ use crypto_bigint::NonZero;
 
 use digest::Digest as _;
 
-use ecdsa::hazmat::{DigestPrimitive, SignPrimitive, VerifyPrimitive};
-use ecdsa::{der, PrimeCurve, Signature, SignatureSize, SigningKey, VerifyingKey};
+use ecdsa::{der, DigestAlgorithm, EcdsaCurve, Signature, SigningKey, VerifyingKey};
 
-use elliptic_curve::generic_array::{ArrayLength, GenericArray};
-use elliptic_curve::group::Curve;
-use elliptic_curve::sec1::{EncodedPoint, FromEncodedPoint, ToEncodedPoint};
+use elliptic_curve::array::ArraySize;
+use elliptic_curve::ops::Invert;
+use elliptic_curve::sec1::{FromSec1Point, Sec1Point, ToSec1Point};
+use elliptic_curve::subtle::CtOption;
 use elliptic_curve::{
-    AffinePoint, CurveArithmetic, Field, FieldBytesSize, PrimeField, ProjectivePoint, PublicKey,
-    Scalar, SecretKey,
+    AffinePoint, CurveArithmetic, CurveGroup, Field, FieldBytes, FieldBytesSize, Generate, Group,
+    PrimeField, ProjectivePoint, PublicKey, Scalar, SecretKey,
 };
 
-use primeorder::PrimeCurveParams;
-
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 
 use sec1::point::ModulusSize;
 
-use x509_cert::attr::AttributeType;
+use x509_cert::attr::{AttributeType, AttributeTypeAndValue};
 use x509_cert::der::{asn1::BitString, Any, Encode, Writer};
-use x509_cert::name::RdnSequence;
+use x509_cert::name::{Name, RdnSequence, RelativeDistinguishedName};
 use x509_cert::request::CertReq;
-use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
+use x509_cert::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 
 use crate::crypto::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
@@ -79,8 +73,6 @@ use crate::crypto::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::utils::init::InitMaybeUninit;
-
-extern crate alloc;
 
 /// A RustCrypto backend for the crypto traits
 pub struct RustCrypto<'s, T> {
@@ -107,7 +99,7 @@ impl<'s, T> RustCrypto<'s, T> {
 
 impl<T> Crypto for RustCrypto<'_, T>
 where
-    T: CryptoRngCore,
+    T: CryptoRng,
 {
     type Rand<'a>
         = &'a SharedRand<T>
@@ -221,7 +213,7 @@ where
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
     ) -> Result<Self::Hmac<'_>, Error> {
-        pub use hmac::Mac;
+        use hmac::KeyInit;
 
         Ok(unsafe {
             Digest::new(unwrap!(
@@ -274,8 +266,10 @@ where
             0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
         ]);
 
-        let scalar = crypto_bigint::U320::from_be_slice(uint.access())
-            .rem(&unwrap!(NonZero::new(NISTP256R1_MODULUS).into_option()));
+        let scalar =
+            crypto_bigint::U320::from_be_slice(uint.access()).rem(
+                &NonZero::<crypto_bigint::U320>::new_unwrap(NISTP256R1_MODULUS),
+            );
 
         self.ec_scalar(CanonEcScalarRef::new_from_slice(
             &scalar.to_be_bytes()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
@@ -415,12 +409,11 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>
     crate::crypto::Aead<KEY_LEN, NONCE_LEN> for AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN, C, M, N>
 where
-    C: cipher::BlockCipher
-        + cipher::BlockSizeUser<BlockSize = ccm::consts::U16 /* TODO */>
-        + cipher::BlockEncrypt
+    C: cipher::BlockSizeUser<BlockSize = ccm::consts::U16 /* TODO */>
+        + cipher::BlockCipherEncrypt
         + cipher::KeyInit,
-    M: ArrayLength<u8> + TagSize,
-    N: ArrayLength<u8> + NonceSize,
+    M: ArraySize + TagSize,
+    N: ArraySize + NonceSize,
 {
     fn encrypt_in_place<'a>(
         &mut self,
@@ -430,13 +423,19 @@ where
         data: &'a mut [u8],
         data_len: usize,
     ) -> Result<&'a [u8], Error> {
-        use ccm::{AeadInPlace, KeyInit};
+        use ccm::{AeadInOut, KeyInit};
 
-        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
+        let cipher =
+            Ccm::<C, M, N>::new_from_slice(key.access()).map_err(|_| ErrorCode::InvalidData)?;
+        let nonce: &ccm::aead::Nonce<Ccm<C, M, N>> = nonce
+            .access()
+            .as_slice()
+            .try_into()
+            .map_err(|_| ErrorCode::InvalidData)?;
 
         let mut buffer = SliceBuffer::new(data, data_len);
         cipher
-            .encrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
+            .encrypt_in_place(nonce, aad, &mut buffer)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
 
         let len = buffer.len();
@@ -451,13 +450,19 @@ where
         aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        use ccm::{AeadInPlace, KeyInit};
+        use ccm::{AeadInOut, KeyInit};
 
-        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
+        let cipher =
+            Ccm::<C, M, N>::new_from_slice(key.access()).map_err(|_| ErrorCode::InvalidData)?;
+        let nonce: &ccm::aead::Nonce<Ccm<C, M, N>> = nonce
+            .access()
+            .as_slice()
+            .try_into()
+            .map_err(|_| ErrorCode::InvalidData)?;
 
         let mut buffer = SliceBuffer::new(data, data.len());
         cipher
-            .decrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
+            .decrypt_in_place(nonce, aad, &mut buffer)
             // `aead::Error` is opaque and only ever means invalid input here (bad tag
             // / malformed ciphertext), not a programming error -> `InvalidData`.
             .map_err(|_| ErrorCode::InvalidData)?;
@@ -478,11 +483,9 @@ pub struct ECPublicKey<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C: Curv
 
 impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C> ECPublicKey<KEY_LEN, SIGNATURE_LEN, C>
 where
-    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    C: CurveArithmetic + EcdsaCurve + DigestAlgorithm,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
     FieldBytesSize<C>: ModulusSize,
-    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
-    SignatureSize<C>: ArrayLength<u8>,
 {
     /// Create a new EC public key from its canonical representation
     ///
@@ -490,13 +493,13 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN` and `SIGNATURE_LEN` const generics.
     unsafe fn new(pub_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, Error> {
-        let encoded_point = EncodedPoint::<C>::from_bytes(pub_key.access()).map_err(|_| {
+        let encoded_point = Sec1Point::<C>::from_bytes(pub_key.access()).map_err(|_| {
             error!("PublicKey creation failed - invalid key format");
 
             ErrorCode::InvalidData
         })?;
 
-        PublicKey::<C>::from_encoded_point(&encoded_point)
+        PublicKey::<C>::from_sec1_point(&encoded_point)
             .into_option()
             .map(Self)
             .ok_or_else(|| {
@@ -510,11 +513,9 @@ where
 impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C>
     crate::crypto::PublicKey<'_, KEY_LEN, SIGNATURE_LEN> for ECPublicKey<KEY_LEN, SIGNATURE_LEN, C>
 where
-    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    C: CurveArithmetic + EcdsaCurve + DigestAlgorithm,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
     FieldBytesSize<C>: ModulusSize,
-    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
-    SignatureSize<C>: ArrayLength<u8>,
 {
     fn verify(
         &self,
@@ -537,7 +538,7 @@ where
     }
 
     fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
-        let point = self.0.as_affine().to_encoded_point(false);
+        let point = self.0.as_affine().to_sec1_point(false);
         let slice = point.as_bytes();
 
         assert_eq!(slice.len(), KEY_LEN);
@@ -567,14 +568,12 @@ impl<
         C,
     > ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
 where
-    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
-    Scalar<C>: SignPrimitive<C>,
+    C: CurveArithmetic + EcdsaCurve + DigestAlgorithm,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
+    Scalar<C>: Invert<Output = CtOption<Scalar<C>>>,
     FieldBytesSize<C>: ModulusSize,
-    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
-    SignatureSize<C>: ArrayLength<u8>,
-    der::MaxSize<C>: ArrayLength<u8>,
-    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
+    der::MaxSize<C>: ArraySize,
+    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArraySize,
 {
     /// Create a new EC secret key from its canonical representation
     ///
@@ -598,8 +597,8 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
     /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
-    unsafe fn new_random<R: CryptoRngCore>(rng: &mut R) -> Self {
-        Self(SecretKey::<C>::random(rng))
+    unsafe fn new_random<R: CryptoRng>(rng: &mut R) -> Self {
+        Self(SecretKey::<C>::generate_from_rng(rng))
     }
 }
 
@@ -613,14 +612,12 @@ impl<
     > crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
     for ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
 where
-    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
-    Scalar<C>: SignPrimitive<C>,
+    C: CurveArithmetic + EcdsaCurve + DigestAlgorithm,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
+    Scalar<C>: Invert<Output = CtOption<Scalar<C>>>,
     FieldBytesSize<C>: ModulusSize,
-    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
-    SignatureSize<C>: ArrayLength<u8>,
-    der::MaxSize<C>: ArrayLength<u8>,
-    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
+    der::MaxSize<C>: ArraySize,
+    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArraySize,
 {
     type PublicKey<'s>
         = ECPublicKey<PUB_KEY_LEN, SIGNATURE_LEN, C>
@@ -635,21 +632,28 @@ where
             )
         }
 
-        let subject = RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(unwrap!(
-            vec![x509_cert::attr::AttributeTypeAndValue {
-                // Organization name: http://www.oid-info.com/get/2.5.4.10
+        // `O=CSR` (organizationName, encoded as a UTF-8 string)
+        //
+        // Assembled by hand rather than via `Name::from_str("O=CSR")`: the latter resolves the
+        // attribute name through the `const-oid` OID name database, which the linker then has to
+        // keep - ~100KB of flash on embedded targets.
+        let mut rdn = RelativeDistinguishedName::default();
+        unwrap!(
+            rdn.insert(AttributeTypeAndValue {
+                // organizationName http://www.oid-info.com/get/2.5.4.10
                 oid: attr_type("2.5.4.10"),
                 value: unwrap!(
-                    x509_cert::attr::AttributeValue::new(
-                        x509_cert::der::Tag::Utf8String,
-                        "CSR".as_bytes(),
-                    ),
-                    "x509 AttrValue creation failed"
+                    Any::new(x509_cert::der::Tag::Utf8String, "CSR".as_bytes()),
+                    "x509 attribute value creation failed"
                 ),
-            }]
-            .try_into(),
-            "x509 AttrValue creation failed"
-        ))]);
+            }),
+            "x509 RDN creation failed"
+        );
+
+        let mut rdn_sequence = RdnSequence::default();
+        rdn_sequence.push(rdn);
+
+        let subject = Name::hazmat_from_rdn_sequence(rdn_sequence);
 
         let mut public_key = MaybeUninit::uninit();
         let public_key = public_key.init_with(CryptoSensitive::<PUB_KEY_LEN>::init()); // TODO MEDIUM BUFFER
@@ -658,7 +662,7 @@ where
         let info = x509_cert::request::CertReqInfo {
             version: x509_cert::request::Version::V1,
             subject,
-            public_key: SubjectPublicKeyInfoOwned {
+            public_key: SubjectPublicKeyInfo {
                 algorithm: AlgorithmIdentifier {
                     // ecPublicKey(1) http://www.oid-info.com/get/1.2.840.10045.2.1
                     oid: attr_type("1.2.840.10045.2.1"),
@@ -743,14 +747,12 @@ impl<
     > crate::crypto::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
 where
-    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
-    Scalar<C>: SignPrimitive<C>,
-    SignatureSize<C>: ArrayLength<u8>,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    C: CurveArithmetic + EcdsaCurve + DigestAlgorithm,
+    Scalar<C>: Invert<Output = CtOption<Scalar<C>>>,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
     FieldBytesSize<C>: ModulusSize,
-    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
-    der::MaxSize<C>: ArrayLength<u8>,
-    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
+    der::MaxSize<C>: ArraySize,
+    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArraySize,
 {
     fn derive_shared_secret(
         &self,
@@ -799,7 +801,12 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
     unsafe fn new(scalar: CryptoSensitiveRef<'_, LEN>) -> Result<Self, Error> {
-        Scalar::<C>::from_repr(GenericArray::from_slice(scalar.access()).clone())
+        let repr = FieldBytes::<C>::try_from(scalar.access().as_slice()).map_err(|_| {
+            error!("EC Scalar creation failed - invalid format");
+            ErrorCode::InvalidData
+        })?;
+
+        Scalar::<C>::from_repr(repr)
             .into_option()
             .map(Self)
             .ok_or_else(|| {
@@ -814,7 +821,7 @@ where
     /// # Safety
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
-    unsafe fn new_random<R: CryptoRngCore>(rng: &mut R) -> Self {
+    unsafe fn new_random<R: CryptoRng>(rng: &mut R) -> Self {
         Self(Scalar::<C>::random(rng))
     }
 }
@@ -847,10 +854,10 @@ pub struct ECPoint<const LEN: usize, const SCALAR_LEN: usize, C: CurveArithmetic
 
 impl<const LEN: usize, const SCALAR_LEN: usize, C> ECPoint<LEN, SCALAR_LEN, C>
 where
-    C: CurveArithmetic + PrimeCurveParams,
+    C: CurveArithmetic,
     FieldBytesSize<C>: ModulusSize,
     Scalar<C>: Mul<Output = C::Scalar> + Clone,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
     ProjectivePoint<C>: Neg<Output = C::ProjectivePoint>
         + Mul<C::Scalar, Output = C::ProjectivePoint>
         + Add<Output = C::ProjectivePoint>
@@ -864,8 +871,8 @@ where
     /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
     /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
     unsafe fn new(point: CryptoSensitiveRef<'_, LEN>) -> Result<Self, Error> {
-        let affine_point = AffinePoint::<C>::from_encoded_point(
-            &EncodedPoint::<C>::from_bytes(point.access()).map_err(|_| {
+        let affine_point = AffinePoint::<C>::from_sec1_point(
+            &Sec1Point::<C>::from_bytes(point.access()).map_err(|_| {
                 error!("EC Point creation failed - invalid format");
 
                 ErrorCode::InvalidData
@@ -889,7 +896,7 @@ where
     /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
     /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
     unsafe fn generator() -> Self {
-        Self(AffinePoint::<C>::GENERATOR.into())
+        Self(ProjectivePoint::<C>::generator())
     }
 }
 
@@ -899,7 +906,7 @@ where
     C: CurveArithmetic,
     FieldBytesSize<C>: ModulusSize,
     Scalar<C>: Mul<Output = C::Scalar> + Clone,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
     ProjectivePoint<C>: Neg<Output = C::ProjectivePoint>
         + Mul<C::Scalar, Output = C::ProjectivePoint>
         + Add<Output = C::ProjectivePoint>
@@ -937,7 +944,7 @@ where
     }
 
     fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
-        let encoded_point = self.0.to_affine().to_encoded_point(false);
+        let encoded_point = self.0.to_affine().to_sec1_point(false);
         let slice = encoded_point.as_bytes();
 
         assert_eq!(slice.len(), LEN);

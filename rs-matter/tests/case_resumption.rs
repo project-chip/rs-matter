@@ -45,7 +45,7 @@ use log::info;
 use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::MAX_CERT_TLV_AND_ASN1_LEN;
 use rs_matter::crypto::{
-    test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey,
+    test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Rng, SecretKey,
     SigningSecretKey, AEAD_CANON_KEY_LEN,
 };
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};

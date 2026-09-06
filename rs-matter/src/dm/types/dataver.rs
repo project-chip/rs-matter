@@ -19,14 +19,14 @@ use core::cell::Cell;
 use core::fmt::Debug;
 use core::num::Wrapping;
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::utils::sync::blocking::Mutex;
 
 pub struct Dataver(Mutex<Cell<Wrapping<u32>>>);
 
 impl Dataver {
-    pub fn new_rand<R: RngCore>(rand: &mut R) -> Self {
+    pub fn new_rand<R: Rng>(rand: &mut R) -> Self {
         Self::new(rand.next_u32())
     }
 

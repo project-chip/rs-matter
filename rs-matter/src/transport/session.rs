@@ -21,7 +21,7 @@ use embassy_time::Instant;
 
 use cfg_if::cfg_if;
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::{
     canon, CanonAeadKey, CanonAeadKeyRef, CanonPkcSharedSecret, CanonPkcSharedSecretRef, Crypto,

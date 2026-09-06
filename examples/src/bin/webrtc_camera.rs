@@ -82,7 +82,7 @@ use embassy_futures::select::{select, select4};
 
 use log::{info, warn};
 
-use rand::RngCore;
+use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::cam_av_settings::{
@@ -1169,7 +1169,7 @@ fn main() -> Result<(), Error> {
     // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
     matter.startup(&kv)?;
 
-    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
 
     // Optional H.264 Annex-B media source. Set `WEBRTC_CAMERA_H264` to a
@@ -1379,7 +1379,7 @@ const NODE: Node<'static> = Node {
 };
 
 fn data_model<'a>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>,
     cam_av_settings: &'a CamAvSettingsHandler<

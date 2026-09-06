@@ -28,7 +28,7 @@ use embassy_futures::select::select4;
 use embassy_futures::select::{select, select3, Either};
 use embassy_time::{Duration, Timer};
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;

@@ -1,5 +1,8 @@
 [build]
 #target = "thumbv7em-none-eabi"
+# `sha2` 0.11 defaults to an unrolled software SHA-256 that is ~5KB larger than the loop-based one `sha2` 0.10 used; pick the compact variant
+# Ditto for `aes`
+rustflags = ["--cfg", "sha2_backend_soft=\"compact\"", "--cfg", "aes_backend_soft=\"compact\""]
 
 [unstable]
 #build-std-features = ["panic_immediate_abort"]

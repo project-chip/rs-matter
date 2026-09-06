@@ -46,16 +46,18 @@ struct CertificationRequest<'a> {
 }
 
 impl<'a> DecodeValue<'a> for CertificationRequest<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         // Decode SEQUENCE
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             let certification_request_info = CertificationRequestInfo::decode(reader)?;
             // Decode algorithm identifier
             let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
 
             // Validate it's ECDSA-SHA256
             if signature_algorithm.algorithm != OID_ECDSA_WITH_SHA256 {
-                return Err(der::Tag::Sequence.value_error());
+                return Err(der::Tag::Sequence.value_error().into());
             }
 
             // Decode the signature bit string
@@ -89,21 +91,52 @@ struct CertificationRequestInfo<'a> {
     pub subject: AnyRef<'a>,
     pub subject_public_key_info: SubjectPublicKeyInfo<'a>,
     #[asn1(context_specific = "0", tag_mode = "IMPLICIT")]
-    pub attributes: AnyRef<'a>,
+    pub attributes: Attributes<'a>,
+}
+
+/// The CSR `attributes [0] IMPLICIT SET OF Attribute`, kept as its raw DER content.
+///
+/// Implicitly tagged fields need a type with a statically known (here: constructed, `SET`)
+/// tag, which a bare `AnyRef` does not have.
+#[allow(unused)]
+struct Attributes<'a>(&'a [u8]);
+
+impl der::FixedTag for Attributes<'_> {
+    const TAG: Tag = Tag::Set;
+}
+
+impl<'a> DecodeValue<'a> for Attributes<'a> {
+    type Error = der::Error;
+
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        Ok(Self(reader.read_slice(header.length())?))
+    }
+}
+
+impl EncodeValue for Attributes<'_> {
+    fn value_len(&self) -> der::Result<Length> {
+        Length::try_from(self.0.len())
+    }
+
+    fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
+        writer.write(self.0)
+    }
 }
 
 /// Algorithm oid verified id-ecPublicKey with prime256v1 curve oid
 /// SubjectPublicKey verified for size
 impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
+    type Error = der::Error;
+
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         // Decode SEQUENCE
-        reader.read_nested(header.length, |reader| {
+        reader.read_nested(header.length(), |reader| {
             // Decode algorithm identifier
             let algorithm = AlgorithmIdentifier::decode(reader)?;
 
             // Validate it's id-ecPublicKey
             if algorithm.algorithm != OID_EC_PUBLIC_KEY {
-                return Err(der::Tag::Sequence.value_error());
+                return Err(der::Tag::Sequence.value_error().into());
             }
 
             // Validate parameters contain prime256v1 OID
@@ -117,10 +150,10 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
                     .map_err(|_| der::Tag::ObjectIdentifier.value_error())?;
 
                 if curve_oid != OID_PRIME256V1 {
-                    return Err(der::Tag::ObjectIdentifier.value_error());
+                    return Err(der::Tag::ObjectIdentifier.value_error().into());
                 }
             } else {
-                return Err(der::Tag::ObjectIdentifier.value_error());
+                return Err(der::Tag::ObjectIdentifier.value_error().into());
             }
 
             // Decode the public key bit string
@@ -134,12 +167,12 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
             // The as_bytes() method returns the actual key bytes without the unused bits count
             // So we expect exactly 65 bytes (0x04 || X || Y)
             if key_bytes.len() != P256_PUBLIC_KEY_LEN {
-                return Err(der::Tag::BitString.value_error());
+                return Err(der::Tag::BitString.value_error().into());
             }
 
             // Verify it's an uncompressed point (starts with 0x04)
             if key_bytes[0] != 0x04 {
-                return Err(der::Tag::BitString.value_error());
+                return Err(der::Tag::BitString.value_error().into());
             }
 
             Ok(Self {

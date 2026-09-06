@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::cert::CertRef;
 use crate::crypto::{

@@ -427,7 +427,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use core::{f32, iter::empty};
+    use core::iter::empty;
 
     use crate::tlv::TLV;
 

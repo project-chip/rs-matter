@@ -20,6 +20,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 /// Re-export `pinned-init` because its API is very unstable currently (0.0.x)
 pub use pinned_init::*;
+// `pinned_init::zeroed` returns a value since 0.0.10; the in-place initializer is `init_zeroed`
+pub use pinned_init::init_zeroed as zeroed;
 
 /// Convert a closure returning `Result<impl Init<T, E>, E>` into an `Init<T, E>`.
 pub fn into_init<F, T, E, I: Init<T, E>>(f: F) -> impl Init<T, E>
@@ -85,7 +87,7 @@ pub trait InitMaybeUninit<T> {
     where
         T: Zeroable,
     {
-        self.init_with(pinned_init::zeroed())
+        self.init_with(pinned_init::init_zeroed())
     }
 }
 

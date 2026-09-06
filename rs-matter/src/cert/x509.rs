@@ -214,7 +214,7 @@ impl<'a> From<BitStringRef<'a>> for KeyUsage {
 #[derive(Sequence)]
 struct AuthorityKeyIdentifier<'a> {
     #[asn1(context_specific = "0", tag_mode = "IMPLICIT")]
-    key_identifier: OctetStringRef<'a>,
+    key_identifier: &'a OctetStringRef,
 }
 
 /// Time ::= CHOICE { utcTime UTCTime, generalTime GeneralizedTime }

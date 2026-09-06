@@ -17,7 +17,9 @@
 
 //! Random number generation utilities.
 
-use rand_core::{CryptoRng, RngCore};
+use core::convert::Infallible;
+
+use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -25,8 +27,8 @@ use crate::utils::sync::blocking::Mutex;
 
 /// A utility wrapping a random number generator in a mutex for shared access.
 ///
-/// Implements the `RngCore` and `CryptoRng` traits for `&SharedRand<M, T>`, where `T` is the
-/// underlying RNG type and `M` is the mutex type.
+/// Implements the `Rng` and `CryptoRng` traits for `&SharedRand<T>`, where `T` is the
+/// underlying RNG type (the `CryptoRng` one only if `T` is itself a `CryptoRng`).
 pub struct SharedRand<T> {
     shared: Mutex<RefCell<T>>,
 }
@@ -47,29 +49,28 @@ impl<T> SharedRand<T> {
     }
 }
 
-impl<T> rand_core::RngCore for &SharedRand<T>
+impl<T> TryRng for &SharedRand<T>
 where
-    T: rand_core::RngCore,
+    T: Rng,
 {
-    fn next_u32(&mut self) -> u32 {
-        self.shared.lock(|rand| rand.borrow_mut().next_u32())
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.shared.lock(|rand| rand.borrow_mut().next_u32()))
     }
 
-    fn next_u64(&mut self) -> u64 {
-        self.shared.lock(|rand| rand.borrow_mut().next_u64())
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.shared.lock(|rand| rand.borrow_mut().next_u64()))
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.shared.lock(|rand| rand.borrow_mut().fill_bytes(dest))
-    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        self.shared.lock(|rand| rand.borrow_mut().fill_bytes(dest));
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.shared
-            .lock(|rand| rand.borrow_mut().try_fill_bytes(dest))
+        Ok(())
     }
 }
 
-impl<T> CryptoRng for &SharedRand<T> where T: CryptoRng {}
+impl<T> TryCryptoRng for &SharedRand<T> where T: CryptoRng {}
 
 /// A weak random number generator intended for use in tests only.
 ///
@@ -89,30 +90,36 @@ impl WeakTestOnlyRand {
     pub const fn new(seed: u32) -> Self {
         Self(seed)
     }
-}
 
-impl RngCore for WeakTestOnlyRand {
-    fn next_u32(&mut self) -> u32 {
-        self.0 = self.0 ^ (self.0 << 13);
-        self.0 = self.0 ^ (self.0 >> 17);
-        self.0 = self.0 ^ (self.0 << 5);
+    /// The next xorshift32 output
+    fn next(&mut self) -> u32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
 
         self.0
     }
+}
 
-    fn next_u64(&mut self) -> u64 {
-        rand_core::impls::next_u64_via_u32(self)
+impl TryRng for WeakTestOnlyRand {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.next())
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        rand_core::impls::fill_bytes_via_next(self, dest)
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        rand_core::utils::next_u64_via_u32(self)
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        rand_core::impls::fill_bytes_via_next(self, dest);
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        for chunk in dest.chunks_mut(4) {
+            let word = self.next().to_le_bytes();
+            chunk.copy_from_slice(&word[..chunk.len()]);
+        }
 
         Ok(())
     }
 }
 
-impl CryptoRng for WeakTestOnlyRand {}
+impl TryCryptoRng for WeakTestOnlyRand {}

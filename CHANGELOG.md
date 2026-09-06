@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* (Breaking) Update to all RustCrypto crates as well as `rand_core` to their latest versions
+* (Breaking) Update the non-crypto dependencies to their latest majors: `pinned-init`, `strum`, `num-derive` and a few others
 * (Breaking) Retire `EpClMatcher` in favor of `FnMatcher` - a plain `fn(EndptId, ClusterId) -> bool`
 * (Breaking) Split the root endpoint system handler chain in two, so that the operational network clusters (Network Commissioning, General Commissioning, General Diagnostics, Ethernet/Wifi/Thread Diagnostics) can be chained on top of a user handler that provides the rest; useful with non-concurrent commissioning
 * (Breaking) Retire `GenDiag::reboot_count` and `GenDiag::uptime_ms` as they are now implemented directly in `rs-matter` (#543)

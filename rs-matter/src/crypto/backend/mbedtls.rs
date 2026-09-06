@@ -44,7 +44,7 @@ use core::ffi::{c_int, c_uchar, c_void};
 
 use mbedtls_rs_sys::merr;
 
-use rand_core::{CryptoRng, CryptoRngCore, RngCore};
+use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
 use crate::crypto::{CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef, SharedRand};
 use crate::error::{Error, ErrorCode};
@@ -87,7 +87,7 @@ impl<'s, T> MbedtlsCrypto<'s, T> {
 
 impl<T> crate::crypto::Crypto for MbedtlsCrypto<'_, T>
 where
-    T: CryptoRngCore,
+    T: CryptoRng,
 {
     type Rand<'a>
         = &'a SharedRand<T>
@@ -953,7 +953,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize, R> Drop for ECPoint<'_, LEN, SCA
 impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>
     for ECPoint<'a, LEN, SCALAR_LEN, R>
 where
-    for<'r> &'r R: CryptoRngCore,
+    for<'r> &'r R: CryptoRng,
 {
     type Scalar<'s>
         = ECScalar<'s, SCALAR_LEN, LEN, R>
@@ -1146,7 +1146,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, R> ECScalar<'a, LEN, POINT_LE
 impl<'a, const LEN: usize, const POINT_LEN: usize, R> crate::crypto::EcScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN, R>
 where
-    for<'r> &'r R: CryptoRngCore,
+    for<'r> &'r R: CryptoRng,
 {
     fn mul(&self, other: &Self) -> Result<Self, Error> {
         let mut result = ECScalar::new(self.group, self.rng);
@@ -1177,7 +1177,7 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
     for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, R>
 where
-    for<'r> &'r R: CryptoRngCore,
+    for<'r> &'r R: CryptoRng,
 {
     type PublicKey<'s>
         = ECPoint<'s, PUB_KEY_LEN, KEY_LEN, R>
@@ -1341,7 +1341,7 @@ impl<
     > crate::crypto::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, R>
 where
-    for<'r> &'r R: CryptoRngCore,
+    for<'r> &'r R: CryptoRng,
 {
     fn derive_shared_secret(
         &self,
@@ -1378,7 +1378,7 @@ unsafe extern "C" fn mbedtls_platform_rng<T>(
     buf_len: usize,
 ) -> c_int
 where
-    for<'a> &'a T: CryptoRngCore,
+    for<'a> &'a T: CryptoRng,
 {
     let mut drbg = unwrap!(unsafe { (ctx as *const _ as *const T).as_ref() });
 
@@ -1389,7 +1389,7 @@ where
 
 /// A type-safe wrapper around the MbedTLS DRBG cryptographically secure random number generator.
 ///
-/// Implements the `CryptoRngCore` trait.
+/// Implements the `CryptoRng` trait.
 pub struct MbedtlsDrbg<'a, T> {
     /// Reference to the entropy source
     _entropy: &'a mut T,
@@ -1397,7 +1397,7 @@ pub struct MbedtlsDrbg<'a, T> {
     raw: mbedtls_rs_sys::mbedtls_ctr_drbg_context,
 }
 
-impl<'a, T: CryptoRngCore> MbedtlsDrbg<'a, T> {
+impl<'a, T: CryptoRng> MbedtlsDrbg<'a, T> {
     /// Create a new MbedTLS DRBG instance.
     ///
     /// # Arguments
@@ -1437,8 +1437,18 @@ impl<T> Drop for MbedtlsDrbg<'_, T> {
     }
 }
 
-impl<T: CryptoRngCore> RngCore for MbedtlsDrbg<'_, T> {
-    fn fill_bytes(&mut self, buf: &mut [u8]) {
+impl<T: CryptoRng> TryRng for MbedtlsDrbg<'_, T> {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        rand_core::utils::next_word_via_fill(self)
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        rand_core::utils::next_word_via_fill(self)
+    }
+
+    fn try_fill_bytes(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
         unwrap!(merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_ctr_drbg_random(
                 &mut self.raw as *mut _ as *mut _,
@@ -1446,28 +1456,16 @@ impl<T: CryptoRngCore> RngCore for MbedtlsDrbg<'_, T> {
                 buf.len(),
             )
         }));
-    }
-
-    fn next_u32(&mut self) -> u32 {
-        rand_core::impls::next_u32_via_fill(self)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        rand_core::impls::next_u64_via_fill(self)
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
 
         Ok(())
     }
 }
 
-impl<T: CryptoRngCore> CryptoRng for MbedtlsDrbg<'_, T> {}
+impl<T: CryptoRng> TryCryptoRng for MbedtlsDrbg<'_, T> {}
 
 /// A type-safe wrapper around the MbedTLS entropy provider.
 ///
-/// Implements the `CryptoRngCore` trait and can then be used by the MbedTLS DRBG impl - `MbedtlsDrbg`.
+/// Implements the `CryptoRng` trait and can then be used by the MbedTLS DRBG impl - `MbedtlsDrbg`.
 /// or any other CSPRNG needing entropy.
 pub struct MbedtlsEntropy<T> {
     /// Raw MbedTLS entropy context
@@ -1507,7 +1505,7 @@ impl<T> MbedtlsEntropy<T> {
     ///
     /// NOTE: At least one non-weak entropy source should be registered
     /// or else `MbedtlsEntropy` would panic at runtime.
-    pub fn add<E: CryptoRngCore>(
+    pub fn add<E: CryptoRng>(
         self,
         entropy_source: &mut E,
         threshold: usize,
@@ -1526,7 +1524,7 @@ impl<T> MbedtlsEntropy<T> {
     ///
     /// NOTE: At least one non-weak entropy source should be registered
     /// using `add()` or else `MbedtlsEntropy` would panic at runtime.
-    pub fn add_weak<E: RngCore>(
+    pub fn add_weak<E: Rng>(
         self,
         entropy_source: &mut E,
         threshold: usize,
@@ -1534,7 +1532,7 @@ impl<T> MbedtlsEntropy<T> {
         self.internal_add(entropy_source, false, threshold)
     }
 
-    fn internal_add<E: RngCore>(
+    fn internal_add<E: Rng>(
         mut self,
         entropy_source: &mut E,
         strong: bool,
@@ -1593,8 +1591,18 @@ impl Default for MbedtlsEntropy<()> {
     }
 }
 
-impl<T> RngCore for MbedtlsEntropy<T> {
-    fn fill_bytes(&mut self, buf: &mut [u8]) {
+impl<T> TryRng for MbedtlsEntropy<T> {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        rand_core::utils::next_word_via_fill(self)
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        rand_core::utils::next_word_via_fill(self)
+    }
+
+    fn try_fill_bytes(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
         unwrap!(merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_entropy_func(
                 unwrap!(self.raw.as_mut()) as *mut _ as *mut _,
@@ -1602,27 +1610,15 @@ impl<T> RngCore for MbedtlsEntropy<T> {
                 buf.len(),
             )
         }));
-    }
-
-    fn next_u32(&mut self) -> u32 {
-        rand_core::impls::next_u32_via_fill(self)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        rand_core::impls::next_u64_via_fill(self)
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
 
         Ok(())
     }
 }
 
-impl<T> CryptoRng for &MbedtlsEntropy<T> {}
+impl<T> TryCryptoRng for MbedtlsEntropy<T> {}
 
 /// MbedTLS platform entropy function adapter.
-unsafe extern "C" fn mbedtls_platform_entropy<T: RngCore>(
+unsafe extern "C" fn mbedtls_platform_entropy<T: Rng>(
     ctx: *mut c_void,
     buf: *mut c_uchar,
     buf_len: usize,
@@ -1635,7 +1631,7 @@ unsafe extern "C" fn mbedtls_platform_entropy<T: RngCore>(
 }
 
 /// MbedTLS platform entropy source function adapter.
-unsafe extern "C" fn mbedtls_platform_entropy_source<T: RngCore>(
+unsafe extern "C" fn mbedtls_platform_entropy_source<T: Rng>(
     ctx: *mut c_void,
     buf: *mut c_uchar,
     buf_len: usize,

@@ -43,7 +43,7 @@
 //! all clusters, as the Descriptor cluster and the Interaction Model dispatch
 //! are driven by the metadata rather than by the shape of the handler chain.
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 use crate::dm::{EmptyHandler, FnMatcher};
 use crate::handler_chain_type;
@@ -200,7 +200,7 @@ pub type SysHandler<'a, T, N> = handler_chain_type!(
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the
 ///   no-op default: heap counters report `0`).
 /// - `rand`: A random number generator.
-pub fn root_handler<'a, R: RngCore>(sw_diag: &'a dyn SwDiag, rand: R) -> RootHandler<'a> {
+pub fn root_handler<'a, R: Rng>(sw_diag: &'a dyn SwDiag, rand: R) -> RootHandler<'a> {
     root_handler_chained(sw_diag, EmptyHandler, rand)
 }
 
@@ -214,7 +214,7 @@ pub fn root_handler<'a, R: RngCore>(sw_diag: &'a dyn SwDiag, rand: R) -> RootHan
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
-pub fn eth_net_handler<'a, R: RngCore, H>(
+pub fn eth_net_handler<'a, R: Rng, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -252,7 +252,7 @@ pub fn eth_net_handler<'a, R: RngCore, H>(
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn wifi_net_handler<'a, R: RngCore, T, H>(
+pub fn wifi_net_handler<'a, R: Rng, T, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -295,7 +295,7 @@ where
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn thread_net_handler<'a, R: RngCore, T, H>(
+pub fn thread_net_handler<'a, R: Rng, T, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -336,7 +336,7 @@ where
 ///   no-op default: heap counters report `0`).
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn eth_sys_handler<'a, R: RngCore>(
+pub fn eth_sys_handler<'a, R: Rng>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -368,7 +368,7 @@ pub fn eth_sys_handler<'a, R: RngCore>(
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn wifi_sys_handler<'a, R: RngCore, T>(
+pub fn wifi_sys_handler<'a, R: Rng, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -405,7 +405,7 @@ where
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn thread_sys_handler<'a, R: RngCore, T>(
+pub fn thread_sys_handler<'a, R: Rng, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -431,7 +431,7 @@ where
 }
 
 /// The `root_handler()` chain on top of `next`.
-fn root_handler_chained<'a, R: RngCore, T>(
+fn root_handler_chained<'a, R: Rng, T>(
     sw_diag: &'a dyn SwDiag,
     next: T,
     mut rand: R,
@@ -476,7 +476,7 @@ fn root_handler_chained<'a, R: RngCore, T>(
 /// `netw_diag_matcher` is the matcher of the network diagnostics link, which sits
 /// at the bottom of the chain, right above `next`.
 #[allow(clippy::too_many_arguments)]
-fn oper_net_handler<'a, R: RngCore, N, T>(
+fn oper_net_handler<'a, R: Rng, N, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -508,7 +508,7 @@ fn oper_net_handler<'a, R: RngCore, N, T>(
 ///   and - as the network diagnostics link is at the bottom of that sub-chain - also serves
 ///   as the matcher of that link.
 #[allow(clippy::too_many_arguments)]
-fn net_handler<'a, R: RngCore, T, N, H>(
+fn net_handler<'a, R: Rng, T, N, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -546,7 +546,7 @@ where
 /// Use `eth_sys_handler()`, `wifi_sys_handler()` or `thread_sys_handler()` instead to get the
 /// appropriate Network Diagnostic handler included in the handler.
 #[allow(clippy::too_many_arguments)]
-fn sys_handler<'a, R: RngCore, T, N>(
+fn sys_handler<'a, R: Rng, T, N>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -646,7 +646,7 @@ impl<'a> EthSysHandlerBuilder<'a> {
     }
 
     /// Build the Ethernet system handler.
-    pub fn build<R: RngCore>(self, rand: R) -> EthSysHandler<'a> {
+    pub fn build<R: Rng>(self, rand: R) -> EthSysHandler<'a> {
         eth_sys_handler(
             self.comm_policy,
             self.gen_diag,
@@ -712,7 +712,7 @@ where
     }
 
     /// Build the Wi-Fi system handler.
-    pub fn build<R: RngCore>(self, rand: R) -> WifiSysHandler<'a, T> {
+    pub fn build<R: Rng>(self, rand: R) -> WifiSysHandler<'a, T> {
         wifi_sys_handler(
             self.comm_policy,
             self.gen_diag,
@@ -780,7 +780,7 @@ where
     }
 
     /// Build the Thread system handler.
-    pub fn build<R: RngCore>(self, rand: R) -> ThreadSysHandler<'a, T> {
+    pub fn build<R: Rng>(self, rand: R) -> ThreadSysHandler<'a, T> {
         thread_sys_handler(
             self.comm_policy,
             self.gen_diag,

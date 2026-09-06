@@ -23,7 +23,7 @@
 
 use std::net::UdpSocket;
 
-use rand::{CryptoRng, RngCore};
+use rand::{Rng, TryCryptoRng, TryRng};
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::Crypto;
@@ -212,7 +212,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a>(
-    mut rand: impl RngCore + Copy,
+    mut rand: impl Rng + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
     endpoints::EthSysHandlerBuilder::new()
@@ -231,25 +231,21 @@ fn data_model<'a>(
 // For now, as `thread_rng` is not `Send`
 struct FakeRng;
 
-impl RngCore for FakeRng {
-    fn next_u32(&mut self) -> u32 {
-        0
+impl TryRng for FakeRng {
+    type Error = std::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(0)
     }
 
-    fn next_u64(&mut self) -> u64 {
-        0
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(0)
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        for b in dest.iter_mut() {
-            *b = 0;
-        }
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        self.fill_bytes(dest);
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        dest.fill(0);
         Ok(())
     }
 }
 
-impl CryptoRng for FakeRng {}
+impl TryCryptoRng for FakeRng {}
