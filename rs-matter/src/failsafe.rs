@@ -747,7 +747,7 @@ impl FailSafe {
     /// existing fabric has the same fabric ID under the same root.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_new_noc<C: Crypto>(
-        crypto: C,
+        crypto: &C,
         time: UtcTime,
         fabrics: &Fabrics,
         root_ca: &[u8],
@@ -764,7 +764,7 @@ impl FailSafe {
         // signature verification (or that doesn't chain back to the
         // staged root) is reported as `kInvalidNOC` cluster status per
         // Matter Core spec (`AddNOC`).
-        Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+        Self::validate_certs(crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
             .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
         // The NOC's public key must match the public key derived from
