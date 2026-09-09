@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! `xtask onboard` - a device's onboarding payloads from its commissioning
+//! `xtask onboard` - derive a device's onboarding payloads from its commissioning
 //! parameters: pairing code, QR code text, NFC NDEF message and, on request,
 //! the QR code itself on the console or as a text / SVG file.
 

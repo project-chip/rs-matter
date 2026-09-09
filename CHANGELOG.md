@@ -11,8 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Certificate serial numbers are now always valid DER INTEGERs: the CA generators encode a drawn `u64` rather than using raw random bytes, and `validate_serial_number` rejects a redundant leading `0xFF` as well as a redundant leading `0x00` (#549)
 * (Breaking) Update to all RustCrypto crates as well as `rand_core` to their latest versions (#548)
 * (Breaking) Update the non-crypto dependencies to their latest majors: `pinned-init`, `strum`, `num-derive` and a few others (#548)
-* (Breaking) Better matching syntax; utils for non-networking system clusters 
- (#547)
+* (Breaking) Better matching syntax; utils for non-networking system clusters (#547)
 * (Breaking) Streamline the factory reset and startup story of all clusters with persistence (#546)
 * (Breaking) Retire `GenDiag::reboot_count` and `GenDiag::uptime_ms` as they are now implemented directly in `rs-matter` (#543)
 * Add PAF and NTL options to `DiscoveryCapabilities`; `QrPayload::as_ndef` (#543)
