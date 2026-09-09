@@ -29,18 +29,22 @@
 #![allow(clippy::uninlined_format_args)]
 #![recursion_limit = "1024"]
 
+use core::num::NonZeroU8;
+
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
 };
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::clusters::icd_mgmt::OperatingModeEnum;
+use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::clusters::time_sync::Rtc;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
-use crate::failsafe::FailSafe;
+use crate::failsafe::{FailSafe, DEFAULT_FAILSAFE_EXPIRY_SECS};
+use crate::handover::{CommissioningHandover, HandoverRegulatory};
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
@@ -81,6 +85,7 @@ pub mod error;
 pub mod fabric;
 pub mod failsafe;
 pub mod group_keys;
+pub mod handover;
 pub mod im;
 pub mod onboard;
 pub mod pairing;
@@ -704,6 +709,200 @@ impl<'a> Matter<'a> {
 
             self.transport().reset()
         })
+    }
+
+    /// Suspend the commissioning in flight on this node: hand its outcome to
+    /// `f` as a [`CommissioningHandover`] and roll this node back.
+    ///
+    /// Requires an armed fail-safe with a processed `AddNOC`. The envelope
+    /// borrows the node state and lives only for the duration of `f`, which
+    /// runs with the state and the networks store locked (state first, like
+    /// the fail-safe and Network Commissioning code) and so must not call back
+    /// into `Matter` or the store. Serializing and transporting the envelope
+    /// is up to `f`.
+    ///
+    /// If `f` succeeds, the node is rolled back as on fail-safe expiry: the
+    /// pending fabric and networks are restored from `kv`, PASE sessions are
+    /// dropped, the fail-safe is disarmed. If `f` fails, nothing changes.
+    ///
+    /// Returns what `f` returned.
+    pub fn suspend_commissioning<N, K, F, R>(&self, networks: N, kv: K, f: F) -> Result<R, Error>
+    where
+        N: NetworksAccess,
+        K: KvBlobStoreAccess,
+        F: FnOnce(&CommissioningHandover<'_>) -> Result<R, Error>,
+    {
+        let notify_mdns = || self.transport().notify_mdns_changed();
+
+        self.with_state(|state| {
+            let (fab_idx, remaining_secs) = state
+                .failsafe
+                .pending_add_noc()
+                .ok_or(ErrorCode::FailSafeRequired)?;
+
+            let fabric = state.fabrics.fabric(fab_idx)?;
+
+            let regulatory = state
+                .basic_info_settings
+                .location
+                .as_ref()
+                .zip(state.basic_info_settings.location_type)
+                .map(|(country_code, location_type)| HandoverRegulatory {
+                    country_code: country_code.as_str(),
+                    location_type,
+                });
+
+            let result = CommissioningHandover::with_pending(
+                fabric,
+                &networks,
+                regulatory,
+                remaining_secs,
+                state.failsafe.breadcrumb(),
+                f,
+            )?;
+
+            info!("Commissioning of fabric {} suspended", fab_idx);
+
+            // The identity now lives in the envelope: stand down
+            state.failsafe.expire(
+                &mut state.fabrics,
+                &mut state.sessions,
+                None,
+                &networks,
+                &kv,
+                notify_mdns,
+                |_, _| {},
+            )?;
+
+            Ok(result)
+        })
+    }
+
+    /// Resume a commissioning whose phase 1 ran elsewhere, from its
+    /// [`CommissioningHandover`] envelope.
+    ///
+    /// Leaves the node as `AddNOC` over PASE would: the fabric is operational
+    /// and advertised, the staged networks are handed to the connectivity
+    /// manager, and the fail-safe is armed for the fabric for the exporter's
+    /// remaining time, floored to [`DEFAULT_FAILSAFE_EXPIRY_SECS`].
+    /// `CommissioningComplete` over CASE then commits; expiry rolls back to
+    /// `kv`. Only the regulatory config is persisted right away.
+    ///
+    /// Call at startup, before serving traffic: no attribute-change
+    /// notifications are emitted. Fails with `Busy` if the fail-safe is armed
+    /// and `InvalidData` if the envelope does not validate, leaving the node
+    /// untouched.
+    ///
+    /// Returns the local index of the resumed fabric.
+    pub fn resume_commissioning<C, N, K>(
+        &self,
+        crypto: C,
+        networks: N,
+        kv: K,
+        handover: &CommissioningHandover<'_>,
+    ) -> Result<NonZeroU8, Error>
+    where
+        C: Crypto,
+        N: NetworksAccess,
+        K: KvBlobStoreAccess,
+    {
+        handover.validate()?;
+
+        let icac = handover.icac.map(|icac| icac.0);
+
+        let (fab_idx, regulatory) = self.with_state(|state| {
+            if state.failsafe.is_armed() {
+                error!("Cannot resume a commissioning while the fail-safe is armed");
+                Err(ErrorCode::Busy)?;
+            }
+
+            let time = state.rtc.utc_time();
+
+            kv.access(|_, buf| {
+                FailSafe::check_new_noc(
+                    &crypto,
+                    time,
+                    &state.fabrics,
+                    handover.root_ca.0,
+                    icac,
+                    handover.noc.0,
+                    handover.secret_key.reference(),
+                    buf,
+                )
+            })?;
+
+            let fabric = state.fabrics.add_with_acl(
+                &crypto,
+                handover.secret_key.reference(),
+                handover.root_ca.0,
+                handover.noc.0,
+                icac.unwrap_or(&[]),
+                Some(handover.ipk.reference()),
+                handover.admin_vendor_id,
+                handover.acl.iter()?,
+            )?;
+
+            let fab_idx = fabric.fab_idx();
+
+            // From here on, failures are undone like a fail-safe expiry
+            state.failsafe.arm_resumed(
+                fab_idx,
+                handover
+                    .fail_safe_remaining_secs
+                    .max(DEFAULT_FAILSAFE_EXPIRY_SECS),
+                handover.breadcrumb,
+            )?;
+
+            let result = (|| {
+                if !handover.label.is_empty() {
+                    state.fabrics.update_label(fab_idx, handover.label)?;
+                }
+
+                handover::stage_networks(handover, &networks)?;
+
+                if let Some(regulatory) = &handover.regulatory {
+                    state
+                        .basic_info_settings
+                        .set_location(regulatory.country_code);
+                    state.basic_info_settings.location_type = Some(regulatory.location_type);
+                }
+
+                Ok::<_, Error>(())
+            })();
+
+            if let Err(err) = result {
+                let _ = state.failsafe.expire(
+                    &mut state.fabrics,
+                    &mut state.sessions,
+                    None,
+                    &networks,
+                    &kv,
+                    || {},
+                    |_, _| {},
+                );
+
+                return Err(err);
+            }
+
+            info!(
+                "Commissioning resumed as fabric {}; awaiting CommissioningComplete over CASE",
+                fab_idx
+            );
+
+            Ok((fab_idx, handover.regulatory.is_some()))
+        })?;
+
+        if regulatory {
+            let mut persist = Persist::new(&kv);
+
+            self.with_state(|state| state.basic_info_settings.store_persist(&mut persist))?;
+
+            persist.run()?;
+        }
+
+        self.transport().notify_mdns_changed();
+
+        Ok(fab_idx)
     }
 
     /// Factory-reset the `Matter` persistable state by removing all fabrics and

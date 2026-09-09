@@ -6,11 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Certificate serial numbers are now always valid DER INTEGERs: the CA generators encode a drawn `u64` rather than using raw random bytes, and `validate_serial_number` rejects a redundant leading `0xFF` as well as a redundant leading `0x00`
-* (Breaking) Update to all RustCrypto crates as well as `rand_core` to their latest versions
-* (Breaking) Update the non-crypto dependencies to their latest majors: `pinned-init`, `strum`, `num-derive` and a few others
-* (Breaking) Retire `EpClMatcher` in favor of `FnMatcher` - a plain `fn(EndptId, ClusterId) -> bool`
-* (Breaking) Split the root endpoint system handler chain in two, so that the operational network clusters (Network Commissioning, General Commissioning, General Diagnostics, Ethernet/Wifi/Thread Diagnostics) can be chained on top of a user handler that provides the rest; useful with non-concurrent commissioning
+* Commissioning handover: `Matter::suspend_commissioning` and `Matter::resume_commissioning` - the building block for NFC (NTL) commissioning, where phase 1 runs on the NFC subsystem (#550)
+* `xtask onboard` - generate a device's manual pairing code, QR code text, NFC NDEF message, the QR code itself, etc. etc. from the commissioning parameters (#550)
+* Certificate serial numbers are now always valid DER INTEGERs: the CA generators encode a drawn `u64` rather than using raw random bytes, and `validate_serial_number` rejects a redundant leading `0xFF` as well as a redundant leading `0x00` (#549)
+* (Breaking) Update to all RustCrypto crates as well as `rand_core` to their latest versions (#548)
+* (Breaking) Update the non-crypto dependencies to their latest majors: `pinned-init`, `strum`, `num-derive` and a few others (#548)
+* (Breaking) Better matching syntax; utils for non-networking system clusters 
+ (#547)
+* (Breaking) Streamline the factory reset and startup story of all clusters with persistence (#546)
 * (Breaking) Retire `GenDiag::reboot_count` and `GenDiag::uptime_ms` as they are now implemented directly in `rs-matter` (#543)
 * Add PAF and NTL options to `DiscoveryCapabilities`; `QrPayload::as_ndef` (#543)
 * Streamline the logging of the E2E test drivers (#542)

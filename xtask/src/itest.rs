@@ -2631,7 +2631,7 @@ impl ITests {
     /// that take the default raw-credentials form.
     ///
     /// rs-matter's standard test pairing code is printed by the test
-    /// executable at startup as `PairingCode: [3497-0112-332]`
+    /// executable at startup as `PairingCode: [3497-011-2332]`
     /// (digits `34970112332`); it encodes `discriminator=3840` and
     /// `passcode=20202021` from `TEST_DEV_COMM`.
     fn setup_payload_override(test_name: &str) -> Option<&'static str> {

@@ -220,7 +220,7 @@ where
         }
 
         // VendorID must be unspecified (0) or in valid range expected.
-        if VendorId::is_valid_operationally(self.vid)
+        if !VendorId::is_valid_operationally(self.vid)
             && (self.vid != VendorId::CommonOrUnspecified as u16)
         {
             return false;
@@ -664,7 +664,7 @@ impl<'a> QrPayload<'a, ()> {
         /// Length of the manual pairing code with vendor/product IDs.
         const LONG_CODE_LEN: usize = 21;
 
-        // Strip the separators of the "pretty" form (e.g. `3497-0112-332`).
+        // Strip the separators of the "pretty" form (e.g. `3497-011-2332`).
         let mut digits: heapless::String<LONG_CODE_LEN> = heapless::String::new();
         for ch in code.chars() {
             if matches!(ch, '-' | ' ') {
@@ -1407,6 +1407,34 @@ mod tests {
         let mut buf = [0; 1024];
         let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
+    }
+
+    /// `is_valid` accepts vendor ID 0 and everything up to the last test
+    /// vendor, and rejects a zero product ID under a real vendor.
+    #[test]
+    fn payload_validity() {
+        fn payload(vid: u16, pid: u16, passcode: u32) -> QrPayload<'static, NoOptionalData> {
+            QrPayload::new(
+                DiscoveryCapabilities::IP,
+                CommFlowType::Standard,
+                BasicCommData {
+                    password: passcode.to_le_bytes().into(),
+                    discriminator: 3840,
+                },
+                vid,
+                pid,
+                "",
+                no_optional_data,
+            )
+        }
+
+        assert!(payload(0xfff1, 0x8001, 20202021).is_valid());
+        assert!(payload(9050, 65279, 34567890).is_valid());
+        assert!(payload(0, 0, 20202021).is_valid());
+        assert!(!payload(0xfff5, 0x8001, 20202021).is_valid());
+        assert!(!payload(0xfff1, 0, 20202021).is_valid());
+        assert!(!payload(0xfff1, 0x8001, 12345678).is_valid());
+        assert!(!payload(0xfff1, 0x8001, 0).is_valid());
     }
 
     /// The bit positions are fixed by the Matter Core spec's Discovery

@@ -641,50 +641,17 @@ impl FailSafe {
             Err(ErrorCode::NocInvalidAdminSubject)?;
         }
 
-        {
-            let noc_ref = CertRef::new(TLVElement::new(noc));
-            let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
-            let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
-
-            // Validate the certs first. A chain that doesn't pass
-            // signature verification (or that doesn't chain back to the
-            // staged root) is reported as `kInvalidNOC` cluster status per
-            // Matter Core spec (`AddNOC`).
-            Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
-                .map_err(|_| ErrorCode::NocInvalidNoc)?;
-
-            // The NOC's public key must match the public key derived from
-            // the most recent `CSRRequest` (Matter Core spec). The CSR's
-            // secret key is stashed in
-            // `self.secret_key` by `add_csr_req` / `update_csr_req`.
-            let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
-            crypto
-                .secret_key(self.secret_key.reference())?
-                .pub_key()?
-                .write_canon(&mut csr_pubkey)?;
-            if csr_pubkey.access().as_slice() != noc_ref.pubkey()? {
-                Err(ErrorCode::NocInvalidPublicKey)?;
-            }
-
-            // Check that there is no fabric with the same fabric ID and root cert pubkey
-            // as the one in the NOC, to avoid adding duplicate fabrics
-
-            let fabric_id = noc_ref.get_fabric_id()?;
-            let root_cert_pubkey = root_ref.pubkey()?;
-
-            for fabric in fabrics.iter() {
-                if fabric_id == fabric.fabric_id() {
-                    let f_root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
-                    let f_root_pubkey = f_root_ref.pubkey()?;
-
-                    if root_cert_pubkey == f_root_pubkey {
-                        // A fabric with the same ID and root cert pubkey already exists,
-                        // which means that this NOC cannot be accepted
-                        Err(ErrorCode::NocFabricConflict)?;
-                    }
-                }
-            }
-        }
+        // `self.secret_key` was stashed by `add_csr_req`
+        Self::check_new_noc(
+            &crypto,
+            time,
+            fabrics,
+            &self.root_ca,
+            icac,
+            noc,
+            self.secret_key.reference(),
+            buf,
+        )?;
 
         let fabric = fabrics
             .add(
@@ -730,6 +697,107 @@ impl FailSafe {
 
     pub fn set_breadcrumb(&mut self, value: u64) {
         self.breadcrumb = value;
+    }
+
+    /// The fabric added by `AddNOC` in the current fail-safe context and the
+    /// seconds left until expiry; `None` if there is no such fabric.
+    pub fn pending_add_noc(&self) -> Option<(NonZeroU8, u16)> {
+        let State::Armed(ctx) = &self.state else {
+            return None;
+        };
+
+        if !ctx.flags.contains(NocFlags::ADD_NOC_RECVD) {
+            return None;
+        }
+
+        let fab_idx = NonZeroU8::new(ctx.fab_idx)?;
+
+        let elapsed_secs = ctx.armed_at.elapsed().as_secs().min(u16::MAX as u64) as u16;
+
+        Some((fab_idx, ctx.timeout_secs.saturating_sub(elapsed_secs)))
+    }
+
+    /// Arm the fail-safe for a fabric resumed from a commissioning handover,
+    /// as if `AddNOC` had just been processed for it. `Busy` if already armed.
+    pub fn arm_resumed(
+        &mut self,
+        fab_idx: NonZeroU8,
+        timeout_secs: u16,
+        breadcrumb: u64,
+    ) -> Result<(), Error> {
+        if !matches!(self.state, State::Idle) {
+            return Err(ErrorCode::Busy.into());
+        }
+
+        self.state = State::Armed(ArmedCtx {
+            armed_at: Instant::now(),
+            timeout_secs,
+            fab_idx: fab_idx.get(),
+            flags: NocFlags::ADD_ROOT_CERT_RECVD
+                | NocFlags::ADD_CSR_REQ_RECVD
+                | NocFlags::ADD_NOC_RECVD,
+        });
+        self.breadcrumb = breadcrumb;
+
+        Ok(())
+    }
+
+    /// Check that a NOC is acceptable for a new fabric: the chain verifies
+    /// against `root_ca`, the NOC public key matches `secret_key`, and no
+    /// existing fabric has the same fabric ID under the same root.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn check_new_noc<C: Crypto>(
+        crypto: C,
+        time: UtcTime,
+        fabrics: &Fabrics,
+        root_ca: &[u8],
+        icac: Option<&[u8]>,
+        noc: &[u8],
+        secret_key: CanonPkcSecretKeyRef<'_>,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        let noc_ref = CertRef::new(TLVElement::new(noc));
+        let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
+        let root_ref = CertRef::new(TLVElement::new(root_ca));
+
+        // Validate the certs first. A chain that doesn't pass
+        // signature verification (or that doesn't chain back to the
+        // staged root) is reported as `kInvalidNOC` cluster status per
+        // Matter Core spec (`AddNOC`).
+        Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+            .map_err(|_| ErrorCode::NocInvalidNoc)?;
+
+        // The NOC's public key must match the public key derived from
+        // the most recent `CSRRequest` (Matter Core spec).
+        let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
+        crypto
+            .secret_key(secret_key)?
+            .pub_key()?
+            .write_canon(&mut csr_pubkey)?;
+        if csr_pubkey.access().as_slice() != noc_ref.pubkey()? {
+            Err(ErrorCode::NocInvalidPublicKey)?;
+        }
+
+        // Check that there is no fabric with the same fabric ID and root cert pubkey
+        // as the one in the NOC, to avoid adding duplicate fabrics
+
+        let fabric_id = noc_ref.get_fabric_id()?;
+        let root_cert_pubkey = root_ref.pubkey()?;
+
+        for fabric in fabrics.iter() {
+            if fabric_id == fabric.fabric_id() {
+                let f_root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
+                let f_root_pubkey = f_root_ref.pubkey()?;
+
+                if root_cert_pubkey == f_root_pubkey {
+                    // A fabric with the same ID and root cert pubkey already exists,
+                    // which means that this NOC cannot be accepted
+                    Err(ErrorCode::NocFabricConflict)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

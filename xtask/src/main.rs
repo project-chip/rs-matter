@@ -30,6 +30,7 @@ use crate::itest::{ITests, TestSuite};
 
 mod copyright;
 mod itest;
+mod onboard;
 mod pics;
 mod tlv;
 
@@ -90,6 +91,11 @@ enum Command {
         #[command(subcommand)]
         action: Option<copyright::Action>,
     },
+    /// Generate a device's onboarding payloads from its commissioning
+    /// parameters: the manual pairing code, the QR code text (`MT:` string),
+    /// the NFC tag NDEF message and, on request, the QR code itself on the
+    /// console or as a text/SVG file.
+    Onboard(onboard::OnboardArgs),
     /// Decode TLV octets
     Tlv {
         /// The TLV octets are decimal
@@ -238,6 +244,7 @@ impl Command {
                 as_asn1,
                 tlv,
             } => tlv::decode(tlv, *dec, *cert, *as_asn1),
+            Command::Onboard(args) => onboard::run(args),
         }
     }
 }
