@@ -317,8 +317,41 @@ impl<const N: usize> Subscriptions<N> {
     where
         B: Buffers<IMBuffer> + 'a,
     {
+        self.add_with_id(
+            None,
+            now,
+            fabric_idx,
+            peer_node_id,
+            min_int_secs,
+            max_int_secs,
+            event_numbers_watermark,
+            buffer,
+            buffers,
+        )
+    }
+
+    /// Add a subscription, either under a caller-supplied ID (`Some`) or under
+    /// the next free one (`None`). See [`SubscriptionsInner::add`] for how a
+    /// supplied ID interacts with the allocator.
+    #[allow(clippy::too_many_arguments)]
+    fn add_with_id<'a, 's, B>(
+        &'s self,
+        id: Option<u32>,
+        now: Instant,
+        fabric_idx: NonZeroU8,
+        peer_node_id: u64,
+        min_int_secs: u16,
+        max_int_secs: u16,
+        event_numbers_watermark: EventNumber,
+        buffer: B::Buffer<'a>,
+        buffers: &'s SubscriptionsBuffers<'a, B, N>,
+    ) -> Option<ReportContext<'a, 's, B, N>>
+    where
+        B: Buffers<IMBuffer> + 'a,
+    {
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
             let (sub, buf) = state.add::<B>(
+                id,
                 fabric_idx,
                 peer_node_id,
                 min_int_secs,
@@ -576,6 +609,7 @@ impl<const N: usize> Subscriptions<N> {
                     min_int_secs: sub.min_int_secs,
                     max_int_secs: sub.max_int_secs,
                     subscribe_req: Octets(rx.as_ref()),
+                    id: sub.ids.id,
                 };
 
                 // Serialize into the front of `buf`, leaving the tail as the store's
@@ -607,7 +641,10 @@ impl<const N: usize> Subscriptions<N> {
     }
 
     /// Re-hydrate the subscription table from `kv`, replaying each persisted record
-    /// through [`Self::add`] exactly as if the subscribe request had just arrived.
+    /// through [`Self::add_with_id`] exactly as if the subscribe request had just
+    /// arrived — but under the subscription ID it had before the reboot, so the
+    /// subscriber keeps recognizing the reports it receives. The ID allocator is
+    /// advanced past every resumed ID so that no later subscription collides.
     ///
     /// Each reloaded subscription enters the table un-primed, so the reporter sends
     /// it a prompt priming report (establishing a session on demand) rather than
@@ -651,7 +688,8 @@ impl<const N: usize> Subscriptions<N> {
                 continue;
             }
 
-            let added = self.add(
+            let added = self.add_with_id(
+                Some(record.id),
                 now,
                 record.fab_idx,
                 record.peer_node_id,
@@ -796,10 +834,16 @@ impl<const N: usize> SubscriptionsInner<N> {
 
     /// Add a subscription with the given parameters.
     ///
-    /// Returns the assigned subscription ID on success, or `None` if the subscription table is full.
+    /// With `id == None` the subscription gets the next free ID. With `Some(id)`
+    /// (a subscription resumed from persistent storage) it keeps that ID, and the
+    /// allocator is advanced past it so that no subscription accepted later can
+    /// be handed the same ID.
+    ///
+    /// Returns the subscription on success, or `None` if the subscription table is full.
     #[allow(clippy::too_many_arguments)]
     fn add<'a, B>(
         &mut self,
+        id: Option<u32>,
         fab_idx: NonZeroU8,
         peer_node_id: u64,
         min_int_secs: u16,
@@ -816,8 +860,8 @@ impl<const N: usize> SubscriptionsInner<N> {
 
         self.subscriptions_count += 1;
 
-        let id = self.next_subscription_id;
-        self.next_subscription_id += 1;
+        let id = id.unwrap_or(self.next_subscription_id);
+        self.next_subscription_id = self.next_subscription_id.max(id.wrapping_add(1));
 
         // Start with the current watermark so that only changes happening AFTER the
         // subscription was accepted will be reported as incremental updates.
@@ -996,9 +1040,9 @@ pub struct SubscriptionIds {
 /// One record is stored per subscription under its own key (see
 /// [`PERSISTENT_SUBSCRIPTIONS_START`]), so the value never grows beyond a single
 /// subscribe request. Everything the reporter needs to resume the subscription
-/// is captured here: the routing `(fab_idx, peer_node_id)`, the negotiated
-/// intervals, and the raw `SubscribeReq` TLV — the same bytes the live
-/// subscription keeps in its RX buffer and re-parses on every report, so no
+/// is captured here: the subscription ID, the routing `(fab_idx, peer_node_id)`,
+/// the negotiated intervals, and the raw `SubscribeReq` TLV — the same bytes the
+/// live subscription keeps in its RX buffer and re-parses on every report, so no
 /// separate path list is serialized.
 #[cfg(feature = "persistent-subscriptions")]
 #[derive(Debug, FromTLV, ToTLV)]
@@ -1011,6 +1055,9 @@ struct PersistedSubscription<'a> {
     /// The raw `SubscribeReq` TLV that created this subscription (its selected
     /// attribute/event paths and fabric-filtered flag live inside it).
     subscribe_req: OctetStr<'a>,
+    /// The subscription ID the subscriber knows this subscription by. Reports
+    /// carry it, so it must survive a reboot unchanged.
+    id: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -3642,6 +3689,79 @@ mod tests {
                 assert_eq!(s.subscriptions.len(), 1);
                 assert_eq!(s.subscriptions[0].ids.peer_node_id, 102);
             });
+        }
+
+        /// A resumed subscription keeps the ID the subscriber knows it by - every
+        /// report of a subscription must carry the same ID, so reporting under a
+        /// fresh one would get the subscription rejected with `INVALID_SUBSCRIPTION`.
+        /// The allocator is advanced past the resumed IDs so later subscriptions
+        /// cannot collide with them.
+        #[test]
+        fn resumed_subscription_keeps_its_id() {
+            let mut kv = MemKv::default();
+            let now = Instant::now();
+
+            // --- First "boot": ID 1 is replaced by ID 2 (KeepSubscriptions = false
+            // style), then ID 3 is added; only 2 and 3 are persisted. ---
+            {
+                let subs: Subscriptions<4> = Subscriptions::new();
+                let pool = TestPool::<5>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+                add_sub_with_req(&subs, &subs_bufs, &pool, now, 1, 0xAABB, 1, 60, &[1]);
+                subs.remove(&subs_bufs, |sub| (sub.ids().id == 1).then_some("replaced"));
+                add_sub_with_req(&subs, &subs_bufs, &pool, now, 1, 0xAABB, 1, 60, &[2]);
+                add_sub_with_req(&subs, &subs_bufs, &pool, now, 2, 0xCCDD, 1, 60, &[3]);
+
+                subs.state.lock(|s| {
+                    let mut ids: std::vec::Vec<u32> =
+                        s.borrow().subscriptions.iter().map(|x| x.ids.id).collect();
+                    ids.sort();
+                    assert_eq!(ids, std::vec![2, 3]);
+                });
+
+                let mut buf = [0u8; 512];
+                subs.persist_all(&subs_bufs, &mut kv, &mut buf).unwrap();
+            }
+
+            // --- Second "boot": the IDs come back unchanged... ---
+            let subs2: Subscriptions<4> = Subscriptions::new();
+            let pool2 = TestPool::<5>::new();
+            let subs_bufs2: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+            let mut buf = [0u8; 512];
+            subs2
+                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0)
+                .unwrap();
+
+            subs2.state.lock(|s| {
+                let s = s.borrow();
+                let by_req = |req: u8| {
+                    let idx = subs_bufs2.with(|bufs| {
+                        bufs.iter()
+                            .position(|b| b[..] == [req])
+                            .expect("req resumed")
+                    });
+                    s.subscriptions[idx].ids.id
+                };
+                assert_eq!(by_req(2), 2);
+                assert_eq!(by_req(3), 3);
+            });
+
+            // ...and a subscription accepted after the reboot does not reuse any of them.
+            let rctx = subs2
+                .add(
+                    now,
+                    fab(1),
+                    0xEEFF,
+                    1,
+                    60,
+                    0,
+                    pool2.get_immediate().unwrap(),
+                    &subs_bufs2,
+                )
+                .unwrap();
+            assert_eq!(rctx.subscription().ids().id, 4);
         }
 
         /// `reset_persist` wipes the whole reserved range.
