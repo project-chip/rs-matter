@@ -11,7 +11,7 @@ members = [
 exclude = ["bloat-check", "xtask"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
@@ -34,3 +34,7 @@ codegen-units = 1 # LLVM can perform better optimizations using a single thread
 lto = "fat"
 incremental = false
 overflow-checks = false
+
+[workspace.dependencies]
+rs-matter-macros = { path = "rs-matter-macros", version = "0.4" }
+rs-matter-codegen = { path = "rs-matter-codegen", version = "0.4" }

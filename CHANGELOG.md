@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-09-14
 * Fix: A persisted subscription is now resumed under the subscription ID it had before the reboot (#552)
 * Commissioning handover: `Matter::suspend_commissioning` and `Matter::resume_commissioning` - the building block for NFC (NTL) commissioning, where phase 1 runs on the NFC subsystem (#550)
 * `xtask onboard` - generate a device's manual pairing code, QR code text, NFC NDEF message, the QR code itself, etc. etc. from the commissioning parameters (#550)
