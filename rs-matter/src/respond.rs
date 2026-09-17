@@ -17,7 +17,7 @@
 
 use core::fmt::Display;
 use core::future::Future;
-use core::pin::pin;
+use core::pin::{pin, Pin};
 
 use embassy_futures::select::{select, select_slice};
 
@@ -189,8 +189,13 @@ where
             unwrap!(handlers.push(self.handle(handler_id)).map_err(|_| ())); // Cannot fail because the vector has size N
         }
 
-        let handlers = pin!(handlers);
-        let handlers = unsafe { handlers.map_unchecked_mut(|handlers| handlers.as_mut_slice()) };
+        // Pin the vector in place rather than via `pin!(handlers)`: `pin!` moves its argument
+        // into a fresh temporary, and since `handlers` was already mutated (by the `push` loop
+        // above) the compiler keeps both the moved-from local and the temporary alive in the
+        // generated future - i.e. the handlers, which dominate the size of this future, would
+        // be stored twice. The shadowing is load-bearing: it makes the original vector
+        // unnameable, so nothing can move it before it is dropped in place at scope end.
+        let handlers = unsafe { Pin::new_unchecked(handlers.as_mut_slice()) };
 
         select_slice(handlers).await.0
     }

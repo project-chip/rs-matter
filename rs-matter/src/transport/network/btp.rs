@@ -22,7 +22,7 @@ use core::future::Future;
 use embassy_futures::select::select;
 use embassy_time::{Instant, Timer};
 
-use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
+use session::{BTP_ACK_SEND_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::Session;
@@ -240,7 +240,7 @@ impl Btp {
     pub async fn wait_outgoing(&self) {
         // Check every second
         // The ack timeout should be at least 1 second, but in production
-        // use cases is anyway hard-coded to `BTP_ACK_TIMEOUT_SECS`
+        // use cases is anyway hard-coded to `BTP_ACK_SEND_TIMEOUT_SECS`
         const ACK_TIMEOUT_CHECK_SECS: u64 = 1;
 
         select(
@@ -368,7 +368,7 @@ impl BtpInner {
         Self {
             session: Session::new(),
             outgoing_sdu: OutgoingSdu::new(),
-            ack_timeout_secs: BTP_ACK_TIMEOUT_SECS,
+            ack_timeout_secs: BTP_ACK_SEND_TIMEOUT_SECS,
             conn_idle_timeout_secs: BTP_CONN_IDLE_TIMEOUT_SECS,
         }
     }
@@ -378,7 +378,7 @@ impl BtpInner {
         init!(Self {
             session <- Session::init(),
             outgoing_sdu <- OutgoingSdu::init(),
-            ack_timeout_secs: BTP_ACK_TIMEOUT_SECS,
+            ack_timeout_secs: BTP_ACK_SEND_TIMEOUT_SECS,
             conn_idle_timeout_secs: BTP_CONN_IDLE_TIMEOUT_SECS,
         })
     }
@@ -387,7 +387,7 @@ impl BtpInner {
     fn reset(&mut self) {
         self.session.reset();
         self.outgoing_sdu.reset();
-        self.ack_timeout_secs = BTP_ACK_TIMEOUT_SECS;
+        self.ack_timeout_secs = BTP_ACK_SEND_TIMEOUT_SECS;
         self.conn_idle_timeout_secs = BTP_CONN_IDLE_TIMEOUT_SECS;
     }
 

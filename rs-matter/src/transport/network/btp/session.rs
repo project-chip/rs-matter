@@ -33,7 +33,20 @@ mod packet;
 
 /// Matter Core spec constant:
 /// The maximum amount of time after receipt of a segment before a stand-alone ACK must be sent.
+///
+/// This is also the time the *peer* waits for our ACK before it tears the BTP session down,
+/// so stand-alone ACKs must go out well before it - see `BTP_ACK_SEND_TIMEOUT_SECS`.
+#[allow(dead_code)]
 pub(crate) const BTP_ACK_TIMEOUT_SECS: u8 = BTP_CONN_IDLE_TIMEOUT_SECS / 2;
+/// How long a received segment is held without any outgoing data before a stand-alone ACK
+/// is sent for it.
+///
+/// Deliberately a small fraction of `BTP_ACK_TIMEOUT_SECS`: the peer starts its own
+/// `BTP_ACK_TIMEOUT` clock the moment it sends the segment, so an ACK sent at (or near)
+/// that deadline arrives too late and the peer closes the session. This matters whenever
+/// a Matter response over BTP takes long - e.g. `ConnectNetwork`, which is only answered
+/// once the operational network is joined. The C++ SDK sends its stand-alone ACKs after 2.5s.
+pub(crate) const BTP_ACK_SEND_TIMEOUT_SECS: u8 = 2;
 /// Matter Core spec constant:
 /// The maximum amount of time no unique data has been sent over a BTP session before the
 /// Central Device must close the BTP session.
