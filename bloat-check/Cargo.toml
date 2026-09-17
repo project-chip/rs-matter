@@ -1,6 +1,6 @@
 [package]
 name = "rs-matter-bloat-check"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - bloat check"

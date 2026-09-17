@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes",
  "bitflags 2.13.2",
@@ -3397,7 +3397,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-bloat-check"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -3423,7 +3423,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-codegen"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "convert_case",
  "miette",
@@ -3441,7 +3441,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-macros"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
