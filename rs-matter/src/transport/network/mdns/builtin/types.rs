@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::cmp::Ordering;
 use core::ops::RangeBounds;
 
 use domain::base::name::{Label, ToLabelIter};
@@ -60,52 +59,58 @@ impl<const N: usize> defmt::Format for NameSlice<'_, N> {
 impl<const N: usize> ToName for NameSlice<'_, N> {}
 
 /// An iterator over the labels in a `NameSlice` instance.
+///
+/// Yields the `N` labels of the name followed by the root label, from either end.
 #[derive(Clone)]
 pub struct NameSliceIter<'a, const N: usize> {
     name: &'a NameSlice<'a, N>,
+    /// Index of the next label to be yielded by `next`
     index: usize,
+    /// One past the index of the next label to be yielded by `next_back`
+    ///
+    /// Kept separately from `index`, so that the two ends work on the same range
+    /// without crossing, as the `DoubleEndedIterator` contract requires.
+    index_back: usize,
+}
+
+impl<'a, const N: usize> NameSliceIter<'a, N> {
+    /// The label at `index`, where index `N` is the root label
+    fn label(&self, index: usize) -> &'a Label {
+        if index == self.name.0.len() {
+            Label::root()
+        } else {
+            unwrap!(
+                Label::from_slice(self.name.0[index].as_bytes()),
+                "Unreachable"
+            )
+        }
+    }
 }
 
 impl<'a, const N: usize> Iterator for NameSliceIter<'a, N> {
     type Item = &'a Label;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.index.cmp(&self.name.0.len()) {
-            Ordering::Less => {
-                let label = unwrap!(
-                    Label::from_slice(self.name.0[self.index].as_bytes()),
-                    "Unreachable"
-                );
-                self.index += 1;
-                Some(label)
-            }
-            Ordering::Equal => {
-                let label = Label::root();
-                self.index += 1;
-                Some(label)
-            }
-            Ordering::Greater => None,
+        if self.index == self.index_back {
+            return None;
         }
+
+        let label = self.label(self.index);
+        self.index += 1;
+
+        Some(label)
     }
 }
 
 impl<const N: usize> DoubleEndedIterator for NameSliceIter<'_, N> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.index > 0 {
-            self.index -= 1;
-            if self.index == self.name.0.len() {
-                let label = Label::root();
-                Some(label)
-            } else {
-                let label = unwrap!(
-                    Label::from_slice(self.name.0[self.index].as_bytes()),
-                    "Unreachable"
-                );
-                Some(label)
-            }
-        } else {
-            None
+        if self.index_back == self.index {
+            return None;
         }
+
+        self.index_back -= 1;
+
+        Some(self.label(self.index_back))
     }
 }
 
@@ -119,6 +124,7 @@ impl<const N: usize> ToLabelIter for NameSlice<'_, N> {
         NameSliceIter {
             name: self,
             index: 0,
+            index_back: self.0.len() + 1,
         }
     }
 }
@@ -289,5 +295,83 @@ impl AsMut<[u8]> for Buf<'_> {
 impl AsRef<[u8]> for Buf<'_> {
     fn as_ref(&self) -> &[u8] {
         &self.0[..self.1]
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use domain::base::name::{Label, ToLabelIter};
+    use domain::base::ToName;
+
+    use super::NameSlice;
+
+    fn label(s: &str) -> &Label {
+        Label::from_slice(s.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn iter_labels_forward() {
+        let name = NameSlice::new(["a", "b", "c"]);
+        let mut iter = name.iter_labels();
+
+        assert_eq!(iter.next(), Some(label("a")));
+        assert_eq!(iter.next(), Some(label("b")));
+        assert_eq!(iter.next(), Some(label("c")));
+        assert_eq!(iter.next(), Some(Label::root()));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn iter_labels_backward() {
+        let name = NameSlice::new(["a", "b", "c"]);
+        let mut iter = name.iter_labels();
+
+        assert_eq!(iter.next_back(), Some(Label::root()));
+        assert_eq!(iter.next_back(), Some(label("c")));
+        assert_eq!(iter.next_back(), Some(label("b")));
+        assert_eq!(iter.next_back(), Some(label("a")));
+        assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn iter_labels_both_directions() {
+        let name = NameSlice::new(["a", "b", "c"]);
+        let mut iter = name.iter_labels();
+
+        assert_eq!(iter.next(), Some(label("a")));
+        assert_eq!(iter.next_back(), Some(Label::root()));
+        assert_eq!(iter.next_back(), Some(label("c")));
+        assert_eq!(iter.next(), Some(label("b")));
+        assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn iter_labels_empty_name() {
+        let name = NameSlice::new([]);
+        let mut iter = name.iter_labels();
+
+        assert_eq!(iter.next_back(), Some(Label::root()));
+        assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    /// `ends_with` and `name_cmp` in the `domain` crate walk the labels from the back
+    #[test]
+    fn ends_with_and_cmp() {
+        let service = NameSlice::new(["_matterc", "_udp", "local"]);
+        let subtype = NameSlice::new(["_L3840", "_sub", "_matterc", "_udp", "local"]);
+        let other = NameSlice::new(["_matter", "_tcp", "local"]);
+
+        assert!(subtype.ends_with(&service));
+        assert!(!service.ends_with(&subtype));
+        assert!(!other.ends_with(&service));
+        assert!(service.ends_with(&NameSlice::new([])));
+
+        assert_eq!(service.name_cmp(&service), core::cmp::Ordering::Equal);
+        assert_ne!(service.name_cmp(&other), core::cmp::Ordering::Equal);
+        assert_ne!(service.name_cmp(&subtype), core::cmp::Ordering::Equal);
     }
 }

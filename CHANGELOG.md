@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: `NameSliceIter::next_back` in the builtin mDNS responder always returned `None`, breaking reverse label iteration (`ends_with`, `name_cmp`) on `NameSlice`
 * Fix: BTP ACKs sender was wrongly using the RECV timeout of 15s for sending (#554)
 * Fix: the `respond` module now uses ~ 2x less memory (#554)
 
