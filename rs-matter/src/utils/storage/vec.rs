@@ -155,6 +155,36 @@ impl<T, const N: usize> Vec<T, N> {
         self.buffer.as_mut_ptr() as *mut T
     }
 
+    /// Returns the number of elements in the vector behind `this`, without
+    /// creating a reference to the vector.
+    ///
+    /// Unlike `(*this).len()`, this does not reborrow the whole vector, so it can
+    /// be used while `&mut` references to individual elements (obtained via
+    /// [`Self::raw_as_mut_ptr`]) are still live.
+    ///
+    /// # Safety
+    ///
+    /// `this` must point to a valid, initialized `Vec`.
+    pub(crate) unsafe fn raw_len(this: *const Self) -> usize {
+        // SAFETY: `this` points to a valid `Vec` per the contract of this method.
+        unsafe { ptr::addr_of!((*this).len).read() }
+    }
+
+    /// Returns a raw pointer to the buffer of the vector behind `this`, without
+    /// creating a reference to the vector.
+    ///
+    /// Unlike `(*this).as_mut_ptr()`, this does not reborrow the whole vector, so
+    /// element references derived from the returned pointer do not alias each other
+    /// or invalidate element references derived from earlier calls.
+    ///
+    /// # Safety
+    ///
+    /// `this` must point to a valid, initialized `Vec`.
+    pub(crate) unsafe fn raw_as_mut_ptr(this: *mut Self) -> *mut T {
+        // SAFETY: `this` points to a valid `Vec` per the contract of this method.
+        unsafe { addr_of_mut!((*this).buffer) as *mut T }
+    }
+
     /// Extracts a slice containing the entire vector.
     ///
     /// Equivalent to `&s[..]`.
@@ -1274,6 +1304,9 @@ where
 #[cfg(test)]
 mod tests {
     use core::fmt::Write;
+    use core::mem::MaybeUninit;
+
+    use crate::utils::init::{into_init, InitDefault, InitMaybeUninit, IntoFallibleInit};
 
     use super::Vec;
 
@@ -1702,5 +1735,241 @@ mod tests {
 
         // Validate full
         assert!(v.is_full());
+    }
+
+    #[test]
+    fn into_array() {
+        droppable!();
+
+        let mut v: Vec<Droppable, 4> = Vec::new();
+        v.push(Droppable::new()).ok().unwrap();
+        v.push(Droppable::new()).ok().unwrap();
+        assert_eq!(Droppable::count(), 2);
+
+        // Wrong length: the vector is handed back untouched
+        let v = v.into_array::<3>().err().unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(Droppable::count(), 2);
+
+        let arr = v.into_array::<2>().ok().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(Droppable::count(), 2);
+
+        core::mem::drop(arr);
+        assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    fn push_init() {
+        droppable!();
+
+        let mut v: Vec<Droppable, 2> = Vec::new();
+
+        v.push_init(Droppable::new().into_fallible::<()>(), || ())
+            .unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(Droppable::count(), 1);
+
+        // A failing initializer leaves the vector unchanged
+        let r = v.push_init(
+            into_init(|| Err::<Droppable, i32>(7).map(|d| d.into_fallible())),
+            || 0,
+        );
+        assert_eq!(r, Err(7));
+        assert_eq!(v.len(), 1);
+        assert_eq!(Droppable::count(), 1);
+
+        v.push_init(Droppable::new().into_fallible::<()>(), || ())
+            .unwrap();
+        assert!(v.is_full());
+        assert_eq!(Droppable::count(), 2);
+
+        // A full vector reports the error from the closure and drops the unused value
+        assert_eq!(
+            v.push_init(Droppable::new().into_fallible::<i32>(), || 42),
+            Err(42)
+        );
+        assert_eq!(v.len(), 2);
+        assert_eq!(Droppable::count(), 2);
+
+        core::mem::drop(v);
+        assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn push_init_unchecked_full_panics() {
+        let mut v: Vec<u8, 1> = Vec::new();
+        v.push_init_unchecked(1u8).unwrap();
+        v.push_init_unchecked(2u8).unwrap();
+    }
+
+    #[test]
+    fn truncate_and_clear() {
+        droppable!();
+
+        let mut v: Vec<Droppable, 4> = Vec::new();
+        for _ in 0..4 {
+            v.push(Droppable::new()).ok().unwrap();
+        }
+        assert_eq!(Droppable::count(), 4);
+
+        // Truncating to a larger length is a no-op
+        v.truncate(10);
+        assert_eq!(v.len(), 4);
+
+        v.truncate(2);
+        assert_eq!(v.len(), 2);
+        assert_eq!(Droppable::count(), 2);
+
+        v.clear();
+        assert!(v.is_empty());
+        assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    fn unchecked_push_pop_and_set_len() {
+        let mut v: Vec<u8, 4> = Vec::new();
+
+        // SAFETY: the vector has room for two elements
+        unsafe {
+            v.push_unchecked(1);
+            v.push_unchecked(2);
+        }
+        assert_eq!(v.as_slice(), &[1, 2]);
+
+        // SAFETY: the vector is not empty
+        assert_eq!(unsafe { v.pop_unchecked() }, 2);
+        assert_eq!(v.as_slice(), &[1]);
+
+        // SAFETY: the new length never exceeds the number of initialized slots
+        unsafe { v.set_len(0) };
+        assert!(v.is_empty());
+        unsafe { v.set_len(1) };
+        assert_eq!(v.as_slice(), &[1]);
+    }
+
+    #[test]
+    fn swap_remove() {
+        let mut v: Vec<u8, 4> = Vec::from_slice(&[1, 2, 3, 4]).unwrap();
+
+        assert_eq!(v.swap_remove(1), 2);
+        assert_eq!(v.as_slice(), &[1, 4, 3]);
+        assert_eq!(v.swap_remove(2), 3);
+        assert_eq!(v.as_slice(), &[1, 4]);
+
+        // SAFETY: index 0 is in bounds
+        assert_eq!(unsafe { v.swap_remove_unchecked(0) }, 1);
+        assert_eq!(v.as_slice(), &[4]);
+    }
+
+    #[test]
+    fn insert_and_remove() {
+        let mut v: Vec<u8, 4> = Vec::new();
+
+        v.insert(0, 3).unwrap();
+        v.insert(0, 1).unwrap();
+        v.insert(1, 2).unwrap();
+        v.insert(3, 4).unwrap();
+        assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+
+        // A full vector hands the element back
+        assert_eq!(v.insert(0, 9), Err(9));
+
+        assert_eq!(v.remove(1), 2);
+        assert_eq!(v.as_slice(), &[1, 3, 4]);
+        assert_eq!(v.remove(2), 4);
+        assert_eq!(v.as_slice(), &[1, 3]);
+        assert_eq!(v.remove(0), 1);
+        assert_eq!(v.as_slice(), &[3]);
+    }
+
+    #[test]
+    fn insert_remove_drop() {
+        droppable!();
+
+        let mut v: Vec<Droppable, 4> = Vec::new();
+        v.push(Droppable::new()).ok().unwrap();
+        v.push(Droppable::new()).ok().unwrap();
+        v.insert(1, Droppable::new()).ok().unwrap();
+        assert_eq!(Droppable::count(), 3);
+
+        core::mem::drop(v.remove(1));
+        assert_eq!(Droppable::count(), 2);
+
+        core::mem::drop(v);
+        assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    fn retain() {
+        droppable!();
+
+        let mut v: Vec<Droppable, 6> = Vec::new();
+        for _ in 0..6 {
+            v.push(Droppable::new()).ok().unwrap();
+        }
+        assert_eq!(Droppable::count(), 6);
+
+        v.retain(|d| d.0 % 2 == 0);
+        assert_eq!(v.len(), 3);
+        assert_eq!(Droppable::count(), 3);
+        assert!(v.iter().all(|d| d.0 % 2 == 0));
+
+        v.retain_mut(|d| {
+            d.0 += 1;
+            d.0 != 3
+        });
+        assert_eq!(v.len(), 2);
+        assert_eq!(Droppable::count(), 2);
+        assert!(v.iter().all(|d| d.0 == 5 || d.0 == 7));
+
+        v.retain(|_| false);
+        assert!(v.is_empty());
+        assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    fn init_in_place() {
+        droppable!();
+
+        let mut slot = MaybeUninit::<Vec<Droppable, 2>>::uninit();
+        let v = slot.init_with(Vec::init());
+        assert!(v.is_empty());
+
+        v.push_init(Droppable::new().into_fallible::<()>(), || ())
+            .unwrap();
+        assert_eq!(Droppable::count(), 1);
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
+        assert_eq!(Droppable::count(), 0);
+
+        let mut slot = MaybeUninit::<Vec<u8, 2>>::uninit();
+        let v = slot.init_with(<Vec<u8, 2> as InitDefault>::init_default());
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn raw_accessors() {
+        let mut v: Vec<u8, 4> = Vec::from_slice(&[1, 2, 3]).unwrap();
+        let ptr = &mut v as *mut Vec<u8, 4>;
+
+        // SAFETY: `ptr` points to a live vector; slots 0 and 1 are distinct, initialized slots
+        unsafe {
+            assert_eq!(Vec::raw_len(ptr), 3);
+
+            let a = &mut *Vec::raw_as_mut_ptr(ptr);
+            let b = &mut *Vec::raw_as_mut_ptr(ptr).add(1);
+
+            // Both references stay valid while the other one is written through
+            *a += 10;
+            *b += 20;
+            *a += 1;
+            assert_eq!(*b, 22);
+            assert_eq!(Vec::raw_len(ptr), 3);
+        }
+
+        assert_eq!(v.as_slice(), &[12, 22, 3]);
     }
 }

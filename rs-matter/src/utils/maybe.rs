@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -329,6 +329,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use core::mem::MaybeUninit;
+
+    use crate::utils::init::{into_init, InitMaybeUninit, IntoFallibleInit};
+
     use super::Maybe;
 
     macro_rules! droppable {
@@ -418,5 +422,76 @@ mod tests {
         }
 
         assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    fn init_reinit() {
+        droppable!();
+
+        let mut slot = MaybeUninit::<Maybe<Droppable>>::uninit();
+
+        let m = slot.init_with(Maybe::init_none());
+        assert!(m.is_none());
+        assert_eq!(Droppable::count(), 0);
+
+        m.reinit(Maybe::init(Some(Droppable::new())));
+        assert!(m.is_some());
+        assert_eq!(Droppable::count(), 1);
+
+        // Re-initializing drops the old value first
+        m.reinit(Maybe::init(Some(Droppable::new())));
+        assert!(m.is_some());
+        assert_eq!(Droppable::count(), 1);
+
+        // A failing initializer leaves the value empty, with the old value dropped
+        let r = m.try_reinit(Maybe::init(Some(into_init(|| {
+            Err::<Droppable, i32>(5).map(|d| d.into_fallible())
+        }))));
+        assert_eq!(r, Err(5));
+        assert!(m.is_none());
+        assert_eq!(Droppable::count(), 0);
+
+        m.reinit(Maybe::init(Some(Droppable::new())));
+        assert_eq!(Droppable::count(), 1);
+        m.reinit(Maybe::init(None::<Droppable>));
+        assert!(m.is_none());
+        assert_eq!(Droppable::count(), 0);
+
+        m.reinit(Maybe::init(Some(Droppable::new())));
+        assert_eq!(Droppable::count(), 1);
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
+        assert_eq!(Droppable::count(), 0);
+    }
+
+    #[test]
+    fn as_ref_as_mut_into_option() {
+        droppable!();
+
+        let mut m: Maybe<Droppable> = Maybe::none();
+        assert!(m.as_ref().is_none());
+        assert!(m.as_mut().is_none());
+        assert!(m.as_opt_ref().is_none());
+        assert!(m.as_opt_mut().is_none());
+        assert!(m.into_option().is_none());
+
+        let mut m: Maybe<Droppable> = Maybe::new(Some(Droppable::new()));
+        assert!(m.as_ref().is_some());
+        assert!(m.as_mut().is_some());
+        assert!(m.as_opt_ref().is_some());
+        assert!(m.as_opt_mut().is_some());
+        assert_eq!(Droppable::count(), 1);
+
+        let d = m.into_option().unwrap();
+        assert_eq!(Droppable::count(), 1);
+        core::mem::drop(d);
+        assert_eq!(Droppable::count(), 0);
+
+        let mut m: Maybe<u32> = Maybe::some(1);
+        *m.as_opt_mut().unwrap() += 1;
+        assert_eq!(m.as_opt_ref().copied(), Some(2));
+        *m.as_mut().into_option().unwrap() += 1;
+        assert_eq!(m.as_ref().into_option().copied(), Some(3));
     }
 }

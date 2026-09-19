@@ -122,17 +122,50 @@ where
         })
     }
 
+    /// Get a unique reference to the buffer at `index`.
+    ///
+    /// The reference is derived from a raw pointer to the pool rather than from a
+    /// `&mut Vec` over the whole pool, so it does not alias (and invalidate) the
+    /// references to the other buffers that are currently handed out to callers.
+    ///
+    /// # Safety
+    ///
+    /// - `index` must be less than `N` and the pool must be fully populated
+    ///   (`init_buffers` must have run);
+    /// - The buffer at `index` must be marked as unavailable in `self.available`,
+    ///   i.e. no other `&mut T` to it may exist for the lifetime of the returned one.
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn buffer(&self, index: usize) -> &mut T {
+        // SAFETY: Per the contract of this method, the slot is initialized and no other
+        // reference to it is live.
+        unsafe { &mut *crate::utils::storage::Vec::raw_as_mut_ptr(self.pool.get()).add(index) }
+    }
+
     fn init_buffers(pool: &UnsafeCell<crate::utils::storage::Vec<T, N>>)
     where
         T: InitDefault,
     {
-        let buffers = unwrap!(unsafe { pool.get().as_mut() });
+        let pool = pool.get();
 
-        while buffers.len() < N {
-            // In-place initialization: each slot is written directly via pinned-init,
-            // never materializing a full `T` value on the stack. This is essential when
-            // `T` is a large buffer (e.g. 1 MiB) that would otherwise overflow the stack.
-            unwrap!(buffers.push_init_unchecked(T::init_default()));
+        // The length is read through the raw pointer rather than via a `&Vec`, because
+        // a reference to the whole pool would alias (and invalidate) the `&mut T` buffers
+        // already handed out to callers.
+        //
+        // SAFETY: `pool` points to the valid, initialized `Vec` inside the `UnsafeCell`.
+        if unsafe { crate::utils::storage::Vec::raw_len(pool) } < N {
+            // Buffers are only handed out once the pool is fully populated, so while it
+            // is still being filled there are no outstanding `&mut T` references and a
+            // unique reference to the whole pool is sound.
+            //
+            // SAFETY: See above; the pool is accessed under the `available` lock.
+            let buffers = unsafe { &mut *pool };
+
+            while buffers.len() < N {
+                // In-place initialization: each slot is written directly via pinned-init,
+                // never materializing a full `T` value on the stack. This is essential when
+                // `T` is a large buffer (e.g. 1 MiB) that would otherwise overflow the stack.
+                unwrap!(buffers.push_init_unchecked(T::init_default()));
+            }
         }
     }
 }
@@ -192,7 +225,8 @@ where
 
             match result {
                 Either::First(index) => {
-                    let buffer = &mut unwrap!(unsafe { self.pool.get().as_mut() })[index];
+                    // SAFETY: See `Self::buffer`.
+                    let buffer = unsafe { self.buffer(index) };
 
                     Some(PooledBuffer {
                         index,
@@ -221,9 +255,8 @@ where
         });
 
         index.map(|index| {
-            let buffers = unwrap!(unsafe { self.pool.get().as_mut() });
-
-            let buffer = &mut buffers[index];
+            // SAFETY: See `Self::buffer`.
+            let buffer = unsafe { self.buffer(index) };
 
             PooledBuffer {
                 index,
@@ -272,5 +305,100 @@ where
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buffer.deref_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::mem::MaybeUninit;
+
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use futures_lite::future::block_on;
+
+    use crate::utils::init::InitMaybeUninit;
+    use crate::utils::storage::Vec;
+
+    use super::{Buffers, PooledBuffers};
+
+    type Pool = PooledBuffers<Vec<u8, 8>, 2, NoopRawMutex>;
+
+    #[test]
+    fn get_immediate_exhausts_and_releases() {
+        let pool = Pool::new();
+
+        let mut a = pool.get_immediate().unwrap();
+        let mut b = pool.get_immediate().unwrap();
+        assert!(pool.get_immediate().is_none());
+
+        // Two buffers are live at the same time: writes to one must not affect the other
+        a.push(1).unwrap();
+        b.push(2).unwrap();
+        b.push(3).unwrap();
+        assert_eq!(a.as_slice(), &[1]);
+        assert_eq!(b.as_slice(), &[2, 3]);
+
+        // Dropping a buffer returns it to the pool
+        drop(a);
+        let mut c = pool.get_immediate().unwrap();
+        assert!(pool.get_immediate().is_none());
+
+        c.clear();
+        c.push(4).unwrap();
+        assert_eq!(b.as_slice(), &[2, 3]);
+        assert_eq!(c.as_slice(), &[4]);
+
+        drop(b);
+        drop(c);
+        let _a = pool.get_immediate().unwrap();
+        let _b = pool.get_immediate().unwrap();
+        assert!(pool.get_immediate().is_none());
+    }
+
+    #[test]
+    fn get_without_timeout_is_immediate() {
+        let pool = Pool::new();
+
+        block_on(async {
+            let a = pool.get().await.unwrap();
+            let b = pool.get().await.unwrap();
+            assert!(pool.get().await.is_none());
+
+            drop(a);
+            assert!(pool.get().await.is_some());
+            drop(b);
+        });
+    }
+
+    #[test]
+    fn get_with_timeout() {
+        let pool = Pool::new_with_timeout(10);
+
+        block_on(async {
+            let a = pool.get().await.unwrap();
+            let _b = pool.get().await.unwrap();
+
+            // All buffers are taken and nobody releases one: the wait must time out
+            assert!(pool.get().await.is_none());
+
+            drop(a);
+            assert!(pool.get().await.is_some());
+        });
+    }
+
+    #[test]
+    fn init_in_place() {
+        let mut slot = MaybeUninit::<Pool>::uninit();
+        let pool = slot.init_with(Pool::init());
+
+        {
+            let mut a = pool.get_immediate().unwrap();
+            a.push(5).unwrap();
+            assert_eq!(a.as_slice(), &[5]);
+        }
+        assert!(pool.get_immediate().is_some());
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
     }
 }

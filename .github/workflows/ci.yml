@@ -108,3 +108,23 @@ jobs:
       - name: Examples - WebRTC Camera
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,webrtc
+
+  miri:
+    # Runs the unit tests under Miri, to catch undefined behavior in the `unsafe` code
+    # (mostly in `utils`, and in particular in `utils::storage`).
+    # The certificate, attestation and secure-channel tests are left out: their
+    # crypto takes hours under Miri and they contain no `unsafe` of their own.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: miri, rust-src
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Miri
+        run: "cd rs-matter; cargo miri test --lib -- utils:: tlv:: dm:: im:: transport::"

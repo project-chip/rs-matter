@@ -160,3 +160,44 @@ pub mod raw {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+    use core::mem::MaybeUninit;
+
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use crate::utils::init::InitMaybeUninit;
+    use crate::utils::storage::Vec;
+
+    use super::Mutex;
+
+    #[test]
+    fn lock_get_mut_into_inner() {
+        let mut m = Mutex::<_, NoopRawMutex>::new(Cell::new(1));
+
+        m.lock(|c| c.set(c.get() + 1));
+        assert_eq!(m.lock(|c| c.get()), 2);
+
+        m.get_mut().set(5);
+        assert_eq!(m.lock(|c| c.get()), 5);
+
+        assert_eq!(m.into_inner().get(), 5);
+
+        let m = Mutex::const_new(NoopRawMutex::new(), 7);
+        assert_eq!(m.lock(|v| *v), 7);
+    }
+
+    #[test]
+    fn init_in_place() {
+        let mut slot = MaybeUninit::<Mutex<Vec<u8, 4>, NoopRawMutex>>::uninit();
+        let m = slot.init_with(Mutex::init(Vec::init()));
+
+        m.get_mut().push(3).unwrap();
+        assert_eq!(m.lock(|v| (v.len(), v[0])), (1, 3));
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
+    }
+}

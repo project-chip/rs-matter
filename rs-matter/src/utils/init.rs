@@ -112,3 +112,84 @@ pub trait InitDefault: Sized {
     /// Returns a canonical in-place initializer for `Self`.
     fn init_default() -> impl Init<Self>;
 }
+
+#[cfg(test)]
+mod tests {
+    use core::cell::{Cell, UnsafeCell};
+    use core::mem::MaybeUninit;
+
+    use super::{into_init, Init, InitMaybeUninit, IntoFallibleInit, UnsafeCellInit};
+
+    struct Droppable<'a>(&'a Cell<u32>);
+
+    impl Drop for Droppable<'_> {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn maybe_uninit_init_with() {
+        let drops = Cell::new(0);
+
+        let mut slot = MaybeUninit::<Droppable>::uninit();
+        let d = slot.init_with(Droppable(&drops));
+        assert_eq!(d.0.get(), 0);
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
+        assert_eq!(drops.get(), 1);
+
+        let mut slot = MaybeUninit::<u32>::uninit();
+        assert_eq!(*slot.init_zeroed(), 0);
+        assert_eq!(*slot.init_with(7), 7);
+    }
+
+    #[test]
+    fn into_init_and_into_fallible() {
+        let drops = Cell::new(0);
+
+        let mut slot = MaybeUninit::<Droppable>::uninit();
+
+        // A failing initializer reports the error and constructs nothing
+        let r = slot.try_init_with(into_init(|| {
+            Err::<Droppable, i32>(3).map(|d| d.into_fallible())
+        }));
+        assert_eq!(r.err(), Some(3));
+        assert_eq!(drops.get(), 0);
+
+        let r = slot.try_init_with(into_init(|| {
+            Ok::<_, i32>(Droppable(&drops).into_fallible())
+        }));
+        assert!(r.is_ok());
+
+        // SAFETY: `slot` was initialized by `try_init_with` above
+        unsafe { slot.assume_init_drop() };
+        assert_eq!(drops.get(), 1);
+
+        // An unused initializer drops the value it wraps
+        let init = Droppable(&drops).into_fallible::<i32>();
+        drop(init);
+        assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
+    fn unsafe_cell_init() {
+        let mut slot = MaybeUninit::<UnsafeCell<u32>>::uninit();
+        let cell = slot.init_with(UnsafeCell::init(42u32));
+        assert_eq!(*cell.get_mut(), 42);
+    }
+
+    #[test]
+    fn value_is_an_initializer() {
+        fn init<T>(init: impl Init<T>) -> T {
+            let mut slot = MaybeUninit::uninit();
+            slot.init_with(init);
+
+            // SAFETY: `slot` was initialized by `init_with` above
+            unsafe { slot.assume_init() }
+        }
+
+        assert_eq!(init(5u8), 5);
+    }
+}
