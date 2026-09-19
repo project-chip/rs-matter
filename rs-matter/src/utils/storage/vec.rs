@@ -165,7 +165,7 @@ impl<T, const N: usize> Vec<T, N> {
     /// # Safety
     ///
     /// `this` must point to a valid, initialized `Vec`.
-    pub unsafe fn raw_len(this: *const Self) -> usize {
+    pub(crate) unsafe fn raw_len(this: *const Self) -> usize {
         // SAFETY: `this` points to a valid `Vec` per the contract of this method.
         unsafe { ptr::addr_of!((*this).len).read() }
     }
@@ -180,7 +180,7 @@ impl<T, const N: usize> Vec<T, N> {
     /// # Safety
     ///
     /// `this` must point to a valid, initialized `Vec`.
-    pub unsafe fn raw_as_mut_ptr(this: *mut Self) -> *mut T {
+    pub(crate) unsafe fn raw_as_mut_ptr(this: *mut Self) -> *mut T {
         // SAFETY: `this` points to a valid `Vec` per the contract of this method.
         unsafe { addr_of_mut!((*this).buffer) as *mut T }
     }
