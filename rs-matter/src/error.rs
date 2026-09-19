@@ -415,7 +415,9 @@ mod tests {
         let slice_err = <[u8; 4]>::try_from(&[1u8, 2, 3][..]).unwrap_err();
         assert_eq!(Error::from(slice_err).code(), ErrorCode::Invalid);
 
-        let utf8_err = from_utf8(&[0xff, 0xfe]).unwrap_err();
+        // Built at runtime so the lint does not flag a constant-invalid literal
+        let invalid: Vec<u8> = (0..2).map(|i| 0xff - i as u8).collect();
+        let utf8_err = from_utf8(&invalid).unwrap_err();
         assert_eq!(Error::from(utf8_err).code(), ErrorCode::Utf8Fail);
 
         #[derive(Debug, Copy, Clone, num_enum::TryFromPrimitive)]
@@ -474,7 +476,7 @@ mod tests {
         assert!(err.details().is_none());
         assert_eq!(format!("{err}"), "Busy");
 
-        let inner = std::io::Error::new(std::io::ErrorKind::Other, "disk on fire");
+        let inner = std::io::Error::other("disk on fire");
         let err = Error::new_with_details(ErrorCode::StdIoError, Box::new(inner));
         assert_eq!(err.code(), ErrorCode::StdIoError);
         assert!(err.details().unwrap().to_string().contains("disk on fire"));

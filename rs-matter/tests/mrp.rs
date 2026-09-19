@@ -55,7 +55,7 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::acl::{AclEntry, AuthMode};
-use rs_matter::crypto::{test_only_crypto, Crypto};
+use rs_matter::crypto::{test_only_crypto, CanonAeadKey, Crypto};
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic};
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::net_comm::DummyNetworks;
@@ -87,7 +87,6 @@ use crate::common::e2e::im::{ReplyProcessor, TestReportDataMsg, TestSubscribeReq
 use crate::common::e2e::test::E2eTest;
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::init_env_logger;
-use crate::{attr_data_path, echo_req, echo_resp};
 
 #[allow(dead_code)]
 mod common;
@@ -131,8 +130,12 @@ enum LossMode {
 }
 
 /// What the transport asked one direction of the link to send.
-#[derive(Default)]
 struct LinkStats {
+    /// Node ID of the node sending over this direction of the link; needed
+    /// to decrypt the packet headers.
+    sender_nodeid: u64,
+    /// The loss policy currently applied to this direction of the link.
+    mode: Cell<LossMode>,
     /// Packets handed to the link by the transport.
     offered: Cell<u32>,
     /// Packets actually pushed into the pipe, duplicates included.
@@ -151,10 +154,24 @@ struct LinkStats {
 }
 
 impl LinkStats {
+    fn new(sender_nodeid: u64) -> Self {
+        Self {
+            sender_nodeid,
+            mode: Cell::new(LossMode::Reliable),
+            offered: Cell::new(0),
+            delivered: Cell::new(0),
+            dropped: Cell::new(0),
+            retransmissions: Cell::new(0),
+            standalone_acks: Cell::new(0),
+            im_messages: Cell::new(0),
+            seen_ctrs: RefCell::new(Vec::new()),
+        }
+    }
+
     fn record(&self, data: &[u8]) {
         self.offered.set(self.offered.get() + 1);
 
-        let Some((ctr, proto_id, opcode)) = decode_hdr(data) else {
+        let Some((ctr, proto_id, opcode)) = decode_hdr(data, self.sender_nodeid) else {
             panic!("Undecodable packet on the link");
         };
 
@@ -178,18 +195,39 @@ impl LinkStats {
     fn unique(&self) -> u32 {
         self.seen_ctrs.borrow().len() as u32
     }
+
+    /// Zero the packet counters, keeping the message counters seen so far so
+    /// that retransmissions of earlier packets are still recognised.
+    fn reset_counts(&self) {
+        self.offered.set(0);
+        self.delivered.set(0);
+        self.dropped.set(0);
+        self.retransmissions.set(0);
+        self.standalone_acks.set(0);
+        self.im_messages.set(0);
+    }
 }
 
-/// Decode the plain and protocol headers of a packet on the (unencrypted)
-/// test link: `(message counter, protocol ID, protocol opcode)`.
-fn decode_hdr(data: &[u8]) -> Option<(u32, u16, u8)> {
+/// Decode the plain and protocol headers of a packet sent by `sender_nodeid`
+/// over the test link: `(message counter, protocol ID, protocol opcode)`.
+///
+/// The pre-installed sessions carry no key material, so the packets are
+/// encrypted with an all-zero key.
+fn decode_hdr(data: &[u8], sender_nodeid: u64) -> Option<(u32, u16, u8)> {
     let mut data = data.to_vec();
     let mut pb = ParseBuf::new(data.as_mut_slice());
     let mut hdr = PacketHdr::new();
 
+    let key = CanonAeadKey::new();
+
     hdr.decode_plain_hdr(&mut pb).ok()?;
-    hdr.decode_remaining(test_only_crypto(), None, 0, &mut pb)
-        .ok()?;
+    hdr.decode_remaining(
+        test_only_crypto(),
+        Some(key.reference()),
+        sender_nodeid,
+        &mut pb,
+    )
+    .ok()?;
 
     Some((hdr.plain.ctr, hdr.proto.proto_id, hdr.proto.proto_opcode))
 }
@@ -199,7 +237,6 @@ type Pipe<'a, const N: usize> = Channel<'a, MatterRawMutex, heapless::Vec<u8, N>
 /// The sending half of a pipe, with a loss policy in front of it.
 struct LossySend<'a, const N: usize> {
     pipe: Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>,
-    mode: LossMode,
     stats: &'a LinkStats,
 }
 
@@ -220,9 +257,11 @@ impl<const N: usize> NetworkSend for LossySend<'_, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
         self.stats.record(data);
 
-        let drop = match self.mode {
+        let mode = self.stats.mode.get();
+
+        let drop = match mode {
             LossMode::Reliable | LossMode::DuplicateAll => false,
-            LossMode::DropEveryNth(n) => self.stats.offered.get() % n == 0,
+            LossMode::DropEveryNth(n) => self.stats.offered.get().is_multiple_of(n),
             LossMode::DropAll => true,
         };
 
@@ -233,7 +272,7 @@ impl<const N: usize> NetworkSend for LossySend<'_, N> {
 
         self.deliver(data).await;
 
-        if matches!(self.mode, LossMode::DuplicateAll) {
+        if matches!(mode, LossMode::DuplicateAll) {
             self.deliver(data).await;
         }
 
@@ -321,19 +360,22 @@ fn add_admin_acl(matter: &Matter<'_>) {
 ///
 /// Panics if a transport or the responder exits first, or if the scenario
 /// does not complete within `SCENARIO_TIMEOUT_SECS`.
-async fn run_link<R, F>(
+async fn run_link<R, F, T>(
     device: &Matter<'_>,
     client: &Matter<'_>,
     device_link: (LossMode, &LinkStats),
     client_link: (LossMode, &LinkStats),
     responder: R,
     client_flow: F,
-) -> Result<(), Error>
+) -> Result<T, Error>
 where
     R: Future<Output = Result<(), Error>>,
-    F: Future<Output = Result<(), Error>>,
+    F: Future<Output = Result<T, Error>>,
 {
     let crypto = test_only_crypto();
+
+    device_link.1.mode.set(device_link.0);
+    client_link.1.mode.set(client_link.0);
 
     let mut to_client_buf = [heapless::Vec::new(); 1];
     let mut to_device_buf = [heapless::Vec::new(); 1];
@@ -349,7 +391,6 @@ where
             &crypto,
             LossySend {
                 pipe: device_send,
-                mode: device_link.0,
                 stats: device_link.1,
             },
             PipeRecv(device_recv),
@@ -359,7 +400,6 @@ where
             &crypto,
             LossySend {
                 pipe: client_send,
-                mode: client_link.0,
                 stats: client_link.1,
             },
             PipeRecv(client_recv),
@@ -380,7 +420,7 @@ where
 }
 
 /// Open an exchange on the client's pre-installed session to the device.
-async fn initiate_exchange(client: &Matter<'_>) -> Result<Exchange<'_>, Error> {
+async fn initiate_exchange<'a>(client: &'a Matter<'a>) -> Result<Exchange<'a>, Error> {
     Exchange::initiate(
         client,
         test_only_crypto(),
@@ -412,10 +452,45 @@ const IM_INTERACTIONS: u32 = 5;
 
 /// A read, a write, an invoke and a subscribe (which is a request plus
 /// a status response), all on one exchange.
-async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
+/// Read `Att1` of the echo cluster on endpoint 0 over `exchange` and check
+/// the reported value.
+async fn read_att1(exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    let ep0_att1 = GenericPath::new(
+        Some(0),
+        Some(echo_cluster::ID),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
+    );
+    let read_input = [AttrPath::from_gp(&ep0_att1)];
+    let read_expected = [attr_data_path!(ep0_att1, Some(&0x1234u16))];
+
+    run_im_test(exchange, &TLVTest::read_attrs(&read_input, &read_expected)).await?;
+    exchange.acknowledge().await
+}
+
+/// One lossless request/response before the loss policy is switched on.
+///
+/// The first message a session receives seeds its replay window with every
+/// counter below it marked as already seen. The device stamps a response
+/// with its counter when the response is encoded, but a standalone ack for
+/// a duplicate of the request can be encoded later and still leave first;
+/// on a window seeded by that ack the response would then be discarded as a
+/// duplicate. A completed exchange leaves the window with real history, so
+/// out-of-order counters are judged by the window bits from then on.
+async fn warm_up(client: &Matter<'_>) -> Result<(), Error> {
     let mut exchange = initiate_exchange(client).await?;
 
-    // Read
+    info!("=== Warm-up read ===");
+    read_att1(&mut exchange).await
+}
+
+/// Run one Interaction Model transaction of each kind against the device.
+///
+/// Every transaction opens an exchange of its own, as Matter clients do: the
+/// responder side of an exchange lingers until the ack of its last message
+/// arrives, and if that ack is lost, a follow-up request reusing the exchange
+/// ID would reach the device as a piggybacked ack for the old exchange rather
+/// than as a new request.
+async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
     let ep0_att1 = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
@@ -425,12 +500,8 @@ async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
     let read_expected = [attr_data_path!(ep0_att1, Some(&0x1234u16))];
 
     info!("=== Read ===");
-    run_im_test(
-        &mut exchange,
-        &TLVTest::read_attrs(&read_input, &read_expected),
-    )
-    .await?;
-    exchange.acknowledge().await?;
+    let mut exchange = initiate_exchange(client).await?;
+    read_att1(&mut exchange).await?;
 
     // Write
     let ep0_att_write = GenericPath::new(
@@ -438,7 +509,7 @@ async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let write_value = 10;
+    let write_value = 10u16;
     let write_input = [TestAttrData::new(
         None,
         AttrPath::from_gp(&ep0_att_write),
@@ -451,6 +522,7 @@ async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
     )];
 
     info!("=== Write ===");
+    let mut exchange = initiate_exchange(client).await?;
     run_im_test(
         &mut exchange,
         &TLVTest::write_attrs(&write_input, &write_expected),
@@ -463,6 +535,7 @@ async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
     let invoke_expected = [echo_resp!(0, 10).with_command_ref(0)];
 
     info!("=== Invoke ===");
+    let mut exchange = initiate_exchange(client).await?;
     run_im_test(
         &mut exchange,
         &TLVTest::inv_cmds(&invoke_input, &invoke_expected),
@@ -473,6 +546,7 @@ async fn im_interactions(client: &Matter<'_>) -> Result<(), Error> {
     // Subscribe: the primed report, then the status response that
     // completes the subscription.
     info!("=== Subscribe ===");
+    let mut exchange = initiate_exchange(client).await?;
     run_im_test(
         &mut exchange,
         &TLVTest::subscribe(
@@ -528,7 +602,7 @@ fn run_im_scenario(
     add_admin_acl(&device);
 
     let crypto = test_only_crypto();
-    let buffers = MatterBuffers::new();
+    let buffers: MatterBuffers = MatterBuffers::new();
     let state = InteractionModelState::<DummyNetworks, 3, 0>::new(DummyNetworks);
 
     let mut rand = crypto.rand().unwrap();
@@ -543,19 +617,33 @@ fn run_im_scenario(
     let dm = InteractionModel::new(&device, &crypto, &buffers, &handler, &kv, &state);
     let responder = Responder::new_default(&dm);
 
-    let device_stats = LinkStats::default();
-    let client_stats = LinkStats::default();
+    let device_stats = LinkStats::new(DEVICE_NODE_ID);
+    let client_stats = LinkStats::new(CLIENT_NODE_ID);
 
-    let device_before = device.transport().counters();
-    let client_before = client.transport().counters();
-
-    futures_lite::future::block_on(run_link(
+    let (device_before, client_before) = futures_lite::future::block_on(run_link(
         &device,
         &client,
-        (device_mode, &device_stats),
-        (client_mode, &client_stats),
+        (LossMode::Reliable, &device_stats),
+        (LossMode::Reliable, &client_stats),
         async { select(responder.run::<4>(), dm.run()).coalesce().await },
-        im_interactions(&client),
+        async {
+            warm_up(&client).await?;
+
+            device_stats.reset_counts();
+            client_stats.reset_counts();
+            device_stats.mode.set(device_mode);
+            client_stats.mode.set(client_mode);
+
+            let before = (device.transport().counters(), client.transport().counters());
+
+            im_interactions(&client).await?;
+
+            // Let packets still in the pipe (a duplicate, a standalone ack)
+            // reach the other side before the link is torn down.
+            Timer::after(Duration::from_millis(300)).await;
+
+            Ok(before)
+        },
     ))
     .unwrap();
 
@@ -699,8 +787,8 @@ fn test_standalone_ack_for_unanswered_message() {
 
         let responder = Responder::new("silent", SilentHandler, &device, 0);
 
-        let device_stats = LinkStats::default();
-        let client_stats = LinkStats::default();
+        let device_stats = LinkStats::new(DEVICE_NODE_ID);
+        let client_stats = LinkStats::new(CLIENT_NODE_ID);
 
         let client_before = client.transport().counters();
 
@@ -732,16 +820,19 @@ fn test_standalone_ack_for_unanswered_message() {
                 );
 
                 // Nothing else arrives on the exchange.
-                let mut recv = pin!(exchange.recv());
-                let mut timeout = pin!(Timer::after(Duration::from_millis(500)));
+                {
+                    let mut recv = pin!(exchange.recv());
+                    let mut timeout = pin!(Timer::after(Duration::from_millis(500)));
 
-                match select(&mut recv, &mut timeout).await {
-                    Either::First(rx) => panic!(
-                        "Unexpected message on the exchange: {:?}",
-                        rx.map(|rx| rx.meta())
-                    ),
-                    Either::Second(_) => Ok(()),
+                    if let Either::First(rx) = select(&mut recv, &mut timeout).await {
+                        panic!(
+                            "Unexpected message on the exchange: {:?}",
+                            rx.map(|rx| rx.meta())
+                        );
+                    }
                 }
+
+                Ok(())
             },
         ))
         .unwrap();
@@ -778,8 +869,9 @@ fn test_send_fails_after_max_transmissions() {
     init_env_logger();
 
     // The number of times the transport puts a reliable message on the wire
-    // before giving up: the initial transmission plus the retransmissions.
-    const MAX_TRANSMISSIONS: u32 = 5;
+    // before giving up: the initial transmission plus the five retransmissions
+    // of the MRP backoff ladder.
+    const MAX_TRANSMISSIONS: u32 = 6;
 
     spawn_with_large_stack(|| {
         let device = new_matter();
@@ -790,8 +882,8 @@ fn test_send_fails_after_max_transmissions() {
 
         let responder = Responder::new("silent", SilentHandler, &device, 0);
 
-        let device_stats = LinkStats::default();
-        let client_stats = LinkStats::default();
+        let device_stats = LinkStats::new(DEVICE_NODE_ID);
+        let client_stats = LinkStats::new(CLIENT_NODE_ID);
 
         futures_lite::future::block_on(run_link(
             &device,

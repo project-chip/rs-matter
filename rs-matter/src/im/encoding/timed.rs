@@ -54,3 +54,34 @@ impl TimedReq {
         Instant::now().saturating_add(Duration::from_millis(self.timeout as _))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{TimedReq, IM_REVISION};
+
+    #[test]
+    fn timed_req_round_trips() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        let req = TimedReq::new(500);
+        req.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[0x15, 0x25, 0, 0xF4, 0x01, 0x24, 0xFF, IM_REVISION, 0x18]
+        );
+        assert_eq!(
+            TimedReq::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            req
+        );
+
+        // A request without the revision field still decodes
+        let bare = [0x15, 0x24, 0, 7, 0x18];
+        let req = TimedReq::from_tlv(&TLVElement::new(&bare)).unwrap();
+        assert_eq!(req.timeout, 7);
+        assert_eq!(req.interaction_model_revision, None);
+    }
+}

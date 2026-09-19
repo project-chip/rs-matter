@@ -357,3 +357,224 @@ pub enum EventDataTimestamp {
     // is relative to most recently emitted event.
     DeltaSystemTimestamp(u64),
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::im::IMStatusCode;
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{
+        EventData, EventDataTimestamp, EventPath, EventPriority, EventResp, EventStatus,
+        GenericPath,
+    };
+
+    fn event_path(endpoint: u16, cluster: u32, event: u32) -> EventPath {
+        EventPath {
+            endpoint: Some(endpoint),
+            cluster: Some(cluster),
+            event: Some(event),
+            ..Default::default()
+        }
+    }
+
+    /// Field-wise comparison: a decoded `data` element also spans the bytes that follow it
+    /// inside the enclosing buffer, so whole-struct equality does not hold.
+    fn assert_event_data_eq(decoded: &EventData<'_>, expected: &EventData<'_>) {
+        assert_eq!(decoded.path, expected.path);
+        assert_eq!(decoded.event_number, expected.event_number);
+        assert_eq!(decoded.priority, expected.priority);
+        assert_eq!(decoded.timestamp, expected.timestamp);
+        assert_eq!(decoded.data.tag().unwrap(), expected.data.tag().unwrap());
+        assert_eq!(decoded.data.u8().unwrap(), expected.data.u8().unwrap());
+    }
+
+    #[test]
+    fn event_path_helpers_and_priority_order() {
+        let gp = GenericPath::new(Some(0), Some(0x28), Some(1));
+        let path = EventPath::from_gp(&gp);
+        assert_eq!(path, event_path(0, 0x28, 1));
+        assert_eq!(path.to_gp(), gp);
+        assert!(!path.is_wildcard());
+        assert!(EventPath::from_gp(&GenericPath::new(None, Some(0x28), Some(1))).is_wildcard());
+        assert!(EventPath::from_gp(&GenericPath::new(Some(0), None, Some(1))).is_wildcard());
+        assert!(EventPath::from_gp(&GenericPath::new(Some(0), Some(0x28), None)).is_wildcard());
+        assert!(
+            EventPath {
+                is_urgent: Some(true),
+                ..path
+            }
+            .to_gp()
+                == gp
+        );
+
+        assert_eq!(EventPriority::Debug.next(), Some(EventPriority::Info));
+        assert_eq!(EventPriority::Info.next(), Some(EventPriority::Critical));
+        assert_eq!(EventPriority::Critical.next(), None);
+        assert_eq!(EventPriority::Debug.prev(), None);
+        assert_eq!(EventPriority::Info.prev(), Some(EventPriority::Debug));
+        assert_eq!(EventPriority::Critical.prev(), Some(EventPriority::Info));
+    }
+
+    #[test]
+    fn event_data_round_trips_each_timestamp_variant() {
+        let value = [0x24, 7, 42];
+
+        for (timestamp, tag) in [
+            (EventDataTimestamp::EpochTimestamp(0x1_0000_0000), 3),
+            (EventDataTimestamp::SystemTimestamp(5), 4),
+            (EventDataTimestamp::DeltaEpochTimestamp(6), 5),
+            (EventDataTimestamp::DeltaSystemTimestamp(7), 6),
+        ] {
+            let data = EventData::new(
+                event_path(0, 0x28, 1),
+                0x1234,
+                EventPriority::Critical,
+                timestamp,
+                TLVElement::new(&value),
+            );
+
+            let mut buf = [0; 64];
+            let mut wb = WriteBuf::new(&mut buf);
+            EventResp::Data(data.clone())
+                .to_tlv(&TLVTag::Anonymous, &mut wb)
+                .unwrap();
+
+            let EventResp::Data(decoded) =
+                EventResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap()
+            else {
+                panic!("expected event data");
+            };
+            assert_event_data_eq(&decoded, &data);
+
+            // The timestamp lands under its own tag and the other timestamp tags are absent
+            let fields = TLVElement::new(wb.as_slice())
+                .structure()
+                .unwrap()
+                .ctx(1)
+                .unwrap();
+            let fields = fields.structure().unwrap();
+            for other in 3..=6 {
+                assert_eq!(fields.find_ctx(other).unwrap().is_empty(), other != tag);
+            }
+        }
+
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+        EventData::new(
+            event_path(0, 0x28, 1),
+            2,
+            EventPriority::Info,
+            EventDataTimestamp::SystemTimestamp(5),
+            TLVElement::new(&value),
+        )
+        .to_tlv(&TLVTag::Anonymous, &mut wb)
+        .unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // EventDataIB
+                0x37, 0, 0x24, 1, 0, 0x24, 2, 0x28, 0x24, 3, 1, 0x18, // Path list
+                0x24, 1, 2, // EventNumber
+                0x24, 2, 1, // Priority
+                0x24, 4, 5, // SystemTimestamp
+                0x24, 7, 42, // Data
+                0x18,
+            ]
+        );
+
+        // Status variant
+        let status = EventResp::Status(EventStatus::from_gp(
+            &GenericPath::new(Some(0), Some(0x28), Some(1)),
+            IMStatusCode::UnsupportedEvent,
+            Some(1),
+        ));
+        wb.reset();
+        status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(
+            EventResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            status
+        );
+    }
+
+    #[test]
+    #[ignore = "the derived ToTLV::tlv_iter (rs-matter-macros) emits a struct start for `datatype = \"list\"` structs such as EventPath, so it disagrees with to_tlv"]
+    fn event_data_tlv_iter_matches_to_tlv() {
+        let value = [0x24, 7, 42];
+        let data = EventData::new(
+            event_path(0, 0x28, 1),
+            2,
+            EventPriority::Info,
+            EventDataTimestamp::SystemTimestamp(5),
+            TLVElement::new(&value),
+        );
+
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+        for byte in data
+            .tlv_iter(TLVTag::Anonymous)
+            .flat_map(TLV::result_into_bytes_iter)
+        {
+            wb.append(&[byte.unwrap()]).unwrap();
+        }
+
+        let mut buf2 = [0; 64];
+        let mut wb2 = WriteBuf::new(&mut buf2);
+        data.to_tlv(&TLVTag::Anonymous, &mut wb2).unwrap();
+        assert_eq!(wb.as_slice(), wb2.as_slice());
+    }
+
+    #[test]
+    fn event_data_from_tlv_rejects_malformed_input() {
+        let value = [0x24, 7, 42];
+        let data = EventData::new(
+            event_path(0, 0x28, 1),
+            2,
+            EventPriority::Info,
+            EventDataTimestamp::SystemTimestamp(5),
+            TLVElement::new(&value),
+        );
+
+        // Missing timestamp
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        data.path.to_tlv(&TLVTag::Context(0), &mut wb).unwrap();
+        wb.u64(&TLVTag::Context(1), 2).unwrap();
+        wb.u8(&TLVTag::Context(2), 1).unwrap();
+        wb.u8(&TLVTag::Context(7), 42).unwrap();
+        wb.end_container().unwrap();
+        assert!(EventData::from_tlv(&TLVElement::new(wb.as_slice())).is_err());
+
+        // Missing data
+        wb.reset();
+        data.write_preamble(&TLVTag::Anonymous, &mut wb).unwrap();
+        wb.end_container().unwrap();
+        assert!(EventData::from_tlv(&TLVElement::new(wb.as_slice())).is_err());
+
+        // Unknown context tag
+        wb.reset();
+        data.write_preamble(&TLVTag::Anonymous, &mut wb).unwrap();
+        wb.u8(&TLVTag::Context(7), 42).unwrap();
+        wb.u8(&TLVTag::Context(8), 0).unwrap();
+        wb.end_container().unwrap();
+        assert!(EventData::from_tlv(&TLVElement::new(wb.as_slice())).is_err());
+
+        // A non-context tag inside the struct
+        wb.reset();
+        data.write_preamble(&TLVTag::Anonymous, &mut wb).unwrap();
+        wb.u8(&TLVTag::Anonymous, 42).unwrap();
+        wb.end_container().unwrap();
+        assert!(EventData::from_tlv(&TLVElement::new(wb.as_slice())).is_err());
+
+        // The preamble followed by the data is a complete, decodable event
+        wb.reset();
+        data.write_preamble(&TLVTag::Anonymous, &mut wb).unwrap();
+        wb.u8(&TLVTag::Context(7), 42).unwrap();
+        wb.end_container().unwrap();
+        assert_event_data_eq(
+            &EventData::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            &data,
+        );
+    }
+}

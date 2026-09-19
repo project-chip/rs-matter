@@ -204,7 +204,7 @@ async fn run_scenario(scenario: Scenario) -> Result<(), Error> {
 
     let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
     let mut rand = crypto.rand()?;
-    let buffers = MatterBuffers::new();
+    let buffers: MatterBuffers = MatterBuffers::new();
     let state: DeviceDmState = InteractionModelState::new(DummyNetworks);
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),

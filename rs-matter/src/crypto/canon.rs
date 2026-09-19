@@ -583,7 +583,8 @@ mod tests {
         let a = CryptoSensitive::<3>::from([0xde, 0xad, 0xbe]);
         let s = format!("{a:?}");
         assert_eq!(s, "CryptoSensitive<3>(**hidden**)");
-        assert!(!s.contains("de") && !s.contains("222"));
+        // Neither the hex nor the decimal rendering of the bytes leaks
+        assert!(!s.contains("0xde") && !s.contains("222") && !s.contains("173"));
 
         let r = a.reference();
         assert_eq!(format!("{r:?}"), "CryptoSensitiveRef<3>(**hidden**)");

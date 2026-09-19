@@ -1426,7 +1426,6 @@ mod tests {
             .end()
             .unwrap();
         assert_eq!(format!("{parent:?}"), "\"root\"");
-        drop(parent);
 
         assert_eq!(
             wb.as_slice(),
@@ -1494,7 +1493,6 @@ mod tests {
             .unwrap()
             .unchecked_into_parent();
         parent.writer().end_container().unwrap();
-        drop(parent);
         assert_eq!(wb.as_slice(), &[0x16, 0x18]);
     }
 
@@ -1592,7 +1590,6 @@ mod tests {
 
         let octets = pair.first(1).unwrap().second();
         assert_eq!(format!("{octets:?}"), "\"root\"[]::Pair<2>");
-        drop(octets);
 
         wb.reset();
         let nullable =

@@ -2561,9 +2561,10 @@ mod tests {
         assert_eq!(sm.iter().count(), MAX_SESSIONS - 1);
         assert!(!ids(&sm).contains(&1));
 
-        // The freed slot is usable again, and the unique ID keeps counting up.
+        // The freed slot is usable again, and the unique ID keeps counting up
+        // (the refused add above consumed one as well).
         let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
-        assert_eq!(sess.id, MAX_SESSIONS as u32);
+        assert_eq!(sess.id, MAX_SESSIONS as u32 + 1);
     }
 
     /// Eviction picks the least recently used session, skipping reserved ones

@@ -395,3 +395,279 @@ pub enum ReportDataRespTag {
     MoreChunkedMsgs = 3,
     SupressResponse = 4,
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::error::ErrorCode;
+    use crate::im::{IMStatusCode, IM_REVISION};
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{
+        AttrData, AttrPath, AttrResp, AttrStatus, GenericPath, ReportDataResp, ReportDataRespTag,
+    };
+
+    fn attr_path(endpoint: u16, cluster: u32, attr: u32) -> AttrPath {
+        AttrPath {
+            endpoint: Some(endpoint),
+            cluster: Some(cluster),
+            attr: Some(attr),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn attr_path_generic_path_conversions_and_wildcards() {
+        let gp = GenericPath::new(Some(1), Some(6), Some(0));
+        let path = AttrPath::from_gp(&gp);
+        assert_eq!(path, attr_path(1, 6, 0));
+        assert_eq!(path.to_gp(), gp);
+        assert!(!path.is_wildcard());
+
+        assert!(AttrPath::from_gp(&GenericPath::new(None, Some(6), Some(0))).is_wildcard());
+        assert!(AttrPath::from_gp(&GenericPath::new(Some(1), None, Some(0))).is_wildcard());
+        assert!(AttrPath::from_gp(&GenericPath::new(Some(1), Some(6), None)).is_wildcard());
+        assert!(AttrPath::default().is_wildcard());
+
+        // Node and list index play no part in wildcard-ness
+        let with_extras = AttrPath {
+            node: Some(9),
+            list_index: Some(crate::tlv::Nullable::none()),
+            ..attr_path(1, 6, 0)
+        };
+        assert!(!with_extras.is_wildcard());
+        assert_eq!(with_extras.to_gp(), gp);
+    }
+
+    #[test]
+    fn attr_resp_data_and_status_round_trip() {
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        let status = AttrResp::from(AttrStatus::new(
+            attr_path(1, 6, 0),
+            IMStatusCode::UnsupportedAttribute,
+            Some(2),
+        ));
+        status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // AttributeReportIB
+                0x35, 0, // Status
+                0x37, 0, 0x24, 2, 1, 0x24, 3, 6, 0x24, 4, 0, 0x18, // Path list
+                0x35, 1, 0x24, 0, 0x86, 0x24, 1, 2, 0x18, // StatusIB
+                0x18, 0x18,
+            ]
+        );
+        assert_eq!(
+            AttrResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            status
+        );
+
+        // The same via `from_gp` and without a cluster status
+        let status = AttrResp::Status(AttrStatus::from_gp(
+            &GenericPath::new(Some(1), Some(6), Some(0)),
+            IMStatusCode::Success,
+            None,
+        ));
+        wb.reset();
+        status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        let decoded = AttrResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(decoded, status);
+
+        let value = [0x24, 2, 42];
+        let data = AttrResp::from(AttrData::new(
+            Some(3),
+            attr_path(1, 6, 0),
+            TLVElement::new(&value),
+        ));
+        wb.reset();
+        data.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // AttributeReportIB
+                0x35, 1, // Data
+                0x24, 0, 3, // DataVersion
+                0x37, 1, 0x24, 2, 1, 0x24, 3, 6, 0x24, 4, 0, 0x18, // Path list
+                0x24, 2, 42, // Data
+                0x18, 0x18,
+            ]
+        );
+        let decoded = AttrResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        let AttrResp::Data(decoded) = decoded else {
+            panic!("expected a data report");
+        };
+        assert_eq!(decoded.data_ver, Some(3));
+        assert_eq!(decoded.path, attr_path(1, 6, 0));
+        assert_eq!(decoded.data.u8().unwrap(), 42);
+        assert_eq!(decoded.data.tag().unwrap(), TLVTag::Context(2));
+    }
+
+    /// Writes the `AttributeReportIB` entries used by the report tests; each one is an
+    /// anonymous element of the `AttributeReports` array.
+    fn write_reports(wb: &mut WriteBuf<'_>) {
+        let value = [0x24, 2, 7];
+        AttrResp::from(AttrData::new(
+            None,
+            attr_path(1, 6, 0),
+            TLVElement::new(&value),
+        ))
+        .to_tlv(&TLVTag::Anonymous, &mut *wb)
+        .unwrap();
+        AttrResp::from(AttrStatus::new(
+            attr_path(2, 6, 0),
+            IMStatusCode::UnsupportedAccess,
+            None,
+        ))
+        .to_tlv(&TLVTag::Anonymous, &mut *wb)
+        .unwrap();
+        // Different attribute: filtered out
+        AttrResp::from(AttrData::new(
+            None,
+            attr_path(1, 6, 1),
+            TLVElement::new(&value),
+        ))
+        .to_tlv(&TLVTag::Anonymous, &mut *wb)
+        .unwrap();
+        // No endpoint: filtered out
+        AttrResp::from(AttrData::new(
+            None,
+            AttrPath {
+                cluster: Some(6),
+                attr: Some(0),
+                ..Default::default()
+            },
+            TLVElement::new(&value),
+        ))
+        .to_tlv(&TLVTag::Anonymous, &mut *wb)
+        .unwrap();
+    }
+
+    #[test]
+    fn report_data_resp_round_trips_and_filters_attrs() {
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.u32(
+            &TLVTag::Context(ReportDataRespTag::SubscriptionId as u8),
+            0x1234,
+        )
+        .unwrap();
+        wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))
+            .unwrap();
+        write_reports(&mut wb);
+        wb.end_container().unwrap();
+        wb.bool(
+            &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
+            true,
+        )
+        .unwrap();
+        wb.bool(
+            &TLVTag::Context(ReportDataRespTag::SupressResponse as u8),
+            true,
+        )
+        .unwrap();
+        wb.u8(&TLVTag::Context(0xFF), IM_REVISION).unwrap();
+        wb.end_container().unwrap();
+
+        let resp = ReportDataResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(resp.subscription_id, Some(0x1234));
+        assert_eq!(resp.attr_reports.as_ref().unwrap().iter().count(), 4);
+        assert!(resp.event_reports.is_none());
+        assert_eq!(resp.more_chunks, Some(true));
+        assert_eq!(resp.suppress_response, Some(true));
+        assert_eq!(resp.interaction_model_revision, Some(IM_REVISION));
+
+        let mut attrs = resp.attrs::<u8>(6, 0);
+        let (endpoint, value) = attrs.next().unwrap();
+        assert_eq!(endpoint, 1);
+        assert_eq!(value.unwrap(), 7);
+        let (endpoint, value) = attrs.next().unwrap();
+        assert_eq!(endpoint, 2);
+        assert_eq!(value.unwrap_err().code(), ErrorCode::UnsupportedAccess);
+        assert!(attrs.next().is_none());
+        drop(attrs);
+
+        // Re-encoding the decoded message reproduces the original bytes
+        let mut buf2 = [0; 256];
+        let mut wb2 = WriteBuf::new(&mut buf2);
+        resp.to_tlv(&TLVTag::Anonymous, &mut wb2).unwrap();
+        assert_eq!(wb2.as_slice(), wb.as_slice());
+
+        // A message without the optional fields
+        wb.reset();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.u8(&TLVTag::Context(0xFF), IM_REVISION).unwrap();
+        wb.end_container().unwrap();
+        let resp = ReportDataResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(resp.subscription_id, None);
+        assert!(resp.attr_reports.is_none());
+        assert_eq!(resp.more_chunks, None);
+        assert_eq!(resp.attrs::<u8>(6, 0).count(), 0);
+    }
+
+    #[test]
+    fn report_chunking_rewinds_partial_attr_resp() {
+        // Room for the array end, `MoreChunkedMessages`, the revision and the message end
+        const TRAILER: usize = 1 + 2 + 3 + 1;
+
+        let mut buf = [0; 96];
+        let buf_len = buf.len();
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.shrink(TRAILER).unwrap();
+
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))
+            .unwrap();
+
+        // Write reports until one does not fit; the derived `ToTLV` unwinds the
+        // partial element so the tail is back where the last complete report ended
+        let mut written = 0u8;
+        loop {
+            let tail = wb.get_tail();
+            let value = [0x24, 2, written];
+            let resp = AttrResp::from(AttrData::new(
+                None,
+                attr_path(1, 6, written as _),
+                TLVElement::new(&value),
+            ));
+
+            match resp.to_tlv(&TLVTag::Anonymous, &mut wb) {
+                Ok(()) => written += 1,
+                Err(e) => {
+                    assert_eq!(e.code(), ErrorCode::NoSpace);
+                    assert_eq!(wb.get_tail(), tail);
+                    break;
+                }
+            }
+        }
+        assert!(written > 0);
+
+        wb.expand(TRAILER).unwrap();
+        wb.end_container().unwrap();
+        wb.bool(
+            &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
+            true,
+        )
+        .unwrap();
+        wb.u8(&TLVTag::Context(0xFF), IM_REVISION).unwrap();
+        wb.end_container().unwrap();
+        assert!(wb.as_slice().len() <= buf_len);
+
+        let resp = ReportDataResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(resp.more_chunks, Some(true));
+        assert!(resp
+            .attr_reports
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|r| match r.unwrap() {
+                AttrResp::Data(d) => (d.path.attr.unwrap(), d.data.u8().unwrap()),
+                AttrResp::Status(_) => panic!("unexpected status"),
+            })
+            .eq((0..written).map(|i| (i as u32, i))));
+    }
+}

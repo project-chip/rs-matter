@@ -1649,7 +1649,8 @@ pub(crate) mod tests {
     /// Mint an ICAC signed by `rcac`.
     pub(crate) fn mint_icac<C: Crypto>(crypto: &C, rcac: &TestRcac) -> TestRcac {
         let mut buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let (key, cert) = IcacGenerator::new(&mut buf)
+        let mut generator = IcacGenerator::new(&mut buf);
+        let (key, cert) = generator
             .generate(crypto, rcac.key.reference(), &rcac.cert, VALID_FOREVER)
             .unwrap();
 
@@ -2008,7 +2009,8 @@ pub(crate) mod tests {
         assert_eq!(fabric.secret_key().access(), noc.key.access());
 
         // The compressed fabric ID is derived from the root pubkey + fabric ID
-        let root_pubkey = CertRef::new(TLVElement::new(&rcac.cert)).pubkey().unwrap();
+        let root_cert = CertRef::new(TLVElement::new(&rcac.cert));
+        let root_pubkey = root_cert.pubkey().unwrap();
         assert_eq!(
             fabric.compressed_fabric_id(),
             Fabric::compute_compressed_fabric_id(&crypto, root_pubkey.try_into().unwrap(), 0xfab)

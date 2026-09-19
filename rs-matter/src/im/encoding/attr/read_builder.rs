@@ -862,7 +862,7 @@ mod tests {
                 0x15, // ReadRequestMessage
                 0x36,
                 0, // AttributeRequests[]
-                0x37,
+                0x17,
                 0x24,
                 2,
                 1,
@@ -1181,6 +1181,7 @@ mod tests {
         const TRAILER: usize = 1 + 2 + 3 + 1;
 
         let mut buf = [0; 48];
+        let buf_len = buf.len();
         let mut wb = WriteBuf::new(&mut buf);
         wb.shrink(TRAILER).unwrap();
 
@@ -1226,7 +1227,7 @@ mod tests {
         .end()
         .unwrap();
 
-        assert!(wb.as_slice().len() <= buf.len());
+        assert!(wb.as_slice().len() <= buf_len);
 
         let req = ReadReq::new(TLVElement::new(wb.as_slice()));
         assert!(req

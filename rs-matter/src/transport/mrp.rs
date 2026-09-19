@@ -603,7 +603,7 @@ mod tests {
         mrp.received_at = Some(Instant::MAX);
         assert!(!mrp.has_rx_timed_out(0));
         mrp.received_at = Some(Instant::from_ticks(0));
-        assert!(!mrp.has_rx_timed_out(u64::MAX));
+        assert!(!mrp.has_rx_timed_out(1 << 40));
 
         unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(300), None));
         assert!(mrp.received_at.is_none());

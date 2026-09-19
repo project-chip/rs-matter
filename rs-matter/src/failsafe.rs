@@ -2046,7 +2046,7 @@ mod tests {
                 &mut Sessions::new(),
                 None,
                 DummyNetworkAccess,
-                &MemKv::new(MemKvBlobStore::default()),
+                MemKv::new(MemKvBlobStore::default()),
                 || panic!("no mdns notification expected"),
                 |_, _| panic!("no change expected"),
             )
@@ -2075,7 +2075,7 @@ mod tests {
                 &mut Sessions::new(),
                 None,
                 DummyNetworkAccess,
-                &MemKv::new(MemKvBlobStore::default()),
+                MemKv::new(MemKvBlobStore::default()),
                 || mdns += 1,
                 |ep, cl| changes.push((ep, cl)),
             )
@@ -2230,7 +2230,7 @@ mod tests {
             &mut sessions,
             Some(ids[1]),
             DummyNetworkAccess,
-            &MemKv::new(MemKvBlobStore::default()),
+            MemKv::new(MemKvBlobStore::default()),
             || {},
             |_, _| {},
         )
@@ -2250,7 +2250,7 @@ mod tests {
             &mut sessions,
             None,
             DummyNetworkAccess,
-            &MemKv::new(MemKvBlobStore::default()),
+            MemKv::new(MemKvBlobStore::default()),
             || {},
             |_, _| {},
         )
