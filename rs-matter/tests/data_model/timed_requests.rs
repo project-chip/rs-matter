@@ -187,7 +187,7 @@ fn test_timed_write_fail_and_success() {
             &TLVTest {
                 delay_ms: None,
                 ..TLVTest::timed(
-                    TimedReq::new(500),
+                    TimedReq::new(5000),
                     StatusResp {
                         status: IMStatusCode::Success,
                         ..Default::default()

@@ -478,3 +478,246 @@ impl<'a, const N: usize> TryFrom<&'a [u8]> for CryptoSensitiveRef<'a, N> {
         Self::try_new(data)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::mem::MaybeUninit;
+
+    use crate::error::ErrorCode;
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVValue, ToTLV};
+    use crate::utils::init::InitMaybeUninit;
+    use crate::utils::storage::WriteBuf;
+
+    use super::{CryptoSensitive, CryptoSensitiveRef};
+
+    #[test]
+    fn new_and_default_are_zeroed() {
+        let a = CryptoSensitive::<8>::new();
+        assert_eq!(a.access(), &[0u8; 8]);
+
+        let b: CryptoSensitive<8> = Default::default();
+        assert_eq!(b.access(), &[0u8; 8]);
+
+        // The zero-length instantiation is legal too
+        let z = CryptoSensitive::<0>::new();
+        assert_eq!(z.access().len(), 0);
+    }
+
+    #[test]
+    fn init_is_zeroed() {
+        let mut slot = MaybeUninit::<CryptoSensitive<16>>::uninit();
+        // Poison the slot so a zeroed result cannot be an accident
+        unsafe { slot.as_mut_ptr().cast::<u8>().write_bytes(0xff, 16) };
+
+        let value = slot.init_with(CryptoSensitive::<16>::init());
+        assert_eq!(value.access(), &[0u8; 16]);
+    }
+
+    #[test]
+    fn load_from_array_and_ref() {
+        let mut a = CryptoSensitive::<4>::new();
+        a.load_from_array(&[1, 2, 3, 4]);
+        assert_eq!(a.access(), &[1, 2, 3, 4]);
+
+        let mut b = CryptoSensitive::<4>::new();
+        b.load(a.reference());
+        assert_eq!(b.access(), a.access());
+
+        let c = CryptoSensitive::new_from_ref(a.reference());
+        assert_eq!(c.access(), &[1, 2, 3, 4]);
+
+        let d: CryptoSensitive<4> = a.reference().into();
+        assert_eq!(d.access(), &[1, 2, 3, 4]);
+
+        let e: CryptoSensitive<4> = (&[9u8, 8, 7, 6]).into();
+        assert_eq!(e.access(), &[9, 8, 7, 6]);
+
+        let f: CryptoSensitive<4> = [5u8, 5, 5, 5].into();
+        assert_eq!(f.access(), &[5, 5, 5, 5]);
+    }
+
+    #[test]
+    fn try_load_from_slice_checks_length() {
+        let mut a = CryptoSensitive::<4>::new();
+
+        assert!(a.try_load_from_slice(&[1, 2, 3, 4]).is_ok());
+        assert_eq!(a.access(), &[1, 2, 3, 4]);
+
+        // Too short and too long both fail and leave the contents untouched
+        assert_eq!(
+            a.try_load_from_slice(&[7, 7, 7]).unwrap_err().code(),
+            ErrorCode::InvalidData
+        );
+        assert_eq!(
+            a.try_load_from_slice(&[7, 7, 7, 7, 7]).unwrap_err().code(),
+            ErrorCode::InvalidData
+        );
+        assert_eq!(a.access(), &[1, 2, 3, 4]);
+
+        assert!(CryptoSensitive::<4>::try_from(&[1u8, 2, 3][..]).is_err());
+        let ok = CryptoSensitive::<3>::try_from(&[1u8, 2, 3][..]).unwrap();
+        assert_eq!(ok.access(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn access_mut_and_zeroize() {
+        let mut a = CryptoSensitive::<6>::from([1u8, 2, 3, 4, 5, 6]);
+
+        a.access_mut()[0] = 0xaa;
+        a.access_mut()[5] = 0xbb;
+        assert_eq!(a.access(), &[0xaa, 2, 3, 4, 5, 0xbb]);
+
+        a.zeroize();
+        assert_eq!(a.access(), &[0u8; 6]);
+
+        // Clone is an independent copy
+        let mut b = CryptoSensitive::<2>::from([1u8, 2]);
+        let c = b.clone();
+        b.zeroize();
+        assert_eq!(c.access(), &[1, 2]);
+        assert_eq!(b.access(), &[0, 0]);
+    }
+
+    #[test]
+    fn debug_hides_contents() {
+        let a = CryptoSensitive::<3>::from([0xde, 0xad, 0xbe]);
+        let s = format!("{a:?}");
+        assert_eq!(s, "CryptoSensitive<3>(**hidden**)");
+        assert!(!s.contains("de") && !s.contains("222"));
+
+        let r = a.reference();
+        assert_eq!(format!("{r:?}"), "CryptoSensitiveRef<3>(**hidden**)");
+    }
+
+    #[test]
+    fn reference_new_and_access() {
+        let data = [1u8, 2, 3, 4, 5];
+
+        let r = CryptoSensitiveRef::<5>::new(&data);
+        assert_eq!(r.access(), &data);
+
+        let r2: CryptoSensitiveRef<5> = (&data).into();
+        assert_eq!(r2.access(), &data);
+
+        let owned = CryptoSensitive::<5>::from(&data);
+        let r3: CryptoSensitiveRef<5> = (&owned).into();
+        assert_eq!(r3.access(), &data);
+
+        // Copy semantics: both copies see the same bytes
+        let r4 = r;
+        assert_eq!(r4.access(), r.access());
+    }
+
+    #[test]
+    fn reference_try_new_checks_length() {
+        let data = [1u8, 2, 3, 4, 5];
+
+        let ok = CryptoSensitiveRef::<5>::try_new(&data).unwrap();
+        assert_eq!(ok.access(), &data);
+
+        assert_eq!(
+            CryptoSensitiveRef::<4>::try_new(&data).unwrap_err().code(),
+            ErrorCode::InvalidData
+        );
+        assert_eq!(
+            CryptoSensitiveRef::<6>::try_new(&data).unwrap_err().code(),
+            ErrorCode::InvalidData
+        );
+
+        assert!(CryptoSensitiveRef::<2>::try_from(&data[..]).is_err());
+        assert!(CryptoSensitiveRef::<5>::try_from(&data[..]).is_ok());
+
+        let r = CryptoSensitiveRef::<3>::new_from_slice(&data[1..4]);
+        assert_eq!(r.access(), &[2, 3, 4]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn reference_new_from_slice_wrong_length_panics() {
+        let data = [1u8, 2, 3];
+        let _ = CryptoSensitiveRef::<2>::new_from_slice(&data);
+    }
+
+    #[test]
+    fn reference_split() {
+        let data = [1u8, 2, 3, 4, 5, 6, 7];
+        let r = CryptoSensitiveRef::<7>::new(&data);
+
+        let (l, rt) = r.split::<3, 4>();
+        assert_eq!(l.access(), &[1, 2, 3]);
+        assert_eq!(rt.access(), &[4, 5, 6, 7]);
+
+        let (l, rt) = r.split::<0, 7>();
+        assert_eq!(l.access().len(), 0);
+        assert_eq!(rt.access(), &data);
+
+        let (l, rt) = r.split::<7, 0>();
+        assert_eq!(l.access(), &data);
+        assert_eq!(rt.access().len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn reference_split_wrong_lengths_panics() {
+        let data = [1u8, 2, 3, 4];
+        let r = CryptoSensitiveRef::<4>::new(&data);
+        let _ = r.split::<1, 2>();
+    }
+
+    #[test]
+    fn tlv_roundtrip() {
+        let orig = CryptoSensitive::<5>::from([0x10, 0x20, 0x30, 0x40, 0x50]);
+
+        let mut buf = [0u8; 32];
+        let mut wb = WriteBuf::new(&mut buf);
+        orig.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        let len = wb.get_tail();
+
+        // Anonymous octet string with a 1-byte length: 0x10, len, payload
+        assert_eq!(&buf[..len], &[0x10, 5, 0x10, 0x20, 0x30, 0x40, 0x50]);
+
+        let parsed = CryptoSensitive::<5>::from_tlv(&TLVElement::new(&buf[..len])).unwrap();
+        assert_eq!(parsed.access(), orig.access());
+
+        // Same via the in-place initializer
+        let mut slot = MaybeUninit::<CryptoSensitive<5>>::uninit();
+        let parsed = slot
+            .try_init_with(CryptoSensitive::<5>::init_from_tlv(TLVElement::new(
+                &buf[..len],
+            )))
+            .unwrap();
+        assert_eq!(parsed.access(), orig.access());
+
+        // The iterator form yields the same single element
+        let mut it = orig.tlv_iter(TLVTag::Anonymous);
+        let tlv = it.next().unwrap().unwrap();
+        assert!(matches!(tlv.tag, TLVTag::Anonymous));
+        assert!(matches!(tlv.value, TLVValue::Str8l(s) if s == orig.access()));
+        assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn tlv_wrong_length_is_constraint_error() {
+        let orig = CryptoSensitive::<5>::from([1, 2, 3, 4, 5]);
+
+        let mut buf = [0u8; 32];
+        let mut wb = WriteBuf::new(&mut buf);
+        orig.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        let len = wb.get_tail();
+
+        let err = CryptoSensitive::<8>::from_tlv(&TLVElement::new(&buf[..len])).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+
+        let mut slot = MaybeUninit::<CryptoSensitive<8>>::uninit();
+        let err = slot
+            .try_init_with(CryptoSensitive::<8>::init_from_tlv(TLVElement::new(
+                &buf[..len],
+            )))
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+
+        // A non-string element is a type error rather than a length error
+        let u8_elem = [0x04, 42];
+        assert!(CryptoSensitive::<1>::from_tlv(&TLVElement::new(&u8_elem)).is_err());
+    }
+}

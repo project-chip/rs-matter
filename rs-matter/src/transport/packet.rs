@@ -121,3 +121,192 @@ impl defmt::Format for PacketHdr {
         defmt::write!(f, "[{}][{}]", self.plain, self.proto)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
+    use crate::error::ErrorCode;
+    use crate::im::PROTO_ID_INTERACTION_MODEL;
+
+    use super::*;
+
+    const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[7; 16]);
+    const PAYLOAD: &[u8] = b"hello";
+    const NODE_ID: u64 = 0x0102_0304_0506_0708;
+
+    /// A packet header with both node IDs and a typical IM proto header.
+    fn header() -> PacketHdr {
+        let mut hdr = PacketHdr::new();
+        hdr.plain.sess_id = 0x1234;
+        hdr.plain.ctr = 99;
+        hdr.plain.set_src_nodeid(Some(NODE_ID));
+        hdr.plain.set_dst_unicast_nodeid(Some(0x99));
+        hdr.proto.exch_id = 7;
+        hdr.proto.proto_id = PROTO_ID_INTERACTION_MODEL;
+        hdr.proto.proto_opcode = 2;
+        hdr.proto.set_initiator();
+        hdr.proto.set_reliable();
+        hdr.proto.set_ack(Some(98));
+        hdr
+    }
+
+    /// Encode `header()` around `PAYLOAD` into `buf`, returning the packet range.
+    fn encode_into(
+        buf: &mut [u8],
+        enc_key: Option<CanonAeadKeyRef<'_>>,
+    ) -> Result<(usize, usize), Error> {
+        let mut wb = WriteBuf::new_with(buf, PacketHdr::HDR_RESERVE, PacketHdr::HDR_RESERVE);
+        wb.append(PAYLOAD)?;
+        header().encode(test_only_crypto(), enc_key, NODE_ID, &mut wb)?;
+        Ok((wb.get_start(), wb.get_tail()))
+    }
+
+    /// Decode a packet, returning the header and the payload range.
+    fn decode(
+        bytes: &mut [u8],
+        dec_key: Option<CanonAeadKeyRef<'_>>,
+        peer_nodeid: u64,
+    ) -> Result<(PacketHdr, (usize, usize)), Error> {
+        let mut pb = ParseBuf::new(bytes);
+        let mut hdr = PacketHdr::new();
+        hdr.decode_plain_hdr(&mut pb)?;
+        hdr.decode_remaining(test_only_crypto(), dec_key, peer_nodeid, &mut pb)?;
+        Ok((hdr, pb.slice_range()))
+    }
+
+    fn assert_header_matches(decoded: &PacketHdr) {
+        let expected = header();
+        assert_eq!(decoded.plain.sess_id, expected.plain.sess_id);
+        assert_eq!(decoded.plain.ctr, expected.plain.ctr);
+        assert_eq!(
+            decoded.plain.get_src_nodeid(),
+            expected.plain.get_src_nodeid()
+        );
+        assert_eq!(
+            decoded.plain.get_dst_unicast_nodeid(),
+            expected.plain.get_dst_unicast_nodeid()
+        );
+        assert_eq!(decoded.proto.exch_id, expected.proto.exch_id);
+        assert_eq!(decoded.proto.proto_id, expected.proto.proto_id);
+        assert_eq!(decoded.proto.proto_opcode, expected.proto.proto_opcode);
+        assert!(decoded.proto.is_initiator());
+        assert!(decoded.proto.is_reliable());
+        assert_eq!(decoded.proto.get_ack(), Some(98));
+    }
+
+    /// The header reserve is the sum of the two maximum header lengths, and the
+    /// longest possible headers fit inside it.
+    #[test]
+    fn hdr_reserve_covers_the_longest_headers() {
+        assert_eq!(
+            PacketHdr::HDR_RESERVE,
+            PlainHdr::MAX_LEN + ProtoHdr::MAX_LEN
+        );
+        assert_eq!(PacketHdr::TAIL_RESERVE, crypto::AEAD_TAG_LEN);
+
+        let mut hdr = header();
+        hdr.proto.set_vendor(Some(0xfff1));
+
+        let mut buf = [0; PacketHdr::HDR_RESERVE];
+        let mut wb = WriteBuf::new_with(&mut buf, PacketHdr::HDR_RESERVE, PacketHdr::HDR_RESERVE);
+        unwrap!(hdr.encode(test_only_crypto(), None, NODE_ID, &mut wb));
+        assert!(wb.get_start() >= 2);
+    }
+
+    /// Without a key, encoding prepends the proto and plain headers in front
+    /// of the payload and decoding hands the same headers and payload back.
+    #[test]
+    fn plaintext_packet_round_trip() {
+        let mut buf = [0; PacketHdr::HDR_RESERVE + PAYLOAD.len()];
+        let (start, end) = unwrap!(encode_into(&mut buf, None));
+
+        // plain: 8 fixed + 8 src + 8 dst; proto: 6 fixed + 4 ack
+        assert_eq!(end - start, 24 + 10 + PAYLOAD.len());
+        assert_eq!(&buf[end - PAYLOAD.len()..end], PAYLOAD);
+
+        let (decoded, (pstart, pend)) = unwrap!(decode(&mut buf[start..end], None, 0));
+        assert_header_matches(&decoded);
+        assert_eq!(&buf[start + pstart..start + pend], PAYLOAD);
+    }
+
+    /// With a key, the proto header and payload are encrypted under the plain
+    /// header as AAD and the sender's node ID in the nonce: the right key and
+    /// node ID recover them, anything else is rejected.
+    #[test]
+    fn encrypted_packet_round_trip() {
+        let mut buf = [0; PacketHdr::HDR_RESERVE + PAYLOAD.len() + PacketHdr::TAIL_RESERVE];
+        let (start, end) = unwrap!(encode_into(&mut buf, Some(KEY)));
+
+        assert_eq!(end - start, 24 + 10 + PAYLOAD.len() + crypto::AEAD_TAG_LEN);
+        assert!(!buf[start..end]
+            .windows(PAYLOAD.len())
+            .any(|window| window == PAYLOAD));
+
+        let packet = buf;
+        let mut bytes = packet;
+        let (decoded, (pstart, pend)) = unwrap!(decode(&mut bytes[start..end], Some(KEY), NODE_ID));
+        assert_header_matches(&decoded);
+        assert_eq!(&bytes[start + pstart..start + pend], PAYLOAD);
+
+        let mut bytes = packet;
+        assert!(decode(&mut bytes[start..end], Some(KEY), NODE_ID + 1).is_err());
+
+        const OTHER_KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[8; 16]);
+        let mut bytes = packet;
+        assert!(decode(&mut bytes[start..end], Some(OTHER_KEY), NODE_ID).is_err());
+
+        // A flipped bit in the AAD (plain header), ciphertext or tag fails auth.
+        for index in [start + 4, start + 24, end - 1] {
+            let mut bytes = packet;
+            bytes[index] ^= 0x01;
+            assert!(
+                decode(&mut bytes[start..end], Some(KEY), NODE_ID).is_err(),
+                "flipped byte {index}"
+            );
+        }
+    }
+
+    /// Encoding needs the header room in front of the payload.
+    #[test]
+    fn encode_fails_without_header_room() {
+        let mut buf = [0; PacketHdr::HDR_RESERVE + PAYLOAD.len()];
+        let mut wb = WriteBuf::new(&mut buf);
+        unwrap!(wb.append(PAYLOAD));
+        assert_eq!(
+            unwrap!(header()
+                .encode(test_only_crypto(), None, NODE_ID, &mut wb)
+                .err())
+            .code(),
+            ErrorCode::NoSpace
+        );
+
+        // Room for the proto header only is not enough either.
+        let mut wb = WriteBuf::new_with(&mut buf, ProtoHdr::MAX_LEN, ProtoHdr::MAX_LEN);
+        unwrap!(wb.append(PAYLOAD));
+        assert_eq!(
+            unwrap!(header()
+                .encode(test_only_crypto(), None, NODE_ID, &mut wb)
+                .err())
+            .code(),
+            ErrorCode::NoSpace
+        );
+    }
+
+    /// `reset` yields a blank header that is reliable by default; `load`
+    /// copies another header wholesale.
+    #[test]
+    fn reset_and_load() {
+        let mut hdr = header();
+        hdr.reset();
+        assert_eq!(hdr.plain.ctr, 0);
+        assert_eq!(hdr.plain.sess_id, 0);
+        assert!(hdr.plain.get_src_nodeid().is_none());
+        assert!(hdr.proto.is_reliable());
+        assert!(!hdr.proto.is_initiator());
+        assert!(hdr.proto.get_ack().is_none());
+        assert!(!hdr.proto.is_decoded());
+
+        hdr.load(&header());
+        assert_header_matches(&hdr);
+    }
+}

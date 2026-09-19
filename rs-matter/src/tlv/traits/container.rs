@@ -478,3 +478,216 @@ where
 //         write!(f, "]")
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use core::mem::MaybeUninit;
+
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+    use crate::utils::init::InitMaybeUninit;
+    use crate::utils::storage::WriteBuf;
+
+    use super::{TLVArray, TLVArrayOrSlice, TLVContainer, TLVList, TLVStruct};
+
+    const ARRAY: &[u8] = &[0x16, 0x04, 1, 0x04, 2, 0x18];
+    const LIST: &[u8] = &[0x17, 0x04, 1, 0x18];
+    const STRUCT: &[u8] = &[0x15, 0x24, 0, 1, 0x18];
+    const SCALAR: &[u8] = &[0x04, 1];
+
+    #[derive(FromTLV, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    struct Pair {
+        a: u8,
+        b: u16,
+    }
+
+    #[test]
+    fn typed_constructors_check_container_type() {
+        assert!(TLVArray::<u8>::new(TLVElement::new(ARRAY)).is_ok());
+        assert!(TLVArray::<u8>::new(TLVElement::new(LIST)).is_err());
+        assert!(TLVArray::<u8>::new(TLVElement::new(STRUCT)).is_err());
+        assert!(TLVArray::<u8>::new(TLVElement::new(SCALAR)).is_err());
+
+        assert!(TLVList::<u8>::new(TLVElement::new(LIST)).is_ok());
+        assert!(TLVList::<u8>::new(TLVElement::new(ARRAY)).is_err());
+        assert!(TLVList::<u8>::new(TLVElement::new(SCALAR)).is_err());
+
+        assert!(TLVStruct::<u8>::new(TLVElement::new(STRUCT)).is_ok());
+        assert!(TLVStruct::<u8>::new(TLVElement::new(LIST)).is_err());
+        assert!(TLVStruct::<u8>::new(TLVElement::new(SCALAR)).is_err());
+
+        // The untyped container accepts any container kind, but still no scalars
+        assert!(TLVContainer::<u8>::new(TLVElement::new(ARRAY)).is_ok());
+        assert!(TLVContainer::<u8>::new(TLVElement::new(LIST)).is_ok());
+        assert!(TLVContainer::<u8>::new(TLVElement::new(STRUCT)).is_ok());
+        assert!(TLVContainer::<u8>::new(TLVElement::new(SCALAR)).is_err());
+
+        // An empty element is accepted by every constructor
+        assert!(TLVArray::<u8>::new(TLVElement::new(&[])).is_ok());
+        assert!(TLVList::<u8>::new(TLVElement::new(&[])).is_ok());
+        assert!(TLVStruct::<u8>::new(TLVElement::new(&[])).is_ok());
+        assert!(TLVContainer::<u8>::new(TLVElement::new(&[])).is_ok());
+
+        // `new_unchecked` performs no validation and exposes the wrapped element as-is
+        let arr = TLVArray::<u8>::new_unchecked(TLVElement::new(SCALAR));
+        assert_eq!(arr.element(), &TLVElement::new(SCALAR));
+    }
+
+    #[test]
+    fn iter_yields_typed_values_in_order() {
+        let arr = TLVArray::<u8>::new(TLVElement::new(ARRAY)).unwrap();
+        assert!(arr.iter().map(Result::unwrap).eq([1, 2]));
+        assert!((&arr).into_iter().map(Result::unwrap).eq([1, 2]));
+        assert!(arr.into_iter().map(Result::unwrap).eq([1, 2]));
+
+        let list = TLVList::<u8>::new(TLVElement::new(LIST)).unwrap();
+        assert!(list.iter().map(Result::unwrap).eq([1]));
+
+        // Struct elements: every field is materialized as `T` regardless of its context tag
+        let strct = TLVStruct::<u8>::new(TLVElement::new(STRUCT)).unwrap();
+        assert!(strct.iter().map(Result::unwrap).eq([1]));
+
+        // Nested: an array of structs and an array of arrays
+        let mut buf = [0; 32];
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.u8(&TLVTag::Context(0), 1).unwrap();
+        wb.u16(&TLVTag::Context(1), 0x1234).unwrap();
+        wb.end_container().unwrap();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.u8(&TLVTag::Context(0), 2).unwrap();
+        wb.u16(&TLVTag::Context(1), 3).unwrap();
+        wb.end_container().unwrap();
+        wb.end_container().unwrap();
+
+        let pairs = TLVArray::<Pair>::new(TLVElement::new(wb.as_slice())).unwrap();
+        assert!(pairs
+            .iter()
+            .map(Result::unwrap)
+            .eq([Pair { a: 1, b: 0x1234 }, Pair { a: 2, b: 3 }]));
+
+        wb.reset();
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.u8(&TLVTag::Anonymous, 1).unwrap();
+        wb.end_container().unwrap();
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.end_container().unwrap();
+        wb.end_container().unwrap();
+
+        let outer = TLVArray::<TLVArray<u8>>::new(TLVElement::new(wb.as_slice())).unwrap();
+        let mut outer_iter = outer.iter();
+        let inner = outer_iter.next().unwrap().unwrap();
+        assert!(inner.iter().map(Result::unwrap).eq([1]));
+        let inner = outer_iter.next().unwrap().unwrap();
+        assert_eq!(inner.iter().count(), 0);
+        assert!(outer_iter.next().is_none());
+    }
+
+    #[test]
+    fn iter_reports_type_mismatch_and_truncation() {
+        // A UTF-8 string where a `u8` is expected fails at materialization,
+        // the preceding element is still delivered
+        let mixed = [0x16, 0x04, 1, 0x0C, 1, b'x', 0x18];
+        let arr = TLVArray::<u8>::new(TLVElement::new(&mixed)).unwrap();
+        let mut iter = arr.iter();
+        assert_eq!(iter.next().unwrap().unwrap(), 1);
+        assert!(iter.next().unwrap().is_err());
+
+        // A truncated stream fails when the iterator tries to advance past the cut
+        let truncated = [0x16, 0x04, 1, 0x04];
+        let arr = TLVArray::<u8>::new(TLVElement::new(&truncated)).unwrap();
+        let mut iter = arr.iter();
+        assert!(iter.next().unwrap().is_err());
+    }
+
+    #[test]
+    fn try_next_init_materializes_in_place() {
+        let arr = TLVArray::<u8>::new(TLVElement::new(ARRAY)).unwrap();
+        let mut iter = arr.iter();
+
+        let init = iter.try_next_init().unwrap().unwrap();
+        let mut slot = MaybeUninit::<u8>::uninit();
+        assert_eq!(*slot.try_init_with(init).unwrap(), 1);
+
+        let init = iter.try_next_init().unwrap().unwrap();
+        let mut slot = MaybeUninit::<u8>::uninit();
+        assert_eq!(*slot.try_init_with(init).unwrap(), 2);
+
+        assert!(iter.try_next_init().is_none());
+        assert!(iter.try_next().is_none());
+    }
+
+    #[test]
+    fn debug_lists_elements() {
+        let arr = TLVArray::<u8>::new(TLVElement::new(ARRAY)).unwrap();
+        assert_eq!(format!("{arr:?}"), "[Ok(1), Ok(2)]");
+
+        let empty = TLVArray::<u8>::new(TLVElement::new(&[0x16, 0x18])).unwrap();
+        assert_eq!(format!("{empty:?}"), "[]");
+    }
+
+    #[test]
+    fn to_tlv_and_from_tlv_preserve_bytes() {
+        let tagged = [0x36, 3, 0x04, 1, 0x04, 2, 0x18];
+        let arr = TLVArray::<u8>::from_tlv(&TLVElement::new(&tagged)).unwrap();
+        assert!(arr.iter().map(Result::unwrap).eq([1, 2]));
+
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        // Same tag: identical bytes
+        arr.to_tlv(&TLVTag::Context(3), &mut wb).unwrap();
+        assert_eq!(wb.as_slice(), &tagged);
+
+        // Different tag: only the tag changes
+        wb.reset();
+        arr.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(wb.as_slice(), ARRAY);
+
+        // The iterator form produces the same bytes as the writer form
+        wb.reset();
+        for byte in arr
+            .tlv_iter(TLVTag::Anonymous)
+            .flat_map(TLV::result_into_bytes_iter)
+        {
+            wb.append(&[byte.unwrap()]).unwrap();
+        }
+        assert_eq!(wb.as_slice(), ARRAY);
+    }
+
+    #[test]
+    fn array_or_slice_iterates_both_variants() {
+        let slice = TLVArrayOrSlice::new_slice(&[1u8, 2]);
+        assert!(slice.iter().unwrap().map(Result::unwrap).eq([1, 2]));
+
+        let array = TLVArrayOrSlice::<u8>::from_tlv(&TLVElement::new(ARRAY)).unwrap();
+        assert!(matches!(array, TLVArrayOrSlice::Array(_)));
+        assert!(array.iter().unwrap().map(Result::unwrap).eq([1, 2]));
+
+        // Only arrays are accepted when deserializing
+        assert!(TLVArrayOrSlice::<u8>::from_tlv(&TLVElement::new(STRUCT)).is_err());
+
+        // Both variants serialize to the same bytes, via the writer and via the iterator
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+        slice.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(wb.as_slice(), ARRAY);
+
+        wb.reset();
+        array.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(wb.as_slice(), ARRAY);
+
+        for variant in [&slice, &array] {
+            wb.reset();
+            for byte in variant
+                .tlv_iter(TLVTag::Anonymous)
+                .flat_map(TLV::result_into_bytes_iter)
+            {
+                wb.append(&[byte.unwrap()]).unwrap();
+            }
+            assert_eq!(wb.as_slice(), ARRAY);
+        }
+    }
+}

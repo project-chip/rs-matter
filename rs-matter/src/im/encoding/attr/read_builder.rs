@@ -803,3 +803,439 @@ where
         defmt::write!(fmt, "{:?}::AttrPath<{}>", self.p, F);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::error::{Error, ErrorCode};
+    use crate::im::{
+        AttrPath, ClusterPath, DataVersionFilter, EventFilter, EventPath, ReadReq, IM_REVISION,
+    };
+    use crate::tlv::{Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWriteParent};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{AttrPathArrayBuilder, ReadReqBuilder};
+
+    type Root<'a, 'b> = TLVWriteParent<(), &'a mut WriteBuf<'b>>;
+
+    fn root<'a, 'b>(wb: &'a mut WriteBuf<'b>) -> Root<'a, 'b> {
+        TLVWriteParent::new((), wb)
+    }
+
+    fn attr_path(endpoint: u16, cluster: u32, attr: u32) -> AttrPath {
+        AttrPath {
+            endpoint: Some(endpoint),
+            cluster: Some(cluster),
+            attr: Some(attr),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn single_path_read_round_trips() {
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .attr_requests()
+            .unwrap()
+            .push()
+            .unwrap()
+            .endpoint(1)
+            .unwrap()
+            .cluster(6)
+            .unwrap()
+            .attr(0)
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // ReadRequestMessage
+                0x36,
+                0, // AttributeRequests[]
+                0x37,
+                0x24,
+                2,
+                1,
+                0x24,
+                3,
+                6,
+                0x24,
+                4,
+                0,
+                0x18, // AttrPath list
+                0x18, // end AttributeRequests
+                0x29,
+                3, // FabricFiltered = true
+                0x24,
+                0xFF,
+                IM_REVISION, // InteractionModelRevision
+                0x18,
+            ]
+        );
+
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req
+            .attr_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq([attr_path(1, 6, 0)]));
+        assert!(req.event_requests().unwrap().is_none());
+        assert!(req.event_filters().unwrap().is_none());
+        assert!(req.fabric_filtered().unwrap());
+        assert!(req.dataver_filters().unwrap().is_none());
+    }
+
+    #[test]
+    fn paths_with_wildcards_node_and_list_index() {
+        let mut buf = [0; 128];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .attr_requests()
+            .unwrap()
+            // every field present
+            .push()
+            .unwrap()
+            .node(0x1122)
+            .unwrap()
+            .endpoint(2)
+            .unwrap()
+            .cluster(3)
+            .unwrap()
+            .attr(4)
+            .unwrap()
+            .list_index(Some(5))
+            .unwrap()
+            .end()
+            .unwrap()
+            // wildcard endpoint and attribute
+            .push()
+            .unwrap()
+            .cluster(6)
+            .unwrap()
+            .end()
+            .unwrap()
+            // wildcard cluster
+            .push()
+            .unwrap()
+            .endpoint(1)
+            .unwrap()
+            .attr(2)
+            .unwrap()
+            .end()
+            .unwrap()
+            // node followed by a skip straight to cluster / attribute
+            .push()
+            .unwrap()
+            .node(9)
+            .unwrap()
+            .cluster(3)
+            .unwrap()
+            .end()
+            .unwrap()
+            .push()
+            .unwrap()
+            .node(9)
+            .unwrap()
+            .attr(1)
+            .unwrap()
+            .end()
+            .unwrap()
+            // null list index
+            .push()
+            .unwrap()
+            .attr(7)
+            .unwrap()
+            .list_index(None)
+            .unwrap()
+            .end()
+            .unwrap()
+            // fully wildcard path
+            .push()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .fabric_filtered(false)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req
+            .attr_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq([
+                AttrPath {
+                    tag_compression: None,
+                    node: Some(0x1122),
+                    endpoint: Some(2),
+                    cluster: Some(3),
+                    attr: Some(4),
+                    list_index: Some(Nullable::some(5)),
+                },
+                AttrPath {
+                    cluster: Some(6),
+                    ..Default::default()
+                },
+                AttrPath {
+                    endpoint: Some(1),
+                    attr: Some(2),
+                    ..Default::default()
+                },
+                AttrPath {
+                    node: Some(9),
+                    cluster: Some(3),
+                    ..Default::default()
+                },
+                AttrPath {
+                    node: Some(9),
+                    attr: Some(1),
+                    ..Default::default()
+                },
+                AttrPath {
+                    attr: Some(7),
+                    list_index: Some(Nullable::none()),
+                    ..Default::default()
+                },
+                AttrPath::default(),
+            ]));
+        assert!(!req.fabric_filtered().unwrap());
+    }
+
+    #[test]
+    fn slice_helpers_and_forwarders_write_every_field() {
+        let paths = [attr_path(1, 6, 0), attr_path(2, 8, 0)];
+        let events = [EventPath {
+            endpoint: Some(0),
+            cluster: Some(0x28),
+            event: Some(0),
+            ..Default::default()
+        }];
+        let filters = [EventFilter {
+            node: None,
+            event_min: Some(42),
+        }];
+        let datavers = [DataVersionFilter {
+            path: ClusterPath {
+                node: None,
+                endpoint: 1,
+                cluster: 6,
+            },
+            data_ver: 0x1234_5678,
+        }];
+
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .attr_requests_from(&paths)
+            .unwrap()
+            .event_requests_from(&events)
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(false)
+            .unwrap()
+            .dataver_filters_from(&datavers)
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req
+            .attr_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(paths.iter().cloned()));
+        assert!(req
+            .event_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(events.iter().cloned()));
+        assert!(req
+            .event_filters()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(filters.iter().cloned()));
+        assert!(!req.fabric_filtered().unwrap());
+        assert!(req
+            .dataver_filters()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(datavers.iter().cloned()));
+        assert_eq!(
+            TLVElement::new(wb.as_slice())
+                .structure()
+                .unwrap()
+                .find_ctx(0xFF)
+                .unwrap()
+                .u8()
+                .unwrap(),
+            7
+        );
+
+        // Skipping straight from state 0 to `EventRequests`
+        wb.reset();
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .event_requests_from(&events)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.attr_requests().unwrap().is_none());
+        assert_eq!(req.event_requests().unwrap().unwrap().iter().count(), 1);
+        assert!(req.event_filters().unwrap().is_none());
+        assert!(req.fabric_filtered().unwrap());
+
+        // Skipping from state 0 to `EventFilters`, and from state 1 to `EventFilters`
+        wb.reset();
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.attr_requests().unwrap().is_none());
+        assert!(req.event_requests().unwrap().is_none());
+        assert_eq!(req.event_filters().unwrap().unwrap().iter().count(), 1);
+
+        wb.reset();
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .attr_requests_from(&paths)
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert_eq!(req.attr_requests().unwrap().unwrap().iter().count(), 2);
+        assert!(req.event_requests().unwrap().is_none());
+        assert_eq!(req.event_filters().unwrap().unwrap().iter().count(), 1);
+        assert!(req.dataver_filters().unwrap().is_none());
+
+        // The minimal request is just the mandatory flag plus the revision
+        wb.reset();
+        ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .fabric_filtered(false)
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[0x15, 0x28, 3, 0x24, 0xFF, IM_REVISION, 0x18]
+        );
+    }
+
+    /// Pushes one concrete `(1, 6, attr)` path into the open array.
+    fn push_path<P: TLVBuilderParent>(
+        arr: AttrPathArrayBuilder<P>,
+        attr: u32,
+    ) -> Result<AttrPathArrayBuilder<P>, Error> {
+        arr.push()?.endpoint(1)?.cluster(6)?.attr(attr)?.end()
+    }
+
+    #[test]
+    fn paths_that_overflow_the_buffer_leave_a_decodable_prefix() {
+        // Room for the array end, `FabricFiltered`, the revision and the message end
+        const TRAILER: usize = 1 + 2 + 3 + 1;
+
+        let mut buf = [0; 48];
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.shrink(TRAILER).unwrap();
+
+        let mut arr = ReadReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .attr_requests()
+            .unwrap();
+
+        // Push paths until one does not fit; remember where the last complete one ended
+        let mut written = 0;
+        let last_complete = loop {
+            let tail = arr.writer().get_tail();
+
+            match push_path(arr, written) {
+                Ok(a) => {
+                    arr = a;
+                    written += 1;
+                }
+                Err(e) => {
+                    assert_eq!(e.code(), ErrorCode::NoSpace);
+                    break tail;
+                }
+            }
+        };
+
+        assert!(written > 0);
+        assert!(
+            wb.get_tail() > last_complete,
+            "the failed push wrote nothing"
+        );
+
+        // Drop the partially written path, then close the message in the reserved space
+        wb.rewind_tail_to(last_complete);
+        wb.expand(TRAILER).unwrap();
+
+        AttrPathArrayBuilder {
+            p: ReadReqBuilder::<_, 1> { p: root(&mut wb) },
+        }
+        .end()
+        .unwrap()
+        .fabric_filtered(true)
+        .unwrap()
+        .end()
+        .unwrap();
+
+        assert!(wb.as_slice().len() <= buf.len());
+
+        let req = ReadReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req
+            .attr_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq((0..written).map(|attr| attr_path(1, 6, attr))));
+        assert!(req.fabric_filtered().unwrap());
+    }
+}

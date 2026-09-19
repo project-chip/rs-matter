@@ -1075,3 +1075,531 @@ where
         self.parent
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::error::{Error, ErrorCode};
+    use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVElement, TLVTag, TLVWrite};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{
+        NullableBuilder, OctetsArrayBuilder, OctetsBuilder, OptionalBuilder, TLVBuilder,
+        TLVBuilderParent, TLVWriteParent, ToTLVArrayBuilder, ToTLVBuilder, Utf8StrArrayBuilder,
+        Utf8StrBuilder,
+    };
+
+    /// The root parent used by every test: a `WriteBuf` wrapped in a `TLVWriteParent`
+    /// whose Debug name is `"root"`.
+    type Root<'a, 'b> = TLVWriteParent<&'static str, &'a mut WriteBuf<'b>>;
+
+    fn root<'a, 'b>(wb: &'a mut WriteBuf<'b>) -> Root<'a, 'b> {
+        TLVWriteParent::new("root", wb)
+    }
+
+    /// A hand-written struct builder in the shape the module docs describe:
+    /// `{ 0: u8, 1: octets }`. Used to exercise nesting and parent hand-back.
+    struct PairBuilder<P, const F: usize> {
+        p: P,
+    }
+
+    impl<P: TLVBuilderParent> PairBuilder<P, 0> {
+        fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+            p.writer().start_struct(tag)?;
+            Ok(Self { p })
+        }
+
+        fn first(mut self, value: u8) -> Result<PairBuilder<P, 1>, Error> {
+            self.p.writer().u8(&TLVTag::Context(0), value)?;
+            Ok(PairBuilder { p: self.p })
+        }
+    }
+
+    impl<P: TLVBuilderParent> PairBuilder<P, 1> {
+        fn second(self) -> OctetsBuilder<PairBuilder<P, 2>> {
+            OctetsBuilder::new(PairBuilder { p: self.p }, &TLVTag::Context(1))
+        }
+    }
+
+    impl<P: TLVBuilderParent> PairBuilder<P, 2> {
+        fn finish(mut self) -> Result<P, Error> {
+            self.p.writer().end_container()?;
+            Ok(self.p)
+        }
+    }
+
+    impl<P: TLVBuilderParent, const F: usize> TLVBuilderParent for PairBuilder<P, F> {
+        type Write = P::Write;
+
+        fn writer(&mut self) -> &mut Self::Write {
+            self.p.writer()
+        }
+    }
+
+    impl<P: core::fmt::Debug, const F: usize> core::fmt::Debug for PairBuilder<P, F> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::Pair<{}>", self.p, F)
+        }
+    }
+
+    #[cfg(feature = "defmt")]
+    impl<P: defmt::Format, const F: usize> defmt::Format for PairBuilder<P, F> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            defmt::write!(f, "{:?}::Pair<{}>", self.p, F)
+        }
+    }
+
+    impl<P: TLVBuilderParent> TLVBuilder<P> for PairBuilder<P, 0> {
+        fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+            Self::new(parent, tag)
+        }
+
+        fn unchecked_into_parent(self) -> P {
+            self.p
+        }
+    }
+
+    /// Array-of-`Pair` builder, again in the shape of the module docs.
+    struct PairArrayBuilder<P> {
+        p: P,
+    }
+
+    impl<P: TLVBuilderParent> PairArrayBuilder<P> {
+        fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+            p.writer().start_array(tag)?;
+            Ok(Self { p })
+        }
+
+        fn push(self) -> Result<PairBuilder<Self, 0>, Error> {
+            PairBuilder::new(self, &TLVTag::Anonymous)
+        }
+
+        fn end(mut self) -> Result<P, Error> {
+            self.p.writer().end_container()?;
+            Ok(self.p)
+        }
+    }
+
+    impl<P: TLVBuilderParent> TLVBuilderParent for PairArrayBuilder<P> {
+        type Write = P::Write;
+
+        fn writer(&mut self) -> &mut Self::Write {
+            self.p.writer()
+        }
+    }
+
+    impl<P: core::fmt::Debug> core::fmt::Debug for PairArrayBuilder<P> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}[]", self.p)
+        }
+    }
+
+    #[cfg(feature = "defmt")]
+    impl<P: defmt::Format> defmt::Format for PairArrayBuilder<P> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            defmt::write!(f, "{:?}[]", self.p)
+        }
+    }
+
+    /// The decoded counterpart of what `PairBuilder` writes.
+    #[derive(FromTLV, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[tlvargs(lifetime = "'a")]
+    struct Pair<'a> {
+        first: u8,
+        second: Octets<'a>,
+    }
+
+    #[test]
+    fn to_tlv_builder_writes_value_with_tag() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        ToTLVBuilder::<_, u32>::new(root(&mut wb), &TLVTag::Context(5))
+            .set(&7)
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 5, 7]);
+
+        wb.reset();
+        ToTLVBuilder::<_, u32>::new(root(&mut wb), &TLVTag::Context(5))
+            .set(&0x1234)
+            .unwrap();
+
+        let elem = TLVElement::new(wb.as_slice());
+        assert_eq!(elem.tag().unwrap(), TLVTag::Context(5));
+        assert_eq!(elem.u32().unwrap(), 0x1234);
+    }
+
+    #[test]
+    fn to_tlv_array_builder_pushes_and_ends() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        ToTLVArrayBuilder::<_, u16>::new(root(&mut wb), &TLVTag::Context(1))
+            .unwrap()
+            .push(&1)
+            .unwrap()
+            .push(&0x1234)
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x36, 1, 0x04, 1, 0x05, 0x34, 0x12, 0x18]);
+
+        let arr = TLVArray::<u16>::new(TLVElement::new(wb.as_slice())).unwrap();
+        assert!(arr.iter().map(Result::unwrap).eq([1, 0x1234]));
+
+        wb.reset();
+        ToTLVArrayBuilder::<_, u16>::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x16, 0x18]);
+    }
+
+    #[test]
+    fn utf8_builders_round_trip() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        Utf8StrBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .set("hi")
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x0C, 2, b'h', b'i']);
+        assert_eq!(TLVElement::new(wb.as_slice()).utf8().unwrap(), "hi");
+
+        wb.reset();
+        Utf8StrArrayBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .push("a")
+            .unwrap()
+            .push("")
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x16, 0x0C, 1, b'a', 0x0C, 0, 0x18]);
+
+        let arr = TLVArray::<&str>::new(TLVElement::new(wb.as_slice())).unwrap();
+        assert!(arr.iter().map(Result::unwrap).eq(["a", ""]));
+    }
+
+    #[test]
+    fn octets_builders_round_trip() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        OctetsBuilder::new(root(&mut wb), &TLVTag::Context(3))
+            .set(Octets(&[1, 2, 3]))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x30, 3, 3, 1, 2, 3]);
+
+        wb.reset();
+        OctetsArrayBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .push(Octets(&[9]))
+            .unwrap()
+            .push(Octets(&[]))
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x16, 0x10, 1, 9, 0x10, 0, 0x18]);
+
+        let arr = TLVArray::<Octets>::new(TLVElement::new(wb.as_slice())).unwrap();
+        assert!(arr
+            .iter()
+            .map(Result::unwrap)
+            .eq([Octets(&[9]), Octets(&[])]));
+    }
+
+    #[test]
+    fn nullable_builder_writes_null_or_delegates() {
+        type NullU8<'a, 'b> = NullableBuilder<Root<'a, 'b>, ToTLVBuilder<Root<'a, 'b>, u8>>;
+
+        let tag = TLVTag::Context(2);
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        NullU8::new(root(&mut wb), &tag).null().unwrap();
+        assert_eq!(wb.as_slice(), &[0x34, 2]);
+        TLVElement::new(wb.as_slice()).null().unwrap();
+
+        wb.reset();
+        NullU8::new(root(&mut wb), &tag)
+            .non_null()
+            .unwrap()
+            .set(&7)
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 2, 7]);
+
+        wb.reset();
+        NullU8::new(root(&mut wb), &tag)
+            .with_non_null(Nullable::some(9u8), |v, b| b.set(v))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 2, 9]);
+
+        wb.reset();
+        NullU8::new(root(&mut wb), &tag)
+            .with_non_null(Nullable::<u8>::none(), |v, b| b.set(v))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x34, 2]);
+
+        wb.reset();
+        NullU8::new(root(&mut wb), &tag)
+            .with_non_null_if(true, |b| b.set(&1))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 2, 1]);
+
+        wb.reset();
+        NullU8::new(root(&mut wb), &tag)
+            .with_non_null_if(false, |b| b.set(&1))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x34, 2]);
+    }
+
+    #[test]
+    fn optional_builder_skips_or_delegates() {
+        type OptU8<'a, 'b> = OptionalBuilder<Root<'a, 'b>, ToTLVBuilder<Root<'a, 'b>, u8>>;
+
+        let tag = TLVTag::Context(2);
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        OptU8::new(root(&mut wb), &tag).none();
+        assert!(wb.as_slice().is_empty());
+
+        OptU8::new(root(&mut wb), &tag)
+            .some()
+            .unwrap()
+            .set(&7)
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 2, 7]);
+
+        wb.reset();
+        OptU8::new(root(&mut wb), &tag)
+            .with_some(Some(3u8), |v, b| b.set(v))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 2, 3]);
+
+        wb.reset();
+        OptU8::new(root(&mut wb), &tag)
+            .with_some(None::<u8>, |v, b| b.set(v))
+            .unwrap();
+        assert!(wb.as_slice().is_empty());
+
+        OptU8::new(root(&mut wb), &tag)
+            .with_some_if(true, |b| b.set(&1))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 2, 1]);
+
+        wb.reset();
+        OptU8::new(root(&mut wb), &tag)
+            .with_some_if(false, |b| b.set(&1))
+            .unwrap();
+        assert!(wb.as_slice().is_empty());
+    }
+
+    #[test]
+    fn nested_struct_and_array_builders_hand_back_parent() {
+        let mut buf = [0; 32];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        // `end()` of the innermost builder returns the array builder, which in turn
+        // returns the root once ended.
+        let parent = PairArrayBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .push()
+            .unwrap()
+            .first(1)
+            .unwrap()
+            .second()
+            .set(Octets(&[0xAA]))
+            .unwrap()
+            .finish()
+            .unwrap()
+            .push()
+            .unwrap()
+            .first(2)
+            .unwrap()
+            .second()
+            .set(Octets(&[]))
+            .unwrap()
+            .finish()
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(format!("{parent:?}"), "\"root\"");
+        drop(parent);
+
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x16, 0x15, 0x24, 0, 1, 0x30, 1, 1, 0xAA, 0x18, 0x15, 0x24, 0, 2, 0x30, 1, 0, 0x18,
+                0x18
+            ]
+        );
+
+        let arr = TLVArray::<Pair>::new(TLVElement::new(wb.as_slice())).unwrap();
+        assert!(arr.iter().map(Result::unwrap).eq([
+            Pair {
+                first: 1,
+                second: Octets(&[0xAA]),
+            },
+            Pair {
+                first: 2,
+                second: Octets(&[]),
+            },
+        ]));
+
+        // A struct builder as the non-null / some branch of the wrapper builders
+        wb.reset();
+        NullableBuilder::<_, PairBuilder<Root, 0>>::new(root(&mut wb), &TLVTag::Context(7))
+            .non_null()
+            .unwrap()
+            .first(5)
+            .unwrap()
+            .second()
+            .set(Octets(b"x"))
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[0x35, 7, 0x24, 0, 5, 0x30, 1, 1, b'x', 0x18]
+        );
+        assert_eq!(
+            Pair::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            Pair {
+                first: 5,
+                second: Octets(b"x"),
+            }
+        );
+
+        wb.reset();
+        OptionalBuilder::<_, PairBuilder<Root, 0>>::new(root(&mut wb), &TLVTag::Context(7)).none();
+        assert!(wb.as_slice().is_empty());
+    }
+
+    #[test]
+    fn with_closure_and_unchecked_into_parent() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        ToTLVBuilder::<_, u8>::new(root(&mut wb), &TLVTag::Anonymous)
+            .with(|b| b.set(&1))
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x04, 1]);
+
+        // `unchecked_into_parent` hands the parent back without closing the container;
+        // the caller is then responsible for the raw writes.
+        wb.reset();
+        let mut parent = Utf8StrArrayBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .unchecked_into_parent();
+        parent.writer().end_container().unwrap();
+        drop(parent);
+        assert_eq!(wb.as_slice(), &[0x16, 0x18]);
+    }
+
+    /// Writes a fixed nested value through the builders; used by the sizing test.
+    fn write_sample(wb: &mut WriteBuf<'_>) -> Result<(), Error> {
+        PairArrayBuilder::new(root(wb), &TLVTag::Anonymous)?
+            .push()?
+            .first(1)?
+            .second()
+            .set(Octets(&[1, 2, 3]))?
+            .finish()?
+            .end()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn exact_fit_succeeds_and_one_byte_short_fails() {
+        let mut big = [0; 64];
+        let mut wb = WriteBuf::new(&mut big);
+        write_sample(&mut wb).unwrap();
+        let len = wb.as_slice().len();
+        let mut full = [0; 64];
+        full[..len].copy_from_slice(wb.as_slice());
+        let full = &full[..len];
+
+        // Exactly big enough: everything fits, output is identical
+        let mut exact = [0; 64];
+        let mut wb = WriteBuf::new(&mut exact[..len]);
+        write_sample(&mut wb).unwrap();
+        assert_eq!(wb.as_slice(), full);
+
+        // One byte short: the closing byte of the outer array cannot be written.
+        // What was written before the failure is a strict prefix of the full output
+        // and the tail can be rewound to the pre-build position.
+        let mut short = [0; 64];
+        let mut wb = WriteBuf::new(&mut short[..len - 1]);
+        let tail = wb.get_tail();
+        let err = write_sample(&mut wb).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NoSpace);
+        assert_eq!(wb.as_slice(), &full[..len - 1]);
+
+        wb.rewind_to(tail);
+        assert!(wb.as_slice().is_empty());
+        wb.u8(&TLVTag::Anonymous, 1).unwrap();
+        assert_eq!(wb.as_slice(), &[0x04, 1]);
+    }
+
+    #[test]
+    fn tag_forms_are_preserved() {
+        let tags = [
+            TLVTag::Anonymous,
+            TLVTag::Context(3),
+            TLVTag::CommonPrf16(0x1234),
+            TLVTag::CommonPrf32(0x1234_5678),
+            TLVTag::ImplPrf16(1),
+            TLVTag::ImplPrf32(2),
+            TLVTag::FullQual48 {
+                vendor_id: 0xFFF1,
+                profile: 0xDEED,
+                tag: 0xAA00,
+            },
+            TLVTag::FullQual64 {
+                vendor_id: 0xFFF1,
+                profile: 0xDEED,
+                tag: 0xAA00_0001,
+            },
+        ];
+
+        for tag in tags {
+            let mut buf = [0; 16];
+            let mut wb = WriteBuf::new(&mut buf);
+
+            ToTLVBuilder::<_, u8>::new(root(&mut wb), &tag)
+                .set(&1)
+                .unwrap();
+
+            let elem = TLVElement::new(wb.as_slice());
+            assert_eq!(elem.tag().unwrap(), tag);
+            assert_eq!(elem.u8().unwrap(), 1);
+            assert_eq!(wb.as_slice().len(), 2 + tag.tag_type().size());
+        }
+    }
+
+    #[test]
+    fn debug_output_nests_builder_names() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        let arr = PairArrayBuilder::new(root(&mut wb), &TLVTag::Anonymous).unwrap();
+        assert_eq!(format!("{arr:?}"), "\"root\"[]");
+
+        let pair = arr.push().unwrap();
+        assert_eq!(format!("{pair:?}"), "\"root\"[]::Pair<0>");
+
+        let octets = pair.first(1).unwrap().second();
+        assert_eq!(format!("{octets:?}"), "\"root\"[]::Pair<2>");
+        drop(octets);
+
+        wb.reset();
+        let nullable =
+            NullableBuilder::<_, ToTLVBuilder<Root, u8>>::new(root(&mut wb), &TLVTag::Anonymous);
+        assert_eq!(format!("{nullable:?}"), "\"root\"");
+
+        let arr = ToTLVArrayBuilder::<_, u8>::new(root(&mut wb), &TLVTag::Anonymous).unwrap();
+        assert_eq!(format!("{arr:?}"), "\"root\"[]");
+    }
+}

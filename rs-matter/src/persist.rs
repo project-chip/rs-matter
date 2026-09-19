@@ -696,3 +696,426 @@ mod fileio {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell as StdRefCell;
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use crate::error::{Error, ErrorCode};
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+    use crate::utils::cell::RefCell;
+    use crate::utils::sync::blocking::Mutex;
+
+    use super::{DummyKvBlobStore, KvBlobStore, KvBlobStoreAccess, Persist, SharedKvBlobStore};
+
+    /// A minimal in-memory `KvBlobStore` whose contents can be inspected
+    /// from outside via the shared `Rc`.
+    #[derive(Default, Clone)]
+    struct MemKvBlobStore {
+        blobs: Rc<StdRefCell<HashMap<u16, Vec<u8>>>>,
+        /// Fail every `store` call with `NoSpace` when set.
+        fail_store: bool,
+    }
+
+    impl MemKvBlobStore {
+        fn get(&self, key: u16) -> Option<Vec<u8>> {
+            self.blobs.borrow().get(&key).cloned()
+        }
+
+        fn len(&self) -> usize {
+            self.blobs.borrow().len()
+        }
+    }
+
+    impl KvBlobStore for MemKvBlobStore {
+        fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            match self.blobs.borrow().get(&key) {
+                Some(v) => {
+                    if v.len() > buf.len() {
+                        return Err(ErrorCode::NoSpace.into());
+                    }
+                    buf[..v.len()].copy_from_slice(v);
+                    Ok(Some(&buf[..v.len()]))
+                }
+                None => Ok(None),
+            }
+        }
+
+        fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+            if self.fail_store {
+                return Err(ErrorCode::NoSpace.into());
+            }
+            self.blobs.borrow_mut().insert(key, data.to_vec());
+            Ok(())
+        }
+
+        fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+            self.blobs.borrow_mut().remove(&key);
+            Ok(())
+        }
+    }
+
+    /// Load `key` through the access object, copying the bytes out.
+    fn load<A: KvBlobStoreAccess>(access: &A, key: u16) -> Option<Vec<u8>> {
+        access.access(|kvb, buf| kvb.load(key, buf).unwrap().map(|d| d.to_vec()))
+    }
+
+    #[test]
+    fn key_layout_is_pinned() {
+        // Vendor keys begin right after the subscription range
+        assert_eq!(
+            super::PERSISTENT_SUBSCRIPTIONS_END,
+            super::VENDOR_KEYS_START
+        );
+        assert_eq!(super::PERSISTENT_SUBSCRIPTIONS_START, 0x0800);
+        assert_eq!(
+            super::PERSISTENT_SUBSCRIPTIONS_END - super::PERSISTENT_SUBSCRIPTIONS_START,
+            super::MAX_PERSISTED_SUBSCRIPTIONS as u16
+        );
+
+        // Singleton keys live above the fabric block and below the subscriptions
+        assert_eq!(super::BASIC_INFO_KEY, 256);
+        assert!(super::REBOOT_COUNT_KEY < super::PERSISTENT_SUBSCRIPTIONS_START);
+        assert!(super::KV_BUF_SIZE >= 1024);
+    }
+
+    #[test]
+    fn dummy_store_is_noop() {
+        let mut store = DummyKvBlobStore;
+        let mut buf = [0u8; 16];
+
+        assert!(store.load(1, &mut buf).unwrap().is_none());
+        store.store(1, &[1, 2, 3], &mut buf).unwrap();
+        assert!(store.load(1, &mut buf).unwrap().is_none());
+        store.remove(1, &mut buf).unwrap();
+        store.remove(0xffff, &mut buf).unwrap();
+    }
+
+    #[test]
+    fn shared_store_access_lends_store_and_buffer() {
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 64]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+
+        shared.access(|kvb, buf| {
+            assert_eq!(buf.len(), 64);
+            kvb.store(7, &[0xaa, 0xbb], buf).unwrap();
+        });
+        assert_eq!(mem.get(7).as_deref(), Some(&[0xaa, 0xbb][..]));
+
+        assert_eq!(load(&shared, 7).as_deref(), Some(&[0xaa, 0xbb][..]));
+        assert_eq!(load(&shared, 8), None);
+
+        // `&T` forwards `KvBlobStoreAccess`
+        assert_eq!(load(&&shared, 7).as_deref(), Some(&[0xaa, 0xbb][..]));
+
+        // The access returns the closure's value
+        let n: usize = shared.access(|_, buf| buf.len() * 2);
+        assert_eq!(n, 128);
+    }
+
+    #[test]
+    fn mut_ref_forwarding_impls() {
+        let mut mem = MemKvBlobStore::default();
+        let mut buf = [0u8; 16];
+
+        {
+            let mut r: &mut MemKvBlobStore = &mut mem;
+            <&mut MemKvBlobStore as KvBlobStore>::store(&mut r, 1, &[9], &mut buf).unwrap();
+            assert_eq!(
+                <&mut MemKvBlobStore as KvBlobStore>::load(&mut r, 1, &mut buf).unwrap(),
+                Some(&[9][..])
+            );
+        }
+        {
+            let mut d: &mut dyn KvBlobStore = &mut mem;
+            assert_eq!(
+                <&mut dyn KvBlobStore as KvBlobStore>::load(&mut d, 1, &mut buf).unwrap(),
+                Some(&[9][..])
+            );
+            <&mut dyn KvBlobStore as KvBlobStore>::remove(&mut d, 1, &mut buf).unwrap();
+            assert_eq!(
+                <&mut dyn KvBlobStore as KvBlobStore>::load(&mut d, 1, &mut buf).unwrap(),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn persist_store_closure_some_writes_prefix() {
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 32]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+        let mut persist = Persist::new(&shared);
+
+        persist
+            .store(0x1000, |buf| {
+                assert_eq!(buf.len(), 32);
+                buf[..4].copy_from_slice(&[1, 2, 3, 4]);
+                // Bytes beyond the returned length are scratch and must not be stored
+                buf[4] = 0xee;
+                Ok(Some(4))
+            })
+            .unwrap();
+
+        assert_eq!(mem.get(0x1000).as_deref(), Some(&[1, 2, 3, 4][..]));
+        assert_eq!(mem.len(), 1);
+    }
+
+    #[test]
+    fn persist_store_closure_none_skips_write() {
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 32]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+        let mut persist = Persist::new(&shared);
+
+        persist.store(5, |_| Ok(Some(2))).unwrap();
+        assert!(mem.get(5).is_some());
+
+        // `None` is "nothing to persist": the existing value stays as-is
+        persist.store(5, |_| Ok(None)).unwrap();
+        assert_eq!(mem.get(5).as_deref(), Some(&[0, 0][..]));
+
+        persist.store(6, |_| Ok(None)).unwrap();
+        assert_eq!(mem.get(6), None);
+        assert_eq!(mem.len(), 1);
+    }
+
+    #[test]
+    fn persist_store_propagates_errors() {
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 32]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+        let mut persist = Persist::new(&shared);
+
+        // Serializer error
+        let err = persist
+            .store(1, |_| Err::<Option<usize>, _>(ErrorCode::NoSpace.into()))
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NoSpace);
+        assert_eq!(mem.len(), 0);
+
+        // Backend error
+        let failing = MemKvBlobStore {
+            fail_store: true,
+            ..Default::default()
+        };
+        let shared = SharedKvBlobStore::new(failing, &buf);
+        let mut persist = Persist::new(&shared);
+        let err = persist.store(1, |_| Ok(Some(1))).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NoSpace);
+    }
+
+    #[test]
+    fn persist_empty_buffer_skips_everything() {
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 0]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+        let mut persist = Persist::new(&shared);
+
+        // With no scratch space the serializer is never invoked and nothing is stored
+        persist
+            .store(1, |_| -> Result<Option<usize>, Error> {
+                panic!("serializer must not run with an empty buffer")
+            })
+            .unwrap();
+        assert_eq!(mem.len(), 0);
+
+        // ... and removes are skipped as well
+        mem.blobs.borrow_mut().insert(1, vec![1]);
+        persist.remove(1).unwrap();
+        assert_eq!(mem.len(), 1);
+
+        persist.run().unwrap();
+    }
+
+    #[test]
+    fn persist_store_tlv_roundtrips_through_load() {
+        #[derive(Debug, PartialEq, Eq, FromTLV, ToTLV)]
+        struct Rec {
+            a: u32,
+            b: bool,
+        }
+
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 64]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+        let mut persist = Persist::new(&shared);
+
+        let rec = Rec {
+            a: 0x0102_0304,
+            b: true,
+        };
+        persist.store_tlv(0x1001, &rec).unwrap();
+
+        // Plain values serialize as the anonymous TLV element
+        persist.store_tlv(0x1002, 42u8).unwrap();
+        assert_eq!(mem.get(0x1002).as_deref(), Some(&[0x04, 42][..]));
+
+        let raw = load(&shared, 0x1001).unwrap();
+        let back = Rec::from_tlv(&TLVElement::new(&raw)).unwrap();
+        assert_eq!(back, rec);
+
+        // Overwrite replaces the value
+        persist.store_tlv(0x1001, 7u8).unwrap();
+        assert_eq!(load(&shared, 0x1001).as_deref(), Some(&[0x04, 7][..]));
+
+        // A value that does not fit the scratch buffer is an error, not a truncation
+        let big = [0u8; 100];
+        let err = persist
+            .store(0x1003, |buf| {
+                let mut wb = crate::utils::storage::WriteBuf::new(buf);
+                big.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+                Ok(Some(wb.get_tail()))
+            })
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NoSpace);
+        assert_eq!(mem.get(0x1003), None);
+    }
+
+    #[test]
+    fn persist_remove_then_load_is_none() {
+        let mem = MemKvBlobStore::default();
+        let buf = Mutex::new(RefCell::new([0u8; 32]));
+        let shared = SharedKvBlobStore::new(mem.clone(), &buf);
+        let mut persist = Persist::new(&shared);
+
+        persist.store_tlv(3, 1u8).unwrap();
+        persist.store_tlv(4, 2u8).unwrap();
+        assert!(load(&shared, 3).is_some());
+
+        persist.remove(3).unwrap();
+        assert_eq!(load(&shared, 3), None);
+        // Other keys are untouched
+        assert!(load(&shared, 4).is_some());
+
+        // Removing a missing key is fine
+        persist.remove(3).unwrap();
+        persist.remove(0xffff).unwrap();
+
+        persist.run().unwrap();
+    }
+
+    #[test]
+    fn persist_with_dummy_store() {
+        let buf = Mutex::new(RefCell::new([0u8; 32]));
+        let shared = SharedKvBlobStore::new(DummyKvBlobStore, &buf);
+        let mut persist = Persist::new(&shared);
+
+        persist.store_tlv(1, 5u8).unwrap();
+        assert_eq!(load(&shared, 1), None);
+        persist.remove(1).unwrap();
+        persist.run().unwrap();
+    }
+
+    #[cfg(feature = "std")]
+    mod fileio {
+        use super::super::{DirKvBlobStore, FileKvBlobStore, KvBlobStore};
+        use crate::error::ErrorCode;
+
+        fn exercise(store: &mut dyn KvBlobStore) {
+            let mut buf = [0u8; 64];
+
+            // Missing key
+            assert_eq!(store.load(1, &mut buf).unwrap(), None);
+
+            // Store / load
+            store.store(1, &[1, 2, 3], &mut buf).unwrap();
+            assert_eq!(store.load(1, &mut buf).unwrap(), Some(&[1, 2, 3][..]));
+
+            // Second key, then overwrite the first
+            store.store(2, &[9; 40], &mut buf).unwrap();
+            store.store(1, &[4, 5], &mut buf).unwrap();
+            assert_eq!(store.load(1, &mut buf).unwrap(), Some(&[4, 5][..]));
+            assert_eq!(store.load(2, &mut buf).unwrap(), Some(&[9; 40][..]));
+
+            // Empty value is stored as such and distinguishable from a missing key
+            store.store(3, &[], &mut buf).unwrap();
+            assert_eq!(store.load(3, &mut buf).unwrap(), Some(&[][..]));
+
+            // Buffer too small
+            let mut small = [0u8; 10];
+            assert_eq!(
+                store.load(2, &mut small).unwrap_err().code(),
+                ErrorCode::NoSpace
+            );
+            // An exact fit is fine
+            let mut exact = [0u8; 40];
+            assert_eq!(store.load(2, &mut exact).unwrap(), Some(&[9; 40][..]));
+
+            // Remove (twice) then load
+            store.remove(1, &mut buf).unwrap();
+            store.remove(1, &mut buf).unwrap();
+            assert_eq!(store.load(1, &mut buf).unwrap(), None);
+            assert_eq!(store.load(2, &mut buf).unwrap(), Some(&[9; 40][..]));
+        }
+
+        #[test]
+        fn dir_store_roundtrip() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("kv");
+
+            let mut store = DirKvBlobStore::new(path.clone());
+            exercise(&mut store);
+
+            // Keys are files named after the key; data survives a fresh instance
+            assert!(path.join("k_0002").is_file());
+            assert!(!path.join("k_0001").exists());
+
+            let mut reopened = DirKvBlobStore::new(path);
+            let reopened: &mut dyn KvBlobStore = &mut reopened;
+            let mut buf = [0u8; 64];
+            assert_eq!(reopened.load(2, &mut buf).unwrap(), Some(&[9; 40][..]));
+            assert_eq!(reopened.load(1, &mut buf).unwrap(), None);
+        }
+
+        #[test]
+        fn dir_store_missing_dir_loads_none() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut store = DirKvBlobStore::new(dir.path().join("does-not-exist"));
+            let store: &mut dyn KvBlobStore = &mut store;
+
+            let mut buf = [0u8; 8];
+            assert_eq!(store.load(1, &mut buf).unwrap(), None);
+            store.remove(1, &mut buf).unwrap();
+        }
+
+        #[test]
+        fn file_store_roundtrip() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("chip_kvs");
+
+            let mut store = FileKvBlobStore::new(path.clone());
+            exercise(&mut store);
+
+            // Everything lives in the single file and survives a fresh instance
+            assert!(path.is_file());
+
+            let mut reopened = FileKvBlobStore::new(path);
+            let reopened: &mut dyn KvBlobStore = &mut reopened;
+            let mut buf = [0u8; 64];
+            assert_eq!(reopened.load(2, &mut buf).unwrap(), Some(&[9; 40][..]));
+            assert_eq!(reopened.load(3, &mut buf).unwrap(), Some(&[][..]));
+            assert_eq!(reopened.load(1, &mut buf).unwrap(), None);
+        }
+
+        #[test]
+        fn file_store_missing_file_loads_none() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("absent");
+            let mut store = FileKvBlobStore::new(path.clone());
+            let store: &mut dyn KvBlobStore = &mut store;
+
+            let mut buf = [0u8; 8];
+            assert_eq!(store.load(1, &mut buf).unwrap(), None);
+            // A load alone does not create the file
+            assert!(!path.exists());
+
+            // A remove of a missing key writes the (empty) file
+            store.remove(1, &mut buf).unwrap();
+            assert!(path.is_file());
+        }
+    }
+}

@@ -564,4 +564,229 @@ mod tests {
             ]
         );
     }
+
+    /// Fixed part of the proto header: exchange flags, opcode, exchange ID,
+    /// protocol ID.
+    const FIXED_LEN: usize = 1 + 1 + 2 + 2;
+
+    fn encode(hdr: &ProtoHdr) -> ([u8; ProtoHdr::MAX_LEN], usize) {
+        let mut buf = [0; ProtoHdr::MAX_LEN];
+        let mut wb = WriteBuf::new(&mut buf);
+        unwrap!(hdr.encode(&mut wb));
+        let len = wb.as_slice().len();
+        (buf, len)
+    }
+
+    /// Decode without decryption.
+    fn decode(bytes: &mut [u8]) -> Result<(ProtoHdr, usize), Error> {
+        let mut pb = ParseBuf::new(bytes);
+        let mut hdr = ProtoHdr::new();
+        hdr.decrypt_and_decode(
+            test_only_crypto(),
+            None,
+            0,
+            &plain_hdr::PlainHdr::new(),
+            &mut pb,
+        )?;
+        Ok((hdr, pb.as_slice().len()))
+    }
+
+    fn round_trip(hdr: &ProtoHdr, expected_len: usize) -> ProtoHdr {
+        let (mut buf, len) = encode(hdr);
+        assert_eq!(len, expected_len);
+
+        let (decoded, left) = unwrap!(decode(&mut buf[..len]));
+        assert_eq!(left, 0);
+
+        assert_eq!(decoded.exch_flags, hdr.exch_flags);
+        assert_eq!(decoded.exch_id, hdr.exch_id);
+        assert_eq!(decoded.proto_id, hdr.proto_id);
+        assert_eq!(decoded.proto_opcode, hdr.proto_opcode);
+        assert_eq!(decoded.get_vendor(), hdr.get_vendor());
+        assert_eq!(decoded.get_ack(), hdr.get_ack());
+
+        decoded
+    }
+
+    /// A fresh header is "not decoded" until real protocol / opcode values
+    /// land in it.
+    #[test]
+    fn new_header_is_not_decoded() {
+        let hdr = ProtoHdr::new();
+        assert!(!hdr.is_decoded());
+        assert!(!hdr.is_initiator());
+        assert!(!hdr.is_reliable());
+        assert!(!hdr.is_security_ext());
+        assert!(hdr.get_ack().is_none());
+        assert!(hdr.get_vendor().is_none());
+
+        let mut bytes = [0x00, 0x20, 0x01, 0x00, 0x00, 0x00];
+        let (decoded, _) = unwrap!(decode(&mut bytes));
+        assert!(decoded.is_decoded());
+    }
+
+    /// The minimal header is the fixed part, laid out little-endian.
+    #[test]
+    fn minimal_header_round_trip() {
+        let mut hdr = ProtoHdr::new();
+        hdr.exch_id = 0x1234;
+        hdr.proto_id = 0x0001;
+        hdr.proto_opcode = 0x08;
+
+        round_trip(&hdr, FIXED_LEN);
+
+        let (buf, len) = encode(&hdr);
+        assert_eq!(&buf[..len], &[0x00, 0x08, 0x34, 0x12, 0x01, 0x00]);
+    }
+
+    /// All five exchange flags round-trip, with the vendor ID and ACK counter
+    /// appended in that order; the result is exactly `MAX_LEN`.
+    #[test]
+    fn all_flags_round_trip() {
+        let mut hdr = ProtoHdr::new();
+        hdr.exch_id = 1;
+        hdr.proto_id = 2;
+        hdr.proto_opcode = 3;
+        hdr.set_initiator();
+        hdr.set_reliable();
+        hdr.set_ack(Some(0xdead_beef));
+        hdr.set_vendor(Some(0xfff1));
+        hdr.exch_flags |= ExchFlags::SECEX;
+
+        let decoded = round_trip(&hdr, ProtoHdr::MAX_LEN);
+        assert!(decoded.is_initiator());
+        assert!(decoded.is_reliable());
+        assert!(decoded.is_security_ext());
+        assert_eq!(decoded.get_ack(), Some(0xdead_beef));
+        assert_eq!(decoded.get_vendor(), Some(0xfff1));
+
+        let (buf, len) = encode(&hdr);
+        assert_eq!(buf[0], ExchFlags::all().bits());
+        assert_eq!(&buf[6..8], &[0xf1, 0xff]);
+        assert_eq!(&buf[8..len], &[0xef, 0xbe, 0xad, 0xde]);
+    }
+
+    /// The vendor ID and ACK counter are each present exactly when their flag
+    /// is set, and clearing the flag also forgets the value.
+    #[test]
+    fn optional_fields_follow_their_flags() {
+        let mut hdr = ProtoHdr::new();
+        hdr.proto_id = 1;
+        hdr.proto_opcode = 1;
+
+        hdr.set_vendor(Some(0x1234));
+        assert!(hdr.exch_flags.contains(ExchFlags::VENDOR));
+        round_trip(&hdr, FIXED_LEN + 2);
+
+        hdr.set_vendor(None);
+        assert!(!hdr.exch_flags.contains(ExchFlags::VENDOR));
+        assert_eq!(hdr.proto_vendor_id, 0);
+        round_trip(&hdr, FIXED_LEN);
+
+        hdr.set_ack(Some(42));
+        assert!(hdr.exch_flags.contains(ExchFlags::ACK));
+        round_trip(&hdr, FIXED_LEN + 4);
+
+        hdr.set_ack(None);
+        assert!(!hdr.exch_flags.contains(ExchFlags::ACK));
+        assert_eq!(hdr.ack_msg_ctr, 0);
+        round_trip(&hdr, FIXED_LEN);
+
+        // A raw A flag without the counter bytes is a truncated packet.
+        let (mut buf, len) = encode(&hdr);
+        buf[0] |= ExchFlags::ACK.bits();
+        assert_eq!(
+            unwrap!(decode(&mut buf[..len]).err()).code(),
+            ErrorCode::TruncatedPacket
+        );
+    }
+
+    /// Unknown exchange flag bits are rejected; a short header is truncated.
+    #[test]
+    fn decode_rejects_unknown_bits_and_truncation() {
+        let mut hdr = ProtoHdr::new();
+        hdr.proto_id = 1;
+        hdr.proto_opcode = 1;
+        hdr.set_vendor(Some(1));
+        hdr.set_ack(Some(1));
+        let (buf, len) = encode(&hdr);
+
+        for bit in [0x20, 0x40, 0x80] {
+            let mut bytes = buf;
+            bytes[0] = bit;
+            assert_eq!(
+                unwrap!(decode(&mut bytes[..len]).err()).code(),
+                ErrorCode::Invalid,
+                "flag {bit:#x}"
+            );
+        }
+
+        for cut in 0..len {
+            let mut bytes = buf;
+            assert_eq!(
+                unwrap!(decode(&mut bytes[..cut]).err()).code(),
+                ErrorCode::TruncatedPacket,
+                "cut at {cut}"
+            );
+        }
+    }
+
+    /// The initiator flag toggles and the opcode helpers map to the given
+    /// protocol's opcode enum.
+    #[test]
+    fn initiator_toggle_and_opcode_checks() {
+        use crate::sc::OpCode;
+
+        let mut hdr = ProtoHdr::new();
+        hdr.toggle_initiator();
+        assert!(hdr.is_initiator());
+        hdr.toggle_initiator();
+        assert!(!hdr.is_initiator());
+
+        hdr.proto_opcode = OpCode::PBKDFParamRequest as u8;
+        assert_eq!(unwrap!(hdr.opcode::<OpCode>()), OpCode::PBKDFParamRequest);
+        unwrap!(hdr.check_opcode(OpCode::PBKDFParamRequest));
+        assert_eq!(
+            unwrap!(hdr.check_opcode(OpCode::CASESigma1).err()).code(),
+            ErrorCode::Invalid
+        );
+
+        hdr.proto_opcode = 0xff;
+        assert_eq!(
+            unwrap!(hdr.opcode::<OpCode>().err()).code(),
+            ErrorCode::Invalid
+        );
+    }
+
+    /// Over a reliable transport the R and A flags are stripped (both ways);
+    /// over UDP they are left alone.
+    #[test]
+    fn adjust_reliability_strips_mrp_flags_on_reliable_transports() {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        use crate::transport::network::BtAddr;
+
+        let sock = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 5540, 0, 0));
+
+        let armed = || {
+            let mut hdr = ProtoHdr::new();
+            hdr.set_reliable();
+            hdr.set_ack(Some(5));
+            hdr
+        };
+
+        for rx in [false, true] {
+            let mut hdr = armed();
+            hdr.adjust_reliability(rx, &Address::Udp(sock));
+            assert!(hdr.is_reliable());
+            assert_eq!(hdr.get_ack(), Some(5));
+
+            for addr in [Address::Tcp(sock), Address::Btp(BtAddr([0; 6]))] {
+                let mut hdr = armed();
+                hdr.adjust_reliability(rx, &addr);
+                assert!(!hdr.is_reliable());
+                assert!(hdr.get_ack().is_none());
+            }
+        }
+    }
 }

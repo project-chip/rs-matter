@@ -315,3 +315,197 @@ impl embedded_io_async::Error for Error {
         embedded_io_async::ErrorKind::Other
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::str::from_utf8;
+
+    use super::{Error, ErrorCode};
+
+    /// A representative slice of the error codes, covering the first and last
+    /// variants and the ones with special `From` mappings.
+    const CODES: &[ErrorCode] = &[
+        ErrorCode::AlreadyExists,
+        ErrorCode::AttributeNotFound,
+        ErrorCode::BufferTooSmall,
+        ErrorCode::ConstraintError,
+        ErrorCode::Invalid,
+        ErrorCode::InvalidData,
+        ErrorCode::InvalidTransportType,
+        ErrorCode::NoSpace,
+        ErrorCode::TxTimeout,
+        ErrorCode::RxTimeout,
+        ErrorCode::StdIoError,
+        ErrorCode::SysTimeFail,
+        ErrorCode::RwLock,
+        ErrorCode::Utf8Fail,
+        ErrorCode::Failure,
+        ErrorCode::CdInvalidPaa,
+    ];
+
+    #[test]
+    fn code_roundtrips_through_error() {
+        for code in CODES {
+            let err = Error::new(*code);
+            assert_eq!(err.code(), *code);
+
+            let err: Error = (*code).into();
+            assert_eq!(err.code(), *code);
+
+            // `?` on an `ErrorCode` works via the same `From`
+            let res: Result<(), Error> = (|| {
+                Err(*code)?;
+                Ok(())
+            })();
+            assert_eq!(res.unwrap_err().code(), *code);
+        }
+    }
+
+    #[test]
+    fn error_code_equality_and_hash() {
+        use std::collections::HashSet;
+
+        assert_eq!(ErrorCode::NoSpace, ErrorCode::NoSpace);
+        assert_ne!(ErrorCode::NoSpace, ErrorCode::NoSpaceExchanges);
+
+        let set: HashSet<ErrorCode> = CODES.iter().copied().collect();
+        assert_eq!(set.len(), CODES.len());
+
+        // Copy semantics
+        let a = ErrorCode::Busy;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn display_and_debug_do_not_panic() {
+        for code in CODES {
+            let err = Error::new(*code);
+
+            let display = format!("{err}");
+            let debug = format!("{err:?}");
+            let code_debug = format!("{code:?}");
+
+            // Display is the code's Debug name; Debug wraps it as `Error::<name>`
+            assert!(
+                display.starts_with(&code_debug),
+                "{display} vs {code_debug}"
+            );
+            assert!(
+                debug.starts_with(&format!("Error::{code_debug}")),
+                "{debug}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_peer_unresponsive_only_for_timeouts() {
+        assert!(Error::new(ErrorCode::TxTimeout).is_peer_unresponsive());
+        assert!(Error::new(ErrorCode::RxTimeout).is_peer_unresponsive());
+
+        for code in CODES {
+            if !matches!(code, ErrorCode::TxTimeout | ErrorCode::RxTimeout) {
+                assert!(!Error::new(*code).is_peer_unresponsive(), "{code:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn core_conversions() {
+        let slice_err = <[u8; 4]>::try_from(&[1u8, 2, 3][..]).unwrap_err();
+        assert_eq!(Error::from(slice_err).code(), ErrorCode::Invalid);
+
+        let utf8_err = from_utf8(&[0xff, 0xfe]).unwrap_err();
+        assert_eq!(Error::from(utf8_err).code(), ErrorCode::Utf8Fail);
+
+        #[derive(Debug, Copy, Clone, num_enum::TryFromPrimitive)]
+        #[repr(u8)]
+        enum Small {
+            _One = 1,
+        }
+        let prim_err = Small::try_from(9u8).unwrap_err();
+        assert_eq!(Error::from(prim_err).code(), ErrorCode::Invalid);
+    }
+
+    #[test]
+    fn error_is_a_core_error() {
+        let err = Error::new(ErrorCode::Busy);
+        let dyn_err: &dyn core::error::Error = &err;
+
+        // Without details attached there is no source
+        assert!(dyn_err.source().is_none());
+
+        // `?` from an `Error` into a boxed error works
+        let boxed: Box<dyn core::error::Error + Send + Sync> = Box::new(err);
+        assert!(boxed.to_string().contains("Busy"));
+    }
+
+    #[test]
+    fn embedded_io_error_kind_is_other() {
+        use embedded_io_async::Error as _;
+
+        assert_eq!(
+            Error::new(ErrorCode::NoSpace).kind(),
+            embedded_io_async::ErrorKind::Other
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn std_conversions() {
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let err = Error::from(io);
+        assert_eq!(err.code(), ErrorCode::StdIoError);
+
+        let lock = std::sync::Mutex::new(());
+        let poisoned = std::sync::PoisonError::new(lock.lock().unwrap());
+        assert_eq!(Error::from(poisoned).code(), ErrorCode::RwLock);
+
+        let time_err = std::time::UNIX_EPOCH
+            .duration_since(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(Error::from(time_err).code(), ErrorCode::SysTimeFail);
+    }
+
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    #[test]
+    fn details_are_kept_and_displayed() {
+        let err = Error::new(ErrorCode::Busy);
+        assert!(err.details().is_none());
+        assert_eq!(format!("{err}"), "Busy");
+
+        let inner = std::io::Error::new(std::io::ErrorKind::Other, "disk on fire");
+        let err = Error::new_with_details(ErrorCode::StdIoError, Box::new(inner));
+        assert_eq!(err.code(), ErrorCode::StdIoError);
+        assert!(err.details().unwrap().to_string().contains("disk on fire"));
+        assert_eq!(format!("{err}"), "StdIoError: disk on fire");
+
+        // The details are exposed as the `source`
+        let dyn_err: &dyn core::error::Error = &err;
+        assert!(dyn_err
+            .source()
+            .unwrap()
+            .to_string()
+            .contains("disk on fire"));
+
+        // `From<std::io::Error>` also attaches the details under `backtrace`
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let err = Error::from(io);
+        assert!(err.details().unwrap().to_string().contains("gone"));
+    }
+
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    #[test]
+    fn backtrace_capture_does_not_panic() {
+        let err = Error::new(ErrorCode::Failure);
+
+        // Capture may be disabled by the environment; only its presence is checked
+        let _ = err.backtrace().status();
+        let _ = format!("{}", err.backtrace());
+
+        // Debug embeds the backtrace block
+        let debug = format!("{err:?}");
+        assert!(debug.starts_with("Error::Failure {"));
+        assert!(debug.trim_end().ends_with('}'));
+    }
+}

@@ -429,4 +429,274 @@ mod tests {
         let active = RetransEntry::retransmission_timeout_ms(300, 5000, u16::MAX, false);
         assert_eq!(active, active_only);
     }
+
+    /// A plain header carrying the given message counter.
+    fn plain(ctr: u32) -> PlainHdr {
+        let mut hdr = PlainHdr::new();
+        hdr.ctr = ctr;
+        hdr
+    }
+
+    /// A proto header with the R flag set (or not).
+    fn proto(reliable: bool) -> ProtoHdr {
+        let mut hdr = ProtoHdr::new();
+        if reliable {
+            hdr.set_reliable();
+        }
+        hdr
+    }
+
+    /// Sending a reliable message records a retransmission entry for its
+    /// counter; sending an unreliable one records nothing.
+    #[test]
+    fn pre_send_arms_retrans_only_for_reliable_messages() {
+        let mut mrp = ReliableMessage::new();
+
+        let mut tx_proto = proto(false);
+        unwrap!(mrp.pre_send(&plain(10), &mut tx_proto, Some(300), None));
+        assert!(!mrp.is_retrans_pending());
+        assert!(tx_proto.get_ack().is_none());
+
+        let mut tx_proto = proto(true);
+        unwrap!(mrp.pre_send(&plain(11), &mut tx_proto, Some(300), None));
+        assert!(mrp.is_retrans_pending());
+        assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), 11);
+        assert!(tx_proto.is_reliable());
+    }
+
+    /// A pending ACK is piggybacked onto the next outgoing message: the A flag
+    /// carries the counter, and the ACK is no longer reported as pending. The
+    /// entry itself is only dropped by `post_recv`, so every later send keeps
+    /// piggybacking the same counter.
+    #[test]
+    fn pre_send_piggybacks_pending_ack() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.post_recv(&plain(7), &proto(true)));
+        assert!(mrp.is_ack_pending());
+
+        let mut tx_proto = proto(false);
+        unwrap!(mrp.pre_send(&plain(1), &mut tx_proto, Some(300), None));
+        assert_eq!(tx_proto.get_ack(), Some(7));
+        assert!(!mrp.is_ack_pending());
+
+        let mut tx_proto = proto(false);
+        unwrap!(mrp.pre_send(&plain(2), &mut tx_proto, Some(300), None));
+        assert_eq!(tx_proto.get_ack(), Some(7));
+        assert!(!mrp.is_ack_pending());
+    }
+
+    /// Re-sending the same counter while a retransmission is pending is a
+    /// retransmission: the entry is kept and its attempt counter advances, and
+    /// once the attempts run out the send fails and both tables are cleared.
+    #[test]
+    fn pre_send_same_counter_is_a_retransmission_until_attempts_run_out() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.post_recv(&plain(3), &proto(true)));
+
+        let tx_plain = plain(20);
+
+        // The first send arms the entry; each further one is a retransmission.
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(300), None));
+        for _ in 0..MRP_MAX_TRANSMISSIONS {
+            unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(300), None));
+            assert!(mrp.is_retrans_pending());
+        }
+        assert_eq!(unwrap!(mrp.retrans.as_ref()).counter, MRP_MAX_TRANSMISSIONS);
+
+        let err = unwrap!(mrp
+            .pre_send(&tx_plain, &mut proto(true), Some(300), None)
+            .err());
+        assert_eq!(err.code(), ErrorCode::TxTimeout);
+        assert!(!mrp.is_retrans_pending());
+        assert!(mrp.ack.is_none());
+    }
+
+    /// A reliable send with a *different* counter while a retransmission is
+    /// still pending is a caller bug and panics rather than silently replacing
+    /// the pending entry.
+    #[test]
+    #[should_panic(expected = "Previous retrans entry")]
+    fn pre_send_different_counter_while_retrans_pending_panics() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(300), None));
+        let _ = mrp.pre_send(&plain(21), &mut proto(true), Some(300), None);
+    }
+
+    /// An incoming ACK for the pending counter clears the retransmission (and
+    /// any piggyback ACK entry); one for another counter is a late duplicate
+    /// that leaves the retransmission pending.
+    #[test]
+    fn post_recv_ack_must_match_pending_retrans() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(300), None));
+
+        let mut rx_proto = proto(false);
+        rx_proto.set_ack(Some(19));
+        let err = unwrap!(mrp.post_recv(&plain(5), &rx_proto).err());
+        assert_eq!(err.code(), ErrorCode::Duplicate);
+        assert!(mrp.is_retrans_pending());
+
+        rx_proto.set_ack(Some(20));
+        unwrap!(mrp.post_recv(&plain(6), &rx_proto));
+        assert!(!mrp.is_retrans_pending());
+        assert!(mrp.ack.is_none());
+    }
+
+    /// An ACK arriving when nothing is being retransmitted is simply ignored.
+    #[test]
+    fn post_recv_ack_without_pending_retrans_is_ignored() {
+        let mut mrp = ReliableMessage::new();
+
+        let mut rx_proto = proto(false);
+        rx_proto.set_ack(Some(99));
+        unwrap!(mrp.post_recv(&plain(5), &rx_proto));
+        assert!(!mrp.is_retrans_pending());
+        assert!(!mrp.is_ack_pending());
+    }
+
+    /// A reliable incoming message arms an ACK for its counter and stamps the
+    /// receive time; an unreliable one does neither.
+    #[test]
+    fn post_recv_reliable_message_arms_ack() {
+        let mut mrp = ReliableMessage::new();
+
+        unwrap!(mrp.post_recv(&plain(5), &proto(false)));
+        assert!(!mrp.is_ack_pending());
+        assert!(mrp.received_at.is_some());
+
+        unwrap!(mrp.post_recv(&plain(6), &proto(true)));
+        assert!(mrp.is_ack_pending());
+        assert_eq!(unwrap!(mrp.ack.as_ref()).get_msg_ctr(), 6);
+    }
+
+    /// A retransmitted (or newer) reliable message re-arms the ACK, even after
+    /// the previous one was already piggybacked out.
+    #[test]
+    fn post_recv_duplicate_reliable_message_rearms_ack() {
+        let mut mrp = ReliableMessage::new();
+
+        unwrap!(mrp.post_recv(&plain(6), &proto(true)));
+        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(300), None));
+        assert!(!mrp.is_ack_pending());
+
+        unwrap!(mrp.post_recv(&plain(6), &proto(true)));
+        assert!(mrp.is_ack_pending());
+        assert_eq!(unwrap!(mrp.ack.as_ref()).get_msg_ctr(), 6);
+
+        unwrap!(mrp.post_recv(&plain(7), &proto(true)));
+        assert!(mrp.is_ack_pending());
+        assert_eq!(unwrap!(mrp.ack.as_ref()).get_msg_ctr(), 7);
+    }
+
+    /// The receive timeout is measured from the last receive: nothing received
+    /// means no timeout, a zero timeout expires at once, and a send clears the
+    /// stamp again.
+    #[test]
+    fn has_rx_timed_out_boundaries() {
+        let mut mrp = ReliableMessage::new();
+        assert!(!mrp.has_rx_timed_out(0));
+
+        mrp.received_at = Some(Instant::from_ticks(0));
+        assert!(mrp.has_rx_timed_out(0));
+
+        // A deadline that saturates at the end of time never arrives.
+        mrp.received_at = Some(Instant::MAX);
+        assert!(!mrp.has_rx_timed_out(0));
+        mrp.received_at = Some(Instant::from_ticks(0));
+        assert!(!mrp.has_rx_timed_out(u64::MAX));
+
+        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(300), None));
+        assert!(mrp.received_at.is_none());
+        assert!(!mrp.has_rx_timed_out(0));
+    }
+
+    /// The jitter adds between 0 (`jitter_rand == 0`) and a quarter
+    /// (`jitter_rand == 255`) of the base delay, and grows with the random.
+    #[test]
+    fn delay_ms_jitter_stays_within_band() {
+        let entry = RetransEntry::new(Some(300), 1);
+
+        let no_jitter = entry.delay_ms(0);
+        let max_jitter = entry.delay_ms(255);
+
+        // First transmission: only the margin applies.
+        assert_eq!(no_jitter, 300 * MRP_BACKOFF_MARGIN.0 / MRP_BACKOFF_MARGIN.1);
+        assert_eq!(
+            max_jitter,
+            no_jitter + no_jitter * MRP_BACKOFF_JITTER.0 / MRP_BACKOFF_JITTER.1
+        );
+
+        let mid_jitter = entry.delay_ms(128);
+        assert!(no_jitter < mid_jitter && mid_jitter < max_jitter);
+    }
+
+    /// `None` and `Some(0)` both fall back to the default base interval, so a
+    /// zero interval can never collapse the ladder into a tight loop.
+    #[test]
+    fn retrans_entry_zero_interval_falls_back_to_default() {
+        let default = RetransEntry::new(None, 1).delay_ms(0);
+
+        assert_eq!(RetransEntry::new(Some(0), 1).delay_ms(0), default);
+        assert_eq!(
+            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), 1).delay_ms(0),
+            default
+        );
+        assert!(RetransEntry::new(Some(1000), 1).delay_ms(0) > default);
+    }
+
+    /// The peer-MRP defaults for a fresh session come from our own SAI / SII,
+    /// with zero and absent values replaced by the built-in fallbacks.
+    #[test]
+    fn default_peer_mrp_params_derive_from_dev_det() {
+        use crate::dm::devices::test::TEST_DEV_DET;
+
+        // The test device advertises neither.
+        assert_eq!(
+            default_peer_mrp_params(&TEST_DEV_DET),
+            (
+                MRP_BASE_RETRY_INTERVAL_MS,
+                MRP_DEFAULT_IDLE_INTERVAL_MS,
+                MRP_DEFAULT_ACTIVE_THRESHOLD_MS
+            )
+        );
+
+        let dev_det = BasicInfoConfig {
+            sai: Some(500),
+            sii: Some(0),
+            ..TEST_DEV_DET
+        };
+        assert_eq!(
+            default_peer_mrp_params(&dev_det),
+            (
+                500,
+                MRP_DEFAULT_IDLE_INTERVAL_MS,
+                MRP_DEFAULT_ACTIVE_THRESHOLD_MS
+            )
+        );
+
+        let dev_det = BasicInfoConfig {
+            sai: None,
+            sii: Some(7000),
+            ..TEST_DEV_DET
+        };
+        assert_eq!(
+            default_peer_mrp_params(&dev_det),
+            (
+                MRP_BASE_RETRY_INTERVAL_MS,
+                7000,
+                MRP_DEFAULT_ACTIVE_THRESHOLD_MS
+            )
+        );
+    }
+
+    /// Any counter can be acknowledged, and a fresh entry is not yet
+    /// acknowledged.
+    #[test]
+    fn ack_entry_accepts_any_counter() {
+        for ctr in [0, 1, u32::MAX] {
+            let entry = unwrap!(AckEntry::new(ctr));
+            assert_eq!(entry.get_msg_ctr(), ctr);
+            assert!(!entry.acknowledged);
+        }
+    }
 }
