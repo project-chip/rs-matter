@@ -1108,3 +1108,218 @@ impl<T: ?Sized + fmt::Display> fmt::Display for RefMut<'_, T> {
         (**self).fmt(f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+    use core::mem::MaybeUninit;
+
+    use crate::utils::init::InitMaybeUninit;
+    use crate::utils::storage::Vec;
+
+    use super::{Ref, RefCell, RefMut};
+
+    #[test]
+    fn borrow_rules() {
+        let x = RefCell::new(10);
+        assert_eq!(*x.borrow(), 10);
+
+        {
+            let b1 = x.borrow();
+            let b2 = x.borrow();
+            assert_eq!(*b1 + *b2, 20);
+            assert!(x.try_borrow().is_ok());
+            assert!(x.try_borrow_mut().is_err());
+        }
+
+        {
+            let mut m = x.borrow_mut();
+            *m += 1;
+            assert!(x.try_borrow().is_err());
+            assert!(x.try_borrow_mut().is_err());
+        }
+
+        assert_eq!(*x.borrow(), 11);
+        assert!(x.try_borrow_mut().is_ok());
+    }
+
+    #[test]
+    #[should_panic]
+    fn double_borrow_mut_panics() {
+        let x = RefCell::new(0);
+        let _a = x.borrow_mut();
+        let _b = x.borrow_mut();
+    }
+
+    #[test]
+    #[should_panic]
+    fn borrow_while_borrowed_mut_panics() {
+        let x = RefCell::new(0);
+        let _a = x.borrow_mut();
+        let _b = x.borrow();
+    }
+
+    #[test]
+    fn ref_clone_and_map() {
+        let x = RefCell::new((1, 2));
+
+        let r = x.borrow();
+        let r2 = Ref::clone(&r);
+        assert!(x.try_borrow_mut().is_err());
+
+        let first = Ref::map(r, |t| &t.0);
+        assert_eq!(*first, 1);
+        drop(first);
+        assert!(x.try_borrow_mut().is_err());
+
+        drop(r2);
+        assert!(x.try_borrow_mut().is_ok());
+    }
+
+    #[test]
+    fn ref_filter_map_and_map_split() {
+        let x = RefCell::new([1u8, 2, 3, 4]);
+
+        // A failed `filter_map` hands the original borrow back
+        let r = Ref::filter_map(x.borrow(), |a| a.get(10)).err().unwrap();
+        assert_eq!(*r, [1, 2, 3, 4]);
+        let second = Ref::filter_map(r, |a| a.get(1)).ok().unwrap();
+        assert_eq!(*second, 2);
+        assert!(x.try_borrow_mut().is_err());
+        drop(second);
+        assert!(x.try_borrow_mut().is_ok());
+
+        let (l, r) = Ref::map_split(x.borrow(), |a| a.split_at(2));
+        assert_eq!(*l, [1, 2]);
+        assert_eq!(*r, [3, 4]);
+        drop(l);
+        assert!(x.try_borrow_mut().is_err());
+        drop(r);
+        assert!(x.try_borrow_mut().is_ok());
+    }
+
+    #[test]
+    fn ref_mut_map_filter_map_and_map_split() {
+        let x = RefCell::new([1u8, 2, 3, 4]);
+
+        {
+            let mut m = RefMut::map(x.borrow_mut(), |a| &mut a[0]);
+            *m = 10;
+            assert!(x.try_borrow().is_err());
+        }
+        assert_eq!(x.borrow()[0], 10);
+
+        {
+            // A failed `filter_map` hands the original borrow back
+            let m = RefMut::filter_map(x.borrow_mut(), |a| a.get_mut(10))
+                .err()
+                .unwrap();
+            let mut m = RefMut::filter_map(m, |a| a.get_mut(3)).ok().unwrap();
+            *m = 40;
+            assert!(x.try_borrow().is_err());
+        }
+        assert_eq!(x.borrow()[3], 40);
+
+        {
+            let (mut l, mut r) = RefMut::map_split(x.borrow_mut(), |a| a.split_at_mut(2));
+            l[1] = 20;
+            r[0] = 30;
+            drop(l);
+            assert!(x.try_borrow().is_err());
+            drop(r);
+            assert!(x.try_borrow().is_ok());
+        }
+        assert_eq!(*x.borrow(), [10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn replace_swap_take_get_mut() {
+        let x = RefCell::new(5);
+        assert_eq!(x.replace(6), 5);
+        assert_eq!(x.replace_with(|v| *v * 2), 6);
+        assert_eq!(*x.borrow(), 12);
+
+        let y = RefCell::new(1);
+        x.swap(&y);
+        assert_eq!(*x.borrow(), 1);
+        assert_eq!(*y.borrow(), 12);
+
+        assert_eq!(y.take(), 12);
+        assert_eq!(*y.borrow(), 0);
+
+        let mut z = RefCell::new(7);
+        *z.get_mut() += 1;
+        // SAFETY: nothing else accesses the cell while the raw pointer is read
+        assert_eq!(unsafe { *z.as_ptr() }, 8);
+        assert_eq!(z.into_inner(), 8);
+    }
+
+    #[test]
+    fn try_borrow_unguarded() {
+        let x = RefCell::new(3);
+
+        {
+            let _m = x.borrow_mut();
+            // SAFETY: the returned reference is not used while the mutable borrow is live
+            assert!(unsafe { x.try_borrow_unguarded() }.is_err());
+        }
+
+        {
+            let _r = x.borrow();
+            // SAFETY: only shared borrows exist for the lifetime of the returned reference
+            assert_eq!(unsafe { x.try_borrow_unguarded() }.copied().unwrap(), 3);
+        }
+    }
+
+    #[test]
+    fn init_in_place() {
+        let mut slot = MaybeUninit::<RefCell<Vec<u8, 4>>>::uninit();
+        let cell = slot.init_with(RefCell::init(Vec::init()));
+
+        cell.borrow_mut().push(1).unwrap();
+        assert_eq!(cell.borrow().as_slice(), &[1]);
+        assert!(cell.try_borrow_mut().is_ok());
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
+    }
+
+    #[test]
+    fn drops_once() {
+        struct Droppable<'a>(&'a Cell<u32>);
+
+        impl Drop for Droppable<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let drops = Cell::new(0);
+
+        {
+            let x = RefCell::new(Droppable(&drops));
+            let _r = x.borrow();
+        }
+        assert_eq!(drops.get(), 1);
+
+        let x = RefCell::new(Droppable(&drops));
+        let d = x.into_inner();
+        assert_eq!(drops.get(), 1);
+        drop(d);
+        assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
+    fn clone_eq_ord_default() {
+        let a = RefCell::new(1);
+        let b = a.clone();
+        assert!(a == b);
+        assert!(a <= b);
+
+        *b.borrow_mut() = 2;
+        assert!(a < b);
+        assert!(a != b);
+
+        assert!(RefCell::<u8>::default() == RefCell::new(0));
+    }
+}

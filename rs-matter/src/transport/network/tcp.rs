@@ -773,7 +773,8 @@ enum IoEvent {
     PoolChanged,
 }
 
-#[cfg(test)]
+// The tests below drive real TCP sockets through the `async-io` reactor, which Miri cannot emulate.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

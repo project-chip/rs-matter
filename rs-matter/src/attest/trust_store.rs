@@ -314,6 +314,7 @@ pub mod fileio {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)] // Touches the filesystem, which Miri isolates by default
         fn from_directory_loads() {
             let dir = create_test_dir("loads");
             write_file(dir.path(), "readme.txt", b"not a cert");
@@ -323,6 +324,7 @@ pub mod fileio {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)] // Touches the filesystem, which Miri isolates by default
         fn from_directory_skips_invalid() {
             let dir = create_test_dir("skips");
             write_file(dir.path(), "garbage.der", &[0xDE, 0xAD, 0xBE, 0xEF]);
@@ -333,6 +335,7 @@ pub mod fileio {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)] // Touches the filesystem, which Miri isolates by default
         fn from_directory_lookup() {
             let dir = create_test_dir("lookup");
 
@@ -349,6 +352,7 @@ pub mod fileio {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)] // Touches the filesystem, which Miri isolates by default
         fn from_directory_empty() {
             let dir = create_empty_test_dir("empty");
 
@@ -358,6 +362,7 @@ pub mod fileio {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)] // Touches the filesystem, which Miri isolates by default
         fn from_directory_nonexistent() {
             let dir = test_path("nonexistent");
             let _ = std::fs::remove_dir_all(&dir);

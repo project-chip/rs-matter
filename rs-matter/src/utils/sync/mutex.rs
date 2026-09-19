@@ -238,3 +238,80 @@ where
         unsafe { &mut *(self.mutex.inner.get()) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::mem::MaybeUninit;
+
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use futures_lite::future::{block_on, zip};
+
+    use crate::utils::init::InitMaybeUninit;
+    use crate::utils::storage::Vec;
+
+    use super::{IfMutex, TryLockError};
+
+    #[test]
+    fn try_lock_and_guard() {
+        let m = IfMutex::<_, NoopRawMutex>::new(1);
+
+        {
+            let mut g = m.try_lock().unwrap();
+            assert_eq!(m.try_lock().err(), Some(TryLockError));
+            assert_eq!(m.try_lock_if(|_| true).err(), Some(TryLockError));
+
+            assert_eq!(*g, 1);
+            *g += 1;
+        }
+
+        assert_eq!(*m.try_lock().unwrap(), 2);
+        assert!(m.try_lock_if(|v| *v == 3).is_err());
+        assert_eq!(*m.try_lock_if(|v| *v == 2).unwrap(), 2);
+    }
+
+    #[test]
+    fn lock_lock_if_and_with() {
+        let m = IfMutex::<_, NoopRawMutex>::new(0);
+
+        block_on(async {
+            {
+                let mut g = m.lock().await;
+                *g = 1;
+            }
+
+            // `lock_if` must wait until the condition holds, which the second future makes true
+            let (g, ()) = zip(m.lock_if(|v| *v == 2), async {
+                let mut g = m.lock().await;
+                *g = 2;
+            })
+            .await;
+            assert_eq!(*g, 2);
+            drop(g);
+
+            let r = m
+                .with(|v| {
+                    *v += 1;
+                    Some(*v)
+                })
+                .await;
+            assert_eq!(r, 3);
+        });
+
+        let mut m = m;
+        *m.get_mut() += 1;
+        assert_eq!(m.into_inner(), 4);
+    }
+
+    #[test]
+    fn init_in_place() {
+        let mut slot = MaybeUninit::<IfMutex<Vec<u8, 4>, NoopRawMutex>>::uninit();
+        let m = slot.init_with(IfMutex::init(Vec::init()));
+
+        m.get_mut().push(9).unwrap();
+        assert_eq!(m.try_lock().unwrap().as_slice(), &[9]);
+
+        // SAFETY: `slot` was initialized by `init_with` above
+        unsafe { slot.assume_init_drop() };
+    }
+}

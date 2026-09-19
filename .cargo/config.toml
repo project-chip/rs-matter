@@ -1,2 +1,8 @@
 [alias]
 xtask = "run --quiet --manifest-path xtask/Cargo.toml --"
+
+[env]
+# `cargo miri test`: the `embassy-time` std driver spawns a timer thread that is never joined,
+# which Miri otherwise reports as a leak when the test process exits.
+# An explicitly set `MIRIFLAGS` in the environment takes precedence over this default.
+MIRIFLAGS = "-Zmiri-ignore-leaks"

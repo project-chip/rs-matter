@@ -464,19 +464,23 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 .key_set_get(group_key_set_id)
                 .ok_or(ErrorCode::NotFound)?;
 
+            // The policy is stored as its `u8` discriminant; anything else means the
+            // persisted key set is corrupted
+            let group_key_security_policy = match entry.group_key_security_policy {
+                v if v == GroupKeySecurityPolicyEnum::TrustFirst as u8 => {
+                    GroupKeySecurityPolicyEnum::TrustFirst
+                }
+                v if v == GroupKeySecurityPolicyEnum::CacheAndSync as u8 => {
+                    GroupKeySecurityPolicyEnum::CacheAndSync
+                }
+                _ => Err(ErrorCode::InvalidState)?,
+            };
+
             // Build response: epoch keys are always null, start times are preserved
             response
                 .group_key_set()?
                 .group_key_set_id(group_key_set_id)?
-                .group_key_security_policy(
-                    // SAFETY: group_key_security_policy is validated at write time
-                    // and the enum is #[repr(u8)]
-                    unsafe {
-                        core::mem::transmute::<u8, GroupKeySecurityPolicyEnum>(
-                            entry.group_key_security_policy,
-                        )
-                    },
-                )?
+                .group_key_security_policy(group_key_security_policy)?
                 .epoch_key_0(Nullable::<Octets<'_>>::none())?
                 .epoch_start_time_0(Nullable::some(entry.epoch_keys[0].epoch_start_time))?
                 .epoch_key_1(Nullable::<Octets<'_>>::none())?
