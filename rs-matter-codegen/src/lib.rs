@@ -29,9 +29,87 @@ use idl::{cluster_content, globals, Idl, IdlGenerateContext, CSA_STANDARD_CLUSTE
 #[allow(unused_assignments)]
 mod idl;
 
+/// Render a generated token stream as Rust source.
+///
+/// By default this uses a fast printer that only respects token spacing and
+/// adds line breaks and indentation around blocks and statements. It is
+/// several times faster than re-parsing the stream with `syn` and
+/// pretty-printing it with `prettyplease`, which matters because the
+/// generated code is ~30MB and the build script runs unoptimized in most
+/// downstream builds.
+///
+/// Set `RS_MATTER_CODEGEN_PRETTY=1` to get fully formatted output instead,
+/// e.g. when reading or diffing the generated code.
 fn format_tokens(tokens: proc_macro2::TokenStream) -> String {
-    let file = syn::parse2(tokens).expect("Generated code is not valid Rust");
-    prettyplease::unparse(&file)
+    if std::env::var_os("RS_MATTER_CODEGEN_PRETTY").is_some_and(|v| v == "1") {
+        let file = syn::parse2(tokens).expect("Generated code is not valid Rust");
+        return prettyplease::unparse(&file);
+    }
+
+    let mut out = String::new();
+    print_tokens(tokens, &mut out, 0, true);
+    out
+}
+
+/// Print `tokens` into `out`, one statement or item per line, indenting
+/// the contents of `{}` groups by one level.
+///
+/// `in_block` is true when the tokens are direct children of a `{}` group
+/// (or of the file), so that a `;` ends a line there but not inside `()`
+/// or `[]` (e.g. `[u8; 4]`).
+fn print_tokens(tokens: proc_macro2::TokenStream, out: &mut String, indent: usize, in_block: bool) {
+    use proc_macro2::{Delimiter, Spacing, TokenTree};
+
+    fn pad(out: &mut String, indent: usize) {
+        for _ in 0..indent {
+            out.push_str("    ");
+        }
+    }
+
+    for tt in tokens {
+        match tt {
+            TokenTree::Group(g) => match g.delimiter() {
+                Delimiter::Brace => {
+                    out.push_str("{\n");
+                    pad(out, indent + 1);
+                    print_tokens(g.stream(), out, indent + 1, true);
+                    out.push('\n');
+                    pad(out, indent);
+                    out.push_str("}\n");
+                    pad(out, indent);
+                }
+                Delimiter::Parenthesis => {
+                    out.push('(');
+                    print_tokens(g.stream(), out, indent, false);
+                    out.push_str(") ");
+                }
+                Delimiter::Bracket => {
+                    out.push('[');
+                    print_tokens(g.stream(), out, indent, false);
+                    out.push_str("] ");
+                }
+                Delimiter::None => {
+                    print_tokens(g.stream(), out, indent, in_block);
+                }
+            },
+            TokenTree::Punct(p) => {
+                let ch = p.as_char();
+                out.push(ch);
+                if ch == ';' && in_block {
+                    out.push('\n');
+                    pad(out, indent);
+                } else if p.spacing() == Spacing::Alone {
+                    // A `Joint` punct is immediately followed by the next
+                    // token (`::`, `->`, `'a`, ...); a space would split it.
+                    out.push(' ');
+                }
+            }
+            TokenTree::Ident(_) | TokenTree::Literal(_) => {
+                out.push_str(&tt.to_string());
+                out.push(' ');
+            }
+        }
+    }
 }
 
 /// Generate Rust code for all Matter clusters from the latest IDL specification.
