@@ -53,7 +53,12 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
+
+      # The test drivers are built with coverage instrumentation, so that the
+      # `coverage_report` job below can show which lines the Chip suites reach
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Checkout rs-matter
         uses: actions/checkout@v4
@@ -172,42 +177,42 @@ jobs:
           # because the relevant lines have already scrolled past the
           # GitHub Actions live tail.
           set -o pipefail
-          cargo xtask itest --skip-setup --suite system-yaml \
+          cargo xtask itest --skip-setup --suite system-yaml --coverage-out /tmp/itest-cov/system-yaml.info \
             2>&1 | tee /tmp/itest-system-yaml.log
 
       - name: Run System Python integration tests with RustCrypto
         if: matrix.suite == 'system-python'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite system-python \
+          cargo xtask itest --skip-setup --suite system-python --coverage-out /tmp/itest-cov/system-python.info \
             2>&1 | tee /tmp/itest-system-python.log
 
       - name: Run one System integration test with MbedTLS
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --features mbedtls TestBasicInformation \
+          cargo xtask itest --skip-setup --features mbedtls TestBasicInformation --coverage-out /tmp/itest-cov/mbedtls.info \
             2>&1 | tee /tmp/itest-system-mbedtls.log
 
       - name: Run one System integration test with OpenSSL
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --features openssl TestBasicInformation \
+          cargo xtask itest --skip-setup --features openssl TestBasicInformation --coverage-out /tmp/itest-cov/openssl.info \
             2>&1 | tee /tmp/itest-system-openssl.log
 
       - name: Run Wireless Network Commissioning integration tests
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite wireless \
+          cargo xtask itest --skip-setup --suite wireless --coverage-out /tmp/itest-cov/wireless.info \
             2>&1 | tee /tmp/itest-wireless.log
 
       - name: Run BLE commissioning integration tests
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite ble \
+          cargo xtask itest --skip-setup --suite ble --coverage-out /tmp/itest-cov/ble.info \
             2>&1 | tee /tmp/itest-ble.log
 
       # Real Thread stack (`otbr-agent` over D-Bus) on OpenThread's simulated
@@ -218,35 +223,35 @@ jobs:
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite thread \
+          cargo xtask itest --skip-setup --suite thread --coverage-out /tmp/itest-cov/thread.info \
             2>&1 | tee /tmp/itest-thread.log
 
       - name: Run LevelControl and OnOff integration tests
         if: matrix.suite == 'light'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite light \
+          cargo xtask itest --skip-setup --suite light --coverage-out /tmp/itest-cov/light.info \
             2>&1 | tee /tmp/itest-light.log
 
       - name: Run Scenes integration tests
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite scenes \
+          cargo xtask itest --skip-setup --suite scenes --coverage-out /tmp/itest-cov/scenes.info \
             2>&1 | tee /tmp/itest-scenes.log
 
       - name: Run Camera integration tests
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite camera \
+          cargo xtask itest --skip-setup --suite camera --coverage-out /tmp/itest-cov/camera.info \
             2>&1 | tee /tmp/itest-camera.log
 
       - name: Run Commissioner integration tests
         if: matrix.suite == 'rest'
         run: |
           set -o pipefail
-          cargo xtask itest --skip-setup --suite commissioner \
+          cargo xtask itest --skip-setup --suite commissioner --coverage-out /tmp/itest-cov/commissioner.info \
             2>&1 | tee /tmp/itest-commissioner.log
 
       # The designated cache saver: `system-python` is the leg whose lazy
@@ -260,6 +265,15 @@ jobs:
         with:
           path: .build/itest/connectedhomeip
           key: chip1-${{ runner.os }}-${{ steps.chip-key.outputs.ref }}
+
+      - name: Upload coverage traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: itest-coverage-${{ matrix.suite }}
+          path: /tmp/itest-cov/*.info
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload test results on failure
         if: failure()
@@ -281,3 +295,94 @@ jobs:
             /tmp/chip_kvs
           retention-days: 7
           if-no-files-found: warn
+
+  # Line coverage of the host test suites (unit, doc and e2e tests) next to
+  # the Chip suites' traces from the legs above, and their union. Nightly, so
+  # that the test modules (`#[cfg_attr(coverage_nightly, coverage(off))]`) stay
+  # out of the host figures. Informational only: nothing here fails the build.
+  coverage_report:
+    name: coverage report
+    needs: chip_integration_tests
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    env:
+      # Generated D-Bus proxies and the Linux OS backends (Avahi, BlueZ,
+      # NetworkManager, wpa_supplicant, OTBR) only run against real system
+      # services and are left out of the host measurement. The Chip legs keep
+      # the BlueZ and OTBR backends, which the `ble` and `thread` suites reach.
+      COV_IGNORE: 'zbus_proxies|mdns/(avahi|zeroconf|astro)|gatt/(bluez|bluer)|wifi/(nm|wpa_supp)|thread/otbr|networks/(unix|eth)'
+      COV_FEATURES: rustcrypto,os,async-io,log,groups,case-resumption,persistent-subscriptions,max-group-keys-per-fabric-2,max-groups-per-fabric-4
+
+    steps:
+      - name: Checkout rs-matter
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install libdbus
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            xtask
+          key: llvm-cov
+
+      - name: Measure the host test suites
+        run: |
+          mkdir -p /tmp/coverage
+          cd rs-matter
+          cargo llvm-cov --doctests --no-default-features --features "$COV_FEATURES" \
+            --ignore-filename-regex "$COV_IGNORE" \
+            --lcov --output-path /tmp/coverage/own.info
+
+      - name: Download the Chip suite traces
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: itest-coverage-*
+          path: /tmp/itest-cov
+          merge-multiple: true
+
+      - name: Report
+        run: |
+          shopt -s nullglob
+          legs=(/tmp/itest-cov/*.info)
+          if [ ${#legs[@]} -gt 0 ]; then
+            cargo xtask coverage --merge-out /tmp/coverage/chip.info "${legs[@]}" > /dev/null
+            traces=(--names own,chip /tmp/coverage/own.info /tmp/coverage/chip.info)
+          else
+            echo "::warning::no Chip suite traces were produced; reporting the host suites only"
+            traces=(--names own /tmp/coverage/own.info)
+          fi
+          cargo xtask coverage --depth 1 --split-above 2000 --lowest 20 \
+            --merge-out /tmp/coverage/all.info "${traces[@]}"
+          {
+            echo "## Line coverage by module: host suites (own), Chip suites (chip), union (all)"
+            echo
+            cargo xtask coverage --depth 1 --split-above 2000 --markdown "${traces[@]}"
+            echo
+            echo "<details><summary>Lowest-covered files (union)</summary>"
+            echo
+            echo '```'
+            cargo xtask coverage --depth 0 --lowest 20 /tmp/coverage/all.info
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage traces
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: /tmp/coverage/*.info
+          retention-days: 14
