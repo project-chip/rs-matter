@@ -456,6 +456,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::error::ErrorCode;
     use crate::im::IM_REVISION;

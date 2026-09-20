@@ -84,6 +84,7 @@ impl StatusResp {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
     use crate::utils::storage::WriteBuf;

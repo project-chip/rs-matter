@@ -1178,6 +1178,7 @@ pub trait CertConsumer {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::test_only_crypto;
     use crate::dm::clusters::time_sync::UtcTime;

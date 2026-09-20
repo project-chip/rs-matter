@@ -299,6 +299,7 @@ impl AsRef<[u8]> for Buf<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod test {
     use domain::base::name::{Label, ToLabelIter};
     use domain::base::ToName;

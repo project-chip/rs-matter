@@ -984,6 +984,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::test_only_crypto;
 

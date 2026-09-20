@@ -805,6 +805,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::error::{Error, ErrorCode};
     use crate::im::{

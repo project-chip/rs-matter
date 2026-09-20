@@ -319,3 +319,7 @@ async-io = "2"
 [[test]]
 name = "mcsp"
 required-features = ["async-io", "groups", "max-group-keys-per-fabric-2", "max-groups-per-fabric-4"]
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

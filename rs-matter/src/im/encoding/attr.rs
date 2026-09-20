@@ -397,6 +397,7 @@ pub enum ReportDataRespTag {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::error::ErrorCode;
     use crate::im::{IMStatusCode, IM_REVISION};

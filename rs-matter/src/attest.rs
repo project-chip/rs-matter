@@ -29,4 +29,5 @@ pub mod cd_keys;
 pub mod trust_store;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod test_paa;

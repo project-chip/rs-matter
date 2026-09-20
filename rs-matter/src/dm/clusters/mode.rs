@@ -1105,6 +1105,7 @@ derived_mode_cluster!(
 );
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Unit tests for the parts of [`ModeHandler`] that need no `Matter` /
     //! `InvokeContext` setup: mode-table lookup, the startup validation

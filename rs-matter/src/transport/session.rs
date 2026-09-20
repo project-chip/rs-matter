@@ -2160,6 +2160,7 @@ pub fn derive_group_session_id<C: Crypto>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
     use crate::dm::clusters::basic_info::BasicInfoConfig;

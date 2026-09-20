@@ -1480,6 +1480,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod tests {
     use core::cell::RefCell;
     use core::mem::MaybeUninit;

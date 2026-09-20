@@ -1077,6 +1077,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::error::{Error, ErrorCode};
     use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVElement, TLVTag, TLVWrite};

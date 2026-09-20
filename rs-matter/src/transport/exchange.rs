@@ -1686,6 +1686,7 @@ impl Display for Exchange<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::crypto::test_only_crypto;

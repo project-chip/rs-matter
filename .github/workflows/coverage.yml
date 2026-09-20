@@ -1,12 +1,16 @@
 name: Coverage
 
-# Line coverage of the `rs-matter` unit and internal e2e suites, measured with
-# `cargo llvm-cov` on the same feature set as the `os` leg of the CI test job.
+# Line coverage of the `rs-matter` unit, doc and internal e2e tests, measured
+# with `cargo llvm-cov` on the same feature set as the `os` leg of the CI test
+# job. It runs on nightly so that the test modules themselves, marked
+# `#[cfg_attr(coverage_nightly, coverage(off))]`, stay out of the figures and
+# doc tests can be included; the crate builds on stable regardless.
 #
 # The numbers are informational: nothing here fails the build. The per-module
-# table lands in the job summary and the full LCOV trace plus an HTML report
-# are attached as artifacts. The CHIP certification suites (chiptool-tests.yml)
-# are not instrumented, so the cluster handlers they exercise read low here.
+# table is printed at the end of the "Measure" step's log and lands in the run's
+# summary page; the full LCOV trace plus an HTML report are attached as
+# artifacts. The CHIP certification suites (chiptool-tests.yml) are not
+# instrumented, so the cluster handlers they exercise read low here.
 
 on:
   push:
@@ -36,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@nightly
         with:
           components: llvm-tools-preview
 
@@ -54,11 +58,13 @@ jobs:
       - name: Measure
         run: |
           cd rs-matter
-          cargo llvm-cov --no-default-features --features "$COV_FEATURES" \
+          cargo llvm-cov --doctests --no-default-features --features "$COV_FEATURES" \
             --ignore-filename-regex "$COV_IGNORE" \
             --lcov --output-path ../target/lcov.info
-          cargo llvm-cov report --ignore-filename-regex "$COV_IGNORE" \
+          cargo llvm-cov report --doctests --ignore-filename-regex "$COV_IGNORE" \
             --html --output-dir ../target/llvm-cov-html
+          cd ..
+          cargo xtask coverage --depth 1 --split-above 2000 --lowest 20 target/lcov.info
 
       - name: Summary
         run: |

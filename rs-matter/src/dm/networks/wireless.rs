@@ -1017,6 +1017,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::dm::clusters::net_comm::{
         NetworksAccess, NetworksError, SharedNetworks, WirelessCreds,

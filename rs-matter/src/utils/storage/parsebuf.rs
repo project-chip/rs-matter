@@ -154,6 +154,7 @@ where
 pub type ParseBuf<'a> = ReadBuf<&'a mut [u8]>;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::utils::storage::ParseBuf;
 

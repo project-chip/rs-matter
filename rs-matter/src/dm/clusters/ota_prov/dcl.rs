@@ -428,6 +428,7 @@ fn parse_designator(fd: &[u8]) -> Option<(u16, u16, u32)> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::future::Future;
     use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};

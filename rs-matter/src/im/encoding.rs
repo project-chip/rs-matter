@@ -303,6 +303,7 @@ impl GenericPath {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::error::ErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};

@@ -468,6 +468,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::im::{
         AttrPath, ClusterPath, DataVersionFilter, EventFilter, EventPath, SubscribeReq, IM_REVISION,

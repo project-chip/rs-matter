@@ -775,6 +775,7 @@ enum IoEvent {
 
 // The tests below drive real TCP sockets through the `async-io` reactor, which Miri cannot emulate.
 #[cfg(all(test, not(miri)))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

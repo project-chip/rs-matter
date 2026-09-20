@@ -2062,6 +2062,7 @@ pub mod test {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::test::TestLevelControlDeviceLogic;
     use super::{AttributeDefaults, LevelControlHandler};

@@ -785,6 +785,7 @@ impl Spake2P {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{
         test_only_crypto, CanonEcScalarRef, Crypto, Digest, HmacHashRef, HASH_ZEROED,

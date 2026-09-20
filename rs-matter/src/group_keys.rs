@@ -101,6 +101,7 @@ impl KeySet {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{test_only_crypto, CanonAeadKeyRef, AEAD_CANON_KEY_LEN};
 

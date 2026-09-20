@@ -241,6 +241,7 @@ macro_rules! write_split {
 pub(crate) use write_split;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::utils::storage::WriteBuf;
 

@@ -415,6 +415,7 @@ impl<C: Crypto> PaseInitiator<C> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

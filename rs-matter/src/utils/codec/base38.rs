@@ -230,6 +230,7 @@ fn decode_char(c: u8) -> Result<u8, Error> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     const ENCODED: &str = "-MOA57ZU02IT2L2BJ00";

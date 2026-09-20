@@ -123,6 +123,7 @@ impl defmt::Format for PacketHdr {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
     use crate::error::ErrorCode;

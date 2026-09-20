@@ -1110,6 +1110,7 @@ impl<T: ?Sized + fmt::Display> fmt::Display for RefMut<'_, T> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::cell::Cell;
     use core::mem::MaybeUninit;

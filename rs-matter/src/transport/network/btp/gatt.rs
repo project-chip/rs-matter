@@ -522,6 +522,7 @@ impl<'a> Iterator for AdStructures<'a> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod test {
     use crate::transport::network::mdns::CommissionableFilter;
 

@@ -683,6 +683,7 @@ pub fn test_only_crypto() -> impl Crypto {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{
         test_only_crypto, Aead, CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey,

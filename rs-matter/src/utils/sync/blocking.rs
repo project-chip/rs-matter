@@ -162,6 +162,7 @@ pub mod raw {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::cell::Cell;
     use core::mem::MaybeUninit;

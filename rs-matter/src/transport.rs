@@ -2712,6 +2712,7 @@ impl MessageCounters {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::crypto::test_only_crypto;
@@ -2767,6 +2768,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod resolve_tests {
     use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
@@ -2986,6 +2988,7 @@ mod resolve_tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod browse_tests {
     use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 

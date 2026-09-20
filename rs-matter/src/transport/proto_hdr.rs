@@ -455,6 +455,7 @@ fn decrypt_in_place<C: Crypto>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
 

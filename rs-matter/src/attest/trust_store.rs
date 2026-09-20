@@ -257,6 +257,7 @@ pub mod fileio {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     mod tests {
         use super::*;
         use crate::attest::test_paa::*;
@@ -372,6 +373,7 @@ pub mod fileio {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::attest::test_paa::*;

@@ -317,6 +317,7 @@ impl embedded_io_async::Error for Error {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::str::from_utf8;
 
