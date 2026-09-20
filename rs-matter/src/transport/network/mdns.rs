@@ -1024,6 +1024,7 @@ fn parse_hex_u64(s: &str) -> Option<u64> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

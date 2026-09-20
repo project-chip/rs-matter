@@ -301,3 +301,81 @@ impl GenericPath {
         )
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::error::ErrorCode;
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{GenericPath, IMStatusCode, OpCode, PROTO_ID_INTERACTION_MODEL};
+
+    #[test]
+    fn generic_path_wildcard_helpers() {
+        let concrete = GenericPath::new(Some(1), Some(6), Some(0));
+        assert!(!concrete.is_wildcard());
+        assert_eq!(concrete.not_wildcard().unwrap(), (1, 6, 0));
+
+        for wildcard in [
+            GenericPath::new(None, Some(6), Some(0)),
+            GenericPath::new(Some(1), None, Some(0)),
+            GenericPath::new(Some(1), Some(6), None),
+            GenericPath::default(),
+        ] {
+            assert!(wildcard.is_wildcard());
+            assert_eq!(
+                wildcard.not_wildcard().unwrap_err().code(),
+                ErrorCode::Invalid
+            );
+        }
+    }
+
+    #[test]
+    fn im_status_code_serde_and_error_mapping() {
+        let mut buf = [0; 8];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        IMStatusCode::UnsupportedCluster
+            .to_tlv(&TLVTag::Context(0), &mut wb)
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 0, 0xC3]);
+        assert_eq!(
+            IMStatusCode::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            IMStatusCode::UnsupportedCluster
+        );
+
+        // Unknown numeric values are rejected
+        assert!(IMStatusCode::from_tlv(&TLVElement::new(&[0x24, 0, 0x02])).is_err());
+
+        // The error-code mapping is its own inverse for the codes that have a dedicated error
+        for code in [
+            IMStatusCode::UnsupportedAccess,
+            IMStatusCode::UnsupportedEndpoint,
+            IMStatusCode::UnsupportedCluster,
+            IMStatusCode::UnsupportedAttribute,
+            IMStatusCode::UnsupportedCommand,
+            IMStatusCode::ConstraintError,
+            IMStatusCode::Busy,
+            IMStatusCode::NeedsTimedInteraction,
+        ] {
+            assert_eq!(IMStatusCode::from(code.to_error_code().unwrap()), code);
+        }
+        assert_eq!(IMStatusCode::Success.to_error_code(), None);
+        assert_eq!(
+            IMStatusCode::Timeout.to_error_code(),
+            Some(ErrorCode::Failure)
+        );
+        assert_eq!(
+            IMStatusCode::from(ErrorCode::NoSpace),
+            IMStatusCode::Failure
+        );
+
+        let meta = OpCode::ReadRequest.meta();
+        assert_eq!(meta.proto_id, PROTO_ID_INTERACTION_MODEL);
+        assert_eq!(meta.proto_opcode, 2);
+        assert!(meta.reliable);
+        assert!(OpCode::ReadRequest.is_tlv());
+        assert!(!OpCode::Reserved.is_tlv());
+    }
+}

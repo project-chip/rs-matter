@@ -1752,6 +1752,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Unit tests for the Scenes Management internals — primarily
     //! [`ScenesHandler::copy_scenes_inner`] (in-place upsert loop

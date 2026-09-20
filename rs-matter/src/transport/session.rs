@@ -188,7 +188,7 @@ impl Session {
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: msg_ctr & MATTER_MSG_CTR_RANGE,
-            rx_ctr_state: RxCtrState::new(0),
+            rx_ctr_state: RxCtrState::new_unsynced(),
             mode: SessionMode::PlainText,
             exchanges: Vec::new(),
             last_use: Instant::now(),
@@ -223,7 +223,7 @@ impl Session {
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: msg_ctr & MATTER_MSG_CTR_RANGE,
-            rx_ctr_state: RxCtrState::new(0),
+            rx_ctr_state: RxCtrState::new_unsynced(),
             mode: SessionMode::PlainText,
             exchanges <- Vec::init(),
             last_use: Instant::now(),
@@ -247,6 +247,13 @@ impl Session {
     #[cfg(test)]
     pub fn set_local_sess_id(&mut self, sess_id: u16) {
         self.local_sess_id = sess_id;
+    }
+
+    /// Backdate (or otherwise pin) the last-use timestamp that drives LRU
+    /// eviction, so tests can order sessions without waiting on the clock.
+    #[cfg(test)]
+    pub fn set_last_use(&mut self, at: Instant) {
+        self.last_use = at;
     }
 
     pub(crate) fn set_local_nodeid(&mut self, nodeid: u64) {
@@ -336,6 +343,17 @@ impl Session {
         }
     }
 
+    /// Allocate the counter for an outgoing message.
+    ///
+    /// The counter is taken when the message is encoded, not when it is
+    /// handed to the network, so two messages can leave in the opposite
+    /// order of their counters when they are encoded concurrently (an
+    /// exchange handler's reply and a standalone ack from the transport
+    /// loop, say). Within an established session the peer's replay window
+    /// absorbs that, but on a session which has not received anything from
+    /// us yet the first message seeds the window with every earlier counter
+    /// marked as seen, and an older message overtaken by a newer one is then
+    /// dropped as a duplicate.
     fn get_msg_ctr(&mut self) -> u32 {
         let ctr = self.msg_ctr;
         self.msg_ctr += 1;
@@ -756,6 +774,14 @@ impl Session {
         self.last_use = Instant::now();
     }
 
+    /// Find the exchange an incoming message belongs to.
+    ///
+    /// A responder exchange stays in the table until the ack of its last
+    /// message has arrived. A new request reusing that exchange ID in the
+    /// meantime is therefore matched to the old exchange rather than opening
+    /// a new one: the ack it carries is consumed, but the request itself is
+    /// only acknowledged, never dispatched. Matter clients open a fresh
+    /// exchange per transaction, which avoids this.
     pub(crate) fn get_exch_for_rx(&self, rx_proto: &ProtoHdr) -> Option<usize> {
         self.exchanges
             .iter()
@@ -2134,6 +2160,7 @@ pub fn derive_group_session_id<C: Crypto>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
     use crate::dm::clusters::basic_info::BasicInfoConfig;
@@ -2492,5 +2519,578 @@ mod tests {
 
         assert_ne!(value, 0);
         assert_eq!(boundary, Some(value + GROUP_DATA_CTR_EPOCH));
+    }
+
+    /// A UDP peer address on the given port, so sessions can be told apart.
+    fn udp(port: u16) -> Address {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        Address::Udp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            port,
+            0,
+            0,
+        )))
+    }
+
+    fn fab(idx: u8) -> NonZeroU8 {
+        unwrap!(NonZeroU8::new(idx))
+    }
+
+    /// Add a session with the given mode and return its unique ID.
+    fn add_with_mode(sm: &mut Sessions, mode: SessionMode) -> u32 {
+        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        sess.mode = mode;
+        sess.id
+    }
+
+    fn ids(sm: &Sessions) -> Vec<u32, MAX_SESSIONS> {
+        sm.iter().map(|sess| sess.id).collect()
+    }
+
+    /// Make sure the clock is past the tick values the eviction tests pin
+    /// sessions to, since eviction only considers sessions used before "now".
+    fn advance_clock_past(ticks: u64) {
+        while Instant::now() <= Instant::from_ticks(ticks) {
+            core::hint::spin_loop();
+        }
+    }
+
+    /// The table fills up to `MAX_SESSIONS`, then refuses; removing a session
+    /// hands it back and frees its slot.
+    #[test]
+    fn add_fills_to_capacity_and_remove_frees_slot() {
+        let mut sm = Sessions::new();
+
+        for i in 0..MAX_SESSIONS {
+            let sess = unwrap!(sm.add(0, false, udp(i as u16), None, &TEST_DEV_DET));
+            assert_eq!(sess.id, i as u32);
+        }
+
+        let err = unwrap!(sm
+            .add(0, false, Address::default(), None, &TEST_DEV_DET)
+            .err());
+        assert_eq!(err.code(), ErrorCode::NoSpaceSessions);
+        assert_eq!(sm.iter().count(), MAX_SESSIONS);
+
+        assert!(sm.remove(u32::MAX).is_none());
+
+        let removed = unwrap!(sm.remove(1));
+        assert_eq!(removed.id, 1);
+        assert_eq!(removed.get_peer_addr(), udp(1));
+        assert_eq!(sm.iter().count(), MAX_SESSIONS - 1);
+        assert!(!ids(&sm).contains(&1));
+
+        // The freed slot is usable again, and the unique ID keeps counting up
+        // (the refused add above consumed one as well).
+        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        assert_eq!(sess.id, MAX_SESSIONS as u32 + 1);
+    }
+
+    /// Eviction picks the least recently used session, skipping reserved ones
+    /// and ones that still carry an exchange, and finds nothing otherwise.
+    #[test]
+    fn eviction_picks_least_recently_used_idle_session() {
+        let mut sm = Sessions::new();
+
+        let a = add_with_mode(&mut sm, SessionMode::PlainText);
+        let b = add_with_mode(&mut sm, SessionMode::PlainText);
+        let c = add_with_mode(&mut sm, SessionMode::PlainText);
+
+        unwrap!(sm.get(a)).set_last_use(Instant::from_ticks(3));
+        unwrap!(sm.get(b)).set_last_use(Instant::from_ticks(1));
+        unwrap!(sm.get(c)).set_last_use(Instant::from_ticks(2));
+        advance_clock_past(3);
+
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, b);
+
+        // A reserved slot is never evicted, even if it is the oldest.
+        unwrap!(sm.get(b)).reserved = true;
+        unwrap!(sm.get(b)).set_last_use(Instant::from_ticks(1));
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, c);
+
+        // Neither is a session with an exchange still on it.
+        unwrap!(unwrap!(sm.get(c)).add_exch(1, Role::Responder(Default::default())));
+        unwrap!(sm.get(c)).set_last_use(Instant::from_ticks(2));
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, a);
+
+        unwrap!(unwrap!(sm.get(a)).add_exch(1, Role::Initiator(Default::default())));
+        unwrap!(sm.get(a)).set_last_use(Instant::from_ticks(3));
+        assert!(sm.get_session_for_eviction().is_none());
+
+        // Dropping the exchange makes the session evictable again.
+        assert!(unwrap!(sm.get(a)).remove_exch(0));
+        unwrap!(sm.get(a)).set_last_use(Instant::from_ticks(3));
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, a);
+    }
+
+    /// An expired session is evicted ahead of older, still-valid ones, but the
+    /// reserved / in-use exclusions still apply to it.
+    #[test]
+    fn eviction_prefers_expired_session() {
+        let mut sm = Sessions::new();
+
+        let old = add_with_mode(&mut sm, SessionMode::PlainText);
+        let expired = add_with_mode(&mut sm, SessionMode::PlainText);
+
+        unwrap!(sm.get(old)).set_last_use(Instant::from_ticks(1));
+        unwrap!(sm.get(expired)).set_last_use(Instant::MAX);
+        unwrap!(sm.get(expired)).expired = true;
+        advance_clock_past(1);
+
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, expired);
+
+        unwrap!(unwrap!(sm.get(expired)).add_exch(1, Role::Responder(Default::default())));
+        unwrap!(sm.get(expired)).set_last_use(Instant::MAX);
+        unwrap!(sm.get(old)).set_last_use(Instant::from_ticks(1));
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, old);
+    }
+
+    /// Removing a fabric's sessions drops every session on that fabric
+    /// (including a PASE session promoted onto it) except the excluded one,
+    /// which is only marked expired; other fabrics' sessions are untouched.
+    #[test]
+    fn remove_for_fabric_honours_exclusion() {
+        let mut sm = Sessions::new();
+
+        let case1a = add_with_mode(
+            &mut sm,
+            SessionMode::Case {
+                fab_idx: fab(1),
+                cat_ids: Default::default(),
+            },
+        );
+        let case1b = add_with_mode(
+            &mut sm,
+            SessionMode::Case {
+                fab_idx: fab(1),
+                cat_ids: Default::default(),
+            },
+        );
+        let pase1 = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 1 });
+        let case2 = add_with_mode(
+            &mut sm,
+            SessionMode::Case {
+                fab_idx: fab(2),
+                cat_ids: Default::default(),
+            },
+        );
+        let pase0 = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 0 });
+        let plain = add_with_mode(&mut sm, SessionMode::PlainText);
+
+        sm.remove_for_fabric(fab(1), Some(case1a));
+
+        let remaining = ids(&sm);
+        assert!(remaining.contains(&case1a));
+        assert!(!remaining.contains(&case1b));
+        assert!(!remaining.contains(&pase1));
+        assert!(remaining.contains(&case2));
+        assert!(remaining.contains(&pase0));
+        assert!(remaining.contains(&plain));
+
+        assert!(unwrap!(sm.get(case1a)).is_expired());
+        assert!(!unwrap!(sm.get(case2)).is_expired());
+
+        // Without an exclusion, the whole fabric goes; an unknown exclusion
+        // is harmless.
+        sm.remove_for_fabric(fab(1), None);
+        assert!(!ids(&sm).contains(&case1a));
+
+        sm.remove_for_fabric(fab(2), Some(u32::MAX));
+        assert!(!ids(&sm).contains(&case2));
+        assert_eq!(sm.iter().count(), 2);
+    }
+
+    /// Removing PASE sessions drops both unpromoted and promoted ones, keeps
+    /// the excluded one as expired, and never touches CASE / plaintext
+    /// sessions - even when named as the exclusion.
+    #[test]
+    fn remove_pase_honours_exclusion() {
+        let mut sm = Sessions::new();
+
+        let pase0 = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 0 });
+        let pase1 = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 1 });
+        let case1 = add_with_mode(
+            &mut sm,
+            SessionMode::Case {
+                fab_idx: fab(1),
+                cat_ids: Default::default(),
+            },
+        );
+        let plain = add_with_mode(&mut sm, SessionMode::PlainText);
+
+        sm.remove_pase(Some(pase0));
+
+        let remaining = ids(&sm);
+        assert!(remaining.contains(&pase0));
+        assert!(!remaining.contains(&pase1));
+        assert!(remaining.contains(&case1));
+        assert!(remaining.contains(&plain));
+        assert!(unwrap!(sm.get(pase0)).is_expired());
+
+        // Naming a non-PASE session as the exclusion does not expire it.
+        sm.remove_pase(Some(case1));
+        assert!(!ids(&sm).contains(&pase0));
+        assert!(!unwrap!(sm.get(case1)).is_expired());
+
+        sm.remove_pase(None);
+        assert_eq!(sm.iter().count(), 2);
+    }
+
+    /// `get` finds a session by its unique ID and refreshes its last-use
+    /// stamp; `iter` walks the table in insertion order.
+    #[test]
+    fn get_and_iter() {
+        let mut sm = Sessions::new();
+
+        let a = add_with_mode(&mut sm, SessionMode::PlainText);
+        let b = add_with_mode(&mut sm, SessionMode::PlainText);
+        let c = add_with_mode(&mut sm, SessionMode::PlainText);
+
+        assert_eq!(ids(&sm).as_slice(), &[a, b, c]);
+        assert!(sm.get(u32::MAX).is_none());
+
+        unwrap!(sm.get(b)).set_last_use(Instant::MAX);
+        let sess = unwrap!(sm.get(b));
+        assert_eq!(sess.id, b);
+        assert!(sess.last_use < Instant::MAX);
+    }
+
+    /// The next local session ID skips over every ID a live session holds.
+    #[test]
+    fn next_sess_id_skips_ids_in_use() {
+        let mut sm = Sessions::new();
+
+        for sess_id in [5, 6, 7] {
+            let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+            sess.set_local_sess_id(sess_id);
+        }
+
+        sm.next_sess_id = 5;
+        assert_eq!(sm.get_next_sess_id(), 8);
+        assert_eq!(sm.get_next_sess_id(), 9);
+    }
+
+    /// The next exchange ID is seeded at random on first use, then counts up,
+    /// skipping 0 and the IDs of exchanges the peer initiated (ours are ours to
+    /// reuse: they live in a different ID space).
+    #[test]
+    fn next_exch_id_is_seeded_then_skips_responder_exchanges() {
+        let crypto = test_only_crypto();
+        let mut sm = Sessions::new();
+
+        assert_eq!(sm.next_exch_id, 0);
+        let first = unwrap!(sm.get_next_exch_id(&crypto));
+        assert_ne!(first, 0);
+        let second = unwrap!(sm.get_next_exch_id(&crypto));
+        assert_eq!(second, if first == u16::MAX { 1 } else { first + 1 });
+
+        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        unwrap!(sess.add_exch(100, Role::Responder(Default::default())));
+        unwrap!(sess.add_exch(101, Role::Initiator(Default::default())));
+
+        sm.next_exch_id = 100;
+        assert_eq!(unwrap!(sm.get_next_exch_id(&crypto)), 101);
+
+        sm.next_exch_id = u16::MAX;
+        assert_eq!(unwrap!(sm.get_next_exch_id(&crypto)), u16::MAX);
+        assert_eq!(unwrap!(sm.get_next_exch_id(&crypto)), 1);
+    }
+
+    /// Only an unpromoted PASE session can take on a fabric, and only once.
+    #[test]
+    fn upgrade_fabric_idx_only_once_from_pase() {
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 5000, 4000);
+
+        sess.mode = SessionMode::Pase { fab_idx: 0 };
+        unwrap!(sess.upgrade_fabric_idx(fab(3)));
+        assert_eq!(sess.get_local_fabric_idx(), 3);
+        assert_eq!(
+            unwrap!(sess.upgrade_fabric_idx(fab(4)).err()).code(),
+            ErrorCode::Invalid
+        );
+        assert_eq!(sess.get_local_fabric_idx(), 3);
+
+        sess.mode = SessionMode::Case {
+            fab_idx: fab(1),
+            cat_ids: Default::default(),
+        };
+        assert_eq!(
+            unwrap!(sess.upgrade_fabric_idx(fab(2)).err()).code(),
+            ErrorCode::Invalid
+        );
+        assert_eq!(sess.get_local_fabric_idx(), 1);
+
+        sess.mode = SessionMode::PlainText;
+        assert_eq!(
+            unwrap!(sess.upgrade_fabric_idx(fab(2)).err()).code(),
+            ErrorCode::Invalid
+        );
+        assert_eq!(sess.get_local_fabric_idx(), 0);
+    }
+
+    /// What each session mode exposes: encryption, fabric, key material and
+    /// the attestation challenge.
+    #[test]
+    fn session_mode_accessors() {
+        let mut sess = Session::new(
+            1,
+            0,
+            false,
+            Address::default(),
+            Some(0xdead_beef),
+            300,
+            5000,
+            4000,
+        );
+        assert_eq!(sess.get_peer_node_id(), Some(0xdead_beef));
+
+        assert!(!sess.is_encrypted());
+        assert_eq!(sess.get_local_fabric_idx(), 0);
+        assert!(sess.get_enc_key().is_none());
+        assert!(sess.get_dec_key().is_none());
+        assert!(sess.get_att_challenge().is_none());
+
+        sess.mode = SessionMode::Pase { fab_idx: 0 };
+        assert!(sess.is_encrypted());
+        assert_eq!(sess.get_local_fabric_idx(), 0);
+        assert!(sess.get_enc_key().is_some());
+        assert!(sess.get_dec_key().is_some());
+        assert!(sess.get_att_challenge().is_some());
+
+        sess.mode = SessionMode::Case {
+            fab_idx: fab(2),
+            cat_ids: Default::default(),
+        };
+        assert!(sess.is_encrypted());
+        assert_eq!(sess.get_local_fabric_idx(), 2);
+        assert!(sess.get_enc_key().is_some());
+        assert!(sess.get_att_challenge().is_some());
+        #[cfg(feature = "case-resumption")]
+        assert!(sess.get_shared_secret().is_some());
+
+        sess.mode = SessionMode::Group {
+            fab_idx: fab(1),
+            group_id: 0x1234,
+        };
+        assert!(sess.is_encrypted());
+        assert_eq!(sess.get_local_fabric_idx(), 1);
+        assert!(sess.get_enc_key().is_some());
+        assert!(sess.get_att_challenge().is_none());
+        #[cfg(feature = "case-resumption")]
+        assert!(sess.get_shared_secret().is_none());
+    }
+
+    /// A reserved slot is invisible to receive matching until it is completed;
+    /// dropping the reservation without completing it frees the slot.
+    #[test]
+    fn reserved_session_lifecycle() {
+        use crate::crypto::CanonAeadKeyRef;
+        use crate::test::test_matter;
+
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[1; 16]);
+
+        let matter = test_matter();
+        let crypto = test_only_crypto();
+
+        let mut reserved = unwrap!(ReservedSession::reserve_now(&matter, &crypto));
+        let id = reserved.id;
+
+        let mut rx_plain = PlainHdr::new();
+        rx_plain.sess_id = 0;
+
+        matter.with_state(|state| {
+            let sess = unwrap!(state.sessions.get(id));
+            assert!(sess.reserved);
+            assert!(!sess.is_for_rx(&Address::default(), &rx_plain));
+        });
+
+        unwrap!(reserved.update(
+            0x11,
+            0x22,
+            0x1234,
+            0x5678,
+            udp(5540),
+            SessionMode::Pase { fab_idx: 0 },
+            Some(KEY),
+            Some(KEY),
+            None,
+            None,
+        ));
+
+        // Still reserved until completed.
+        matter.with_state(|state| {
+            assert!(unwrap!(state.sessions.get(id)).reserved);
+        });
+
+        reserved.complete();
+
+        matter.with_state(|state| {
+            let sess = unwrap!(state.sessions.get(id));
+            assert!(!sess.reserved);
+            assert!(sess.is_encrypted());
+            assert_eq!(sess.get_peer_node_id(), Some(0x22));
+            assert_eq!(sess.get_peer_sess_id(), 0x1234);
+            assert_eq!(sess.get_local_sess_id(), 0x5678);
+            assert_eq!(sess.get_peer_addr(), udp(5540));
+            assert_eq!(unwrap!(sess.get_enc_key()).access(), KEY.access());
+            assert!(sess.is_pase_for_addr(&udp(5540)));
+        });
+
+        let abandoned = unwrap!(ReservedSession::reserve_now(&matter, &crypto));
+        let abandoned_id = abandoned.id;
+        drop(abandoned);
+
+        matter.with_state(|state| {
+            assert!(state.sessions.get(abandoned_id).is_none());
+            assert!(state.sessions.get(id).is_some());
+        });
+    }
+
+    /// Exchange slots: up to `MAX_EXCHANGES`, freed slots are reused, and a
+    /// slot with MRP work still pending is only marked dropped.
+    #[test]
+    fn add_exch_reuses_freed_slots() {
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 5000, 4000);
+
+        for i in 0..MAX_EXCHANGES {
+            assert_eq!(
+                sess.add_exch(i as u16, Role::Initiator(Default::default())),
+                Some(i)
+            );
+        }
+        assert!(sess
+            .add_exch(99, Role::Initiator(Default::default()))
+            .is_none());
+
+        assert!(sess.remove_exch(2));
+        assert!(sess.exchanges[2].is_none());
+        assert_eq!(
+            sess.add_exch(100, Role::Responder(Default::default())),
+            Some(2)
+        );
+
+        // An exchange that still owes an ACK is marked dropped, not removed.
+        let mut rx_proto = ProtoHdr::new();
+        rx_proto.set_reliable();
+        unwrap!(unwrap!(sess.exchanges[2].as_mut()).post_recv(&PlainHdr::new(), &rx_proto));
+        assert!(!sess.remove_exch(2));
+        let exch = unwrap!(sess.exchanges[2].as_ref());
+        assert!(exch.role.is_dropped_state());
+        assert_eq!(exch.exch_id, 100);
+    }
+
+    /// Receiving on a session: a message from an initiator opens a responder
+    /// exchange, the same counter again is a duplicate, and messages that
+    /// cannot open an exchange (non-initiator, standalone ACK, expired session)
+    /// are refused with the matching error.
+    #[test]
+    fn post_recv_opens_exchange_for_initiator_only() {
+        use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 5000, 4000);
+
+        let mut rx = PacketHdr::new();
+        rx.plain.ctr = 1;
+        rx.proto.exch_id = 7;
+        rx.proto.proto_id = PROTO_ID_SECURE_CHANNEL;
+        rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
+        rx.proto.set_initiator();
+        rx.proto.set_reliable();
+
+        assert!(unwrap!(sess.post_recv(&rx)));
+        let exch = unwrap!(sess.exchanges[0].as_ref());
+        assert_eq!(exch.exch_id, 7);
+        assert!(matches!(exch.role, Role::Responder(_)));
+        assert!(exch.mrp.is_ack_pending());
+
+        // The same counter again is a duplicate ...
+        assert_eq!(
+            unwrap!(sess.post_recv(&rx).err()).code(),
+            ErrorCode::Duplicate
+        );
+
+        // ... a new counter on the same exchange joins it.
+        rx.plain.ctr = 2;
+        assert!(!unwrap!(sess.post_recv(&rx)));
+        assert_eq!(sess.exchanges.len(), 1);
+
+        // A responder-flagged message for an unknown exchange has nowhere to go.
+        rx.plain.ctr = 3;
+        rx.proto.exch_id = 8;
+        rx.proto.unset_initiator();
+        assert_eq!(
+            unwrap!(sess.post_recv(&rx).err()).code(),
+            ErrorCode::NoExchange
+        );
+
+        // Nor does a standalone ACK, even from an initiator.
+        rx.plain.ctr = 4;
+        rx.proto.set_initiator();
+        rx.proto.proto_opcode = sc::OpCode::MRPStandAloneAck as u8;
+        assert_eq!(
+            unwrap!(sess.post_recv(&rx).err()).code(),
+            ErrorCode::NoExchange
+        );
+
+        // An expired session refuses new exchanges but keeps serving old ones.
+        sess.expired = true;
+        rx.plain.ctr = 5;
+        rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
+        assert_eq!(
+            unwrap!(sess.post_recv(&rx).err()).code(),
+            ErrorCode::NoSession
+        );
+        rx.plain.ctr = 6;
+        rx.proto.exch_id = 7;
+        assert!(!unwrap!(sess.post_recv(&rx)));
+    }
+
+    /// Sending stamps the plain header per session mode: plaintext sessions
+    /// carry both node IDs, encrypted ones neither; the counter advances per
+    /// message; and a reliable transport strips the R flag.
+    #[test]
+    fn pre_send_stamps_plain_header_per_mode() {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        let mut sess = Session::new(1, 100, false, udp(5540), Some(0x22), 300, 5000, 4000);
+        sess.set_local_nodeid(0x11);
+
+        let mut tx = PacketHdr::new();
+        tx.proto.set_reliable();
+
+        let (addr, retransmission) = unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        assert_eq!(addr, udp(5540));
+        assert!(!retransmission);
+        assert_eq!(tx.plain.sess_id, 0);
+        assert_eq!(tx.plain.ctr, 100);
+        assert_eq!(tx.plain.get_src_nodeid(), Some(0x11));
+        assert_eq!(tx.plain.get_dst_unicast_nodeid(), Some(0x22));
+        assert!(tx.proto.is_reliable());
+
+        unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        assert_eq!(tx.plain.ctr, 101);
+
+        sess.mode = SessionMode::Pase { fab_idx: 0 };
+        sess.peer_sess_id = 0x1234;
+        unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        assert_eq!(tx.plain.sess_id, 0x1234);
+        assert_eq!(tx.plain.ctr, 102);
+        assert!(tx.plain.get_src_nodeid().is_none());
+        assert!(tx.plain.get_dst_unicast_nodeid().is_none());
+        assert!(tx.proto.is_reliable());
+
+        // TCP is reliable on its own: no MRP flags go out.
+        sess.peer_addr = Address::Tcp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            5540,
+            0,
+            0,
+        )));
+        tx.proto.set_ack(Some(50));
+        let (addr, _) = unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        assert!(addr.is_tcp());
+        assert!(!tx.proto.is_reliable());
+        assert!(tx.proto.get_ack().is_none());
     }
 }

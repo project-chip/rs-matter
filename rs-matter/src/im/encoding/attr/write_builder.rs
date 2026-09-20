@@ -675,3 +675,306 @@ where
         defmt::write!(fmt, "{:?}::AttrData<{}>", self.p, F);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::error::{Error, ErrorCode};
+    use crate::im::{AttrData, AttrPath, WriteReq, IM_REVISION};
+    use crate::tlv::{
+        Nullable, Octets, OctetsBuilder, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite,
+        TLVWriteParent, ToTLVArrayBuilder,
+    };
+    use crate::utils::storage::WriteBuf;
+
+    use super::{AttrDataArrayBuilder, WriteReqBuilder};
+
+    type Root<'a, 'b> = TLVWriteParent<(), &'a mut WriteBuf<'b>>;
+
+    fn root<'a, 'b>(wb: &'a mut WriteBuf<'b>) -> Root<'a, 'b> {
+        TLVWriteParent::new((), wb)
+    }
+
+    fn attr_path(endpoint: u16, cluster: u32, attr: u32) -> AttrPath {
+        AttrPath {
+            endpoint: Some(endpoint),
+            cluster: Some(cluster),
+            attr: Some(attr),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn minimal_write_round_trips_exact_bytes() {
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        WriteReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .write_requests()
+            .unwrap()
+            .push()
+            .unwrap()
+            .path(1, 6, 0x4001)
+            .unwrap()
+            .data(|w| w.u16(&TLVTag::Context(2), 60))
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap();
+
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // WriteRequestMessage
+                0x36,
+                2,    // WriteRequests[]
+                0x15, // AttrData
+                0x37,
+                1,
+                0x24,
+                2,
+                1,
+                0x24,
+                3,
+                6,
+                0x25,
+                4,
+                0x01,
+                0x40,
+                0x18, // Path list
+                0x24,
+                2,
+                60, // Data
+                0x18,
+                0x18, // end AttrData, end WriteRequests
+                0x24,
+                0xFF,
+                IM_REVISION, // InteractionModelRevision
+                0x18,
+            ]
+        );
+
+        let req = WriteReq::new(TLVElement::new(wb.as_slice()));
+        assert!(!req.supress_response().unwrap());
+        assert!(!req.timed_request().unwrap());
+        assert!(!req.more_chunks().unwrap());
+
+        let mut entries = req.write_requests().unwrap().iter();
+        let entry = entries.next().unwrap().unwrap();
+        assert_eq!(entry.data_ver, None);
+        assert_eq!(entry.path, attr_path(1, 6, 0x4001));
+        assert_eq!(entry.data.u16().unwrap(), 60);
+        assert!(entries.next().is_none());
+    }
+
+    #[test]
+    fn all_optional_fields_and_path_variants() {
+        let wild = AttrPath {
+            cluster: Some(0x1F),
+            attr: Some(0),
+            list_index: Some(Nullable::none()),
+            ..Default::default()
+        };
+
+        let mut buf = [0; 128];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        WriteReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .suppress_response(true)
+            .unwrap()
+            .timed_request(true)
+            .unwrap()
+            .write_requests()
+            .unwrap()
+            .push()
+            .unwrap()
+            .data_version(42)
+            .unwrap()
+            .path_from(&wild)
+            .unwrap()
+            .data_builder::<OctetsBuilder<_>>()
+            .unwrap()
+            .set(Octets(&[0xAB]))
+            .unwrap()
+            .end()
+            .unwrap()
+            .push()
+            .unwrap()
+            .path(1, 6, 0)
+            .unwrap()
+            .data_builder::<ToTLVArrayBuilder<_, u8>>()
+            .unwrap()
+            .push(&1)
+            .unwrap()
+            .push(&2)
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .more_chunks(true)
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        let req = WriteReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.supress_response().unwrap());
+        assert!(req.timed_request().unwrap());
+        assert!(req.more_chunks().unwrap());
+
+        let mut entries = req.write_requests().unwrap().iter();
+        let entry = entries.next().unwrap().unwrap();
+        assert_eq!(entry.data_ver, Some(42));
+        assert_eq!(entry.path, wild);
+        assert_eq!(entry.data.tag().unwrap(), TLVTag::Context(2));
+        assert_eq!(entry.data.octets().unwrap(), &[0xAB]);
+
+        let entry = entries.next().unwrap().unwrap();
+        assert_eq!(entry.data_ver, None);
+        assert_eq!(entry.path, attr_path(1, 6, 0));
+        assert!(TLVArray::<u8>::new(entry.data)
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq([1, 2]));
+        assert!(entries.next().is_none());
+
+        assert_eq!(
+            TLVElement::new(wb.as_slice())
+                .structure()
+                .unwrap()
+                .find_ctx(0xFF)
+                .unwrap()
+                .u8()
+                .unwrap(),
+            7
+        );
+
+        // Forwarders: state 0 -> `TimedRequest`, state 1 -> `WriteRequests`,
+        // state 3 -> `InteractionModelRevision`
+        wb.reset();
+        WriteReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .timed_request(true)
+            .unwrap()
+            .write_requests()
+            .unwrap()
+            .end()
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = WriteReq::new(TLVElement::new(wb.as_slice()));
+        assert!(!req.supress_response().unwrap());
+        assert!(req.timed_request().unwrap());
+        assert!(!req.more_chunks().unwrap());
+        assert_eq!(req.write_requests().unwrap().iter().count(), 0);
+
+        wb.reset();
+        WriteReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .suppress_response(false)
+            .unwrap()
+            .write_requests()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = WriteReq::new(TLVElement::new(wb.as_slice()));
+        assert!(!req.supress_response().unwrap());
+        assert!(!req.timed_request().unwrap());
+        assert!(TLVElement::new(wb.as_slice())
+            .structure()
+            .unwrap()
+            .find_ctx(1)
+            .unwrap()
+            .is_empty());
+    }
+
+    /// Pushes one `(1, 6, attr) = 0xDEAD_BEEF` entry into the open array.
+    fn push_entry<P: TLVBuilderParent>(
+        arr: AttrDataArrayBuilder<P>,
+        attr: u32,
+    ) -> Result<AttrDataArrayBuilder<P>, Error> {
+        arr.push()?
+            .path(1, 6, attr)?
+            .data(|w| w.u32(&TLVTag::Context(2), 0xDEAD_BEEF))?
+            .end()
+    }
+
+    #[test]
+    fn entries_that_overflow_are_rewound_and_chunk_closes_with_more_chunks() {
+        // Room for the array end, `MoreChunkedMessages`, the revision and the message end
+        const TRAILER: usize = 1 + 2 + 3 + 1;
+
+        let mut buf = [0; 64];
+        let buf_len = buf.len();
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.shrink(TRAILER).unwrap();
+
+        let mut arr = WriteReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .write_requests()
+            .unwrap();
+
+        let mut written = 0;
+        let last_complete = loop {
+            let tail = arr.writer().get_tail();
+
+            match push_entry(arr, written) {
+                Ok(a) => {
+                    arr = a;
+                    written += 1;
+                }
+                Err(e) => {
+                    assert_eq!(e.code(), ErrorCode::NoSpace);
+                    break tail;
+                }
+            }
+        };
+
+        assert!(written > 0);
+        assert!(
+            wb.get_tail() > last_complete,
+            "the failed push wrote nothing"
+        );
+
+        wb.rewind_tail_to(last_complete);
+        wb.expand(TRAILER).unwrap();
+
+        AttrDataArrayBuilder {
+            p: WriteReqBuilder::<_, 3> { p: root(&mut wb) },
+        }
+        .end()
+        .unwrap()
+        .more_chunks(true)
+        .unwrap()
+        .end()
+        .unwrap();
+
+        assert!(wb.as_slice().len() <= buf_len);
+
+        let req = WriteReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.more_chunks().unwrap());
+
+        let mut attr = 0;
+        for entry in req.write_requests().unwrap().iter() {
+            let entry: AttrData = entry.unwrap();
+            assert_eq!(entry.path, attr_path(1, 6, attr));
+            assert_eq!(entry.data.u32().unwrap(), 0xDEAD_BEEF);
+            attr += 1;
+        }
+        assert_eq!(attr, written);
+    }
+}

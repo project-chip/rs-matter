@@ -1197,30 +1197,38 @@ impl<'a> TLVSequenceTLVIter<'a> {
     }
 
     fn try_next(&mut self) -> Result<Option<TLV<'a>>, Error> {
-        let current = self.seq.current()?;
-        if current.is_empty() {
+        if self.seq.0.is_empty() {
             return Ok(None);
         }
 
-        self.advance()?;
+        let control = self.seq.control()?;
 
-        Ok(Some(TLV::new(current.tag()?, current.value()?)))
-    }
+        if control.is_container_end() {
+            if self.nesting == 0 {
+                // The end of the enclosing container, which is not part of this sequence
+                return Ok(None);
+            }
 
-    fn advance(&mut self) -> Result<(), Error> {
-        if self.nesting > 0 || !self.seq.0.is_empty() && !self.seq.control()?.is_container_end() {
+            control.confirm_container_end()?;
+
+            self.nesting -= 1;
             self.seq = self.seq.next_enter()?;
 
-            let control = self.seq.control()?;
-
-            if control.is_container_start() {
-                self.nesting += 1;
-            } else if control.is_container_end() {
-                self.nesting -= 1;
-            }
+            return Ok(Some(TLV::end_container()));
         }
 
-        Ok(())
+        let element = TLVElement::new(self.seq.0);
+        let tlv = TLV::new(element.tag()?, element.value()?);
+
+        // A container start opens a level; its elements follow as separate `TLV`s
+        // and its end closes the level again
+        if control.is_container_start() {
+            self.nesting += 1;
+        }
+
+        self.seq = self.seq.next_enter()?;
+
+        Ok(Some(tlv))
     }
 }
 
@@ -1282,6 +1290,7 @@ impl defmt::Format for TLVSequenceIter<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
 
     use super::TLVElement;

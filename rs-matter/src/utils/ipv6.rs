@@ -60,6 +60,7 @@ pub fn compute_group_multicast_addr(fabric_id: u64, group_id: u16) -> Ipv6Addr {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -611,3 +611,291 @@ where
         defmt::write!(fmt, "{:?}::CmdData<{}>", self.p, F);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::error::{Error, ErrorCode};
+    use crate::im::{CmdData, CmdPath, InvReq, IM_REVISION};
+    use crate::tlv::{
+        TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TLVWriteParent, ToTLV, Utf8StrBuilder,
+    };
+    use crate::utils::storage::WriteBuf;
+
+    use super::{CmdDataArrayBuilder, InvReqBuilder};
+
+    type Root<'a, 'b> = TLVWriteParent<(), &'a mut WriteBuf<'b>>;
+
+    fn root<'a, 'b>(wb: &'a mut WriteBuf<'b>) -> Root<'a, 'b> {
+        TLVWriteParent::new((), wb)
+    }
+
+    fn cmd_path(endpoint: u16, cluster: u32, cmd: u32) -> CmdPath {
+        CmdPath::new(Some(endpoint), Some(cluster), Some(cmd))
+    }
+
+    #[test]
+    fn minimal_invoke_emits_both_flags_and_exact_bytes() {
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        InvReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .invoke_requests()
+            .unwrap()
+            .push()
+            .unwrap()
+            .path(1, 6, 2)
+            .unwrap()
+            .data(|w| {
+                w.start_struct(&TLVTag::Context(1))?;
+                w.end_container()
+            })
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap();
+
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // InvokeRequestMessage
+                0x28,
+                0, // SuppressResponse = false
+                0x28,
+                1, // TimedRequest = false
+                0x36,
+                2,    // InvokeRequests[]
+                0x15, // CmdData
+                0x37,
+                0,
+                0x24,
+                0,
+                1,
+                0x24,
+                1,
+                6,
+                0x24,
+                2,
+                2,
+                0x18, // Path list
+                0x35,
+                1,
+                0x18, // Data = {}
+                0x18,
+                0x18, // end CmdData, end InvokeRequests
+                0x24,
+                0xFF,
+                IM_REVISION, // InteractionModelRevision
+                0x18,
+            ]
+        );
+
+        let req = InvReq::new(TLVElement::new(wb.as_slice()));
+        assert!(!req.suppress_response().unwrap());
+        assert!(!req.timed_request().unwrap());
+
+        let mut entries = req.inv_requests().unwrap().unwrap().iter();
+        let entry = entries.next().unwrap().unwrap();
+        assert_eq!(entry.path, cmd_path(1, 6, 2));
+        assert_eq!(entry.data.structure().unwrap().iter().count(), 0);
+        assert_eq!(entry.command_ref, None);
+        assert!(entries.next().is_none());
+    }
+
+    #[derive(ToTLV, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    struct MoveToLevel {
+        level: u8,
+        transition_time: u16,
+    }
+
+    #[test]
+    fn explicit_flags_command_ref_and_typed_data() {
+        let mut buf = [0; 128];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        InvReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .suppress_response(true)
+            .unwrap()
+            .timed_request(true)
+            .unwrap()
+            .invoke_requests()
+            .unwrap()
+            .push()
+            .unwrap()
+            .path_from(&cmd_path(2, 8, 0))
+            .unwrap()
+            .data(|w| {
+                MoveToLevel {
+                    level: 50,
+                    transition_time: 300,
+                }
+                .to_tlv(&TLVTag::Context(1), w)
+            })
+            .unwrap()
+            .command_ref(7)
+            .unwrap()
+            .end()
+            .unwrap()
+            .push()
+            .unwrap()
+            .path(1, 6, 1)
+            .unwrap()
+            .data_builder::<Utf8StrBuilder<_>>()
+            .unwrap()
+            .set("x")
+            .unwrap()
+            .command_ref(8)
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        let req = InvReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.suppress_response().unwrap());
+        assert!(req.timed_request().unwrap());
+
+        let mut entries = req.inv_requests().unwrap().unwrap().iter();
+        let entry: CmdData = entries.next().unwrap().unwrap();
+        assert_eq!(entry.path, cmd_path(2, 8, 0));
+        assert_eq!(entry.command_ref, Some(7));
+        let fields = entry.data.structure().unwrap();
+        assert_eq!(fields.ctx(0).unwrap().u8().unwrap(), 50);
+        assert_eq!(fields.ctx(1).unwrap().u16().unwrap(), 300);
+
+        let entry = entries.next().unwrap().unwrap();
+        assert_eq!(entry.path, cmd_path(1, 6, 1));
+        assert_eq!(entry.data.tag().unwrap(), TLVTag::Context(1));
+        assert_eq!(entry.data.utf8().unwrap(), "x");
+        assert_eq!(entry.command_ref, Some(8));
+        assert!(entries.next().is_none());
+
+        assert_eq!(
+            TLVElement::new(wb.as_slice())
+                .structure()
+                .unwrap()
+                .find_ctx(0xFF)
+                .unwrap()
+                .u8()
+                .unwrap(),
+            7
+        );
+
+        // Skipping `SuppressResponse` still emits it (as `false`) before `TimedRequest`,
+        // and skipping `TimedRequest` after an explicit `SuppressResponse` emits it too
+        wb.reset();
+        InvReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .timed_request(true)
+            .unwrap()
+            .invoke_requests()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap();
+        assert!(wb
+            .as_slice()
+            .starts_with(&[0x15, 0x28, 0, 0x29, 1, 0x36, 2, 0x18]));
+
+        wb.reset();
+        InvReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .suppress_response(true)
+            .unwrap()
+            .invoke_requests()
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap();
+        assert!(wb
+            .as_slice()
+            .starts_with(&[0x15, 0x29, 0, 0x28, 1, 0x36, 2, 0x18]));
+    }
+
+    /// Pushes one `(1, 6, 2)` no-payload entry with the given command ref.
+    fn push_entry<P: TLVBuilderParent>(
+        arr: CmdDataArrayBuilder<P>,
+        command_ref: u16,
+    ) -> Result<CmdDataArrayBuilder<P>, Error> {
+        arr.push()?
+            .path(1, 6, 2)?
+            .data(|w| {
+                w.start_struct(&TLVTag::Context(1))?;
+                w.end_container()
+            })?
+            .command_ref(command_ref)?
+            .end()
+    }
+
+    #[test]
+    fn commands_that_overflow_are_rewound_to_last_complete_entry() {
+        // Room for the array end, the revision and the message end
+        const TRAILER: usize = 1 + 3 + 1;
+
+        let mut buf = [0; 64];
+        let buf_len = buf.len();
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.shrink(TRAILER).unwrap();
+
+        let mut arr = InvReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .invoke_requests()
+            .unwrap();
+
+        let mut written = 0;
+        let last_complete = loop {
+            let tail = arr.writer().get_tail();
+
+            match push_entry(arr, written) {
+                Ok(a) => {
+                    arr = a;
+                    written += 1;
+                }
+                Err(e) => {
+                    assert_eq!(e.code(), ErrorCode::NoSpace);
+                    break tail;
+                }
+            }
+        };
+
+        assert!(written > 0);
+        assert!(
+            wb.get_tail() > last_complete,
+            "the failed push wrote nothing"
+        );
+
+        wb.rewind_tail_to(last_complete);
+        wb.expand(TRAILER).unwrap();
+
+        CmdDataArrayBuilder {
+            p: InvReqBuilder::<_, 3> { p: root(&mut wb) },
+        }
+        .end()
+        .unwrap()
+        .end()
+        .unwrap();
+
+        assert!(wb.as_slice().len() <= buf_len);
+
+        let req = InvReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req
+            .inv_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.unwrap().command_ref.unwrap())
+            .eq(0..written));
+    }
+}

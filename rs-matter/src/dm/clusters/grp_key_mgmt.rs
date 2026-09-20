@@ -202,6 +202,11 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     for entry in &list {
                         count += 1;
                         if count > MAX_GROUP_KEYS_PER_FABRIC {
+                            // A list over capacity answers FAILURE, as the CHIP SDK does
+                            // and its `TestGroupKeyManagementCluster` expects. The same
+                            // holds for the per-entry appends below, which is how chip-tool
+                            // actually writes a list (an empty replacement, then one append
+                            // per entry)
                             return Err(ErrorCode::Failure.into());
                         }
                         let entry = entry?;

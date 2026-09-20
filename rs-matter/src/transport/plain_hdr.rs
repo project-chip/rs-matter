@@ -346,3 +346,235 @@ impl defmt::Format for PlainHdr {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    /// Fixed part of the plain header: flags, session ID, security flags,
+    /// message counter.
+    const FIXED_LEN: usize = 1 + 2 + 1 + 4;
+
+    fn encode(hdr: &PlainHdr) -> ([u8; PlainHdr::MAX_LEN], usize) {
+        let mut buf = [0; PlainHdr::MAX_LEN];
+        let mut wb = WriteBuf::new(&mut buf);
+        unwrap!(hdr.encode(&mut wb));
+        let len = wb.as_slice().len();
+        (buf, len)
+    }
+
+    fn decode(bytes: &mut [u8]) -> Result<(PlainHdr, usize), Error> {
+        let mut pb = ParseBuf::new(bytes);
+        let mut hdr = PlainHdr::new();
+        hdr.decode(&mut pb)?;
+        Ok((hdr, pb.as_slice().len()))
+    }
+
+    /// Encode, then decode, and check the decoded header reads back the same
+    /// and the encoding had the expected length.
+    fn round_trip(hdr: &PlainHdr, expected_len: usize) -> PlainHdr {
+        let (mut buf, len) = encode(hdr);
+        assert_eq!(len, expected_len);
+
+        let (decoded, left) = unwrap!(decode(&mut buf[..len]));
+        assert_eq!(left, 0);
+
+        assert_eq!(decoded.flags, hdr.flags);
+        assert_eq!(decoded.sec_flags, hdr.sec_flags);
+        assert_eq!(decoded.sess_id, hdr.sess_id);
+        assert_eq!(decoded.ctr, hdr.ctr);
+        assert_eq!(decoded.get_src_nodeid(), hdr.get_src_nodeid());
+        assert_eq!(
+            decoded.get_dst_unicast_nodeid(),
+            hdr.get_dst_unicast_nodeid()
+        );
+        assert_eq!(
+            decoded.get_dst_groupcast_nodeid(),
+            hdr.get_dst_groupcast_nodeid()
+        );
+
+        decoded
+    }
+
+    /// The minimal header carries neither node ID and is exactly the fixed
+    /// part, laid out little-endian.
+    #[test]
+    fn minimal_header_round_trip() {
+        let mut hdr = PlainHdr::new();
+        hdr.sess_id = 0x1234;
+        hdr.ctr = 0xdead_beef;
+
+        let decoded = round_trip(&hdr, FIXED_LEN);
+        assert!(decoded.get_src_nodeid().is_none());
+        assert!(decoded.get_dst_unicast_nodeid().is_none());
+        assert!(decoded.get_dst_groupcast_nodeid().is_none());
+
+        let (buf, len) = encode(&hdr);
+        assert_eq!(
+            &buf[..len],
+            &[0x00, 0x34, 0x12, 0x00, 0xef, 0xbe, 0xad, 0xde]
+        );
+    }
+
+    /// Every combination of the optional address fields round-trips with the
+    /// matching length.
+    #[test]
+    fn address_fields_round_trip() {
+        let mut hdr = PlainHdr::new();
+        hdr.set_src_nodeid(Some(0x0102_0304_0506_0708));
+        round_trip(&hdr, FIXED_LEN + 8);
+
+        hdr.set_dst_unicast_nodeid(Some(0x1112_1314_1516_1718));
+        round_trip(&hdr, FIXED_LEN + 8 + 8);
+
+        hdr.set_src_nodeid(None);
+        round_trip(&hdr, FIXED_LEN + 8);
+
+        hdr.set_dst_groupcast_nodeid(Some(0xabcd));
+        round_trip(&hdr, FIXED_LEN + 2);
+
+        hdr.set_src_nodeid(Some(1));
+        round_trip(&hdr, FIXED_LEN + 8 + 2);
+
+        hdr.set_dst_groupcast_nodeid(None);
+        hdr.set_src_nodeid(None);
+        round_trip(&hdr, FIXED_LEN);
+    }
+
+    /// Unicast and groupcast destinations are mutually exclusive: setting one
+    /// replaces the other, and clearing either clears both.
+    #[test]
+    fn destination_kinds_are_exclusive() {
+        let mut hdr = PlainHdr::new();
+
+        hdr.set_dst_unicast_nodeid(Some(7));
+        assert_eq!(hdr.get_dst_unicast_nodeid(), Some(7));
+        assert!(hdr.get_dst_groupcast_nodeid().is_none());
+
+        hdr.set_dst_groupcast_nodeid(Some(9));
+        assert!(hdr.get_dst_unicast_nodeid().is_none());
+        assert_eq!(hdr.get_dst_groupcast_nodeid(), Some(9));
+        assert_eq!(hdr.flags & DSIZ_MASK, MsgFlags::DSIZ_GROUPCAST_NODEID);
+
+        hdr.set_dst_unicast_nodeid(Some(7));
+        assert_eq!(hdr.flags & DSIZ_MASK, MsgFlags::DSIZ_UNICAST_NODEID);
+
+        hdr.set_dst_groupcast_nodeid(None);
+        assert!(hdr.get_dst_unicast_nodeid().is_none());
+        assert!(hdr.get_dst_groupcast_nodeid().is_none());
+        assert!(hdr.flags.is_empty());
+    }
+
+    /// The security flags round-trip and drive the session-type predicates;
+    /// a message is encrypted when it has a session ID or is a group message.
+    #[test]
+    fn security_flags_round_trip() {
+        let mut hdr = PlainHdr::new();
+        assert!(!hdr.is_encrypted());
+        assert!(!hdr.is_group_session());
+        assert!(!hdr.is_control_msg());
+        assert!(!hdr.is_privacy());
+
+        hdr.set_group_session(true);
+        hdr.set_control_msg(true);
+        let decoded = round_trip(&hdr, FIXED_LEN);
+        assert!(decoded.is_group_session());
+        assert!(decoded.is_control_msg());
+        assert!(decoded.is_encrypted());
+
+        // The privacy bit has no setter but survives decoding.
+        let (mut buf, len) = encode(&hdr);
+        buf[3] |= SecFlags::PRIVACY.bits();
+        let (decoded, _) = unwrap!(decode(&mut buf[..len]));
+        assert!(decoded.is_privacy());
+        assert!(decoded.is_group_session());
+
+        hdr.set_group_session(false);
+        hdr.set_control_msg(false);
+        assert!(hdr.sec_flags.is_empty());
+        assert!(!hdr.is_encrypted());
+
+        hdr.sess_id = 1;
+        assert!(hdr.is_encrypted());
+    }
+
+    /// Unknown message flag bits (including a non-zero version nibble) and
+    /// unknown security flag bits are rejected.
+    #[test]
+    fn decode_rejects_unknown_flag_bits() {
+        let (buf, len) = encode(&PlainHdr::new());
+
+        for bit in [0x08, 0x10, 0x80] {
+            let mut bytes = buf;
+            bytes[0] = bit;
+            assert_eq!(
+                unwrap!(decode(&mut bytes[..len]).err()).code(),
+                ErrorCode::Invalid,
+                "message flag {bit:#x}"
+            );
+        }
+
+        for bit in [0x02, 0x04, 0x08, 0x10] {
+            let mut bytes = buf;
+            bytes[3] = bit;
+            assert_eq!(
+                unwrap!(decode(&mut bytes[..len]).err()).code(),
+                ErrorCode::Invalid,
+                "security flag {bit:#x}"
+            );
+        }
+    }
+
+    /// A header cut short anywhere - in the fixed part or in an optional node
+    /// ID - is a truncated packet.
+    #[test]
+    fn decode_rejects_truncated_input() {
+        let mut hdr = PlainHdr::new();
+        hdr.set_src_nodeid(Some(1));
+        hdr.set_dst_unicast_nodeid(Some(2));
+        let (buf, len) = encode(&hdr);
+
+        for cut in 0..len {
+            let mut bytes = buf;
+            assert_eq!(
+                unwrap!(decode(&mut bytes[..cut]).err()).code(),
+                ErrorCode::TruncatedPacket,
+                "cut at {cut}"
+            );
+        }
+
+        let mut bytes = buf;
+        assert!(decode(&mut bytes[..len]).is_ok());
+    }
+
+    /// Both DSIZ bits set is a reserved combination: it decodes, but carries
+    /// no destination and consumes no destination bytes.
+    #[test]
+    fn decode_both_dsiz_bits_carries_no_destination() {
+        let mut bytes = [0x03, 0, 0, 0, 0, 0, 0, 0, 0xaa, 0xbb];
+
+        let (decoded, left) = unwrap!(decode(&mut bytes));
+        assert_eq!(decoded.flags, DSIZ_MASK);
+        assert!(decoded.get_dst_unicast_nodeid().is_none());
+        assert!(decoded.get_dst_groupcast_nodeid().is_none());
+        assert_eq!(left, 2);
+
+        // And it encodes back to the same fixed-length form.
+        let (_, len) = encode(&decoded);
+        assert_eq!(len, FIXED_LEN);
+    }
+
+    /// The maximum encoded length stays within `MAX_LEN`, which also leaves
+    /// room for the TCP length prefix.
+    #[test]
+    fn max_len_covers_the_longest_encoding() {
+        let mut hdr = PlainHdr::new();
+        hdr.set_src_nodeid(Some(u64::MAX));
+        hdr.set_dst_unicast_nodeid(Some(u64::MAX));
+        hdr.sec_flags = SecFlags::all();
+
+        let (_, len) = encode(&hdr);
+        assert_eq!(len, PlainHdr::MAX_LEN - 2);
+    }
+}

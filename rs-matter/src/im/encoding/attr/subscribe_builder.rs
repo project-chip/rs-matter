@@ -466,3 +466,290 @@ where
         defmt::write!(fmt, "{:?}::SubscribeRequestMessage<{}>", self.p, F);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::im::{
+        AttrPath, ClusterPath, DataVersionFilter, EventFilter, EventPath, SubscribeReq, IM_REVISION,
+    };
+    use crate::tlv::{TLVElement, TLVTag, TLVWriteParent};
+    use crate::utils::storage::WriteBuf;
+
+    use super::SubscribeReqBuilder;
+
+    type Root<'a, 'b> = TLVWriteParent<(), &'a mut WriteBuf<'b>>;
+
+    fn root<'a, 'b>(wb: &'a mut WriteBuf<'b>) -> Root<'a, 'b> {
+        TLVWriteParent::new((), wb)
+    }
+
+    #[test]
+    fn subscribe_round_trips_all_fields() {
+        let paths = [AttrPath {
+            endpoint: Some(1),
+            cluster: Some(6),
+            attr: Some(0),
+            ..Default::default()
+        }];
+        let events = [EventPath {
+            cluster: Some(0x28),
+            ..Default::default()
+        }];
+        let filters = [EventFilter {
+            node: Some(5),
+            event_min: Some(42),
+        }];
+        let datavers = [DataVersionFilter {
+            path: ClusterPath {
+                node: None,
+                endpoint: 1,
+                cluster: 6,
+            },
+            data_ver: 9,
+        }];
+
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(false)
+            .unwrap()
+            .min_int_floor(1)
+            .unwrap()
+            .max_int_ceil(0x1234)
+            .unwrap()
+            .attr_requests()
+            .unwrap()
+            .push()
+            .unwrap()
+            .endpoint(1)
+            .unwrap()
+            .cluster(6)
+            .unwrap()
+            .attr(0)
+            .unwrap()
+            .end()
+            .unwrap()
+            .end()
+            .unwrap()
+            .event_requests_from(&events)
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .dataver_filters_from(&datavers)
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        let req = SubscribeReq::new(TLVElement::new(wb.as_slice()));
+        assert!(!req.keep_subs().unwrap());
+        assert_eq!(req.min_int_floor().unwrap(), 1);
+        assert_eq!(req.max_int_ceil().unwrap(), 0x1234);
+        assert!(req
+            .attr_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(paths.iter().cloned()));
+        assert!(req
+            .event_requests()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(events.iter().cloned()));
+        assert!(req
+            .event_filters()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(filters.iter().cloned()));
+        assert!(req.fabric_filtered().unwrap());
+        assert!(req
+            .dataver_filters()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(Result::unwrap)
+            .eq(datavers.iter().cloned()));
+        assert_eq!(
+            TLVElement::new(wb.as_slice())
+                .structure()
+                .unwrap()
+                .find_ctx(0xFF)
+                .unwrap()
+                .u8()
+                .unwrap(),
+            7
+        );
+
+        // The same via the slice helper for the attribute paths produces identical bytes
+        let mut buf2 = [0; 256];
+        let mut wb2 = WriteBuf::new(&mut buf2);
+        SubscribeReqBuilder::new(root(&mut wb2), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(false)
+            .unwrap()
+            .min_int_floor(1)
+            .unwrap()
+            .max_int_ceil(0x1234)
+            .unwrap()
+            .attr_requests_from(&paths)
+            .unwrap()
+            .event_requests_from(&events)
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .dataver_filters_from(&datavers)
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(wb.as_slice(), wb2.as_slice());
+
+        // Minimal request: the four mandatory fields plus the revision
+        wb.reset();
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(0)
+            .unwrap()
+            .max_int_ceil(60)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .end()
+            .unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15,
+                0x29,
+                0,
+                0x24,
+                1,
+                0,
+                0x24,
+                2,
+                60,
+                0x29,
+                7,
+                0x24,
+                0xFF,
+                IM_REVISION,
+                0x18
+            ]
+        );
+    }
+
+    #[test]
+    fn subscribe_forwarders_skip_optional_arrays() {
+        let events = [EventPath::default()];
+        let filters = [EventFilter::default()];
+
+        let mut buf = [0; 128];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        // state 3 -> `EventRequests`, state 4 -> `FabricFiltered`
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(0)
+            .unwrap()
+            .max_int_ceil(1)
+            .unwrap()
+            .event_requests_from(&events)
+            .unwrap()
+            .fabric_filtered(false)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = SubscribeReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.attr_requests().unwrap().is_none());
+        assert_eq!(req.event_requests().unwrap().unwrap().iter().count(), 1);
+        assert!(req.event_filters().unwrap().is_none());
+        assert!(!req.fabric_filtered().unwrap());
+        assert!(req.dataver_filters().unwrap().is_none());
+
+        // state 3 -> `EventFilters`, state 6 -> `FabricFiltered`, state 7 -> revision
+        wb.reset();
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(0)
+            .unwrap()
+            .max_int_ceil(1)
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .interaction_model_revision(7)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = SubscribeReq::new(TLVElement::new(wb.as_slice()));
+        assert!(req.attr_requests().unwrap().is_none());
+        assert!(req.event_requests().unwrap().is_none());
+        assert_eq!(req.event_filters().unwrap().unwrap().iter().count(), 1);
+        assert!(req.fabric_filtered().unwrap());
+
+        // state 4 -> `EventFilters`, state 5 -> `FabricFiltered`
+        wb.reset();
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(0)
+            .unwrap()
+            .max_int_ceil(1)
+            .unwrap()
+            .attr_requests_from(&[])
+            .unwrap()
+            .event_filters_from(&filters)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = SubscribeReq::new(TLVElement::new(wb.as_slice()));
+        assert_eq!(req.attr_requests().unwrap().unwrap().iter().count(), 0);
+        assert!(req.event_requests().unwrap().is_none());
+        assert_eq!(req.event_filters().unwrap().unwrap().iter().count(), 1);
+
+        wb.reset();
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(0)
+            .unwrap()
+            .max_int_ceil(1)
+            .unwrap()
+            .attr_requests_from(&[])
+            .unwrap()
+            .event_requests_from(&events)
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .end()
+            .unwrap();
+        let req = SubscribeReq::new(TLVElement::new(wb.as_slice()));
+        assert_eq!(req.event_requests().unwrap().unwrap().iter().count(), 1);
+        assert!(req.event_filters().unwrap().is_none());
+    }
+}

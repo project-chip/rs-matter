@@ -305,6 +305,12 @@ where
             result.set(point)?;
         }
 
+        // `mbedtls_ecp_point_read_binary` only parses the coordinates; the
+        // point must be on the curve (and not the identity) to be usable
+        if !crate::crypto::EcPoint::is_valid_pubkey(&result)? {
+            Err(ErrorCode::InvalidData)?;
+        }
+
         Ok(result)
     }
 
@@ -707,7 +713,10 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        assert!(data.len() >= TAG_LEN);
+        if data.len() < TAG_LEN {
+            // Nothing to authenticate
+            Err(ErrorCode::InvalidData)?;
+        }
 
         let mut ctx = Default::default();
 

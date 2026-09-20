@@ -94,6 +94,7 @@ pub fn signal_strength_to_rssi(strength_perc: u8) -> i8 {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #[test]
     fn test_band_and_channel() {

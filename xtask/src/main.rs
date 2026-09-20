@@ -29,6 +29,7 @@ use log::{Level, LevelFilter};
 use crate::itest::{ITests, TestSuite};
 
 mod copyright;
+mod coverage;
 mod itest;
 mod onboard;
 mod pics;
@@ -75,6 +76,11 @@ enum Command {
         /// Skip building the tested executable (assume it's already built)
         #[arg(long)]
         skip_build: bool,
+        /// Write an LCOV trace of the lines the tests reached in the test
+        /// executable to this file (implies `--coverage`; default with
+        /// `--coverage`: `target/itest-coverage.info`)
+        #[arg(long, value_name = "FILE")]
+        coverage_out: Option<PathBuf>,
     },
     /// Setup Chip environment for integration testing
     ItestSetup(ItestSetupArgs),
@@ -110,6 +116,8 @@ enum Command {
         /// A comma-separated list of TLV octets to decode (e.g., "0x01,0x02,0x03" or "1,2,3")
         tlv: String,
     },
+    /// Summarize a `cargo llvm-cov` LCOV trace per `rs-matter` module
+    Coverage(coverage::Args),
     /// Fill in the CSA master PICS templates from a device's own data model.
     ///
     /// Feed it the JSON emitted by a binary built with the `pics` feature
@@ -160,12 +168,14 @@ impl Command {
             }
             Command::ItestSetup(args) => ITests::new(workspace_dir(), print_cmd_output)
                 .setup(Some(&args.gitref), args.force_setup),
-            Command::ItestExe(args) => ITests::new(workspace_dir(), print_cmd_output).build(
-                &args.profile,
-                args.target_or_default(),
-                &args.features,
-                args.force_rebuild,
-            ),
+            Command::ItestExe(args) => ITests::new(workspace_dir(), print_cmd_output)
+                .with_coverage(args.coverage)?
+                .build(
+                    &args.profile,
+                    args.target_or_default(),
+                    &args.features,
+                    args.force_rebuild,
+                ),
             Command::Itest {
                 setup_args,
                 build_args,
@@ -174,7 +184,15 @@ impl Command {
                 timeout,
                 skip_setup,
                 skip_build,
+                coverage_out,
             } => {
+                let coverage = build_args.coverage || coverage_out.is_some();
+                let coverage_out = coverage.then(|| {
+                    coverage_out.clone().unwrap_or_else(|| {
+                        workspace_dir().join("target").join("itest-coverage.info")
+                    })
+                });
+
                 // Resolve overrides against the selected suite's defaults.
                 let resolved_target = build_args
                     .target
@@ -207,16 +225,20 @@ impl Command {
                         target: Some(resolved_target.clone()),
                         features: resolved_features.clone(),
                         force_rebuild: build_args.force_rebuild,
+                        coverage,
                     };
                     Command::ItestExe(resolved_build).run(print_cmd_output)?;
                 }
 
-                ITests::new(workspace_dir(), print_cmd_output).run(
-                    &resolved_tests,
-                    resolved_timeout,
-                    &build_args.profile,
-                    &resolved_target,
-                )
+                ITests::new(workspace_dir(), print_cmd_output)
+                    .with_coverage(coverage)?
+                    .run(
+                        &resolved_tests,
+                        resolved_timeout,
+                        &build_args.profile,
+                        &resolved_target,
+                        coverage_out.as_deref(),
+                    )
             }
             Command::Pics {
                 templates,
@@ -245,6 +267,7 @@ impl Command {
                 tlv,
             } => tlv::decode(tlv, *dec, *cert, *as_asn1),
             Command::Onboard(args) => onboard::run(args),
+            Command::Coverage(args) => coverage::run(args),
         }
     }
 }
@@ -311,6 +334,10 @@ struct BuildArgs {
     /// Force clean rebuild
     #[arg(long)]
     force_rebuild: bool,
+    /// Build with coverage instrumentation via `cargo llvm-cov` (which must
+    /// be installed), so that test runs write execution profiles
+    #[arg(long)]
+    coverage: bool,
 }
 
 impl BuildArgs {

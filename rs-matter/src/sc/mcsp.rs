@@ -177,6 +177,7 @@ pub async fn respond<C: Crypto>(crypto: C, mut exchange: Exchange<'_>) -> Result
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

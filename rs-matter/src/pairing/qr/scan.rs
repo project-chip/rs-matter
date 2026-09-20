@@ -136,6 +136,7 @@ fn first_matter_qr<E>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::dm::devices::test::TEST_DEV_DET;
     use crate::pairing::qr::{CommFlowType, Qr, QrPayload};

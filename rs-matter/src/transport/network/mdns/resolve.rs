@@ -453,6 +453,7 @@ fn parse_ip_address(family: i32, addr_bytes: &[u8]) -> Option<IpAddr> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

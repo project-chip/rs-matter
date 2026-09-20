@@ -288,6 +288,7 @@ pub fn is_test_cd_key(kid: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

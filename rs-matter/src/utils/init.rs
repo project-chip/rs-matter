@@ -114,6 +114,7 @@ pub trait InitDefault: Sized {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::cell::{Cell, UnsafeCell};
     use core::mem::MaybeUninit;

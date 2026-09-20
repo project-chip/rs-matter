@@ -124,6 +124,7 @@ pub fn copy_integer_to_fixed(target: &mut [u8], integer: &[u8]) -> Result<(), Er
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     #[test]

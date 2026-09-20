@@ -773,6 +773,7 @@ fn dataver(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod test {
     use crate::acl::{Accessor, AccessorSubjects, AuthMode};
     use crate::dm::{

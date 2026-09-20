@@ -235,6 +235,7 @@ impl<'a> NocGenerator<'a> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::cert::gen::VALID_FOREVER;
     use crate::cert::{CertRef, MAX_CERT_TLV_AND_ASN1_LEN};

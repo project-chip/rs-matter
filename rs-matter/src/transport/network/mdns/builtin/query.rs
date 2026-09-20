@@ -278,6 +278,7 @@ pub fn parse_into_answer(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

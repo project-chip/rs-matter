@@ -1259,6 +1259,9 @@ const THREAD_TARGET: &str = "thread_tests";
 /// binaries) and their `.pics` files.
 const TEST_CRATE_DIR: &str = "tests";
 
+/// Sources left out of the coverage report: the generated D-Bus proxies.
+const COVERAGE_IGNORE_REGEX: &str = "zbus_proxies";
+
 /// Synthetic test name surfaced for [`TestSuite::Commissioner`] — picked
 /// up by [`ITests::run_tests`] and routed to [`ITests::run_commissioner_suite`].
 pub(crate) const COMMISSIONER_PHASE1_TEST: &str = "commissioner_phase_1";
@@ -1288,6 +1291,9 @@ pub struct ITests {
     workspace_dir: PathBuf,
     print_cmd_output: bool,
     chip_builder: ChipBuilder,
+    /// The `cargo llvm-cov show-env` environment when the test executable is
+    /// built with coverage instrumentation; `None` for a plain build
+    coverage_env: Option<Vec<(String, String)>>,
 }
 
 impl ITests {
@@ -1303,7 +1309,127 @@ impl ITests {
             workspace_dir,
             print_cmd_output,
             chip_builder: ChipBuilder::new(chip_dir, print_cmd_output),
+            coverage_env: None,
         }
+    }
+
+    /// Build the test executable with coverage instrumentation and have every
+    /// test run write execution profiles for it, so that `run` can report the
+    /// lines the Chip suites reach.
+    ///
+    /// Uses `cargo llvm-cov`, which must be installed (`cargo install cargo-llvm-cov`).
+    pub fn with_coverage(mut self, coverage: bool) -> anyhow::Result<Self> {
+        self.coverage_env = coverage
+            .then(|| Self::coverage_env(&self.workspace_dir))
+            .transpose()?;
+
+        Ok(self)
+    }
+
+    /// The environment `cargo llvm-cov` needs a `cargo build` to run under so
+    /// that the workspace crates come out instrumented, plus the profile file
+    /// pattern the instrumented executables write to.
+    fn coverage_env(workspace_dir: &Path) -> anyhow::Result<Vec<(String, String)>> {
+        let output = Command::new("cargo")
+            .arg("llvm-cov")
+            .arg("show-env")
+            .current_dir(workspace_dir)
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to run `cargo llvm-cov show-env`: {e}"))?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "`cargo llvm-cov show-env` failed ({}); is `cargo-llvm-cov` installed \
+                 (`cargo install cargo-llvm-cov`) together with the `llvm-tools-preview` \
+                 rustup component?\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let env = parse_show_env(&String::from_utf8_lossy(&output.stdout));
+
+        if !env.iter().any(|(k, _)| k == "LLVM_PROFILE_FILE") {
+            anyhow::bail!("`cargo llvm-cov show-env` did not report `LLVM_PROFILE_FILE`");
+        }
+
+        Ok(env)
+    }
+
+    /// A value from the coverage environment.
+    fn coverage_var(&self, name: &str) -> Option<&str> {
+        self.coverage_env
+            .as_ref()?
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Point a test-runner command at the coverage profile file pattern, so
+    /// that the test executables it spawns (which inherit its environment)
+    /// write their execution profiles.
+    fn apply_coverage_env(&self, cmd: &mut Command) {
+        if let Some(profile_file) = self.coverage_var("LLVM_PROFILE_FILE") {
+            cmd.env("LLVM_PROFILE_FILE", profile_file);
+        }
+    }
+
+    /// Remove the execution profiles of earlier runs, so that the report
+    /// covers this run only.
+    fn clear_coverage_profiles(&self) -> anyhow::Result<()> {
+        let Some(pattern) = self.coverage_var("LLVM_PROFILE_FILE") else {
+            return Ok(());
+        };
+
+        let dir = Path::new(pattern)
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.workspace_dir.clone());
+
+        if !dir.exists() {
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|ext| ext == "profraw") {
+                fs::remove_file(&path)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Turn the execution profiles written during the run into an LCOV trace.
+    fn write_coverage_report(&self, out: &Path) -> anyhow::Result<()> {
+        let Some(env) = &self.coverage_env else {
+            return Ok(());
+        };
+
+        warn!("Writing coverage report to `{}`...", out.display());
+
+        if let Some(dir) = out.parent() {
+            fs::create_dir_all(dir)?;
+        }
+
+        let mut cmd = Command::new("cargo");
+
+        cmd.arg("llvm-cov")
+            .arg("report")
+            .arg("--lcov")
+            .arg("--output-path")
+            .arg(out)
+            .arg("--ignore-filename-regex")
+            .arg(COVERAGE_IGNORE_REGEX)
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .current_dir(&self.workspace_dir);
+
+        run_command(&mut cmd, self.print_cmd_output)?;
+
+        info!("Coverage report written to `{}`", out.display());
+
+        Ok(())
     }
 
     /// Print the required system tools for Chip integration tests.
@@ -1350,8 +1476,21 @@ impl ITests {
         test_timeout_secs: u32,
         profile: &str,
         target: &str,
+        coverage_out: Option<&Path>,
     ) -> anyhow::Result<()> {
-        self.run_tests(tests, test_timeout_secs, profile, target)
+        if self.coverage_env.is_some() {
+            self.clear_coverage_profiles()?;
+        }
+
+        let result = self.run_tests(tests, test_timeout_secs, profile, target);
+
+        // Written even after a failure: the profiles of the tests which did
+        // run are still worth having
+        if let Some(out) = coverage_out {
+            self.write_coverage_report(out)?;
+        }
+
+        result
     }
 
     fn run_tests<'a>(
@@ -1658,6 +1797,8 @@ impl ITests {
             .arg("-c")
             .arg(&test_command);
 
+        self.apply_coverage_env(&mut cmd);
+
         if let Some(ble_env) = &_ble_env {
             cmd.env("DBUS_SYSTEM_BUS_ADDRESS", ble_env.dbus_address());
         }
@@ -1782,6 +1923,8 @@ impl ITests {
             .env("CHIP_HOME", chip_dir)
             .arg("-c")
             .arg(&test_command);
+
+        self.apply_coverage_env(&mut cmd);
 
         if let Some(otbr_env) = &_otbr_env {
             cmd.env("DBUS_SYSTEM_BUS_ADDRESS", otbr_env.dbus_address());
@@ -2025,11 +2168,15 @@ impl ITests {
 
         // 5. Run the rs-matter controller binary against it. Time-bound
         //    so a hung commissioning doesn't deadlock the suite.
-        let mut controller = Command::new(&test_exe_path)
+        let mut controller_cmd = Command::new(&test_exe_path);
+        controller_cmd
             .arg(COMMISSIONER_PASSCODE.to_string())
             .arg(format!("[::1]:{COMMISSIONER_DEVICE_PORT}"))
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        self.apply_coverage_env(&mut controller_cmd);
+
+        let mut controller = controller_cmd
             .spawn()
             .map_err(|e| anyhow::anyhow!("failed to spawn commissioner_tests: {e}"))?;
 
@@ -3257,6 +3404,10 @@ impl ITests {
             .arg(&features)
             .current_dir(&test_exe_crate_dir);
 
+        if let Some(env) = &self.coverage_env {
+            cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
+
         if profile == "release" {
             cmd.arg("--release");
         }
@@ -3273,7 +3424,12 @@ impl ITests {
     }
 
     fn test_exe_path(&self, profile: &str, target: &str) -> PathBuf {
-        self.workspace_dir.join("target").join(profile).join(target)
+        let target_dir = self
+            .coverage_var("CARGO_LLVM_COV_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.workspace_dir.join("target"));
+
+        target_dir.join(profile).join(target)
     }
 
     fn test_pics_path(&self, test_name: &str, target: &str) -> PathBuf {
@@ -3294,5 +3450,53 @@ impl ITests {
             .join("src")
             .join("bin")
             .join(format!("{target}.pics"))
+    }
+}
+
+/// Parse the `KEY='VALUE'` (or `export KEY='VALUE'`) lines of
+/// `cargo llvm-cov show-env`.
+fn parse_show_env(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let line = line.strip_prefix("export ").unwrap_or(line);
+            let (key, value) = line.split_once('=')?;
+            let value = value
+                .strip_prefix('\'')
+                .and_then(|v| v.strip_suffix('\''))
+                .unwrap_or(value);
+
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_show_env;
+
+    #[test]
+    fn show_env_lines_are_parsed_with_and_without_export() {
+        let env = parse_show_env(
+            "LLVM_PROFILE_FILE='/w/target/rs-matter-%p-%8m.profraw'\n\
+             export RUSTC_WRAPPER='/home/x/.cargo/bin/cargo-llvm-cov'\n\
+             CARGO_LLVM_COV=1\n\
+             not a variable\n",
+        );
+
+        assert_eq!(
+            env,
+            vec![
+                (
+                    "LLVM_PROFILE_FILE".to_string(),
+                    "/w/target/rs-matter-%p-%8m.profraw".to_string()
+                ),
+                (
+                    "RUSTC_WRAPPER".to_string(),
+                    "/home/x/.cargo/bin/cargo-llvm-cov".to_string()
+                ),
+                ("CARGO_LLVM_COV".to_string(), "1".to_string()),
+            ]
+        );
     }
 }

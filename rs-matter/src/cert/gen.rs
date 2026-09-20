@@ -419,6 +419,7 @@ impl<'a> CertGenerator<'a> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::{
         cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN},

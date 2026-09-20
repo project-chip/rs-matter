@@ -726,6 +726,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Unit tests for the parts of [`ModeSelectHandler`] that need no `Matter`
     //! / operation-context setup: the startup validation rules, the

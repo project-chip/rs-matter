@@ -275,6 +275,7 @@ pub(super) fn held_fd<'x>(exchange: &'x Exchange<'_>) -> &'x [u8] {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

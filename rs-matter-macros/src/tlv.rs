@@ -215,6 +215,13 @@ fn gen_totlv_for_struct_named(
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
     let datatype = format_ident!("start_{}", tlvargs.datatype);
+    let container = format_ident!(
+        "{}",
+        match tlvargs.datatype.as_str() {
+            "struct" => "structure",
+            other => other,
+        }
+    );
 
     let mut idents = Vec::new();
     let mut tags = Vec::new();
@@ -251,7 +258,7 @@ fn gen_totlv_for_struct_named(
             }
 
             fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
-                let iter = #krate::tlv::TLV::structure(tag).into_tlv_iter();
+                let iter = #krate::tlv::TLV::#container(tag).into_tlv_iter();
 
                 #(let iter = Iterator::chain(iter, #krate::tlv::ToTLV::tlv_iter(&self.#idents, #krate::tlv::TLVTag::Context(#tags)));)*
 

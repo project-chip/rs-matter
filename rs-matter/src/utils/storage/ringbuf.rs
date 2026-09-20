@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -221,6 +221,7 @@ impl<const N: usize> Iterator for RingBuf<N> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -3482,6 +3482,7 @@ pub mod test {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Unit tests for the ColorControl scenes integration — no
     //! chip-tool YAML suite covers it.

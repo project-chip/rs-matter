@@ -82,3 +82,54 @@ impl StatusResp {
         .to_tlv(&TagType::Anonymous, &mut *wb)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{IMStatusCode, Status, StatusResp, IM_REVISION};
+
+    #[test]
+    fn status_resp_write_and_round_trip() {
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        StatusResp::write(&mut wb, IMStatusCode::Busy).unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[0x15, 0x24, 0, 0x9C, 0x24, 0xFF, IM_REVISION, 0x18]
+        );
+        assert_eq!(
+            StatusResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            StatusResp {
+                status: IMStatusCode::Busy,
+                ..Default::default()
+            }
+        );
+
+        // A peer that omits the revision still decodes
+        wb.reset();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.u16(&TLVTag::Context(0), IMStatusCode::Success as u16)
+            .unwrap();
+        wb.end_container().unwrap();
+        let resp = StatusResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(resp.status, IMStatusCode::Success);
+        assert_eq!(resp.interaction_model_revision, None);
+
+        // `Status` with and without a cluster status
+        for status in [
+            Status::new(IMStatusCode::Failure, Some(0x1234)),
+            Status::new(IMStatusCode::Success, None),
+        ] {
+            wb.reset();
+            status.to_tlv(&TLVTag::Context(1), &mut wb).unwrap();
+            assert_eq!(
+                Status::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+                status
+            );
+        }
+    }
+}

@@ -847,6 +847,7 @@ pub fn parse_bdx_url(url: &str) -> Result<(NodeId, &str), Error> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

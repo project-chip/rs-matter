@@ -288,6 +288,11 @@ impl FailSafe {
             //     return Err(ErrorCode::GennCommInvalidAuthentication.into());
             // }
 
+            if timeout_secs == 0 {
+                // Expiring a fail-safe which is not armed succeeds without side effects
+                return Ok(());
+            }
+
             self.state = State::Armed(ArmedCtx {
                 armed_at: Instant::now(),
                 timeout_secs,
@@ -910,5 +915,1393 @@ impl FailSafe {
 impl Default for FailSafe {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use core::num::NonZeroU8;
+
+    use crate::cert::gen::VALID_FOREVER;
+    use crate::crypto::{test_only_crypto, CanonPkcSecretKey, Crypto, PKC_CANON_SECRET_KEY_LEN};
+    use crate::dm::clusters::net_comm::DummyNetworkAccess;
+    use crate::dm::clusters::time_sync::UtcTime;
+    use crate::dm::devices::test::TEST_DEV_COMM;
+    use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+    use crate::dm::{ClusterId, EndptId};
+    use crate::error::{Error, ErrorCode};
+    use crate::fabric::tests::{
+        add_fabric, mint_icac, mint_noc, mint_noc_for_pubkey, mint_rcac, pubkey_of, MemKv,
+        MemKvBlobStore, TestRcac, TEST_IPK,
+    };
+    use crate::fabric::{FabricPersist, Fabrics, MAX_FABRICS};
+    use crate::sc::pase::Pase;
+    use crate::transport::session::{SessionMode, Sessions};
+
+    use super::{FailSafe, DEFAULT_FAILSAFE_EXPIRY_SECS};
+
+    fn pase(fab_idx: u8) -> SessionMode {
+        SessionMode::Pase { fab_idx }
+    }
+
+    fn case(fab_idx: u8) -> SessionMode {
+        SessionMode::Case {
+            fab_idx: NonZeroU8::new(fab_idx).unwrap(),
+            cat_ids: Default::default(),
+        }
+    }
+
+    fn idx(i: u8) -> NonZeroU8 {
+        NonZeroU8::new(i).unwrap()
+    }
+
+    /// A UTC time inside the validity window of every minted certificate.
+    fn now() -> UtcTime {
+        UtcTime::Reliable(VALID_FOREVER.not_before as u64 * 1_000_000)
+    }
+
+    fn code<T>(r: Result<T, Error>) -> ErrorCode {
+        r.err().expect("expected an error").code()
+    }
+
+    /// Arm a fresh fail-safe over `session_mode` with the default expiry.
+    fn armed(session_mode: &SessionMode) -> FailSafe {
+        let mut fs = FailSafe::new();
+        fs.arm(
+            DEFAULT_FAILSAFE_EXPIRY_SECS,
+            0,
+            session_mode,
+            &mut Pase::new(),
+        )
+        .unwrap();
+        fs
+    }
+
+    /// Open a basic commissioning window on `pase`.
+    fn open_window(pase: &mut Pase) {
+        pase.open_basic_comm_window(
+            1,
+            &[0x11; 16],
+            TEST_DEV_COMM.password.reference(),
+            TEST_DEV_COMM.discriminator,
+            180,
+            None,
+            || {},
+            |_, _| {},
+        )
+        .unwrap();
+    }
+
+    /// Stage `rcac` via `AddTrustedRootCertificate`, then issue an `AddNOC`-style
+    /// CSR and return the generated secret key.
+    fn stage_root_and_csr<C: Crypto>(
+        crypto: &C,
+        fs: &mut FailSafe,
+        session_mode: &SessionMode,
+        rcac: &TestRcac,
+    ) -> CanonPkcSecretKey {
+        let mut buf = [0u8; 1024];
+        fs.add_trusted_root_cert(crypto, now(), session_mode, &rcac.cert, &mut buf)
+            .unwrap();
+
+        CanonPkcSecretKey::new_from_ref(fs.add_csr_req(crypto, session_mode).unwrap())
+    }
+
+    /// Drive the full `AddNOC` flow over PASE for a new fabric with
+    /// `fabric_id` / `node_id`, returning the staged RCAC and the local index
+    /// of the pending fabric.
+    fn add_noc_flow<C: Crypto>(
+        crypto: &C,
+        fs: &mut FailSafe,
+        fabrics: &mut Fabrics,
+        fabric_id: u64,
+        node_id: u64,
+    ) -> (TestRcac, NonZeroU8) {
+        let rcac = mint_rcac(crypto, fabric_id, 0x77);
+        let key = stage_root_and_csr(crypto, fs, &pase(0), &rcac);
+        let noc = mint_noc_for_pubkey(
+            crypto,
+            &rcac,
+            true,
+            pubkey_of(crypto, key.reference()).reference(),
+            node_id,
+        );
+
+        let mut buf = [0u8; 1024];
+        let fab_idx = fs
+            .add_noc(
+                crypto,
+                now(),
+                fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK,
+                node_id,
+                &mut buf,
+                || {},
+            )
+            .unwrap()
+            .fab_idx();
+
+        (rcac, fab_idx)
+    }
+
+    #[test]
+    fn new_and_init_are_idle() {
+        use crate::utils::init::InitMaybeUninit;
+
+        let mut init = core::mem::MaybeUninit::<FailSafe>::uninit();
+        let init = init.init_with(FailSafe::init());
+
+        for fs in [&FailSafe::new(), &FailSafe::default(), &*init] {
+            assert!(!fs.is_armed());
+            assert!(!fs.is_armed_for(0));
+            assert!(!fs.has_pending_noc_for(idx(1)));
+            assert_eq!(fs.breadcrumb(), 0);
+            assert!(fs.pending_root_ca().is_none());
+            assert!(fs.pending_add_noc().is_none());
+            assert_eq!(code(fs.check_armed(&pase(0))), ErrorCode::FailSafeRequired);
+            assert_eq!(code(fs.check_armed(&case(1))), ErrorCode::FailSafeRequired);
+        }
+    }
+
+    #[test]
+    fn arm_over_pase_from_idle() {
+        let mut fs = FailSafe::new();
+        fs.arm(60, 7, &pase(0), &mut Pase::new()).unwrap();
+
+        assert!(fs.is_armed());
+        assert!(fs.is_armed_for(0));
+        assert!(!fs.is_armed_for(1));
+        assert!(!fs.has_pending_noc_for(idx(1)));
+        assert_eq!(fs.breadcrumb(), 7);
+        assert!(fs.pending_root_ca().is_none());
+        assert!(fs.pending_add_noc().is_none());
+
+        fs.check_armed(&pase(0)).unwrap();
+        assert_eq!(
+            code(fs.check_armed(&case(1))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        assert_eq!(
+            code(fs.check_armed(&pase(1))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        assert_eq!(
+            code(fs.check_armed(&SessionMode::PlainText)),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+    }
+
+    #[test]
+    fn arm_over_case_from_idle() {
+        let mut fs = FailSafe::new();
+        fs.arm(60, 1, &case(2), &mut Pase::new()).unwrap();
+
+        assert!(fs.is_armed());
+        assert!(fs.is_armed_for(2));
+        assert!(!fs.is_armed_for(0));
+        assert_eq!(fs.breadcrumb(), 1);
+
+        fs.check_armed(&case(2)).unwrap();
+        assert_eq!(
+            code(fs.check_armed(&case(1))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        assert_eq!(
+            code(fs.check_armed(&pase(0))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+    }
+
+    #[test]
+    fn arm_rejects_plaintext_sessions() {
+        let mut fs = FailSafe::new();
+
+        assert_eq!(
+            code(fs.arm(60, 1, &SessionMode::PlainText, &mut Pase::new())),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+        assert!(!fs.is_armed());
+        assert_eq!(fs.breadcrumb(), 0);
+    }
+
+    #[test]
+    fn arm_over_case_with_open_commissioning_window_is_busy() {
+        let mut pase_state = Pase::new();
+        open_window(&mut pase_state);
+
+        let mut fs = FailSafe::new();
+        assert_eq!(
+            code(fs.arm(60, 1, &case(1), &mut pase_state)),
+            ErrorCode::Busy
+        );
+        assert!(!fs.is_armed());
+
+        // PASE arming is fine while the window is open
+        fs.arm(60, 1, &pase(0), &mut pase_state).unwrap();
+        assert!(fs.is_armed_for(0));
+    }
+
+    #[test]
+    fn rearm_from_same_session_extends_and_updates_breadcrumb() {
+        let mut fs = FailSafe::new();
+        fs.arm(60, 1, &pase(0), &mut Pase::new()).unwrap();
+        fs.arm(120, 2, &pase(0), &mut Pase::new()).unwrap();
+
+        assert!(fs.is_armed_for(0));
+        assert_eq!(fs.breadcrumb(), 2);
+
+        // A commissioning window opened meanwhile does not affect re-arming
+        let mut pase_state = Pase::new();
+        open_window(&mut pase_state);
+        let mut fs = FailSafe::new();
+        fs.arm(60, 1, &case(1), &mut Pase::new()).unwrap();
+        fs.arm(60, 3, &case(1), &mut pase_state).unwrap();
+        assert!(fs.is_armed_for(1));
+        assert_eq!(fs.breadcrumb(), 3);
+    }
+
+    #[test]
+    fn rearm_from_other_session_is_rejected() {
+        let mut fs = FailSafe::new();
+        fs.arm(60, 1, &pase(0), &mut Pase::new()).unwrap();
+
+        assert_eq!(
+            code(fs.arm(60, 2, &case(1), &mut Pase::new())),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        assert_eq!(
+            code(fs.arm(60, 2, &SessionMode::PlainText, &mut Pase::new())),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+
+        assert!(fs.is_armed_for(0));
+        assert_eq!(fs.breadcrumb(), 1);
+
+        let mut fs = FailSafe::new();
+        fs.arm(60, 1, &case(1), &mut Pase::new()).unwrap();
+        assert_eq!(
+            code(fs.arm(60, 2, &case(2), &mut Pase::new())),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        assert!(fs.is_armed_for(1));
+    }
+
+    #[test]
+    fn rearm_with_zero_timeout_disarms() {
+        let mut fs = FailSafe::new();
+        fs.arm(60, 5, &case(1), &mut Pase::new()).unwrap();
+
+        fs.arm(0, 9, &case(1), &mut Pase::new()).unwrap();
+
+        assert!(!fs.is_armed());
+        assert_eq!(fs.breadcrumb(), 0);
+    }
+
+    #[test]
+    fn arm_from_idle_with_zero_timeout_is_a_noop() {
+        let mut fs = FailSafe::new();
+        fs.set_breadcrumb(3);
+        fs.arm(0, 5, &pase(0), &mut Pase::new()).unwrap();
+        assert!(!fs.is_armed());
+        assert_eq!(fs.breadcrumb(), 3);
+
+        // The session checks still apply
+        assert_eq!(
+            fs.arm(0, 5, &SessionMode::PlainText, &mut Pase::new())
+                .unwrap_err()
+                .code(),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+    }
+
+    /// The `(endpoint, cluster)` notifications an expiry emits.
+    fn expected_expiry_changes() -> std::vec::Vec<(EndptId, ClusterId)> {
+        std::vec![
+            (
+                ROOT_ENDPOINT_ID,
+                crate::dm::clusters::decl::operational_credentials::FULL_CLUSTER.id,
+            ),
+            (
+                ROOT_ENDPOINT_ID,
+                crate::dm::clusters::decl::network_commissioning::FULL_CLUSTER.id,
+            ),
+        ]
+    }
+
+    #[test]
+    fn check_failsafe_timeout_before_expiry_is_a_noop() {
+        let mut fs = armed(&pase(0));
+        let mut fabrics = Fabrics::new();
+        let mut sessions = Sessions::new();
+        let kv = MemKv::new(MemKvBlobStore::default());
+        let mut mdns = 0;
+
+        let removed = fs
+            .check_failsafe_timeout(
+                &mut fabrics,
+                &mut sessions,
+                DummyNetworkAccess,
+                &kv,
+                None,
+                || mdns += 1,
+                |_, _| panic!("no change expected"),
+            )
+            .unwrap();
+
+        assert_eq!(removed, None);
+        assert!(fs.is_armed_for(0));
+        assert_eq!(mdns, 0);
+
+        // Nor does it do anything when idle
+        let mut fs = FailSafe::new();
+        let removed = fs
+            .check_failsafe_timeout(
+                &mut fabrics,
+                &mut sessions,
+                DummyNetworkAccess,
+                &kv,
+                None,
+                || mdns += 1,
+                |_, _| panic!("no change expected"),
+            )
+            .unwrap();
+        assert_eq!(removed, None);
+        assert_eq!(mdns, 0);
+    }
+
+    #[test]
+    fn disarm_requires_case_session_matching_the_armed_fabric() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+
+        // Not armed
+        let mut fs = FailSafe::new();
+        assert_eq!(
+            code(fs.disarm(&case(1), &mut fabrics)),
+            ErrorCode::FailSafeRequired
+        );
+
+        // Armed over PASE: PASE cannot disarm, nor can a CASE session of
+        // another fabric
+        let mut fs = armed(&pase(0));
+        assert_eq!(
+            code(fs.disarm(&pase(0), &mut fabrics)),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+        assert_eq!(
+            code(fs.disarm(&case(1), &mut fabrics)),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        assert!(fs.is_armed_for(0));
+
+        // Armed over CASE for a fabric that is not in the table
+        let mut fs = armed(&case(2));
+        assert_eq!(code(fs.disarm(&case(2), &mut fabrics)), ErrorCode::NotFound);
+        assert!(fs.is_armed_for(2));
+
+        // Armed over CASE for an existing fabric
+        let mut fs = FailSafe::new();
+        fs.arm(60, 4, &case(1), &mut Pase::new()).unwrap();
+        let fabric = fs.disarm(&case(1), &mut fabrics).unwrap();
+        assert_eq!(fabric.fab_idx(), idx(1));
+        assert!(!fs.is_armed());
+        assert_eq!(fs.breadcrumb(), 0);
+    }
+
+    #[test]
+    fn breadcrumb_is_settable_and_reset_on_arm_and_disarm() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+
+        let mut fs = FailSafe::new();
+        fs.set_breadcrumb(42);
+        assert_eq!(fs.breadcrumb(), 42);
+
+        fs.arm(60, 7, &case(1), &mut Pase::new()).unwrap();
+        assert_eq!(fs.breadcrumb(), 7);
+
+        fs.set_breadcrumb(99);
+        assert_eq!(fs.breadcrumb(), 99);
+
+        fs.disarm(&case(1), &mut fabrics).unwrap();
+        assert_eq!(fs.breadcrumb(), 0);
+    }
+
+    #[test]
+    fn add_trusted_root_cert_stages_a_pending_root_ca() {
+        let crypto = test_only_crypto();
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let mut buf = [0u8; 1024];
+
+        // Not armed
+        let mut fs = FailSafe::new();
+        assert_eq!(
+            code(fs.add_trusted_root_cert(&crypto, now(), &pase(0), &rcac.cert, &mut buf)),
+            ErrorCode::FailSafeRequired
+        );
+
+        let mut fs = armed(&pase(0));
+
+        // Wrong session
+        assert_eq!(
+            code(fs.add_trusted_root_cert(&crypto, now(), &case(1), &rcac.cert, &mut buf)),
+            ErrorCode::NocInvalidFabricIndex
+        );
+
+        // Garbage and non-self-signed certs are INVALID_COMMAND
+        assert_eq!(
+            code(fs.add_trusted_root_cert(&crypto, now(), &pase(0), &[1, 2, 3], &mut buf)),
+            ErrorCode::InvalidCommand
+        );
+        let icac = mint_icac(&crypto, &rcac);
+        assert_eq!(
+            code(fs.add_trusted_root_cert(&crypto, now(), &pase(0), &icac.cert, &mut buf)),
+            ErrorCode::InvalidCommand
+        );
+        assert!(fs.pending_root_ca().is_none());
+
+        fs.add_trusted_root_cert(&crypto, now(), &pase(0), &rcac.cert, &mut buf)
+            .unwrap();
+        assert_eq!(fs.pending_root_ca(), Some(rcac.cert.as_slice()));
+
+        // Only once per fail-safe context
+        assert_eq!(
+            code(fs.add_trusted_root_cert(&crypto, now(), &pase(0), &rcac.cert, &mut buf)),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(fs.pending_root_ca(), Some(rcac.cert.as_slice()));
+    }
+
+    #[test]
+    fn add_csr_req_is_once_per_context_and_pase_cannot_update() {
+        let crypto = test_only_crypto();
+
+        let mut fs = FailSafe::new();
+        assert_eq!(
+            code(fs.add_csr_req(&crypto, &pase(0))),
+            ErrorCode::FailSafeRequired
+        );
+
+        let mut fs = armed(&pase(0));
+        assert_eq!(
+            code(fs.add_csr_req(&crypto, &case(1))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+
+        let key = CanonPkcSecretKey::new_from_ref(fs.add_csr_req(&crypto, &pase(0)).unwrap());
+        assert_ne!(key.access(), &[0u8; PKC_CANON_SECRET_KEY_LEN]);
+
+        assert_eq!(
+            code(fs.add_csr_req(&crypto, &pase(0))),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(
+            code(fs.update_csr_req(&crypto, &pase(0))),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+    }
+
+    #[test]
+    fn update_csr_req_over_case_is_once_per_context() {
+        let crypto = test_only_crypto();
+
+        let mut fs = armed(&case(1));
+        assert_eq!(
+            code(fs.update_csr_req(&crypto, &case(2))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+
+        let key = CanonPkcSecretKey::new_from_ref(fs.update_csr_req(&crypto, &case(1)).unwrap());
+        assert_ne!(key.access(), &[0u8; PKC_CANON_SECRET_KEY_LEN]);
+
+        assert_eq!(
+            code(fs.update_csr_req(&crypto, &case(1))),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(
+            code(fs.add_csr_req(&crypto, &case(1))),
+            ErrorCode::ConstraintError
+        );
+    }
+
+    #[test]
+    fn noc_command_ordering_matrix() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let mut buf = [0u8; 1024];
+
+        // AddNOC on an armed context that has seen no CSR at all
+        let mut fs = armed(&pase(0));
+        fs.add_trusted_root_cert(&crypto, now(), &pase(0), &rcac.cert, &mut buf)
+            .unwrap();
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &[],
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocMissingCsr
+        );
+
+        // AddNOC after a CSR but without a trusted root
+        let mut fs = armed(&pase(0));
+        fs.add_csr_req(&crypto, &pase(0)).unwrap();
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &[],
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+
+        // UpdateNOC over PASE is never allowed
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                None,
+                &[],
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::GennCommInvalidAuthentication
+        );
+
+        // UpdateNOC over CASE without any CSR
+        let mut fs = armed(&case(1));
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &[],
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocMissingCsr
+        );
+
+        // UpdateNOC over CASE after an AddNOC-style CSR
+        fs.add_csr_req(&crypto, &case(1)).unwrap();
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &[],
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+
+        // AddNOC over CASE after an UpdateNOC-style CSR
+        let mut fs = armed(&case(1));
+        fs.update_csr_req(&crypto, &case(1)).unwrap();
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                0xfff1,
+                None,
+                &[],
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+
+        // A trusted root staged in an UpdateNOC context blocks UpdateNOC
+        fs.add_trusted_root_cert(&crypto, now(), &case(1), &rcac.cert, &mut buf)
+            .unwrap();
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &[],
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+
+        // Nothing is allowed from another session
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(2),
+                None,
+                &[],
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidFabricIndex
+        );
+    }
+
+    #[test]
+    fn add_noc_creates_a_pending_fabric() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut fs = armed(&pase(0));
+
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let key = stage_root_and_csr(&crypto, &mut fs, &pase(0), &rcac);
+        assert!(fs.pending_root_ca().is_some());
+
+        let noc = mint_noc_for_pubkey(
+            &crypto,
+            &rcac,
+            true,
+            pubkey_of(&crypto, key.reference()).reference(),
+            0x1234,
+        );
+
+        let mut buf = [0u8; 1024];
+        let mut mdns = 0;
+        let fabric = fs
+            .add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || mdns += 1,
+            )
+            .unwrap();
+
+        assert_eq!(mdns, 1);
+        assert_eq!(fabric.fab_idx(), idx(1));
+        assert_eq!(fabric.node_id(), 0x1234);
+        assert_eq!(fabric.fabric_id(), 0xfab);
+        assert_eq!(fabric.vendor_id(), 0xfff1);
+        assert_eq!(fabric.root_ca(), rcac.cert.as_slice());
+        assert_eq!(fabric.noc(), noc.as_slice());
+        assert!(fabric.icac().is_empty());
+        assert_eq!(fabric.secret_key().access(), key.access());
+        assert_eq!(fabric.ipk().epoch_key().access(), &TEST_IPK);
+        assert_eq!(fabric.acl().len(), 1);
+
+        // The context now follows the new fabric
+        assert!(fs.is_armed_for(1));
+        assert!(!fs.is_armed_for(0));
+        assert!(fs.has_pending_noc_for(idx(1)));
+        assert!(!fs.has_pending_noc_for(idx(2)));
+        assert!(fs.pending_root_ca().is_none());
+        let (fab_idx, secs_left) = fs.pending_add_noc().unwrap();
+        assert_eq!(fab_idx, idx(1));
+        assert!(secs_left <= DEFAULT_FAILSAFE_EXPIRY_SECS);
+        assert!(secs_left > 0);
+
+        // The PASE session is expected to be upgraded to the new fabric
+        assert_eq!(
+            code(fs.check_armed(&pase(0))),
+            ErrorCode::NocInvalidFabricIndex
+        );
+        fs.check_armed(&pase(1)).unwrap();
+
+        // Only one AddNOC per context
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(1),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(
+            code(fs.add_csr_req(&crypto, &pase(1))),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(fabrics.iter().count(), 1);
+    }
+
+    #[test]
+    fn add_noc_with_icac() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut fs = armed(&pase(0));
+
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let icac = mint_icac(&crypto, &rcac);
+        let key = stage_root_and_csr(&crypto, &mut fs, &pase(0), &rcac);
+        let noc = mint_noc_for_pubkey(
+            &crypto,
+            &icac,
+            false,
+            pubkey_of(&crypto, key.reference()).reference(),
+            0x1234,
+        );
+
+        let mut buf = [0u8; 1024];
+        let fabric = fs
+            .add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                Some(&icac.cert),
+                &noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {},
+            )
+            .unwrap();
+
+        assert_eq!(fabric.icac(), icac.cert.as_slice());
+        assert_eq!(fabric.node_id(), 0x1234);
+
+        // Passing the RCAC itself as the ICAC is rejected
+        let mut fs = armed(&pase(0));
+        let key = stage_root_and_csr(&crypto, &mut fs, &pase(0), &rcac);
+        let noc = mint_noc_for_pubkey(
+            &crypto,
+            &rcac,
+            true,
+            pubkey_of(&crypto, key.reference()).reference(),
+            0x1235,
+        );
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut Fabrics::new(),
+                &pase(0),
+                0xfff1,
+                Some(&rcac.cert),
+                &noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidNoc
+        );
+    }
+
+    #[test]
+    fn add_noc_rejects_bad_admin_subject_key_mismatch_and_foreign_chains() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut buf = [0u8; 1024];
+
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let mut fs = armed(&pase(0));
+        let key = stage_root_and_csr(&crypto, &mut fs, &pase(0), &rcac);
+        let pubkey = pubkey_of(&crypto, key.reference());
+        let noc = mint_noc_for_pubkey(&crypto, &rcac, true, pubkey.reference(), 0x1234);
+
+        // CaseAdminSubject must be a node ID or a CAT
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK,
+                0,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidAdminSubject
+        );
+
+        // A NOC for some other key than the CSR's
+        let other_noc = mint_noc(&crypto, &rcac, true, 0x1234);
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &other_noc.cert,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidPublicKey
+        );
+
+        // A NOC not chaining to the staged root
+        let other_rcac = mint_rcac(&crypto, 0xfab, 0x78);
+        let foreign_noc =
+            mint_noc_for_pubkey(&crypto, &other_rcac, true, pubkey.reference(), 0x1234);
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &foreign_noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidNoc
+        );
+
+        // A malformed IPK
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK[..15],
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::InvalidData
+        );
+
+        // None of the failures consumed the context or added a fabric
+        assert!(fs.is_armed_for(0));
+        assert!(fs.pending_root_ca().is_some());
+        assert!(fs.pending_add_noc().is_none());
+        assert_eq!(fabrics.iter().count(), 0);
+
+        // A CAT admin subject is accepted
+        fs.add_noc(
+            &crypto,
+            now(),
+            &mut fabrics,
+            &pase(0),
+            0xfff1,
+            None,
+            &noc,
+            &TEST_IPK,
+            0xffff_fffd_0001_0001,
+            &mut buf,
+            || {},
+        )
+        .unwrap();
+        assert_eq!(fabrics.iter().count(), 1);
+    }
+
+    #[test]
+    fn add_noc_rejects_duplicate_fabric_and_full_table() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut buf = [0u8; 1024];
+
+        // A fabric with the same fabric ID under the same root already exists
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let existing = mint_noc(&crypto, &rcac, true, 0x1111);
+        fabrics
+            .add(
+                &crypto,
+                existing.key.reference(),
+                &rcac.cert,
+                &existing.cert,
+                &[],
+                Some(crate::crypto::CanonAeadKeyRef::new(&TEST_IPK)),
+                0xfff1,
+                0x1111,
+            )
+            .unwrap();
+
+        let mut fs = armed(&pase(0));
+        let key = stage_root_and_csr(&crypto, &mut fs, &pase(0), &rcac);
+        let noc = mint_noc_for_pubkey(
+            &crypto,
+            &rcac,
+            true,
+            pubkey_of(&crypto, key.reference()).reference(),
+            0x2222,
+        );
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocFabricConflict
+        );
+        assert_eq!(fabrics.iter().count(), 1);
+
+        // Same fabric ID under a different root is a different fabric
+        let mut fabrics = Fabrics::new();
+        for i in 0..MAX_FABRICS as u64 {
+            add_fabric(&crypto, &mut fabrics, 0x100 + i, 0x200 + i);
+        }
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(0),
+                0xfff1,
+                None,
+                &noc,
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocFabricTableFull
+        );
+        assert_eq!(fabrics.iter().count(), MAX_FABRICS);
+        assert!(fs.pending_add_noc().is_none());
+    }
+
+    #[test]
+    fn update_noc_replaces_the_fabric_noc() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut buf = [0u8; 1024];
+
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let original = mint_noc(&crypto, &rcac, true, 0x1111);
+        fabrics
+            .add(
+                &crypto,
+                original.key.reference(),
+                &rcac.cert,
+                &original.cert,
+                &[],
+                Some(crate::crypto::CanonAeadKeyRef::new(&TEST_IPK)),
+                0xfff1,
+                0x1111,
+            )
+            .unwrap();
+        fabrics.update_label(idx(1), "home").unwrap();
+
+        let mut fs = armed(&case(1));
+        let key = CanonPkcSecretKey::new_from_ref(fs.update_csr_req(&crypto, &case(1)).unwrap());
+        let pubkey = pubkey_of(&crypto, key.reference());
+
+        // A NOC for some other key than the CSR's
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &original.cert,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidPublicKey
+        );
+
+        // A NOC not chaining to the fabric's root
+        let other_rcac = mint_rcac(&crypto, 0xfab, 0x78);
+        let foreign = mint_noc_for_pubkey(&crypto, &other_rcac, true, pubkey.reference(), 0x2222);
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &foreign,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::NocInvalidNoc
+        );
+        assert_eq!(fabrics.get(idx(1)).unwrap().node_id(), 0x1111);
+        assert!(!fs.has_pending_noc_for(idx(1)));
+
+        let noc = mint_noc_for_pubkey(&crypto, &rcac, true, pubkey.reference(), 0x2222);
+        let mut mdns = 0;
+        let fabric = fs
+            .update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &noc,
+                &mut buf,
+                || mdns += 1,
+            )
+            .unwrap();
+
+        assert_eq!(mdns, 1);
+        assert_eq!(fabric.fab_idx(), idx(1));
+        assert_eq!(fabric.node_id(), 0x2222);
+        assert_eq!(fabric.noc(), noc.as_slice());
+        assert_eq!(fabric.secret_key().access(), key.access());
+        assert_eq!(fabric.root_ca(), rcac.cert.as_slice());
+        assert_eq!(fabric.label(), "home");
+
+        assert!(fs.is_armed_for(1));
+        assert!(fs.has_pending_noc_for(idx(1)));
+        // Only `AddNOC` reports a pending fabric
+        assert!(fs.pending_add_noc().is_none());
+        assert!(fs.pending_root_ca().is_none());
+
+        // Only one UpdateNOC per context
+        assert_eq!(
+            code(fs.update_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &case(1),
+                None,
+                &noc,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+    }
+
+    #[test]
+    fn expire_when_idle_is_a_noop() {
+        let mut fs = FailSafe::new();
+        fs.set_breadcrumb(5);
+
+        let removed = fs
+            .expire(
+                &mut Fabrics::new(),
+                &mut Sessions::new(),
+                None,
+                DummyNetworkAccess,
+                MemKv::new(MemKvBlobStore::default()),
+                || panic!("no mdns notification expected"),
+                |_, _| panic!("no change expected"),
+            )
+            .unwrap();
+
+        assert_eq!(removed, None);
+        assert_eq!(fs.breadcrumb(), 5);
+    }
+
+    #[test]
+    fn expire_drops_a_fabric_pending_from_add_noc() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut fs = armed(&pase(0));
+        fs.set_breadcrumb(3);
+
+        let (_, fab_idx) = add_noc_flow(&crypto, &mut fs, &mut fabrics, 0xfab, 0x1234);
+        assert_eq!(fab_idx, idx(1));
+        assert!(fabrics.get(idx(1)).is_some());
+
+        let mut mdns = 0;
+        let mut changes = std::vec::Vec::new();
+        let removed = fs
+            .expire(
+                &mut fabrics,
+                &mut Sessions::new(),
+                None,
+                DummyNetworkAccess,
+                MemKv::new(MemKvBlobStore::default()),
+                || mdns += 1,
+                |ep, cl| changes.push((ep, cl)),
+            )
+            .unwrap();
+
+        assert_eq!(removed, Some(idx(1)));
+        assert!(fabrics.get(idx(1)).is_none());
+        assert_eq!(fabrics.iter().count(), 0);
+        assert!(!fs.is_armed());
+        assert_eq!(fs.breadcrumb(), 0);
+        assert!(fs.pending_add_noc().is_none());
+        assert_eq!(mdns, 1);
+        assert_eq!(changes, expected_expiry_changes());
+    }
+
+    #[test]
+    fn expire_restores_a_persisted_fabric_after_update_noc() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut buf = [0u8; 1024];
+
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let original = mint_noc(&crypto, &rcac, true, 0x1111);
+        fabrics
+            .add(
+                &crypto,
+                original.key.reference(),
+                &rcac.cert,
+                &original.cert,
+                &[],
+                Some(crate::crypto::CanonAeadKeyRef::new(&TEST_IPK)),
+                0xfff1,
+                0x1111,
+            )
+            .unwrap();
+        fabrics.update_label(idx(1), "home").unwrap();
+
+        let kv = MemKv::new(MemKvBlobStore::default());
+        FabricPersist::new(&kv)
+            .store(fabrics.get(idx(1)).unwrap())
+            .unwrap();
+
+        let mut fs = armed(&case(1));
+        let key = CanonPkcSecretKey::new_from_ref(fs.update_csr_req(&crypto, &case(1)).unwrap());
+        let noc = mint_noc_for_pubkey(
+            &crypto,
+            &rcac,
+            true,
+            pubkey_of(&crypto, key.reference()).reference(),
+            0x2222,
+        );
+        fs.update_noc(
+            &crypto,
+            now(),
+            &mut fabrics,
+            &case(1),
+            None,
+            &noc,
+            &mut buf,
+            || {},
+        )
+        .unwrap();
+        assert_eq!(fabrics.get(idx(1)).unwrap().node_id(), 0x2222);
+
+        let removed = fs
+            .expire(
+                &mut fabrics,
+                &mut Sessions::new(),
+                None,
+                DummyNetworkAccess,
+                &kv,
+                || {},
+                |_, _| {},
+            )
+            .unwrap();
+
+        // The fabric is resurrected from storage rather than removed
+        assert_eq!(removed, None);
+        let fabric = fabrics.get(idx(1)).unwrap();
+        assert_eq!(fabric.node_id(), 0x1111);
+        assert_eq!(fabric.noc(), original.cert.as_slice());
+        assert_eq!(fabric.secret_key().access(), original.key.access());
+        assert_eq!(fabric.label(), "home");
+        assert!(!fs.is_armed());
+    }
+
+    #[test]
+    fn expire_of_a_context_without_pending_noc_keeps_fabrics() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+
+        let kv = MemKv::new(MemKvBlobStore::default());
+        FabricPersist::new(&kv)
+            .store(fabrics.get(idx(1)).unwrap())
+            .unwrap();
+
+        // Armed over CASE for fabric 1 but nothing staged: the fabric is
+        // reloaded from its persisted copy and reported as kept
+        let mut fs = armed(&case(1));
+        let removed = fs
+            .expire(
+                &mut fabrics,
+                &mut Sessions::new(),
+                None,
+                DummyNetworkAccess,
+                &kv,
+                || {},
+                |_, _| {},
+            )
+            .unwrap();
+        assert_eq!(removed, None);
+        assert_eq!(fabrics.get(idx(1)).unwrap().node_id(), 0x1a);
+
+        // Armed over PASE with no fabric involved: nothing to roll back
+        let mut fs = armed(&pase(0));
+        let removed = fs
+            .expire(
+                &mut fabrics,
+                &mut Sessions::new(),
+                None,
+                DummyNetworkAccess,
+                &kv,
+                || {},
+                |_, _| {},
+            )
+            .unwrap();
+        assert_eq!(removed, None);
+        assert_eq!(fabrics.iter().count(), 1);
+    }
+
+    #[cfg(feature = "groups")]
+    #[test]
+    fn expire_removes_pase_sessions_but_keeps_the_triggering_one() {
+        use crate::dm::devices::test::TEST_DEV_DET;
+        use crate::transport::network::Address;
+
+        let mut sessions = Sessions::new();
+        let mut ids = std::vec::Vec::new();
+        for mode in [pase(0), pase(0), case(1)] {
+            let session = sessions
+                .add(0, false, Address::new(), None, &TEST_DEV_DET)
+                .unwrap();
+            session.set_session_mode(mode);
+            ids.push(session.id);
+        }
+        assert_eq!(sessions.iter().count(), 3);
+
+        let mut fs = armed(&pase(0));
+        fs.expire(
+            &mut Fabrics::new(),
+            &mut sessions,
+            Some(ids[1]),
+            DummyNetworkAccess,
+            MemKv::new(MemKvBlobStore::default()),
+            || {},
+            |_, _| {},
+        )
+        .unwrap();
+
+        let remaining: std::vec::Vec<_> = sessions.iter().map(|s| s.id).collect();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&ids[1]));
+        assert!(remaining.contains(&ids[2]));
+        assert!(sessions.get(ids[1]).unwrap().is_expired());
+        assert!(!sessions.get(ids[2]).unwrap().is_expired());
+
+        // With no session to preserve, every PASE session goes
+        let mut fs = armed(&pase(0));
+        fs.expire(
+            &mut Fabrics::new(),
+            &mut sessions,
+            None,
+            DummyNetworkAccess,
+            MemKv::new(MemKvBlobStore::default()),
+            || {},
+            |_, _| {},
+        )
+        .unwrap();
+        let remaining: std::vec::Vec<_> = sessions.iter().map(|s| s.id).collect();
+        assert_eq!(remaining, [ids[2]]);
+    }
+
+    #[test]
+    fn arm_resumed_behaves_like_a_context_after_add_noc() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+        let mut buf = [0u8; 1024];
+
+        let mut fs = FailSafe::new();
+        fs.arm_resumed(idx(3), 30, 11).unwrap();
+
+        assert!(fs.is_armed_for(3));
+        assert!(fs.has_pending_noc_for(idx(3)));
+        assert_eq!(fs.breadcrumb(), 11);
+        let (fab_idx, secs_left) = fs.pending_add_noc().unwrap();
+        assert_eq!(fab_idx, idx(3));
+        assert!(secs_left <= 30);
+        // No root cert bytes were staged, so none is pending
+        assert!(fs.pending_root_ca().is_none());
+
+        // Already armed
+        assert_eq!(code(fs.arm_resumed(idx(4), 30, 12)), ErrorCode::Busy);
+        assert!(fs.is_armed_for(3));
+
+        // The NOC commands are consumed, exactly as after a real AddNOC
+        assert_eq!(
+            code(fs.add_csr_req(&crypto, &pase(3))),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(
+            code(fs.add_noc(
+                &crypto,
+                now(),
+                &mut fabrics,
+                &pase(3),
+                0xfff1,
+                None,
+                &[],
+                &TEST_IPK,
+                0x1a,
+                &mut buf,
+                || {}
+            )),
+            ErrorCode::ConstraintError
+        );
+
+        // Re-arming from the same session and disarming work as usual
+        fs.arm(60, 13, &pase(3), &mut Pase::new()).unwrap();
+        assert_eq!(fs.breadcrumb(), 13);
+        fs.arm(0, 0, &pase(3), &mut Pase::new()).unwrap();
+        assert!(!fs.is_armed());
+
+        // Arming normally after that is fine again
+        fs.arm_resumed(idx(4), 30, 12).unwrap();
+        assert!(fs.is_armed_for(4));
     }
 }

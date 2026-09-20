@@ -454,3 +454,183 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::error::ErrorCode;
+    use crate::im::IM_REVISION;
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{
+        CmdData, CmdPath, CmdResp, CmdStatus, GenericPath, IMStatusCode, InvRespTag, InvokeResp,
+    };
+
+    fn cmd_path(endpoint: u16, cluster: u32, cmd: u32) -> CmdPath {
+        CmdPath::new(Some(endpoint), Some(cluster), Some(cmd))
+    }
+
+    #[test]
+    fn cmd_path_helpers_and_cmd_resp_round_trip() {
+        let gp = GenericPath::new(Some(1), Some(6), Some(2));
+        let path = CmdPath::from_gp(&gp);
+        assert_eq!(path, cmd_path(1, 6, 2));
+        assert_eq!(path.to_gp(), gp);
+        assert!(!path.is_wildcard());
+        assert!(CmdPath::new(None, Some(6), Some(2)).is_wildcard());
+        assert!(CmdPath::new(Some(1), None, Some(2)).is_wildcard());
+        assert!(CmdPath::new(Some(1), Some(6), None).is_wildcard());
+
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        let status = CmdResp::status_new(
+            cmd_path(1, 6, 2),
+            IMStatusCode::InvalidCommand,
+            Some(0x1234),
+            Some(7),
+        );
+        status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // InvokeResponseIB
+                0x35, 1, // Status
+                0x37, 0, 0x24, 0, 1, 0x24, 1, 6, 0x24, 2, 2, 0x18, // Path list
+                0x35, 1, 0x24, 0, 0x85, 0x25, 1, 0x34, 0x12, 0x18, // StatusIB
+                0x24, 2, 7, // CommandRef
+                0x18, 0x18,
+            ]
+        );
+        let CmdResp::Status(decoded) = CmdResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap()
+        else {
+            panic!("expected a status");
+        };
+        assert_eq!(
+            decoded,
+            CmdStatus::new(
+                cmd_path(1, 6, 2),
+                IMStatusCode::InvalidCommand,
+                Some(0x1234),
+                Some(7)
+            )
+        );
+
+        let payload = [0x35, 1, 0x24, 0, 9, 0x18];
+        let data = CmdResp::from(CmdData::new(
+            cmd_path(1, 6, 4),
+            TLVElement::new(&payload),
+            None,
+        ));
+        wb.reset();
+        data.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        assert_eq!(
+            wb.as_slice(),
+            &[
+                0x15, // InvokeResponseIB
+                0x35, 0, // Cmd
+                0x37, 0, 0x24, 0, 1, 0x24, 1, 6, 0x24, 2, 4, 0x18, // Path list
+                0x35, 1, 0x24, 0, 9, 0x18, // Data
+                0x18, 0x18,
+            ]
+        );
+        let CmdResp::Cmd(decoded) = CmdResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap()
+        else {
+            panic!("expected command data");
+        };
+        assert_eq!(decoded.path, cmd_path(1, 6, 4));
+        assert_eq!(decoded.command_ref, None);
+        assert_eq!(
+            decoded
+                .data
+                .structure()
+                .unwrap()
+                .ctx(0)
+                .unwrap()
+                .u8()
+                .unwrap(),
+            9
+        );
+    }
+
+    #[test]
+    fn invoke_resp_filters_responses_and_statuses() {
+        let payload = [0x35, 1, 0x24, 0, 5, 0x18];
+
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.bool(&TLVTag::Context(InvRespTag::SupressResponse as u8), false)
+            .unwrap();
+        wb.start_array(&TLVTag::Context(InvRespTag::InvokeResponses as u8))
+            .unwrap();
+        for resp in [
+            CmdResp::from(CmdData::new(
+                cmd_path(1, 6, 1),
+                TLVElement::new(&payload),
+                Some(1),
+            )),
+            CmdResp::status_new(cmd_path(1, 6, 2), IMStatusCode::Success, None, Some(2)),
+            CmdResp::status_new(cmd_path(2, 6, 2), IMStatusCode::Busy, None, Some(3)),
+            // Other command: filtered out of both iterators
+            CmdResp::status_new(cmd_path(1, 6, 9), IMStatusCode::Failure, None, None),
+            // No endpoint: filtered out
+            CmdResp::from(CmdData::new(
+                CmdPath::new(None, Some(6), Some(1)),
+                TLVElement::new(&payload),
+                None,
+            )),
+            // A status for the data-bearing command: an error in `responses`
+            CmdResp::status_new(
+                cmd_path(3, 6, 1),
+                IMStatusCode::UnsupportedEndpoint,
+                None,
+                None,
+            ),
+        ] {
+            resp.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        }
+        wb.end_container().unwrap();
+        wb.bool(&TLVTag::Context(2), true).unwrap();
+        wb.u8(&TLVTag::Context(0xFF), IM_REVISION).unwrap();
+        wb.end_container().unwrap();
+
+        let resp = InvokeResp::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(resp.suppress_response, Some(false));
+        assert_eq!(resp.more_chunks, Some(true));
+        assert_eq!(resp.interaction_model_revision, Some(IM_REVISION));
+        assert_eq!(resp.invoke_responses.as_ref().unwrap().iter().count(), 6);
+
+        let mut responses = resp.responses::<TLVElement>(6, 1);
+        let (endpoint, data) = responses.next().unwrap();
+        assert_eq!(endpoint, 1);
+        assert_eq!(
+            data.unwrap()
+                .structure()
+                .unwrap()
+                .ctx(0)
+                .unwrap()
+                .u8()
+                .unwrap(),
+            5
+        );
+        let (endpoint, data) = responses.next().unwrap();
+        assert_eq!(endpoint, 3);
+        assert_eq!(data.unwrap_err().code(), ErrorCode::EndpointNotFound);
+        assert!(responses.next().is_none());
+
+        let mut statuses = resp.statuses(6, 2);
+        let (endpoint, result) = statuses.next().unwrap();
+        assert_eq!(endpoint, 1);
+        assert!(result.is_ok());
+        let (endpoint, result) = statuses.next().unwrap();
+        assert_eq!(endpoint, 2);
+        assert_eq!(result.unwrap_err().code(), ErrorCode::Busy);
+        assert!(statuses.next().is_none());
+
+        // `statuses` ignores data-bearing entries even for a matching path
+        assert_eq!(resp.statuses(6, 1).count(), 1);
+    }
+}

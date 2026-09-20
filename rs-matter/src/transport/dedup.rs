@@ -22,13 +22,29 @@ const MSG_RX_STATE_BITMAP_LEN: u32 = 16;
 pub struct RxCtrState {
     max_ctr: u32,
     ctr_bitmap: u16,
+    /// Whether `max_ctr` reflects a counter actually received from the peer.
+    /// Until then, the first message received seeds the state.
+    synced: bool,
 }
 
 impl RxCtrState {
+    /// Create a state synchronized to `max_ctr`, with every earlier counter treated as seen.
+    #[cfg(any(feature = "groups", test))]
     pub const fn new(max_ctr: u32) -> Self {
         Self {
             max_ctr,
             ctr_bitmap: 0xffff,
+            synced: true,
+        }
+    }
+
+    /// Create a state for a peer whose counter is not known yet: the first message
+    /// received is accepted and synchronizes the state to its counter.
+    pub const fn new_unsynced() -> Self {
+        Self {
+            max_ctr: 0,
+            ctr_bitmap: 0xffff,
+            synced: false,
         }
     }
 
@@ -51,6 +67,16 @@ impl RxCtrState {
     /// - `true` (group): modular comparison — a counter is forward
     ///   iff `(msg_ctr - max_ctr) mod 2^32` falls in `[1, 2^31 - 1]`, otherwise behind.
     pub fn post_recv(&mut self, msg_ctr: u32, is_encrypted: bool, with_rollover: bool) -> bool {
+        if !self.synced {
+            // First message from the peer: synchronize to its counter, treating
+            // every earlier counter as already seen
+            self.max_ctr = msg_ctr;
+            self.ctr_bitmap = 0xffff;
+            self.synced = true;
+
+            return true;
+        }
+
         if msg_ctr == self.max_ctr {
             // Duplicate
             return false;
@@ -183,6 +209,7 @@ impl GroupCtrStore {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::RxCtrState;
 
@@ -195,6 +222,34 @@ mod tests {
 
     fn assert_dup(b: bool) {
         assert!(!b);
+    }
+
+    /// A state without knowledge of the peer's counter accepts whatever comes
+    /// first, however small, and is synchronized to it from then on.
+    #[test]
+    fn unsynced_accepts_any_first_counter() {
+        for first in [0, 1, 16, 17, 101, u32::MAX] {
+            let mut s = RxCtrState::new_unsynced();
+
+            assert_ndup(s.post_recv(first, ENCRYPTED, false));
+            assert_eq!(s.max_ctr, first);
+            assert!(s.synced);
+
+            // Synchronized: the same counter and every earlier one are duplicates
+            assert_dup(s.post_recv(first, ENCRYPTED, false));
+            if first > 0 {
+                assert_dup(s.post_recv(first - 1, ENCRYPTED, false));
+            }
+            if first < u32::MAX {
+                assert_ndup(s.post_recv(first + 1, ENCRYPTED, false));
+            }
+        }
+
+        // An unencrypted first message synchronizes the same way
+        let mut s = RxCtrState::new_unsynced();
+        assert_ndup(s.post_recv(0, NOT_ENCRYPTED, false));
+        assert_dup(s.post_recv(0, NOT_ENCRYPTED, false));
+        assert_ndup(s.post_recv(1, NOT_ENCRYPTED, false));
     }
 
     #[test]

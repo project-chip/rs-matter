@@ -903,6 +903,7 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
