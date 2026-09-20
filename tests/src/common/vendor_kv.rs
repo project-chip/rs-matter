@@ -39,6 +39,16 @@ pub const ON_OFF_STATE_KEY: u16 = VENDOR_KEYS_START;
 /// `StartUpColorTemperatureMireds`, as a little-endian `u16`. Absent for null.
 pub const START_UP_CT_KEY: u16 = VENDOR_KEYS_START + 1;
 
+/// The Thermostat cluster's four non-volatile attributes, as seven bytes:
+/// `SystemMode` then `OccupiedHeatingSetpoint`, `MinHeatSetpointLimit` and
+/// `MaxHeatSetpointLimit` as little-endian `i16`s.
+pub const THERMOSTAT_STATE_KEY: u16 = VENDOR_KEYS_START + 2;
+
+/// The heating element's lifetime energy counter, as a little-endian `i64` in
+/// milliwatt-seconds. Reported (divided down to mWh) as the Electrical Energy
+/// Measurement cluster's `CumulativeEnergyImported`.
+pub const HEATING_ELEMENT_ENERGY_KEY: u16 = VENDOR_KEYS_START + 3;
+
 /// An object-safe view of a [`KvBlobStoreAccess`].
 ///
 /// [`KvBlobStoreAccess::access`] is generic over its closure, so there is no
