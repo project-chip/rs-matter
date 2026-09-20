@@ -202,7 +202,10 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     for entry in &list {
                         count += 1;
                         if count > MAX_GROUP_KEYS_PER_FABRIC {
-                            return Err(ErrorCode::ResourceExhausted.into());
+                            // A replacement list over capacity answers FAILURE, as the
+                            // CHIP SDK does and its `TestGroupKeyManagementCluster` expects;
+                            // appending a single entry to a full map is RESOURCE_EXHAUSTED
+                            return Err(ErrorCode::Failure.into());
                         }
                         let entry = entry?;
                         // GroupKeySetID must not be 0
