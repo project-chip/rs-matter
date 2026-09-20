@@ -22,6 +22,8 @@ fn main() {
     // Only re-run when build.rs itself changes.
     // Changes to the rs-matter-codegen build-dependency are tracked automatically by Cargo.
     println!("cargo:rerun-if-changed=build.rs");
+    // Opt-in full pretty-printing of the generated code; see `rs_matter_codegen::generate`.
+    println!("cargo:rerun-if-env-changed=RS_MATTER_CODEGEN_PRETTY");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
