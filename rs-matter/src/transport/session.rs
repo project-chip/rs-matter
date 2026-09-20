@@ -188,7 +188,7 @@ impl Session {
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: msg_ctr & MATTER_MSG_CTR_RANGE,
-            rx_ctr_state: RxCtrState::new(0),
+            rx_ctr_state: RxCtrState::new_unsynced(),
             mode: SessionMode::PlainText,
             exchanges: Vec::new(),
             last_use: Instant::now(),
@@ -223,7 +223,7 @@ impl Session {
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: msg_ctr & MATTER_MSG_CTR_RANGE,
-            rx_ctr_state: RxCtrState::new(0),
+            rx_ctr_state: RxCtrState::new_unsynced(),
             mode: SessionMode::PlainText,
             exchanges <- Vec::init(),
             last_use: Instant::now(),
@@ -343,6 +343,17 @@ impl Session {
         }
     }
 
+    /// Allocate the counter for an outgoing message.
+    ///
+    /// The counter is taken when the message is encoded, not when it is
+    /// handed to the network, so two messages can leave in the opposite
+    /// order of their counters when they are encoded concurrently (an
+    /// exchange handler's reply and a standalone ack from the transport
+    /// loop, say). Within an established session the peer's replay window
+    /// absorbs that, but on a session which has not received anything from
+    /// us yet the first message seeds the window with every earlier counter
+    /// marked as seen, and an older message overtaken by a newer one is then
+    /// dropped as a duplicate.
     fn get_msg_ctr(&mut self) -> u32 {
         let ctr = self.msg_ctr;
         self.msg_ctr += 1;
@@ -763,6 +774,14 @@ impl Session {
         self.last_use = Instant::now();
     }
 
+    /// Find the exchange an incoming message belongs to.
+    ///
+    /// A responder exchange stays in the table until the ack of its last
+    /// message has arrived. A new request reusing that exchange ID in the
+    /// meantime is therefore matched to the old exchange rather than opening
+    /// a new one: the ack it carries is consumed, but the request itself is
+    /// only acknowledged, never dispatched. Matter clients open a fresh
+    /// exchange per transaction, which avoids this.
     pub(crate) fn get_exch_for_rx(&self, rx_proto: &ProtoHdr) -> Option<usize> {
         self.exchanges
             .iter()

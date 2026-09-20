@@ -649,7 +649,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TLVSequenceTLVIter::advance underflows `nesting` at the enclosing container end (read.rs), so TLVElement::tlv_iter panics on containers in debug builds"]
     fn tlv_iter_matches_to_tlv() {
         let arr = TLVArray::<u8>::from_tlv(&TLVElement::new(ARRAY)).unwrap();
 

@@ -288,6 +288,11 @@ impl FailSafe {
             //     return Err(ErrorCode::GennCommInvalidAuthentication.into());
             // }
 
+            if timeout_secs == 0 {
+                // Expiring a fail-safe which is not armed succeeds without side effects
+                return Ok(());
+            }
+
             self.state = State::Armed(ArmedCtx {
                 armed_at: Instant::now(),
                 timeout_secs,
@@ -1197,35 +1202,20 @@ mod tests {
     }
 
     #[test]
-    fn arm_from_idle_with_zero_timeout_arms_and_expires_on_next_check() {
+    fn arm_from_idle_with_zero_timeout_is_a_noop() {
         let mut fs = FailSafe::new();
+        fs.set_breadcrumb(3);
         fs.arm(0, 5, &pase(0), &mut Pase::new()).unwrap();
-        assert!(fs.is_armed_for(0));
-        assert_eq!(fs.breadcrumb(), 5);
-
-        let mut fabrics = Fabrics::new();
-        let mut sessions = Sessions::new();
-        let kv = MemKv::new(MemKvBlobStore::default());
-        let mut mdns = 0;
-        let mut changes = std::vec::Vec::new();
-
-        let removed = fs
-            .check_failsafe_timeout(
-                &mut fabrics,
-                &mut sessions,
-                DummyNetworkAccess,
-                &kv,
-                None,
-                || mdns += 1,
-                |ep, cl| changes.push((ep, cl)),
-            )
-            .unwrap();
-
-        assert_eq!(removed, None);
         assert!(!fs.is_armed());
-        assert_eq!(fs.breadcrumb(), 0);
-        assert_eq!(mdns, 1);
-        assert_eq!(changes, expected_expiry_changes());
+        assert_eq!(fs.breadcrumb(), 3);
+
+        // The session checks still apply
+        assert_eq!(
+            fs.arm(0, 5, &SessionMode::PlainText, &mut Pase::new())
+                .unwrap_err()
+                .code(),
+            ErrorCode::GennCommInvalidAuthentication
+        );
     }
 
     /// The `(endpoint, cluster)` notifications an expiry emits.

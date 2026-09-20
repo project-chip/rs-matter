@@ -567,7 +567,10 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         // Most of the initialization stuff adapted from here:
         // https://wiki.openssl.org/images/e/e1/Evp-ccm-encrypt.c
 
-        assert!(data.len() >= TAG_LEN);
+        if data.len() < TAG_LEN {
+            // Nothing to authenticate
+            Err(ErrorCode::InvalidData)?;
+        }
 
         let (data, tag) = data.split_at_mut(data.len() - TAG_LEN);
 

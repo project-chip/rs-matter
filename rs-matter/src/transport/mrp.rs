@@ -54,6 +54,10 @@ pub(crate) use mrp_log;
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
 pub(crate) const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
+/// The length of the retransmission ladder: a reliable message goes out once
+/// and is then retransmitted up to this many times, so it can be on the wire
+/// `MRP_MAX_TRANSMISSIONS + 1` times in total. The Matter default of 5
+/// counts total attempts, but the spec leaves the number to the sender.
 const MRP_MAX_TRANSMISSIONS: u16 = 5;
 const MRP_BACKOFF_THRESHOLD: u16 = 1;
 const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6

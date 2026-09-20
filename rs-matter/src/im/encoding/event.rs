@@ -498,7 +498,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "the derived ToTLV::tlv_iter (rs-matter-macros) emits a struct start for `datatype = \"list\"` structs such as EventPath, so it disagrees with to_tlv"]
     fn event_data_tlv_iter_matches_to_tlv() {
         let value = [0x24, 7, 42];
         let data = EventData::new(

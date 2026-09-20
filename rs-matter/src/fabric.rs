@@ -259,7 +259,9 @@ mod groups {
         }
 
         pub fn key_map_add(&mut self, entry: GroupKeyMapping) -> Result<(), Error> {
-            self.key_map.push(entry).map_err(|_| ErrorCode::Failure)?;
+            self.key_map
+                .push(entry)
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
 
             Ok(())
         }
@@ -315,6 +317,10 @@ mod groups {
             group_id: u16,
             group_name: &str,
         ) -> Result<bool, Error> {
+            // Validate the name up-front, so that a rejected command leaves the table untouched
+            let group_name =
+                String::from_str(group_name).map_err(|_| ErrorCode::ConstraintError)?;
+
             let entry = if let Some(entry) = self
                 .endpoint_mapping
                 .iter_mut()
@@ -326,8 +332,7 @@ mod groups {
                     .push(GroupEndpointMapping {
                         group_id,
                         endpoints: Vec::new(),
-                        group_name: String::from_str(group_name)
-                            .map_err(|_| ErrorCode::ConstraintError)?,
+                        group_name: group_name.clone(),
                         has_aux_acl: None,
                         mcast_policy: None,
                     })
@@ -336,11 +341,7 @@ mod groups {
             };
 
             // Update group name
-            entry.group_name.clear();
-            entry
-                .group_name
-                .push_str(group_name)
-                .map_err(|_| ErrorCode::ConstraintError)?;
+            entry.group_name = group_name;
 
             if entry.endpoints.contains(&endpoint_id) {
                 return Ok(true);
@@ -964,15 +965,17 @@ impl Fabric {
     where
         I: Init<AclEntry, Error>,
     {
-        // if entry.auth_mode() == AuthMode::Pase {
-        //     // Reserved for future use
-        //     Err(ErrorCode::ConstraintError)?;
-        // }
-
         self.acl
             .push_init(init, || ErrorCode::ResourceExhausted.into())?;
 
         let idx = self.acl.len() - 1;
+
+        if self.acl[idx].auth_mode() == AuthMode::Pase {
+            // Reserved for future use
+            self.acl.pop();
+            Err(ErrorCode::ConstraintError)?;
+        }
+
         let entry = &mut self.acl[idx];
 
         // Overwrite the fabric index with our accessing fabric index
@@ -2361,6 +2364,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn acl_add_init_rejects_pase_entries() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+
+        let fab_idx = add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+        let fabric = fabrics.get_mut(fab_idx).unwrap();
+        let count = fabric.acl().len();
+
+        assert_eq!(
+            fabric
+                .acl_add_init(
+                    AclEntry::init(None, Privilege::VIEW, AuthMode::Pase).into_fallible::<Error>()
+                )
+                .unwrap_err()
+                .code(),
+            ErrorCode::ConstraintError
+        );
+        assert_eq!(fabric.acl().len(), count);
+    }
+
+    #[test]
     fn acl_add_init_and_update_init() {
         let crypto = test_only_crypto();
         let mut fabrics = Fabrics::new();
@@ -3138,7 +3162,7 @@ pub(crate) mod tests {
                     })
                     .unwrap_err()
                     .code(),
-                ErrorCode::Failure
+                ErrorCode::ResourceExhausted
             );
 
             // Replacing an existing group's mapping still works when full
@@ -3245,6 +3269,18 @@ pub(crate) mod tests {
                 ErrorCode::ConstraintError
             );
             assert_eq!(fresh.group_count(), 1);
+
+            // A rejected name leaves an existing group's name and members untouched
+            assert_eq!(
+                fresh
+                    .add(2, 0x100, &"n".repeat(MAX_GROUP_NAME_LEN + 1))
+                    .unwrap_err()
+                    .code(),
+                ErrorCode::ConstraintError
+            );
+            let entry = fresh.get(0x100).unwrap();
+            assert_eq!(entry.group_name.as_str(), "n".repeat(MAX_GROUP_NAME_LEN));
+            assert_eq!(entry.endpoints.as_slice(), &[1]);
         }
 
         #[test]

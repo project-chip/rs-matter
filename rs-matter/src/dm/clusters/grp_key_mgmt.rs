@@ -202,7 +202,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     for entry in &list {
                         count += 1;
                         if count > MAX_GROUP_KEYS_PER_FABRIC {
-                            return Err(ErrorCode::Failure.into());
+                            return Err(ErrorCode::ResourceExhausted.into());
                         }
                         let entry = entry?;
                         // GroupKeySetID must not be 0

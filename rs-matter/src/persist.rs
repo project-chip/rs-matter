@@ -483,7 +483,15 @@ mod fileio {
 
                     loop {
                         if offset == buf.len() {
-                            Err(crate::error::ErrorCode::NoSpace)?;
+                            // The buffer is full: the blob fits only if the
+                            // file ends right here
+                            let mut probe = [0u8; 1];
+
+                            if file.read(&mut probe)? != 0 {
+                                Err(crate::error::ErrorCode::BufferTooSmall)?;
+                            }
+
+                            break;
                         }
 
                         let len = file.read(&mut buf[offset..])?;
@@ -589,7 +597,7 @@ mod fileio {
 
             if let Some(blob) = blobs.get(&key) {
                 if blob.len() > buf.len() {
-                    Err(crate::error::ErrorCode::NoSpace)?;
+                    Err(crate::error::ErrorCode::BufferTooSmall)?;
                 }
 
                 buf[..blob.len()].copy_from_slice(blob);
@@ -1039,7 +1047,7 @@ mod tests {
             let mut small = [0u8; 10];
             assert_eq!(
                 store.load(2, &mut small).unwrap_err().code(),
-                ErrorCode::NoSpace
+                ErrorCode::BufferTooSmall
             );
             // Remove (twice) then load
             store.remove(1, &mut buf).unwrap();
@@ -1069,7 +1077,6 @@ mod tests {
 
         /// A value that exactly fills the caller's buffer loads fine.
         #[test]
-        #[ignore = "DirKvBlobStore::load reports NoSpace for an exact-fit buffer: it checks offset == buf.len() before the EOF read"]
         fn dir_store_exact_fit_buffer() {
             let dir = tempfile::tempdir().unwrap();
             let mut store = DirKvBlobStore::new(dir.path().join("kv"));
