@@ -146,6 +146,41 @@ pub const DEV_TYPE_EXTENDED_COLOR_LIGHT: DeviceType = DeviceType {
     drev: 4,
 };
 
+/// Thermostat (`0x0301`), Matter Device Library revision 6.
+///
+/// Mandates `Identify` and `Thermostat` as servers, plus `Groups` when the
+/// device supports group communication. Revision history: rev 4 dropped Time
+/// Synchronization, Scenes Management and the Zigbee-only clusters; rev 5 moved
+/// the disallowed-element conformance into the Thermostat cluster itself; rev 6
+/// added Ambient Context Sensing as an optional client.
+///
+/// See [`crate::dm::clusters::app::thermostat`] for the heating-only cluster
+/// handler that backs it.
+pub const DEV_TYPE_THERMOSTAT: DeviceType = DeviceType {
+    dtype: 0x0301,
+    drev: 6,
+};
+
+/// Electrical Sensor (`0x0510`), Matter Device Library revision 1.
+///
+/// A **utility** device type: it does not stand on its own but attaches to an
+/// endpoint that already carries an application device type, describing that
+/// endpoint's electrical behaviour. Core spec 9.2.1 permits any number of
+/// utility device types beside the single application one, which is how a
+/// thermostat endpoint can also meter its heating element.
+///
+/// Mandates `PowerTopology` plus at least one of `ElectricalPowerMeasurement`
+/// (instantaneous draw) and `ElectricalEnergyMeasurement` (energy over time).
+///
+/// See [`crate::dm::clusters::app::power_topology`],
+/// [`crate::dm::clusters::app::elec_pwr_meas`] and
+/// [`crate::dm::clusters::app::elec_energy_meas`] for the handlers that back
+/// it.
+pub const DEV_TYPE_ELECTRICAL_SENSOR: DeviceType = DeviceType {
+    dtype: 0x0510,
+    drev: 1,
+};
+
 /// A constant representing the Smart Speaker device in Matter.
 pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
     dtype: 0x0022,

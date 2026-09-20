@@ -39,6 +39,9 @@ name = "bridge"
 name = "dimmable_light"
 
 [[bin]]
+name = "thermostat"
+
+[[bin]]
 name = "webrtc_camera"
 required-features = ["webrtc"]
 

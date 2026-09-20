@@ -1,0 +1,248 @@
+PICS_SDK_CI_ONLY=1
+# PICS values to be used when running the `thermostat_tests` executable.
+# A heating-only Thermostat (`0x0301`) on EP1: Descriptor + Identify + Groups +
+# Thermostat, plus an Electrical Sensor (`0x0510`) metering the simulated
+# heating element: Power Topology + Electrical Power/Energy Measurement.
+#
+# Cross-checked against the device's own data model with
+# `cargo xtask itest --suite thermostat TC_pics_checker`, which reports no
+# discrepancy in either direction - only the standing `PICS_SDK_CI_ONLY`
+# complaint that every `.pics` here carries.
+
+# ---- Thermostat Cluster ----
+TSTAT.S=1
+
+# Features. `HEAT` (F00) only: no cooling, no occupancy, no setback, no auto
+# mode, no schedules, no presets, no events, no suggestions. F03 does not
+# exist in Matter 1.6 - the legacy weekly-schedule feature was dropped.
+TSTAT.S.F00=1
+TSTAT.S.F01=0
+TSTAT.S.F02=0
+TSTAT.S.F04=0
+TSTAT.S.F05=0
+TSTAT.S.F06=0
+TSTAT.S.F07=0
+TSTAT.S.F08=0
+TSTAT.S.F09=0
+TSTAT.S.F0a=0
+
+# Attributes. The four mandatory ones (LocalTemperature,
+# AbsMin/AbsMaxHeatSetpointLimit with HEAT, OccupiedHeatingSetpoint,
+# ControlSequenceOfOperation, SystemMode) plus the optional user-configurable
+# heat setpoint limits, which the handler serves as a set of four.
+TSTAT.S.A0000=1
+TSTAT.S.A0001=0
+TSTAT.S.A0002=0
+TSTAT.S.A0003=1
+TSTAT.S.A0004=1
+TSTAT.S.A0005=0
+TSTAT.S.A0006=0
+TSTAT.S.A0007=0
+TSTAT.S.A0008=0
+TSTAT.S.A0009=0
+TSTAT.S.A0010=0
+TSTAT.S.A0011=0
+TSTAT.S.A0012=1
+TSTAT.S.A0013=0
+TSTAT.S.A0014=0
+TSTAT.S.A0015=1
+TSTAT.S.A0016=1
+TSTAT.S.A0017=0
+TSTAT.S.A0018=0
+TSTAT.S.A0019=0
+TSTAT.S.A001a=0
+TSTAT.S.A001b=1
+TSTAT.S.A001c=1
+TSTAT.S.A001d=0
+TSTAT.S.A001e=0
+TSTAT.S.A0020=0
+TSTAT.S.A0021=0
+TSTAT.S.A0022=0
+TSTAT.S.A0023=0
+TSTAT.S.A0024=0
+TSTAT.S.A0025=0
+TSTAT.S.A0029=1
+TSTAT.S.A0030=0
+TSTAT.S.A0031=0
+TSTAT.S.A0032=0
+TSTAT.S.A0034=0
+TSTAT.S.A0035=0
+TSTAT.S.A0036=0
+TSTAT.S.A0037=0
+TSTAT.S.A0038=0
+TSTAT.S.A0039=0
+TSTAT.S.A003a=0
+TSTAT.S.A0040=0
+TSTAT.S.A0041=0
+TSTAT.S.A0042=0
+TSTAT.S.A0043=0
+TSTAT.S.A0044=0
+TSTAT.S.A0045=0
+TSTAT.S.A0046=0
+TSTAT.S.A0047=0
+TSTAT.S.A0048=0
+TSTAT.S.A0049=0
+TSTAT.S.A004a=0
+TSTAT.S.A004b=0
+TSTAT.S.A004c=0
+TSTAT.S.A004d=0
+TSTAT.S.A004e=0
+TSTAT.S.A004f=0
+TSTAT.S.A0050=0
+TSTAT.S.A0051=0
+TSTAT.S.A0052=0
+TSTAT.S.A0053=0
+TSTAT.S.A0054=0
+TSTAT.S.A0055=0
+TSTAT.S.A0056=0
+
+# `MinSetpointDeadBand` belongs to the AUTO feature, which we do not implement;
+# `HVACSystemTypeConfiguration` was deprecated in Matter 1.4.
+TSTAT.S.M.MinSetpointDeadBandWritable=0
+TSTAT.S.M.HVACSystemTypeConfigurationWritable=0
+
+# Commands. `SetpointRaiseLower` (0x00) is the only mandatory one; the rest
+# belong to the schedule / preset / suggestion features.
+TSTAT.S.C00.Rsp=1
+TSTAT.S.C01.Rsp=0
+TSTAT.S.C02.Rsp=0
+TSTAT.S.C03.Rsp=0
+TSTAT.S.C04.Rsp=0
+TSTAT.S.C05.Rsp=0
+TSTAT.S.C06.Rsp=0
+TSTAT.S.Cfe.Rsp=0
+TSTAT.S.Cfd.Tx=0
+TSTAT.S.C00.Tx=0
+TSTAT.S.C01.Tx=0
+
+# We implement the server, not the client.
+TSTAT.C=0
+TSTAT.C.AM-READ=0
+TSTAT.C.AM-WRITE=0
+TSTAT.C.AO-READ=0
+TSTAT.C.AO-WRITE=0
+TSTAT.C.C00.Rsp=0
+TSTAT.C.C01.Rsp=0
+TSTAT.C.C01.Tx=0
+TSTAT.C.C02.Tx=0
+TSTAT.C.C03.Tx=0
+TSTAT.C.C05.Tx=0
+
+# ---- Descriptor Cluster (EP1) ----
+# No `TagList` (F00) - the endpoint declares no semantic tags.
+DESC.S=1
+DESC.S.A0000=1
+DESC.S.A0001=1
+DESC.S.A0002=1
+DESC.S.A0003=1
+DESC.S.A0004=0
+DESC.S.F00=0
+
+DESC.C=0
+
+# ---- Identify Cluster (EP1) ----
+# Mandatory for the Thermostat device type.
+I.S=1
+I.S.A0000=1
+I.S.A0001=1
+I.S.C00.Rsp=1
+I.S.C01.Rsp=0
+I.S.C40.Rsp=1
+I.S.C00.Tx=0
+I.S.F00=0
+
+I.C=0
+
+# ---- Groups Cluster (EP1) ----
+# Mandatory for the Thermostat device type on a device that does groupcast.
+G.S=1
+G.S.F00=1
+G.S.A0000=1
+G.S.C00.Rsp=1
+G.S.C01.Rsp=1
+G.S.C02.Rsp=1
+G.S.C03.Rsp=1
+G.S.C04.Rsp=1
+G.S.C05.Rsp=1
+G.S.C00.Tx=1
+G.S.C01.Tx=1
+G.S.C02.Tx=1
+G.S.C03.Tx=1
+
+G.C=0
+G.C.A0000=0
+G.C.C00.Tx=0
+G.C.C01.Tx=0
+G.C.C02.Tx=0
+G.C.C03.Tx=0
+G.C.C04.Tx=0
+G.C.C05.Tx=0
+
+# ---- Power Topology Cluster (EP1) ----
+# `NODE` topology: the measurements below cover the whole node, which leaves
+# both of the cluster's attributes non-conformant.
+PWRTL.S=1
+PWRTL.S.F00=1
+PWRTL.S.F01=0
+PWRTL.S.F02=0
+PWRTL.S.F03=0
+PWRTL.S.A0000=0
+PWRTL.S.A0001=0
+
+PWRTL.C=0
+
+# ---- Electrical Power Measurement Cluster (EP1) ----
+# A single-phase AC load: no polyphase (F02), harmonics (F03) or power
+# quality (F04).
+EPM.S=1
+EPM.S.F00=0
+EPM.S.F01=1
+EPM.S.F02=0
+EPM.S.F03=0
+EPM.S.F04=0
+EPM.S.A0000=1
+EPM.S.A0001=1
+EPM.S.A0002=1
+EPM.S.A0003=0
+EPM.S.A0004=1
+EPM.S.A0005=1
+EPM.S.A0006=1
+EPM.S.A0007=1
+EPM.S.A0008=1
+EPM.S.A0009=1
+EPM.S.A000a=1
+EPM.S.A000b=1
+EPM.S.A000c=1
+EPM.S.A000d=1
+EPM.S.A000e=1
+EPM.S.A000f=0
+EPM.S.A0010=0
+EPM.S.A0011=1
+EPM.S.A0012=0
+# `MeasurementPeriodRanges` is mandatory only given the `Ranges` attribute,
+# which we do not serve.
+EPM.S.E00=0
+
+EPM.C=0
+
+# ---- Electrical Energy Measurement Cluster (EP1) ----
+# Imported (F00) and cumulative (F02): a lifetime kWh counter. No export
+# (F01), no periodic reporting (F03), and the provisional apparent (F04) and
+# reactive (F05) energy features are out.
+EEM.S=1
+EEM.S.F00=1
+EEM.S.F01=0
+EEM.S.F02=1
+EEM.S.F03=1
+EEM.S.F04=0
+EEM.S.F05=0
+EEM.S.A0000=1
+EEM.S.A0001=1
+EEM.S.A0002=0
+EEM.S.A0003=1
+EEM.S.A0004=0
+EEM.S.A0005=1
+EEM.S.E00=1
+EEM.S.E01=1
+
+EEM.C=0

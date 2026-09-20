@@ -32,6 +32,9 @@ name = "light_tests"
 name = "scenes_tests"
 
 [[bin]]
+name = "thermostat_tests"
+
+[[bin]]
 name = "commissioner_tests"
 
 [features]

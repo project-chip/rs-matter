@@ -25,4 +25,5 @@ mod events;
 mod groups;
 mod long_reads;
 mod provisional;
+mod thermostat;
 mod timed_requests;

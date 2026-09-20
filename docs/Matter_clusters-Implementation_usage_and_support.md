@@ -394,13 +394,18 @@ Blank entries indicate that an assessment has not yet been made to identify if t
 | TotalVolatileOrganicCompoundsConcentrationMeasurement | ✅ | ⚫ | ⚫ | ⚫ |    |       |
 | RadonConcentrationMeasurement                         | ✅ | ⚫ | ⚫ | ⚫ |    |       |
 | SmokeCoAlarm                                          | ✅ |    |    |    |    |       |
+| ElectricalEnergyMeasurement                           | ✅ | ⚫ | ✅ | ⚫ |    | import-only (`IMPE` with `CUME` and/or `PERE`); no export (`EXPE`) |
+| ElectricalPowerMeasurement                            | ✅ | ⚫ | ✅ | ⚫ |    | `DC` or single-phase `AC`; no `Ranges`, `POLY`, `HARM` or `PWRQ` |
+|                                                       |    |    |    |    |    |       |
+| **Power Topology** Matter Core Specification          |    |    |    |    |    | defined by the Core spec, not the Application Cluster spec; listed here beside the two measurement clusters it describes |
+| PowerTopology                                         | ✅ | ✅ | ⚫ | ⚫ |    | `NODE` topology only; `TREE` / `SET` (and `DYPF`) need endpoint enumeration |
 |                                                       |    |    |    |    |    |       |
 | **3. Lighting**                                       |    |    |    |    |    |       |
 | ColorControl                                          | ✅ |    |    |    |    |       |
 |                                                       |    |    |    |    |    |       |
 | **4. HVAC**                                           |    |    |    |    |    |       |
 | PumpConfigurationAndControl                           | ✅ |    |    |    |    |       |
-| Thermostat                                            | ✅ |    |    |    |    |       |
+| Thermostat                                            | ✅ | ⚫ | ✅ | ⚫ |    | `HEAT`, `COOL` and `AUTO`, plus the optional `SetpointChangeSource`/`Amount`/`Timestamp`; events are served only if the consumer opts into `TEVT`, which is provisional in 1.6; occupancy, schedules, presets and suggestions are not implemented |
 | FanControl                                            | ✅ | ⚫ | ❌ | ⚫ |    |       |
 | ThermostatUserInterfaceConfiguration                  | ✅ |    |    |    |    |       |
 |                                                       |    |    |    |    |    |       |

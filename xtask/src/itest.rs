@@ -27,10 +27,9 @@
 //!   device types we do not model: `DL_*` (Door Lock),
 //!   `TV_*` (the twelve media clusters), `TestOperationalState` and
 //!   `TestRVCOperationalState`, `TestActivatedCarbonFilterMonitoring`,
-//!   `TestHepaFilterMonitoring`, `TestDishwasherAlarm`, `TestFanControl`,
-//!   `TestTemperatureControl` and `TestThermostat`. Each would need its
-//!   own example binary with a simulated appliance behind it, not just
-//!   the cluster.
+//!   `TestHepaFilterMonitoring`, `TestDishwasherAlarm`, `TestFanControl`
+//!   and `TestTemperatureControl`. Each would need its own example
+//!   binary with a simulated appliance behind it, not just the cluster.
 //! - **The suite tests the harness, not a DUT.**
 //!   `TestPurposefulFailureEqualities`,
 //!   `TestPurposefulFailureExtraReportingOnToggle` and
@@ -45,6 +44,14 @@
 //!   only darwin-framework-tool implements; upstream skips it for
 //!   chip-tool for exactly this reason. The rs-matter side of that
 //!   transfer is covered by `TestDiagnosticLogs`, which is enabled.
+//! - **It hardcodes upstream `all-clusters-app`'s own configuration.**
+//!   `TestThermostat` writes `SystemMode` = `Sleep` and then `Dry`, and
+//!   requires both to succeed. Both are `<optionalConform/>` values in
+//!   the 1.6 data model, and `thermostat_tests` is a heating-only
+//!   thermostat with neither a fan nor a dehumidifier, so it refuses
+//!   them with `CONSTRAINT_ERROR` - conformantly. The suite pins the
+//!   CHIP example app's value set, not the cluster; see
+//!   [`TestSuite::Thermostat`] for the suites that do apply.
 //! - **It duplicates an enabled certification suite.**
 //!   `TestColorControl_9_1` and `TestColorControl_9_2` are copies of
 //!   `Test_TC_CC_9_1` / `Test_TC_CC_9_2` with the PICS gates stripped.
@@ -875,6 +882,49 @@ pub(crate) const SCENES_TESTS: &[&str] = &[
     "TC_CC_10_1",
 ];
 
+/// Thermostat YAML/Python tests — run against the `thermostat_tests` driver,
+/// a heating-only thermostat (`HEAT` alone) on EP1, metering its own heating
+/// element through an Electrical Sensor device type on the same endpoint.
+///
+/// Deliberately absent:
+/// - `TestThermostat` — see the module docs; it requires the `Sleep` and `Dry`
+///   system modes, which a heating-only device conformantly refuses.
+/// - `Test_TC_TSTAT_3_2` — "DUT as Client" (`TSTAT.C`); we implement the server.
+/// - `TC_TSTAT_4_2` / `TC_TSTAT_4_3` — the Presets (`F08`) and Thermostat
+///   Suggestions (`F0a`) features, neither of which we implement.
+pub(crate) const THERMOSTAT_TESTS: &[&str] = &[
+    // Attributes with server as DUT. Every step is PICS-gated, so a heat-only
+    // DUT runs the applicable subset.
+    "Test_TC_TSTAT_2_1",
+    // Setpoint test cases with server as DUT — the suite that exercises the
+    // clamp/`CONSTRAINT_ERROR` asymmetry between `SetpointRaiseLower` (which
+    // clamps) and a setpoint *write* (which errors). Gates heating on
+    // `TSTAT.S.F00` and the setpoint events behind `feature_guard(kEvents)`,
+    // so it runs without `TEVT`.
+    "TC_TSTAT_2_2",
+    // Power Topology: with the `NODE` topology it serves no attributes at all,
+    // so this is purely a check that the cluster is present and coherent.
+    "TC_PWRTL_2_1",
+    // Electrical Power Measurement / Electrical Energy Measurement attribute
+    // reads. Both branch on the DUT's real feature map rather than on PICS, so
+    // a single-phase AC, import-only device runs the applicable subset.
+    "TC_EPM_2_1",
+    "TC_EEM_2_1",
+    // The changing-reading half of the same two clusters: these drive a fake
+    // 1 kW load in through the GeneralDiagnostics `TestEventTrigger` command
+    // and check that the readings move. `TC_EEM_2_3` and `TC_EEM_2_5` are the
+    // exported-energy mirror of the last two and stay out: they ask for a
+    // 3 kW *generator*, which needs the `EXPE` feature this device has no
+    // hardware for.
+    "TC_EPM_2_2",
+    "TC_EEM_2_2",
+    "TC_EEM_2_4",
+    // The Thermostat device type (`0x0301`) is new with this driver, and the
+    // Electrical Sensor (`0x0510`) shares its endpoint: check both mandatory
+    // cluster sets and that the revision claims are honest.
+    "TC_DeviceConformance",
+];
+
 /// OTA Software Update tests — run against the `system_tests` example, which
 /// plays the rs-matter OTA *role* (Provider or Requestor) while the counterpart
 /// node is a CHIP `chip-ota-{provider,requestor}-app`. Only the CI-automatable
@@ -1122,6 +1172,8 @@ pub(crate) enum TestSuite {
     Light,
     /// Scenes Management cluster — runs against the `scenes_tests` example.
     Scenes,
+    /// Heating-only Thermostat — runs against the `thermostat_tests` driver.
+    Thermostat,
     /// OTA Software Update — `system_tests` plays an rs-matter OTA role against a
     /// CHIP `chip-ota-{provider,requestor}-app` counterpart.
     Ota,
@@ -1167,6 +1219,7 @@ impl TestSuite {
             Self::Camera => CAMERA_TESTS.to_vec(),
             Self::Light => LIGHT_TESTS.to_vec(),
             Self::Scenes => SCENES_TESTS.to_vec(),
+            Self::Thermostat => THERMOSTAT_TESTS.to_vec(),
             Self::Ota => OTA_TESTS.to_vec(),
             Self::Wireless => WIRELESS_TESTS.to_vec(),
             Self::Thread => THREAD_TESTS.to_vec(),
@@ -1185,6 +1238,7 @@ impl TestSuite {
             Self::Camera => "camera_tests",
             Self::Light => "light_tests",
             Self::Scenes => "scenes_tests",
+            Self::Thermostat => "thermostat_tests",
             // rs-matter plays its OTA role from the `system_tests` binary.
             Self::Ota => "system_tests",
             Self::Wireless => "wireless_tests",
@@ -1203,6 +1257,7 @@ impl TestSuite {
             | Self::Camera
             | Self::Light
             | Self::Scenes
+            | Self::Thermostat
             | Self::Ota
             | Self::Wireless
             | Self::Commissioner => &[],
@@ -1224,6 +1279,9 @@ impl TestSuite {
             // Scenes tests include some long composite YAML suites
             // (multi-fabric/max-capacity); match `Light`'s budget.
             Self::Scenes => 500,
+            // `TC_TSTAT_2_2` walks a lot of setpoint combinations, and
+            // `TC_DeviceConformance` wildcard-reads the whole device first.
+            Self::Thermostat => 240,
             // A full OTA flow commissions two nodes and transfers an image over
             // BDX; give it headroom.
             Self::Ota => 300,
@@ -2890,6 +2948,20 @@ impl ITests {
             // `TC_DeviceConformance` likewise reads `is_pics_sdk_ci_only`
             // (in `check_conformance`), so it needs the target `.pics` too.
             | "TC_DeviceConformance"
+            // `TC_TSTAT_2_2` guards *every* one of its steps on
+            // `pics_guard(check_pics("TSTAT.S.F00"))` and friends. With no
+            // `--PICS` all of them answer false, the whole suite skips step by
+            // step - and still reports a pass, because `--fail-on-skipped`
+            // counts skipped *tests*, not steps. Handing over the target
+            // `.pics` is what makes it actually exercise the heating setpoints.
+            | "TC_TSTAT_2_2"
+            // `TC_EPM_2_1` and `TC_EEM_2_1` declare a top-level `pics_*` gate
+            // (`["EPM.S"]` / `["EEM.S"]`), so with no `--PICS` the runner skips
+            // the whole test - and `--fail-on-skipped` then fails the run.
+            // `TC_EEM_2_1` additionally gates its per-attribute steps on
+            // `EEM.S.A0001`..`A0005`.
+            | "TC_EPM_2_1"
+            | "TC_EEM_2_1"
             // `TC_pics_checker` exists solely to cross-check the declared PICS
             // against what the device actually exposes, in both directions.
             // With no `--PICS` every `check_pics` answers false and it reports
