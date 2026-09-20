@@ -258,10 +258,13 @@ mod groups {
             }
         }
 
+        /// Append a group key map entry.
+        ///
+        /// A full map answers `Failure` rather than `ResourceExhausted`: that is
+        /// the status the CHIP SDK gives, and what its `TestGroupKeyManagementCluster`
+        /// expects, for the per-entry appends chip-tool turns a list write into.
         pub fn key_map_add(&mut self, entry: GroupKeyMapping) -> Result<(), Error> {
-            self.key_map
-                .push(entry)
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
+            self.key_map.push(entry).map_err(|_| ErrorCode::Failure)?;
 
             Ok(())
         }
@@ -3163,7 +3166,7 @@ pub(crate) mod tests {
                     })
                     .unwrap_err()
                     .code(),
-                ErrorCode::ResourceExhausted
+                ErrorCode::Failure
             );
 
             // Replacing an existing group's mapping still works when full
