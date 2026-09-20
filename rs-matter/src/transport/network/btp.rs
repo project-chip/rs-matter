@@ -587,9 +587,13 @@ mod test {
     fn test_mtu_timeout() {
         #[cfg(all(feature = "std", not(target_os = "espidf")))]
         {
-            let _ = env_logger::try_init_from_env(
+            // No timestamps: the logger stays installed for every later test
+            // in this process, and Miri has no wall clock under isolation
+            let _ = env_logger::Builder::from_env(
                 env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-            );
+            )
+            .format_timestamp(None)
+            .try_init();
         }
 
         let btp = Btp::new();
