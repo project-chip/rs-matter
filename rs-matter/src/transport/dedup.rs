@@ -29,6 +29,7 @@ pub struct RxCtrState {
 
 impl RxCtrState {
     /// Create a state synchronized to `max_ctr`, with every earlier counter treated as seen.
+    #[cfg(any(feature = "groups", test))]
     pub const fn new(max_ctr: u32) -> Self {
         Self {
             max_ctr,

@@ -29,6 +29,7 @@ use log::{Level, LevelFilter};
 use crate::itest::{ITests, TestSuite};
 
 mod copyright;
+mod coverage;
 mod itest;
 mod onboard;
 mod pics;
@@ -110,6 +111,8 @@ enum Command {
         /// A comma-separated list of TLV octets to decode (e.g., "0x01,0x02,0x03" or "1,2,3")
         tlv: String,
     },
+    /// Summarize a `cargo llvm-cov` LCOV trace per `rs-matter` module
+    Coverage(coverage::Args),
     /// Fill in the CSA master PICS templates from a device's own data model.
     ///
     /// Feed it the JSON emitted by a binary built with the `pics` feature
@@ -245,6 +248,7 @@ impl Command {
                 tlv,
             } => tlv::decode(tlv, *dec, *cert, *as_asn1),
             Command::Onboard(args) => onboard::run(args),
+            Command::Coverage(args) => coverage::run(args),
         }
     }
 }
