@@ -478,22 +478,16 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // commission (and later remove) a second test fabric.
     "TC_GC_2_1",
     "TC_GC_2_2",
+    // `TC_GC_2_3`, `TC_GC_2_4` and `TC_GC_2_5` upstream call `<sub>.reset()`
+    // *after* the command whose `Membership` report they then await. `reset()`
+    // discards everything already received, so a device that reports promptly -
+    // as rs-matter does, correctly, with `min_interval=0` - can have its report
+    // wiped in the few ms between the command response and the reset, after
+    // which the await times out on a report that can never come. The
+    // `groupcast-reset-before-mutation` patch (see `CHIP_PATCHES`) moves each
+    // reset ahead of its command, which is the shape `TC_GC_2_8` already uses.
     "TC_GC_2_3",
-    // "TC_GC_2_4", // Skipped: flaky harness-side timing race, not a DUT bug.
-    // Steps 6-8 do `LeaveGroup(0)` (leave all groups) -> `membership_sub.reset()`
-    // -> await a fresh *empty* `Membership` report. With `min_interval=0` the
-    // DUT correctly emits the empty-`Membership` report the instant the command
-    // is handled (spec: report ASAP), so it reaches the harness in the ~2 ms
-    // between the `LeaveGroup(0)` response and the step-7 `reset()` - which then
-    // discards it. Step 8 then waits the full max interval for another
-    // *data-bearing* report that never comes (membership is stable-empty and
-    // max-interval reports are empty liveness heartbeats), and times out. The
-    // test implicitly assumes reporting is deferred past the reset (as CHIP's
-    // scheduled reporting engine happens to be); rs-matter reports synchronously
-    // and loses the race. No DUT timing change can deterministically win a
-    // wall-clock race against the harness's reset, so re-enable this only once
-    // the reporter defers post-command reports (or the upstream test stops
-    // reset-then-awaiting the same change).
+    "TC_GC_2_4",
     "TC_GC_2_5",
     "TC_GC_2_6",
     "TC_GC_2_7",

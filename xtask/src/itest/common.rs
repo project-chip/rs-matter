@@ -34,6 +34,20 @@ use log::{debug, info, warn};
 /// the note on that constant.
 pub const CHIP_DEFAULT_GITREF: &str = "f3af82eb6fd1aed968e04642cb8d2ac305f5a371"; // tip of `v1.6-branch`
 
+/// Local patches applied to the checked-out Chip tree after every checkout.
+///
+/// Each entry is `(name, unified diff)`. The diffs fix *upstream test* bugs
+/// that rs-matter would otherwise have to skip or retry around; they are not
+/// workarounds for rs-matter behaviour. Every patch carries, in its own
+/// preamble, what it changes and why, and is meant to be dropped once the
+/// equivalent fix lands upstream and `CHIP_DEFAULT_GITREF` moves past it.
+///
+/// Application is best-effort and idempotent, see [`ChipBuilder::apply_chip_patches`].
+const CHIP_PATCHES: &[(&str, &str)] = &[(
+    "groupcast-reset-before-mutation",
+    include_str!("../../patches/chip/groupcast-reset-before-mutation.patch"),
+)];
+
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
     "bash",
@@ -748,6 +762,15 @@ impl ChipBuilder {
             }
         }
 
+        // Undo our patches before checking out: they leave tracked files
+        // modified, and `git checkout` aborts with "Your local changes would
+        // be overwritten by checkout" as soon as `chip_gitref` moves to a ref
+        // where those files differ - which is exactly what happens when the
+        // pin is bumped past the upstream fix a patch waits for. The
+        // `reset --hard` further down would clean the tree, but only *after*
+        // the checkout has already failed.
+        self.restore_chip_patch_paths(chip_dir);
+
         // Checkout the specified reference
         info!("Checking out Chip GIT reference: {chip_gitref}...");
 
@@ -778,6 +801,10 @@ impl ChipBuilder {
             }
             run_command(&mut reset, self.print_cmd_output)?;
         }
+
+        // Re-apply our local test patches: the `checkout` (and the `reset
+        // --hard` above) restore a pristine tree, so this runs on every setup.
+        self.apply_chip_patches(chip_dir)?;
 
         // Did HEAD actually move (tip advanced, or ref switched)? A fresh clone
         // (`head_before == None`) and `--force-rebuild` both count as "changed".
@@ -816,6 +843,109 @@ impl ChipBuilder {
         self.setup_py_env(chip_dir)?;
 
         info!("Chip environment setup completed successfully.");
+
+        Ok(())
+    }
+
+    /// Apply the [`CHIP_PATCHES`] to the checked-out Chip tree.
+    ///
+    /// Idempotent: a patch that is already applied is detected (via a reverse
+    /// `--check`) and skipped, so an offline setup - which leaves the previous
+    /// tree in place instead of resetting it - does not fail.
+    ///
+    /// A patch that neither applies nor is already applied warns rather than
+    /// failing the setup: the likeliest cause is that upstream changed (or
+    /// fixed) the file, and in that case a broken setup is a worse outcome
+    /// than running with the unpatched test.
+    fn apply_chip_patches(&self, chip_dir: &Path) -> anyhow::Result<()> {
+        for (name, diff) in CHIP_PATCHES {
+            if self.git_apply(chip_dir, diff, &["--check"]).is_ok() {
+                self.git_apply(chip_dir, diff, &[])
+                    .with_context(|| format!("Failed to apply Chip patch `{name}`"))?;
+                info!("Applied Chip patch `{name}`");
+            } else if self
+                .git_apply(chip_dir, diff, &["--reverse", "--check"])
+                .is_ok()
+            {
+                debug!("Chip patch `{name}` already applied");
+            } else {
+                warn!(
+                    "Chip patch `{name}` does not apply to this checkout and is not already \
+                     applied; continuing without it (upstream may have changed or fixed it). \
+                     See xtask/patches/chip/{name}.patch"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Restore every path touched by [`CHIP_PATCHES`] to its committed
+    /// content, so the tree is pristine for a subsequent `git checkout`.
+    ///
+    /// Best-effort per path: a path that the current checkout does not have
+    /// (the patch targets a file added later upstream) simply has nothing to
+    /// restore.
+    fn restore_chip_patch_paths(&self, chip_dir: &Path) {
+        for path in Self::chip_patch_paths() {
+            let mut cmd = Command::new("git");
+
+            cmd.current_dir(chip_dir)
+                .arg("checkout")
+                .arg("--quiet")
+                .arg("--")
+                .arg(path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+
+            let _ = cmd.status();
+        }
+    }
+
+    /// The repository-relative paths that [`CHIP_PATCHES`] modify, read off
+    /// the `+++ b/<path>` headers of the diffs themselves so the list cannot
+    /// drift away from the patches.
+    fn chip_patch_paths() -> impl Iterator<Item = &'static str> {
+        CHIP_PATCHES
+            .iter()
+            .flat_map(|(_, diff)| diff.lines().filter_map(|l| l.strip_prefix("+++ b/")))
+    }
+
+    /// Run `git apply` in `chip_dir`, feeding `diff` on stdin.
+    fn git_apply(&self, chip_dir: &Path, diff: &str, args: &[&str]) -> anyhow::Result<()> {
+        use std::io::Write;
+
+        // `--check` runs are probes whose failure is an expected outcome
+        // (see `apply_chip_patches`), so keep them quiet; a real apply that
+        // fails is worth seeing.
+        let stderr = if args.contains(&"--check") {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        };
+
+        let mut child = Command::new("git")
+            .current_dir(chip_dir)
+            .arg("apply")
+            .args(args)
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(stderr)
+            .spawn()
+            .context("Failed to spawn `git apply`")?;
+
+        child
+            .stdin
+            .take()
+            .context("`git apply` stdin unavailable")?
+            .write_all(diff.as_bytes())
+            .context("Failed to write patch to `git apply`")?;
+
+        let status = child.wait().context("Failed to wait for `git apply`")?;
+
+        anyhow::ensure!(status.success(), "`git apply` failed: {status}");
 
         Ok(())
     }
@@ -941,5 +1071,43 @@ impl ChipBuilder {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChipBuilder, CHIP_PATCHES};
+
+    /// Every patch must yield at least one path.
+    ///
+    /// The paths are parsed off the `+++ b/<path>` headers, so a patch
+    /// regenerated without the `b/` prefix (e.g. `git diff --no-prefix`) would
+    /// silently yield none - turning `restore_chip_patch_paths` into a no-op
+    /// and re-introducing the "local changes would be overwritten by checkout"
+    /// failure the next time `CHIP_DEFAULT_GITREF` moves.
+    #[test]
+    fn every_chip_patch_declares_paths() {
+        for (name, diff) in CHIP_PATCHES {
+            let paths: Vec<_> = diff
+                .lines()
+                .filter_map(|l| l.strip_prefix("+++ b/"))
+                .collect();
+
+            assert!(
+                !paths.is_empty(),
+                "patch `{name}` yields no `+++ b/<path>` headers; \
+                 `restore_chip_patch_paths` would not clean it up"
+            );
+
+            for path in paths {
+                assert!(
+                    !path.is_empty() && !path.starts_with('/'),
+                    "patch `{name}` has a suspicious path: {path:?}"
+                );
+            }
+        }
+
+        // The parser used in production must agree with the above.
+        assert!(ChipBuilder::chip_patch_paths().count() >= CHIP_PATCHES.len());
     }
 }
