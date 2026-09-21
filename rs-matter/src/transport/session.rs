@@ -1907,6 +1907,29 @@ impl Sessions {
         }
     }
 
+    /// Remove every session established with `peer_node_id` on `fabric_idx`,
+    /// returning how many were dropped.
+    pub(crate) fn remove_for_node(&mut self, fabric_idx: NonZeroU8, peer_node_id: u64) -> usize {
+        let mut removed = 0;
+
+        while let Some(index) = self
+            .sessions
+            .iter()
+            .position(|sess| sess.is_for_node(fabric_idx, peer_node_id))
+        {
+            info!(
+                "Dropping session with ID {} for peer node 0x{:016x} on fabric index {}",
+                self.sessions[index].id,
+                peer_node_id,
+                fabric_idx.get()
+            );
+            self.sessions.swap_remove(index);
+            removed += 1;
+        }
+
+        removed
+    }
+
     /// This assumes that the higher layer has taken care of doing anything required
     /// as per the spec before the sessions are removed or expired
     pub(crate) fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8, expire_sess_id: Option<u32>) {
@@ -2544,6 +2567,22 @@ mod tests {
         sess.id
     }
 
+    /// Add an encrypted CASE session to a specific peer on a specific fabric.
+    fn add_for_node(sm: &mut Sessions, fab_idx: NonZeroU8, peer_node_id: u64) -> u32 {
+        let sess = unwrap!(sm.add(
+            0,
+            false,
+            Address::default(),
+            Some(peer_node_id),
+            &TEST_DEV_DET
+        ));
+        sess.mode = SessionMode::Case {
+            fab_idx,
+            cat_ids: Default::default(),
+        };
+        sess.id
+    }
+
     fn ids(sm: &Sessions) -> Vec<u32, MAX_SESSIONS> {
         sm.iter().map(|sess| sess.id).collect()
     }
@@ -2554,6 +2593,34 @@ mod tests {
         while Instant::now() <= Instant::from_ticks(ticks) {
             core::hint::spin_loop();
         }
+    }
+
+    /// Tearing down one device must drop that device's sessions and nothing
+    /// else. A session left behind after the peer has discarded its half is
+    /// what later provokes an unsecured `SessionNotFound` from the peer.
+    #[test]
+    fn remove_for_node_targets_only_that_peer() {
+        const DEV_A: u64 = 0x1111;
+        const DEV_B: u64 = 0x2222;
+
+        let mut sm = Sessions::new();
+
+        let a1 = add_for_node(&mut sm, fab(1), DEV_A);
+        let a2 = add_for_node(&mut sm, fab(1), DEV_A);
+        let sibling = add_for_node(&mut sm, fab(1), DEV_B);
+        // Same node ID, different fabric - must survive.
+        let other_fabric = add_for_node(&mut sm, fab(2), DEV_A);
+
+        assert_eq!(sm.remove_for_node(fab(1), DEV_A), 2);
+
+        let left = ids(&sm);
+        assert!(!left.contains(&a1));
+        assert!(!left.contains(&a2));
+        assert!(left.contains(&sibling));
+        assert!(left.contains(&other_fabric));
+
+        // Idempotent - a second teardown of the same peer is a no-op.
+        assert_eq!(sm.remove_for_node(fab(1), DEV_A), 0);
     }
 
     /// The table fills up to `MAX_SESSIONS`, then refuses; removing a session

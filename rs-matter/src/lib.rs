@@ -704,6 +704,19 @@ impl<'a> Matter<'a> {
         self.with_state(|state| f(&mut state.rtc))
     }
 
+    /// Drop every secure session held with `peer_node_id` on `fabric_idx`,
+    /// returning how many were removed.
+    pub fn remove_sessions_for_peer(&self, fabric_idx: NonZeroU8, peer_node_id: u64) -> usize {
+        let removed =
+            self.with_state(|state| state.sessions.remove_for_node(fabric_idx, peer_node_id));
+
+        if removed > 0 {
+            self.transport().notify_session_removed();
+        }
+
+        removed
+    }
+
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
     /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
     pub fn reset_transport(&self) -> Result<(), Error> {
