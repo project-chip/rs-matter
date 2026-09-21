@@ -44,8 +44,8 @@ use crate::dm::clusters::decl::scenes_management::{
 };
 use crate::dm::clusters::scenes::{SceneClusterHandler, SceneInvalidator};
 use crate::dm::{
-    AttrId, Cluster, ClusterId, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext,
-    WriteContext,
+    AttrId, Cluster, ClusterId, Dataver, EndptId, HandlerContext, InvokeContext, LifecycleOp,
+    ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
@@ -143,6 +143,27 @@ impl LevelControlState {
         }
     }
 
+    /// The current values of the writable attributes.
+    fn writable_attributes(&self) -> AttributeDefaults {
+        AttributeDefaults {
+            on_level: self.on_level.clone(),
+            options: self.options,
+            on_off_transition_time: self.on_off_transition_time,
+            on_transition_time: self.on_transition_time.clone(),
+            off_transition_time: self.off_transition_time.clone(),
+            default_move_rate: self.default_move_rate.clone(),
+        }
+    }
+
+    fn set_writable_attributes(&mut self, attributes: AttributeDefaults) {
+        self.on_level = attributes.on_level;
+        self.options = attributes.options;
+        self.on_off_transition_time = attributes.on_off_transition_time;
+        self.on_transition_time = attributes.on_transition_time;
+        self.off_transition_time = attributes.off_transition_time;
+        self.default_move_rate = attributes.default_move_rate;
+    }
+
     /// Updates the RemainingTime attribute and returns true if a Matter notification is required.
     /// Matter notifications, reporting changes to this attribute, are only required under specific conditions.
     ///
@@ -198,11 +219,17 @@ pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     /// See [`OnOffHandler::with_scene_invalidator`] — same role, fired
     /// when `CurrentLevel` mutates.
     scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
+    attribute_defaults: AttributeDefaults,
     state: Mutex<RefCell<LevelControlState>>,
     task_signal: Signal<Option<Task>>,
 }
 
 /// Default values for the attributes with manufacturer specific defaults.
+///
+/// These are exactly the writable attributes the handler keeps in RAM, so the
+/// same shape also carries their current values to and from
+/// [`LevelControlHooks::writable_attributes`] and
+/// [`LevelControlHooks::set_writable_attributes`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttributeDefaults {
@@ -285,7 +312,10 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             hooks,
             on_off_handler: Mutex::new(Cell::new(None)),
             scene_invalidator: Mutex::new(Cell::new(None)),
-            state: Mutex::new(RefCell::new(LevelControlState::new(attribute_defaults))),
+            state: Mutex::new(RefCell::new(LevelControlState::new(
+                attribute_defaults.clone(),
+            ))),
+            attribute_defaults,
             task_signal: Signal::new(None),
         }
     }
@@ -382,10 +412,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         }
     }
 
-    /// Initializes the cluster on startup;
-    /// - wire coupled handlers
-    /// - validate the handler setup with the configuration
-    /// - set the CurrentLevel attribute according to the StartUpCurrentLevel attribute.
+    /// Wire the coupled OnOff handler and validate the handler setup.
+    ///
+    /// The `StartUpCurrentLevel` behaviour is applied later, on
+    /// [`LifecycleOp::Startup`], after the hooks had a chance to load their
+    /// persisted state.
     ///
     /// # Parameters
     /// *on_off_handler: the OnOffHandler instance coupled with this LevelControlHandler, i.e. the OnOff cluster on the same endpoint. This should be set if the OnOff feature is set.
@@ -394,6 +425,19 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     ///
     /// panics if the `state`'s `CLUSTER` is misconfigured.
     pub fn init(&self, on_off_handler: Option<&'a OnOffHandler<'a, OH, H>>) {
+        // Wire any coupled clusters
+        self.on_off_handler.lock(|h| h.set(on_off_handler));
+
+        self.validate();
+    }
+
+    /// Restore the writable attributes persisted by the hooks and apply the
+    /// `StartUpCurrentLevel` attribute.
+    fn startup(&self) {
+        if let Some(attributes) = self.hooks.writable_attributes() {
+            self.with_state(|state| state.set_writable_attributes(attributes));
+        }
+
         // 1.6.6.15. StartUpCurrentLevel Attribute
         // This attribute SHALL indicate the desired startup level for a device when it is supplied with power
         // and this level SHALL be reflected in the CurrentLevel attribute. The values of the
@@ -406,11 +450,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         // todo: Implement checking the reason for reboot.
         // This behavior does not apply to reboots associated with OTA. After an OTA restart, the CurrentLevel
         // attribute SHALL return to its value prior to the restart.
-
-        // Wire any coupled clusters
-        self.on_off_handler.lock(|h| h.set(on_off_handler));
-
-        self.validate();
 
         // `self.hooks` holds the previous current level as supplied by the SDK consumer.
         // Hence, if this process errors, we quietly abort resulting in the previous current level.
@@ -431,9 +470,35 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         }
     }
 
+    /// Stop any transition and reset the handler-internal attributes to the
+    /// [`AttributeDefaults`] the handler was created with.
+    fn factory_reset(&self, ctx: impl HandlerContext) {
+        self.task_signal.signal(Task::Stop);
+
+        self.with_state(|state| *state = LevelControlState::new(self.attribute_defaults.clone()));
+
+        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+    }
+
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
         HandlerAsyncAdaptor(self)
+    }
+
+    /// Update the writable attributes with `f`, persist them via the hooks
+    /// and only then commit them, so that a failed save fails the write.
+    fn write_attributes<F>(&self, ctx: impl WriteContext, f: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut AttributeDefaults),
+    {
+        let mut attributes = self.with_state(|state| state.writable_attributes());
+        f(&mut attributes);
+
+        self.hooks.set_writable_attributes(&attributes)?;
+
+        self.with_state_notify(ctx, |state| state.set_writable_attributes(attributes));
+
+        Ok(())
     }
 
     fn with_state<F, R>(&self, f: F) -> R
@@ -1324,6 +1389,20 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 }
 
 impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlHandler<'_, H, OH> {
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        // The hooks go first, so that on startup they load the persisted state
+        // the handler reads below, and on factory reset they erase it.
+        self.hooks.lifecycle(op)?;
+
+        match op {
+            LifecycleOp::Startup => self.startup(),
+            LifecycleOp::FactoryReset => self.factory_reset(&ctx),
+            LifecycleOp::FabricRemoval { .. } => (),
+        }
+
+        Ok(())
+    }
+
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     // Runs an async task manager for the cluster handler.
@@ -1394,11 +1473,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
                 }
             }
 
-            self.with_state_notify(ctx, |state| {
-                state.on_level = value;
-            });
-
-            Ok(())
+            self.write_attributes(ctx, |attributes| attributes.on_level = value)
         })
     }
 
@@ -1414,13 +1489,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: OptionsBitmap,
     ) -> impl Future<Output = Result<(), Error>> {
-        ready({
-            self.with_state_notify(ctx, |state| {
-                state.options = value;
-            });
-
-            Ok(())
-        })
+        ready(self.write_attributes(ctx, |attributes| attributes.options = value))
     }
 
     fn remaining_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
@@ -1448,11 +1517,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         value: u16,
     ) -> impl Future<Output = Result<(), Error>> {
         ready({
-            self.with_state_notify(ctx, |state| {
-                state.on_off_transition_time = value;
-            });
-
-            Ok(())
+            self.write_attributes(ctx, |attributes| attributes.on_off_transition_time = value)
         })
     }
 
@@ -1468,13 +1533,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> impl Future<Output = Result<(), Error>> {
-        ready({
-            self.with_state_notify(ctx, |state| {
-                state.on_transition_time = value;
-            });
-
-            Ok(())
-        })
+        ready(self.write_attributes(ctx, |attributes| attributes.on_transition_time = value))
     }
 
     fn off_transition_time(
@@ -1491,13 +1550,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> impl Future<Output = Result<(), Error>> {
-        ready({
-            self.with_state_notify(ctx, |state| {
-                state.off_transition_time = value;
-            });
-
-            Ok(())
-        })
+        ready(self.write_attributes(ctx, |attributes| attributes.off_transition_time = value))
     }
 
     fn default_move_rate(
@@ -1520,11 +1573,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
                 break 'a Err(ErrorCode::InvalidData.into());
             }
 
-            self.with_state_notify(ctx, |state| {
-                state.default_move_rate = value;
-            });
-
-            Ok(())
+            self.write_attributes(ctx, |attributes| attributes.default_move_rate = value)
         })
     }
 
@@ -1819,6 +1868,25 @@ pub trait LevelControlHooks {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
+    /// Raw getter for the writable attributes the handler keeps in RAM
+    /// (`OnLevel`, `Options`, the transition times and `DefaultMoveRate`).
+    /// These values should persist across reboots.
+    ///
+    /// Read on [`LifecycleOp::Startup`], after [`Self::lifecycle`]. `None`
+    /// (the default) keeps the [`AttributeDefaults`] the handler was created with.
+    fn writable_attributes(&self) -> Option<AttributeDefaults> {
+        None
+    }
+
+    /// Raw setter for the writable attributes, called on every write of one
+    /// of them with the new values of all of them. These values should
+    /// persist across reboots. On `Err` the write fails and nothing changes.
+    ///
+    /// The default implementation does not persist anything.
+    fn set_writable_attributes(&self, _attributes: &AttributeDefaults) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Background task for out-of-band notifications to the handler.
     ///
     /// This future MUST NOT return. Implementers should either loop forever or await
@@ -1828,6 +1896,24 @@ pub trait LevelControlHooks {
     /// The SDK will panic if this method returns.
     fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) -> impl Future<Output = ()> {
         pending::<()>()
+    }
+
+    /// Lifecycle operation, forwarded by the cluster handler before it
+    /// reacts to the operation itself.
+    ///
+    /// Hooks that persist device state load it on [`LifecycleOp::Startup`],
+    /// since the handler reads that state right after, and erase it on
+    /// [`LifecycleOp::FactoryReset`]. The storage is wired into the hooks by
+    /// the application, e.g. the same [`crate::persist::KvBlobStoreAccess`]
+    /// passed to the `InteractionModel`, which also serves the setters that
+    /// save the state.
+    ///
+    /// If one hooks instance serves several handlers, it receives each
+    /// operation once per handler.
+    ///
+    /// The default implementation does nothing.
+    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -1860,8 +1946,20 @@ where
         (*self).set_start_up_current_level(value)
     }
 
+    fn writable_attributes(&self) -> Option<AttributeDefaults> {
+        (*self).writable_attributes()
+    }
+
+    fn set_writable_attributes(&self, attributes: &AttributeDefaults) -> Result<(), Error> {
+        (*self).set_writable_attributes(attributes)
+    }
+
     fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
+    }
+
+    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (*self).lifecycle(op)
     }
 }
 
@@ -1963,7 +2061,7 @@ where
 
 pub mod test {
     use crate::dm::clusters::app::level_control::{
-        AttributeId, CommandId, Feature, LevelControlHooks, FULL_CLUSTER,
+        AttributeDefaults, AttributeId, CommandId, Feature, LevelControlHooks, FULL_CLUSTER,
     };
     use crate::dm::Cluster;
     use crate::error::Error;
@@ -1974,6 +2072,7 @@ pub mod test {
     struct TestLevelControlState {
         current_level: Option<u8>,
         start_up_current_level: Option<u8>,
+        writable_attributes: Option<AttributeDefaults>,
     }
 
     impl TestLevelControlState {
@@ -1981,6 +2080,7 @@ pub mod test {
             Self {
                 current_level: Some(1),
                 start_up_current_level: None,
+                writable_attributes: None,
             }
         }
     }
@@ -2058,6 +2158,17 @@ pub mod test {
                 .lock(|state| state.borrow_mut().start_up_current_level = value);
             Ok(())
         }
+
+        fn writable_attributes(&self) -> Option<AttributeDefaults> {
+            self.state
+                .lock(|state| state.borrow().writable_attributes.clone())
+        }
+
+        fn set_writable_attributes(&self, attributes: &AttributeDefaults) -> Result<(), Error> {
+            self.state
+                .lock(|state| state.borrow_mut().writable_attributes = Some(attributes.clone()));
+            Ok(())
+        }
     }
 }
 
@@ -2085,5 +2196,31 @@ mod tests {
         let on_off = OnOffHandler::new(Dataver::new(2), 1, &on_off_logic);
         on_off.init(Some(&level));
         level.init(Some(&on_off));
+    }
+
+    #[test]
+    fn startup_restores_writable_attributes() {
+        use super::{LevelControlHooks, NoOnOff};
+        use crate::tlv::Nullable;
+
+        let level_logic = TestLevelControlDeviceLogic::new();
+        let level = LevelControlHandler::<_, NoOnOff>::new(
+            Dataver::new(1),
+            1,
+            &level_logic,
+            AttributeDefaults::default(),
+        );
+
+        // What the hooks would have loaded from storage on startup.
+        let saved = AttributeDefaults {
+            on_level: Nullable::some(42),
+            on_off_transition_time: 7,
+            ..AttributeDefaults::default()
+        };
+        level_logic.set_writable_attributes(&saved).unwrap();
+
+        level.startup();
+
+        assert_eq!(level.with_state(|state| state.writable_attributes()), saved);
     }
 }

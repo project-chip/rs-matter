@@ -21,10 +21,7 @@
 use core::cell::Cell;
 use core::pin::pin;
 
-use std::fs;
-use std::io::{Read, Write};
 use std::net::UdpSocket;
-use std::path::PathBuf;
 
 use embassy_futures::select::select3;
 
@@ -48,11 +45,12 @@ use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
+use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, LifecycleOp, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
+use rs_matter::persist::{KvBlobStoreAccess, VENDOR_KEYS_START};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -93,7 +91,7 @@ fn main() -> Result<(), Error> {
 
     // OnOff cluster setup
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new());
+        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new(&kv));
 
     // LevelControl cluster setup
     let level_control_handler = level_control::LevelControlHandler::new(
@@ -188,7 +186,7 @@ const NODE: Node<'static> = Node {
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
-                OnOffDeviceLogic::CLUSTER,
+                ON_OFF_CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
             ),
         ),
@@ -216,7 +214,7 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,
+                |e, c| e == 1 && c == ON_OFF_CLUSTER.id,
                 on_off::HandlerAsyncAdaptor(on_off),
             )
             .chain(
@@ -355,80 +353,104 @@ impl OnOffPersistentState {
     }
 }
 
-#[derive(Default)]
-pub struct OnOffDeviceLogic {
+/// The key under which [`OnOffDeviceLogic`] persists its state, in the key
+/// range the Matter KV store leaves to the application.
+const ON_OFF_STATE_KEY: u16 = VENDOR_KEYS_START;
+
+/// The OnOff cluster metadata. A standalone const rather than
+/// `OnOffDeviceLogic::CLUSTER`, since `OnOffDeviceLogic` is generic.
+const ON_OFF_CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+    .with_revision(6)
+    .with_features(on_off_cluster::Feature::LIGHTING.bits())
+    .with_attrs(with!(
+        required;
+        on_off_cluster::AttributeId::OnOff
+        | on_off_cluster::AttributeId::GlobalSceneControl
+        | on_off_cluster::AttributeId::OnTime
+        | on_off_cluster::AttributeId::OffWaitTime
+        | on_off_cluster::AttributeId::StartUpOnOff
+    ))
+    .with_cmds(with!(
+        on_off_cluster::CommandId::Off
+            | on_off_cluster::CommandId::On
+            | on_off_cluster::CommandId::Toggle
+            | on_off_cluster::CommandId::OffWithEffect
+            | on_off_cluster::CommandId::OnWithRecallGlobalScene
+            | on_off_cluster::CommandId::OnWithTimedOff
+    ));
+
+/// OnOff hooks that persist their state in the same KV store as the rest of
+/// the Matter state, so that a factory reset erases it too.
+///
+/// The state is loaded on [`LifecycleOp::Startup`], saved by the setters and
+/// erased on [`LifecycleOp::FactoryReset`].
+pub struct OnOffDeviceLogic<K> {
     on_off: Cell<bool>,
     start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
-    storage_path: PathBuf,
+    kv: K,
 }
 
-const STORAGE_FILE_NAME: &str = "rs-matter-on-off-state";
-
-impl OnOffDeviceLogic {
-    pub fn new() -> Self {
-        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
-        info!(
-            "OnOffDeviceLogic using storage path: {}",
-            storage_path.as_path().to_str().unwrap_or("none")
-        );
-
-        let persisted_state = match fs::File::open(storage_path.as_path()) {
-            Ok(mut file) => {
-                let mut buf: [u8; 1] = [0];
-                file.read_exact(&mut buf).unwrap();
-
-                trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
-
-                OnOffPersistentState::from_bytes(buf[0]).unwrap()
-            }
-            Err(_) => OnOffPersistentState::default(),
-        };
-
+impl<K: KvBlobStoreAccess> OnOffDeviceLogic<K> {
+    pub const fn new(kv: K) -> Self {
         Self {
-            on_off: Cell::new(persisted_state.on_off),
-            start_up_on_off: Cell::new(persisted_state.start_up_on_off),
-            storage_path,
+            on_off: Cell::new(false),
+            start_up_on_off: Cell::new(None),
+            kv,
         }
     }
 
-    fn save_state(&self) -> Result<(), Error> {
-        let mut file = fs::File::create(self.storage_path.as_path())?;
+    fn load_state(&self) -> Result<(), Error> {
+        let data = self.kv.access(|store, buf| {
+            store
+                .load(ON_OFF_STATE_KEY, buf)
+                .map(|data| data.and_then(|data| data.first().copied()))
+        })?;
 
+        let state = match data {
+            Some(data) => {
+                trace!("OnOffDeviceLogic: loaded {:0x}", data);
+                OnOffPersistentState::from_bytes(data)?
+            }
+            None => OnOffPersistentState::default(),
+        };
+
+        self.on_off.set(state.on_off);
+        self.start_up_on_off.set(state.start_up_on_off);
+
+        Ok(())
+    }
+
+    fn save_state(&self) -> Result<(), Error> {
         let value = OnOffPersistentState::to_bytes_from_values(
             self.on_off.get(),
             self.start_up_on_off.get(),
         );
 
-        let buf = &[value];
+        trace!("OnOffDeviceLogic: saving {:0x}", value);
 
-        trace!("save_storage: wrote {:0x}", value);
+        self.kv
+            .access(|store, buf| store.store(ON_OFF_STATE_KEY, &[value], buf))
+    }
 
-        file.write_all(buf)?;
+    fn erase_state(&self) -> Result<(), Error> {
+        self.on_off.set(false);
+        self.start_up_on_off.set(None);
 
-        Ok(())
+        self.kv
+            .access(|store, buf| store.remove(ON_OFF_STATE_KEY, buf))
     }
 }
 
-impl OnOffHooks for OnOffDeviceLogic {
-    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
-        .with_revision(6)
-        .with_features(on_off_cluster::Feature::LIGHTING.bits())
-        .with_attrs(with!(
-            required;
-            on_off_cluster::AttributeId::OnOff
-            | on_off_cluster::AttributeId::GlobalSceneControl
-            | on_off_cluster::AttributeId::OnTime
-            | on_off_cluster::AttributeId::OffWaitTime
-            | on_off_cluster::AttributeId::StartUpOnOff
-        ))
-        .with_cmds(with!(
-            on_off_cluster::CommandId::Off
-                | on_off_cluster::CommandId::On
-                | on_off_cluster::CommandId::Toggle
-                | on_off_cluster::CommandId::OffWithEffect
-                | on_off_cluster::CommandId::OnWithRecallGlobalScene
-                | on_off_cluster::CommandId::OnWithTimedOff
-        ));
+impl<K: KvBlobStoreAccess> OnOffHooks for OnOffDeviceLogic<K> {
+    const CLUSTER: Cluster<'static> = ON_OFF_CLUSTER;
+
+    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        match op {
+            LifecycleOp::Startup => self.load_state(),
+            LifecycleOp::FactoryReset => self.erase_state(),
+            LifecycleOp::FabricRemoval { .. } => Ok(()),
+        }
+    }
 
     fn on_off(&self) -> bool {
         self.on_off.get()

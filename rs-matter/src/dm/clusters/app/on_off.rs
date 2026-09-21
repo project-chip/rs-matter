@@ -43,7 +43,8 @@ use crate::dm::clusters::mode_select::OnModeApplier;
 use crate::dm::clusters::scenes::{SceneClusterHandler, SceneInvalidator};
 use crate::dm::types::EndptId;
 use crate::dm::{
-    AttrId, Cluster, ClusterId, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext,
+    AttrId, Cluster, ClusterId, Dataver, HandlerContext, InvokeContext, LifecycleOp, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVArray, TLVBuilderParent};
@@ -258,10 +259,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
     }
 
-    /// Initialise the cluster on startup.
-    /// - wire coupled handlers
-    /// - validate the handler setup with the configuration
-    /// - update the OnOff state based on the StartUpOnOff attribute
+    /// Wire the coupled handlers and validate the handler setup.
+    ///
+    /// The `StartUpOnOff` behaviour is applied later, on [`LifecycleOp::Startup`],
+    /// after the hooks had a chance to load their persisted state.
     ///
     /// # Parameters
     /// *level_control_handler: the LevelControlHandler instance coupled with this OnOffHandler, i.e. the LevelControl cluster on the same endpoint.
@@ -275,7 +276,11 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             .lock(|h| h.set(level_control_handler));
 
         self.validate();
+    }
 
+    /// Apply the `StartUpOnOff` attribute and bring the state machine in line
+    /// with the (possibly just loaded) on/off state of the hooks.
+    fn startup(&self, ctx: impl HandlerContext) {
         // 1.5.6.6. StartUpOnOff Attribute
         // This attribute SHALL define the desired startup behavior of a device when it is supplied with power
         // and this state SHALL be reflected in the OnOff attribute. If the value is null, the OnOff attribute is
@@ -293,6 +298,21 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 StartUpOnOffEnum::Toggle => self.hooks.set_on_off(!self.hooks.on_off()),
             }
         }
+
+        self.with_state(|state| self.update(state, ctx));
+    }
+
+    /// Reset the handler-internal attributes to their defaults, keeping the
+    /// on/off state reported by the hooks.
+    fn factory_reset(&self, ctx: impl HandlerContext) {
+        self.with_state(|state| {
+            *state = OnOffState::new(match self.hooks.on_off() {
+                true => OnOffClusterState::On,
+                false => OnOffClusterState::Off,
+            })
+        });
+
+        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -857,6 +877,20 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         self.dataver.changed();
     }
 
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        // The hooks go first, so that on startup they load the persisted state
+        // the handler reads below, and on factory reset they erase it.
+        self.hooks.lifecycle(op)?;
+
+        match op {
+            LifecycleOp::Startup => self.startup(&ctx),
+            LifecycleOp::FactoryReset => self.factory_reset(&ctx),
+            LifecycleOp::FabricRemoval { .. } => (),
+        }
+
+        Ok(())
+    }
+
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let mut hooks_fut = pin!(self.hooks.run(|message| self.out_of_band_message(message)));
 
@@ -1131,6 +1165,24 @@ pub trait OnOffHooks {
     async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
         core::future::pending::<()>().await
     }
+
+    /// Lifecycle operation, forwarded by the cluster handler before it
+    /// reacts to the operation itself.
+    ///
+    /// Hooks that persist device state load it on [`LifecycleOp::Startup`],
+    /// since the handler reads that state right after, and erase it on
+    /// [`LifecycleOp::FactoryReset`]. The storage is wired into the hooks by
+    /// the application, e.g. the same [`crate::persist::KvBlobStoreAccess`]
+    /// passed to the `InteractionModel`, which also serves the setters that
+    /// save the state.
+    ///
+    /// If one hooks instance serves several handlers, it receives each
+    /// operation once per handler.
+    ///
+    /// The default implementation does nothing.
+    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<T> OnOffHooks for &T
@@ -1161,6 +1213,10 @@ where
 
     fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
+    }
+
+    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (*self).lifecycle(op)
     }
 }
 

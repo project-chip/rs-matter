@@ -75,19 +75,24 @@
 
 use core::cell::{Cell, RefCell};
 use core::future::Future;
+use core::pin::pin;
+
+use embassy_futures::select::{select, Either};
 
 use crate::dm::clusters::decl::globals::{
     ICECandidateStruct, StreamUsageEnum, WebRTCEndReasonEnum, WebRTCSessionStructArrayBuilder,
     WebRTCSessionStructBuilder,
 };
 use crate::dm::{
-    ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext,
+    ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, LifecycleOp,
+    ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::Notification;
 use crate::with;
 
 use super::super::decl::web_rtc_transport_provider as decl;
@@ -521,6 +526,10 @@ pub struct WebRtcProvHandler<
     endpoint_id: EndptId,
     hooks: H,
     sessions: Mutex<RefCell<Vec<SessionEntry, N_SESSIONS>>>,
+    /// IDs of sessions dropped because their fabric was removed, for which
+    /// [`WebRtcHooks::on_end_session`] is still to be called.
+    removed: Mutex<RefCell<Vec<u16, N_SESSIONS>>>,
+    removed_signal: Notification,
     next_id: Mutex<Cell<u16>>,
 }
 
@@ -552,6 +561,8 @@ impl<
             endpoint_id,
             hooks,
             sessions: Mutex::new(RefCell::new(Vec::new())),
+            removed: Mutex::new(RefCell::new(Vec::new())),
+            removed_signal: Notification::new(),
             next_id: Mutex::new(Cell::new(1)),
         }
     }
@@ -562,18 +573,50 @@ impl<
         decl::HandlerAsyncAdaptor(self)
     }
 
-    /// Remove every session owned by the given fabric index. Callers MUST
-    /// invoke this when a fabric is removed (spec §"Fabric-scoped data"
-    /// for fabric removal). Hooks are NOT notified.
-    pub fn remove_fabric_sessions(&self, fab_idx: u8) {
-        let changed = self.sessions.lock(|cell| {
+    /// Remove every session owned by the given fabric index and queue them
+    /// for [`WebRtcHooks::on_end_session`], which is called from the
+    /// handler's `run` task. Returns `true` if any session was removed.
+    fn remove_fabric_sessions(&self, fab_idx: u8) -> bool {
+        let removed = self.sessions.lock(|cell| {
             let mut sessions = cell.borrow_mut();
             let before = sessions.len();
+
+            self.removed.lock(|removed| {
+                let mut removed = removed.borrow_mut();
+
+                for s in sessions.iter().filter(|s| s.fab_idx == fab_idx) {
+                    if removed.push(s.id).is_err() {
+                        warn!("webrtc_prov: no room to queue the end of session {}", s.id);
+                    }
+                }
+            });
+
             sessions.retain(|s| s.fab_idx != fab_idx);
+
             before != sessions.len()
         });
-        if changed {
-            self.dataver.changed();
+
+        if removed {
+            self.removed_signal.notify();
+        }
+
+        removed
+    }
+
+    /// Call [`WebRtcHooks::on_end_session`] for the sessions dropped on
+    /// fabric removal.
+    async fn end_removed_sessions(&self) {
+        while let Some(session_id) = self.removed.lock(|cell| cell.borrow_mut().pop()) {
+            if let Err(err) = self
+                .hooks
+                .on_end_session(session_id, WebRTCEndReasonEnum::UnknownReason)
+                .await
+            {
+                warn!(
+                    "webrtc_prov: on_end_session({}) failed after fabric removal: {:?}",
+                    session_id, err
+                );
+            }
         }
     }
 
@@ -822,6 +865,20 @@ impl<
         self.dataver.changed();
     }
 
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        if let LifecycleOp::FabricRemoval { fab_idx } = op {
+            if self.remove_fabric_sessions(fab_idx.get()) {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::CurrentSessions as _,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         // Drain loop: the hook parks in `next_outbound().await` until it
         // has something to say, then we push it to the paired
@@ -829,8 +886,22 @@ impl<
         // (when a `log`/`defmt` feature is enabled) and the loop
         // continues — a single failed push must not take down the whole
         // cluster.
+        //
+        // While parked, the loop also ends the sessions dropped on fabric
+        // removal. `next_outbound` is only paused meanwhile, never dropped,
+        // so no outbound work is lost.
         loop {
-            let work = self.hooks.next_outbound().await;
+            let work = {
+                let mut outbound = pin!(self.hooks.next_outbound());
+
+                loop {
+                    match select(&mut outbound, self.removed_signal.wait()).await {
+                        Either::First(work) => break work,
+                        Either::Second(()) => self.end_removed_sessions().await,
+                    }
+                }
+            };
+
             if let Err(err) = self.push_outbound(&ctx, work).await {
                 warn!("webrtc_prov: outbound push failed: {}", err);
             }
