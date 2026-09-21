@@ -68,7 +68,7 @@ use rs_matter::im::IMStatusCode;
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
-use rs_matter::onboard::{CommissionOptions, Commissioner};
+use rs_matter::onboard::{CommissionOptions, CommissionResult, Commissioner};
 use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
@@ -76,6 +76,7 @@ use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
+use rs_matter::transport::session::{Session, SessionMode};
 use rs_matter::transport::{TransportPreference, MATTER_SOCKET_BIND_ADDR};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -251,7 +252,13 @@ macro_rules! commissioning_test {
 
             let controller_fut = run_with_transport(
                 ctrl_matter.run(&ctrl_crypto, &ctrl_net, &ctrl_net, NoNetwork),
-                run_controller_flow(ctrl_matter, &ctrl_crypto, $use_tcp),
+                run_controller_flow(
+                    ctrl_matter,
+                    &ctrl_crypto,
+                    device_matter,
+                    &device_crypto,
+                    $use_tcp,
+                ),
             );
 
             run_device_controller(device_fut, controller_fut).await
@@ -287,9 +294,11 @@ commissioning_test! {
     )?),
 }
 
-async fn run_controller_flow<C: Crypto>(
+async fn run_controller_flow<C: Crypto, D: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
+    device_matter: &Matter<'_>,
+    device_crypto: &D,
     use_tcp: bool,
 ) -> Result<(), Error> {
     info!("=== Phase 1: Resolve device endpoint (mDNS skipped) ===");
@@ -308,9 +317,46 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 4: IM Operations over the CASE session ===");
     test_onoff_cluster(matter, controller_fab_idx, device_node_id).await?;
 
+    // Phase 5 - the device reboots and is commissioned again by the *same*
+    // controller. A reboot wipes the device's session table, but the controller
+    // still holds its half of the PASE session from the first run, and
+    // `initiate_pase` reuses a PASE session by peer address alone. So the first
+    // step of the second run lands on a session the device no longer has. The
+    // device answers `SessionNotFound`, the controller drops its stale session,
+    // and phase 1 must retry on a fresh one rather than fail - which is what
+    // used to limit a controller to one commissioning per process.
+    //
+    // `test_commission` mints a fresh controller fabric, so the device simply
+    // gains a second fabric (no `AddNOC` conflict with the first).
+    info!("=== Phase 5: device reboots, then the same controller commissions it again ===");
+    device_matter.remove_sessions(|_| true);
+    device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
+
+    test_commission(matter, crypto, peer_addr, use_tcp).await?;
+
+    info!("=== Phase 6: a stale CASE session to the node ID being assigned is dropped ===");
+    test_stale_case_is_dropped(
+        matter,
+        crypto,
+        device_matter,
+        device_crypto,
+        peer_addr,
+        use_tcp,
+    )
+    .await?;
+
     info!("=== All commissioning test phases completed successfully! ===");
     Ok(())
 }
+
+const FABRIC_ID: u64 = 1;
+// chip-tool's conventional admin NodeID; matches the
+// CaseAdminSubject the device-side ACL is seeded with.
+const CONTROLLER_NODE_ID: u64 = 112233;
+// The single device this test commissions. Real callers pick
+// these from whatever NodeID allocation scheme they prefer.
+const DEVICE_NODE_ID: u64 = 112234;
+const ADMIN_VENDOR_ID: u16 = 0xFFF1;
 
 /// Drive both phases of the commissioner flow against the peer that
 /// PASE was just negotiated with. Returns the
@@ -330,15 +376,6 @@ async fn test_commission<C: Crypto>(
     peer_addr: Address,
     use_tcp: bool,
 ) -> Result<(core::num::NonZeroU8, u64), Error> {
-    const FABRIC_ID: u64 = 1;
-    // chip-tool's conventional admin NodeID; matches the
-    // CaseAdminSubject the device-side ACL is seeded with.
-    const CONTROLLER_NODE_ID: u64 = 112233;
-    // The single device this test commissions. Real callers pick
-    // these from whatever NodeID allocation scheme they prefer.
-    const DEVICE_NODE_ID: u64 = 112234;
-    const ADMIN_VENDOR_ID: u16 = 0xFFF1;
-
     // ---- Offline CA chain: RCAC then ICAC; RCAC priv discarded ----
 
     let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
@@ -351,6 +388,135 @@ async fn test_commission<C: Crypto>(
         icac_gen.generate(crypto, rcac_priv.reference(), rcac, VALID_FOREVER)?;
     drop(rcac_priv);
 
+    // ---- NocGenerator: signs the controller NOC now, then the
+    //      device NOC during commissioning. The NOC serial is derived
+    //      from the NodeID internally. ----
+
+    let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
+
+    let controller_fab_idx =
+        install_controller_fabric(matter, crypto, &mut noc_generator, rcac, icac)?;
+
+    // Scratch buffer for Commissioner — used to stage the fabric's
+    // RCAC / ICAC bytes across the async on-wire calls. One
+    // `MAX_CERT_TLV_LEN` slot is enough; see `Commissioner::new`.
+    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    let mut commissioner = Commissioner::new(
+        matter,
+        crypto,
+        controller_fab_idx,
+        &mut noc_generator,
+        &mut commissioner_buf,
+    )
+    .with_transport(transport(use_tcp));
+
+    let result = run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+
+    Ok((controller_fab_idx, result.device_node_id))
+}
+
+/// A CASE session to the node ID being assigned must not cost phase 2 an
+/// attempt.
+///
+/// NodeIDs get reused, so the controller can still hold a CASE session to the
+/// previous holder of the ID it is about to hand out. `Commissioner::commission`
+/// drops it up front; otherwise phase 2 resumes it and only learns it is dead by
+/// losing an attempt - fatal when given a single one, as here.
+///
+/// Two other things would clear that session first and let this pass without
+/// the fix, so both are ruled out. The device is reset *locally*: a
+/// `RemoveFabric` could close the session over the wire. And phase 1 starts on
+/// a fresh PASE session: a stale one draws a `SessionNotFound`, which drops
+/// every secure session to the device, the stale CASE session included.
+///
+/// Over UDP a third one can't be ruled out, so only the TCP variant exercises
+/// the fix: the controller's trailing MRP ack for `CommissioningComplete` can
+/// reach the device after its reset, and draws a `SessionNotFound` that clears
+/// the session anyway. TCP has no MRP acks - nor does BTP, where commissioning
+/// is typically given a single phase 2 attempt.
+async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    device_matter: &Matter<'_>,
+    device_crypto: &D,
+    peer_addr: Address,
+    use_tcp: bool,
+) -> Result<(), Error> {
+    // One controller fabric for both runs.
+    let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut rcac_gen = RcacGenerator::new(&mut rcac_buf);
+    let (rcac_priv, rcac) = rcac_gen.generate(crypto, FABRIC_ID, VALID_FOREVER)?;
+
+    let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut icac_gen = IcacGenerator::new(&mut icac_buf);
+    let (icac_priv, icac) =
+        icac_gen.generate(crypto, rcac_priv.reference(), rcac, VALID_FOREVER)?;
+    drop(rcac_priv);
+
+    let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
+    let controller_fab_idx =
+        install_controller_fabric(matter, crypto, &mut noc_generator, rcac, icac)?;
+
+    let device = peer_addr.canonical();
+    let pase_to_device = move |sess: &Session| {
+        matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+            && sess.get_peer_addr().canonical() == device
+    };
+
+    // Start both nodes clean.
+    matter.remove_sessions(pase_to_device);
+    device_matter.remove_sessions(|_| true);
+    device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
+
+    // First run: leaves a CASE session to `(controller_fab_idx, DEVICE_NODE_ID)`.
+    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    let mut commissioner = Commissioner::new(
+        matter,
+        crypto,
+        controller_fab_idx,
+        &mut noc_generator,
+        &mut commissioner_buf,
+    )
+    .with_transport(transport(use_tcp));
+    let first = run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+
+    // Factory-reset the device without a word to the controller, whose CASE
+    // session to it is now stale.
+    device_matter.remove_sessions(|_| true);
+    device_matter.with_state(|state| state.fabrics.remove(first.fabric_index))?;
+    device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
+
+    // A fresh PASE session for phase 1, so nothing there clears the stale one.
+    matter.remove_sessions(pase_to_device);
+
+    // Second run: same fabric and node ID, a single phase 2 attempt.
+    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    let mut commissioner = Commissioner::new(
+        matter,
+        crypto,
+        controller_fab_idx,
+        &mut noc_generator,
+        &mut commissioner_buf,
+    )
+    .with_transport(transport(use_tcp))
+    .with_case_attempts(1);
+    run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+
+    Ok(())
+}
+
+/// Mint the controller's own operational key and NOC (signed by
+/// `noc_generator`) plus the fabric IPK, and install the controller fabric.
+/// Returns its index.
+fn install_controller_fabric<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    noc_generator: &mut NocGenerator<'_>,
+    rcac: &[u8],
+    icac: &[u8],
+) -> Result<core::num::NonZeroU8, Error> {
     // ---- Controller operational keypair + CSR ----
 
     let controller_secret_key = crypto.generate_secret_key()?;
@@ -358,13 +524,6 @@ async fn test_commission<C: Crypto>(
     let controller_csr = controller_secret_key.csr(&mut controller_csr_buf)?;
     let mut controller_secret_key_canon = CanonPkcSecretKey::new();
     controller_secret_key.write_canon(&mut controller_secret_key_canon)?;
-
-    // ---- NocGenerator: signs the controller NOC now, then the
-    //      device NOC during commissioning. The NOC serial is derived
-    //      from the NodeID internally. ----
-
-    let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-    let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
 
     let controller_noc = noc_generator.generate(
         crypto,
@@ -379,7 +538,7 @@ async fn test_commission<C: Crypto>(
     crypto.rand()?.fill_bytes(ipk.access_mut());
 
     // ---- Install the controller's fabric in matter.state.fabrics ----
-    let controller_fab_idx = matter.with_state(|state| {
+    matter.with_state(|state| {
         state
             .fabrics
             .add(
@@ -393,33 +552,28 @@ async fn test_commission<C: Crypto>(
                 CONTROLLER_NODE_ID,
             )
             .map(|f| f.fab_idx())
-    })?;
+    })
+}
 
-    // controller_noc slice was just copied into the fabric record;
-    // it's fine for the next noc_generator.generate() call to
-    // overwrite `noc_buf`.
-
-    // Scratch buffer for Commissioner — used to stage the fabric's
-    // RCAC / ICAC bytes across the async on-wire calls. One
-    // `MAX_CERT_TLV_LEN` slot is enough; see `Commissioner::new`.
-    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
-    // Phase 2 discovers the device and defaults to UDP, as the CHIP SDK's
-    // commissioner does. This test's TCP device listens on TCP *only*, so it has
-    // to ask for TCP explicitly - which also covers the `tcp_capable` veto path,
-    // since the stub below has to advertise TCP support for this to be allowed.
-    let mut commissioner = Commissioner::new(
-        matter,
-        crypto,
-        controller_fab_idx,
-        &mut noc_generator,
-        &mut commissioner_buf,
-    )
-    .with_transport(if use_tcp {
+/// Phase 2 discovers the device and defaults to UDP, as the CHIP SDK's
+/// commissioner does. This test's TCP device listens on TCP *only*, so it has
+/// to ask for TCP explicitly - which also covers the `tcp_capable` veto path,
+/// since the stub resolver has to advertise TCP support for this to be allowed.
+fn transport(use_tcp: bool) -> TransportPreference {
+    if use_tcp {
         TransportPreference::LargePayload
     } else {
         TransportPreference::Mrp
-    });
+    }
+}
 
+/// Drive both phases of an already-built `Commissioner` against the device.
+async fn run_commissioner<C: Crypto>(
+    matter: &Matter<'_>,
+    commissioner: &mut Commissioner<'_, '_, C>,
+    peer_addr: Address,
+    use_tcp: bool,
+) -> Result<CommissionResult, Error> {
     let opts = CommissionOptions {
         // Test DAC — system_tests / TEST_DEV_ATT.
         allow_test_attestation: true,
@@ -468,10 +622,10 @@ async fn test_commission<C: Crypto>(
 
     info!(
         "complete_via_case() ok: controller_fab_idx={}, discovery+CASE+CommissioningComplete done",
-        controller_fab_idx,
+        commissioner.fab_idx(),
     );
 
-    Ok((controller_fab_idx, result.device_node_id))
+    Ok(result)
 }
 
 // ============================================================================

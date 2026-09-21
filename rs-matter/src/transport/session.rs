@@ -409,6 +409,19 @@ impl Session {
             && !self.reserved
     }
 
+    /// Whether this session is with `peer`, compared canonically: a dual-stack
+    /// socket may report a peer as `::ffff:a.b.c.d` on receive while the session
+    /// stored the plain `V4` address it was created with (or vice versa). Only the
+    /// *comparison* is canonical, not the stored address used for reply routing.
+    /// See `Address::canonical`.
+    ///
+    /// Out of line on purpose: it sits on the receive path of every node, and one
+    /// shared copy is cheaper in flash than inlining it at each caller.
+    #[inline(never)]
+    pub(crate) fn is_peer(&self, peer: &Address) -> bool {
+        self.peer_addr.canonical() == peer.canonical()
+    }
+
     /// Whether this is a PASE session to the given peer address.
     ///
     /// PASE sessions are all keyed at fabric 0 / node 0 (no operational
@@ -416,9 +429,7 @@ impl Session {
     /// session from another - which matters on a commissioner that may have
     /// several PASE sessions (to different devices) in flight at once.
     pub(crate) fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
-        matches!(self.mode, SessionMode::Pase { .. })
-            && self.peer_addr.canonical() == peer_addr.canonical()
-            && !self.reserved
+        matches!(self.mode, SessionMode::Pase { .. }) && self.is_peer(peer_addr) && !self.reserved
     }
 
     pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
@@ -437,13 +448,7 @@ impl Session {
         nodeid_matches
             && dest_nodeid_matches
             && self.local_sess_id == rx_plain.sess_id
-            // Compare canonically: a dual-stack socket may report a peer as
-            // `::ffff:a.b.c.d` on receive while the session stored the plain
-            // `V4` address it was created with (or vice versa). Canonicalizing
-            // only the *comparison* (not the stored address) lets the two match
-            // without disturbing the address used for reply routing. See
-            // `Address::canonical`.
-            && self.peer_addr.canonical() == rx_peer.canonical()
+            && self.is_peer(rx_peer)
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
     }
@@ -1907,22 +1912,24 @@ impl Sessions {
         }
     }
 
-    /// Remove every session established with `peer_node_id` on `fabric_idx`,
-    /// returning how many were dropped.
-    pub(crate) fn remove_for_node(&mut self, fabric_idx: NonZeroU8, peer_node_id: u64) -> usize {
+    /// Remove every session matching `predicate`, returning how many were
+    /// dropped.
+    ///
+    /// Sessions still being established (reserved) are neither offered to the
+    /// predicate nor removed: yanking one out from under an in-flight handshake
+    /// would break invariants that handshake relies on.
+    pub fn remove_where<F>(&mut self, mut predicate: F) -> usize
+    where
+        F: FnMut(&Session) -> bool,
+    {
         let mut removed = 0;
 
         while let Some(index) = self
             .sessions
             .iter()
-            .position(|sess| sess.is_for_node(fabric_idx, peer_node_id))
+            .position(|sess| !sess.reserved && predicate(sess))
         {
-            info!(
-                "Dropping session with ID {} for peer node 0x{:016x} on fabric index {}",
-                self.sessions[index].id,
-                peer_node_id,
-                fabric_idx.get()
-            );
+            info!("Dropping session with ID {}", self.sessions[index].id);
             self.sessions.swap_remove(index);
             removed += 1;
         }
@@ -2599,9 +2606,18 @@ mod tests {
     /// else. A session left behind after the peer has discarded its half is
     /// what later provokes an unsecured `SessionNotFound` from the peer.
     #[test]
-    fn remove_for_node_targets_only_that_peer() {
+    fn remove_where_targets_only_the_matching_peer() {
         const DEV_A: u64 = 0x1111;
         const DEV_B: u64 = 0x2222;
+
+        // What a controller means by "this device's sessions".
+        let for_node = |fabric_idx: NonZeroU8, node_id: u64| {
+            move |sess: &Session| {
+                sess.is_encrypted()
+                    && sess.get_local_fabric_idx() == fabric_idx.get()
+                    && sess.get_peer_node_id() == Some(node_id)
+            }
+        };
 
         let mut sm = Sessions::new();
 
@@ -2611,7 +2627,7 @@ mod tests {
         // Same node ID, different fabric - must survive.
         let other_fabric = add_for_node(&mut sm, fab(2), DEV_A);
 
-        assert_eq!(sm.remove_for_node(fab(1), DEV_A), 2);
+        assert_eq!(sm.remove_where(for_node(fab(1), DEV_A)), 2);
 
         let left = ids(&sm);
         assert!(!left.contains(&a1));
@@ -2620,7 +2636,24 @@ mod tests {
         assert!(left.contains(&other_fabric));
 
         // Idempotent - a second teardown of the same peer is a no-op.
-        assert_eq!(sm.remove_for_node(fab(1), DEV_A), 0);
+        assert_eq!(sm.remove_where(for_node(fab(1), DEV_A)), 0);
+    }
+
+    /// A reserved session is mid-handshake: the predicate must never see it, let
+    /// alone remove it.
+    #[test]
+    fn remove_where_never_touches_a_reserved_session() {
+        let mut sm = Sessions::new();
+
+        let live = add_for_node(&mut sm, fab(1), 0x1111);
+        let reserved = unwrap!(sm.add(0, true, Address::default(), None, &TEST_DEV_DET)).id;
+
+        // A predicate that would otherwise take everything.
+        assert_eq!(sm.remove_where(|_| true), 1);
+
+        let left = ids(&sm);
+        assert!(!left.contains(&live));
+        assert!(left.contains(&reserved), "reserved session was removed");
     }
 
     /// The table fills up to `MAX_SESSIONS`, then refuses; removing a session

@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix, breaking: `Commissioner` contained the `&'a mut NocGenerator<'a>` anti-pattern; fixed by introducing an extra lifetime - `'b` (#567)
+* Fix: `Commissioner::commission` should remove any stale sessions (#567)
+* Process incoming "Session not found" messages from the peers by removing these sessions on our end (#567)
+* `Matter::remove_sessions` - a new API for controllers when commissioning/decommissioning a node (#567)
+* Fix: make `tokio` and `tokio-stream` optional, gated behind `bluer` (#564)
+* Fix: gate the BlueZ zbus proxies behind target_os = "linux" (#562)
 * Fix: never answer with "no session" messages expecting no answer (#560)
-* `Matter::remove_sessions_for_peer` - a new API for controllers when decommissioning a node (#560)
 * Fix: faster clusters' codegen (#558)
 * Fixes for issues uncovered by new unit tests (#557):
   * Mbedtls accepted off-curve points on public-key import;
