@@ -71,6 +71,7 @@ use crate::onboard::noc::NocGenerator;
 use crate::tlv::{FromTLV, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
+use crate::transport::session::SessionMode;
 use crate::transport::TransportPreference;
 use crate::Matter;
 
@@ -160,17 +161,17 @@ pub struct CommissionResult {
 /// it once via [`crate::fabric::Fabrics::add`] before constructing any
 /// commissioner. A single `Commissioner` instance can then be reused to
 /// commission any number of devices onto that fabric.
-pub struct Commissioner<'a, C: Crypto> {
+pub struct Commissioner<'a, 'b, C: Crypto> {
     matter: &'a Matter<'a>,
     crypto: C,
     fab_idx: NonZeroU8,
-    noc_generator: &'a mut NocGenerator<'a>,
+    noc_generator: &'a mut NocGenerator<'b>,
     buf: &'a mut [u8],
     case_attempts: u8,
     transport: TransportPreference,
 }
 
-impl<'a, C: Crypto> Commissioner<'a, C> {
+impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// Create a commissioner bound to a Matter stack, crypto backend,
     /// an already-installed fabric (`fab_idx`), an already-constructed
     /// NOC generator that signs against the chain stored on that
@@ -187,7 +188,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         matter: &'a Matter<'a>,
         crypto: C,
         fab_idx: NonZeroU8,
-        noc_generator: &'a mut NocGenerator<'a>,
+        noc_generator: &'a mut NocGenerator<'b>,
         buf: &'a mut [u8],
     ) -> Self {
         Self {
@@ -274,10 +275,38 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         device_node_id: NodeId,
         validity: Validity,
     ) -> Result<CommissionResult, Error> {
+        // A CASE session to the NodeID we are about to assign can only be left
+        // over from a previous holder of it (NodeIDs get reused, e.g. after a
+        // decommission): no live device can hold an ID we are only now handing
+        // out. Left in place, phase 2 would resume it and lose an attempt finding
+        // out it is dead - fatal when it is given a single one.
+        let fab_idx = self.fab_idx;
+        self.matter.remove_sessions(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Case { .. })
+                && sess.get_local_fabric_idx() == fab_idx.get()
+                && sess.get_peer_node_id() == Some(device_node_id)
+        });
+
         // The first PASE step (ArmFailSafe) establishes the PASE session via
         // `initiate_pase`; the rest reuse it.
-        self.arm_fail_safe(peer_addr, passcode, opts.fail_safe_secs)
-            .await?;
+        //
+        // `initiate_pase` reuses any PASE session to this peer, including one
+        // the device has since lost (e.g. it rebooted). The device then answers
+        // `SessionNotFound`, the transport drops our stale session and this step
+        // fails with `NoSession`. The device never decrypted it, so one retry is
+        // safe - and lands on a fresh PASE session.
+        match self
+            .arm_fail_safe(peer_addr, passcode, opts.fail_safe_secs)
+            .await
+        {
+            Err(err) if err.code() == ErrorCode::NoSession => {
+                warn!("Commissioning phase 1: PASE session was stale; retrying on a fresh one");
+
+                self.arm_fail_safe(peer_addr, passcode, opts.fail_safe_secs)
+                    .await?;
+            }
+            result => result?,
+        }
 
         // Device Attestation — structural hook. See [`CommissionOptions::allow_test_attestation`].
         self.verify_device_attestation(opts).await?;
