@@ -805,9 +805,6 @@ fn status_report_to_a_sessionless_peer_does_not_loop() {
     });
 }
 
-/// Every third packet is lost in both directions: all four interaction
-/// types still complete, and the link statistics show that the loss was
-/// recovered through retransmissions.
 /// A node whose session the peer no longer has must give it up after one round
 /// trip, not after its whole MRP retransmission ladder.
 ///
@@ -912,6 +909,9 @@ fn session_not_found_abandons_the_stale_session_immediately() {
     });
 }
 
+/// Every third packet is lost in both directions: all four interaction
+/// types still complete, and the link statistics show that the loss was
+/// recovered through retransmissions.
 #[test]
 fn test_drop_every_third_packet() {
     init_env_logger();
