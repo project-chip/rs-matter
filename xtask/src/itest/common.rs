@@ -34,6 +34,20 @@ use log::{debug, info, warn};
 /// the note on that constant.
 pub const CHIP_DEFAULT_GITREF: &str = "f3af82eb6fd1aed968e04642cb8d2ac305f5a371"; // tip of `v1.6-branch`
 
+/// Local patches applied to the checked-out Chip tree after every checkout.
+///
+/// Each entry is `(name, unified diff)`. The diffs fix *upstream test* bugs
+/// that rs-matter would otherwise have to skip or retry around; they are not
+/// workarounds for rs-matter behaviour. Every patch carries, in its own
+/// preamble, what it changes and why, and is meant to be dropped once the
+/// equivalent fix lands upstream and `CHIP_DEFAULT_GITREF` moves past it.
+///
+/// Application is best-effort and idempotent, see [`ChipBuilder::apply_chip_patches`].
+const CHIP_PATCHES: &[(&str, &str)] = &[(
+    "groupcast-reset-before-mutation",
+    include_str!("../../patches/chip/groupcast-reset-before-mutation.patch"),
+)];
+
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
     "bash",
@@ -779,6 +793,10 @@ impl ChipBuilder {
             run_command(&mut reset, self.print_cmd_output)?;
         }
 
+        // Re-apply our local test patches: the `checkout` (and the `reset
+        // --hard` above) restore a pristine tree, so this runs on every setup.
+        self.apply_chip_patches(chip_dir)?;
+
         // Did HEAD actually move (tip advanced, or ref switched)? A fresh clone
         // (`head_before == None`) and `--force-rebuild` both count as "changed".
         let head_after = self.git_head(chip_dir);
@@ -816,6 +834,77 @@ impl ChipBuilder {
         self.setup_py_env(chip_dir)?;
 
         info!("Chip environment setup completed successfully.");
+
+        Ok(())
+    }
+
+    /// Apply the [`CHIP_PATCHES`] to the checked-out Chip tree.
+    ///
+    /// Idempotent: a patch that is already applied is detected (via a reverse
+    /// `--check`) and skipped, so an offline setup - which leaves the previous
+    /// tree in place instead of resetting it - does not fail.
+    ///
+    /// A patch that neither applies nor is already applied warns rather than
+    /// failing the setup: the likeliest cause is that upstream changed (or
+    /// fixed) the file, and in that case a broken setup is a worse outcome
+    /// than running with the unpatched test.
+    fn apply_chip_patches(&self, chip_dir: &Path) -> anyhow::Result<()> {
+        for (name, diff) in CHIP_PATCHES {
+            if self.git_apply(chip_dir, diff, &["--check"]).is_ok() {
+                self.git_apply(chip_dir, diff, &[])
+                    .with_context(|| format!("Failed to apply Chip patch `{name}`"))?;
+                info!("Applied Chip patch `{name}`");
+            } else if self
+                .git_apply(chip_dir, diff, &["--reverse", "--check"])
+                .is_ok()
+            {
+                debug!("Chip patch `{name}` already applied");
+            } else {
+                warn!(
+                    "Chip patch `{name}` does not apply to this checkout and is not already \
+                     applied; continuing without it (upstream may have changed or fixed it). \
+                     See xtask/patches/chip/{name}.patch"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run `git apply` in `chip_dir`, feeding `diff` on stdin.
+    fn git_apply(&self, chip_dir: &Path, diff: &str, args: &[&str]) -> anyhow::Result<()> {
+        use std::io::Write;
+
+        // `--check` runs are probes whose failure is an expected outcome
+        // (see `apply_chip_patches`), so keep them quiet; a real apply that
+        // fails is worth seeing.
+        let stderr = if args.contains(&"--check") {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        };
+
+        let mut child = Command::new("git")
+            .current_dir(chip_dir)
+            .arg("apply")
+            .args(args)
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(stderr)
+            .spawn()
+            .context("Failed to spawn `git apply`")?;
+
+        child
+            .stdin
+            .take()
+            .context("`git apply` stdin unavailable")?
+            .write_all(diff.as_bytes())
+            .context("Failed to write patch to `git apply`")?;
+
+        let status = child.wait().context("Failed to wait for `git apply`")?;
+
+        anyhow::ensure!(status.success(), "`git apply` failed: {status}");
 
         Ok(())
     }

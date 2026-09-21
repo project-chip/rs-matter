@@ -1,0 +1,121 @@
+Move the subscription `reset()` ahead of the command whose report it awaits.
+
+Upstream `TC_GC_2_3`, `TC_GC_2_4` and `TC_GC_2_5` send a Groupcast command
+that mutates `Membership`, and only then call `<sub>.reset()` before awaiting
+the report of that very mutation. `reset()` clears the accumulated reports and
+flushes the queue, so a device that reports promptly loses: the report lands in
+the few milliseconds between the command response and the `reset()`, is
+discarded, and the subsequent `await_all_expected_report_matches` waits the
+full timeout for a report that can never come (the attribute does not change
+again, and max-interval reports are empty liveness heartbeats).
+
+These subscriptions use `min_interval = 0`, so reporting immediately is both
+spec-correct and desirable; rs-matter does exactly that and wins or loses the
+race depending on host load. `TC_GC_2_8` already shows the correct shape -
+`reset()` first, then the command - and this patch applies it to the other
+three. No test semantics change: the reset still discards everything observed
+before the mutation under test.
+
+Reported upstream; drop this patch once the fix lands and the CHIP pin moves
+past it. See `CHIP_PATCHES` in `xtask/src/itest/common.rs`.
+
+diff --git a/src/python_testing/TC_GC_2_3.py b/src/python_testing/TC_GC_2_3.py
+index 6a52d6c230..e487648538 100644
+--- a/src/python_testing/TC_GC_2_3.py
++++ b/src/python_testing/TC_GC_2_3.py
+@@ -173,19 +173,19 @@ class TC_GC_2_3(MatterBaseTest):
+             asserts.fail(f"UpdateGroupKey command should have failed with {Status.AlreadyExists}, but it succeeded.")
+         except InteractionModelError as e:
+             asserts.assert_equal(e.status, Status.AlreadyExists,
+                                  f"Send UpdateGroupKey command error should be {Status.AlreadyExists} instead of {e.status}")
+ 
+         self.step(5)
++        sub.reset()
+         await self.send_single_cmd(Clusters.Groupcast.Commands.UpdateGroupKey(
+             groupID=groupID2,
+             keySetID=keySetID1)
+         )
+ 
+         self.step(6)
+-        sub.reset()
+         membership_matcher = generate_membership_entry_matcher(groupID2, key_set_id=keySetID1)
+         sub.await_all_expected_report_matches(expected_matchers=[membership_matcher], timeout_sec=60)
+ 
+         self.step(7)
+         keySetID4 = 4
+         try:
+diff --git a/src/python_testing/TC_GC_2_4.py b/src/python_testing/TC_GC_2_4.py
+index 87c4e44f1b..0d3ff7fd1d 100644
+--- a/src/python_testing/TC_GC_2_4.py
++++ b/src/python_testing/TC_GC_2_4.py
+@@ -210,23 +210,23 @@ class TC_GC_2_4(MatterBaseTest):
+ 
+             self.step("4b")
+             if len(endpoints_list) == 1:
+                 self.mark_step_range_skipped("4c", "4d")
+             else:
+                 self.step("4c")
++                membership_sub.reset()
+                 endpoint_2 = [endpoints_list[1]]
+                 resp: Clusters.Groupcast.Commands.LeaveGroupResponse = await self.send_single_cmd(Clusters.Groupcast.Commands.LeaveGroup(
+                     groupID=groupID3,
+                     endpoints=endpoint_2)
+                 )
+                 asserts.assert_is_not_none(resp.endpoints, "LeaveGroupResponse endpoints should not be None")
+                 asserts.assert_equal(resp.endpoints, endpoint_2,
+                                      f"LeaveGroupResponse cmd endpoints list {resp.endpoints} is not equal to {endpoint_2}")
+ 
+                 self.step("4d")
+-                membership_sub.reset()
+                 membership_matcher = generate_membership_entry_matcher(groupID3, endpoints=[endpoints_list[0]])
+                 membership_sub.await_all_expected_report_matches(expected_matchers=[membership_matcher], timeout_sec=60)
+ 
+             self.step("4e")
+             endpoint_1 = [endpoints_list[0]]
+             resp: Clusters.Groupcast.Commands.LeaveGroupResponse = await self.send_single_cmd(Clusters.Groupcast.Commands.LeaveGroup(
+@@ -252,19 +252,19 @@ class TC_GC_2_4(MatterBaseTest):
+             asserts.fail("LeaveGroup command should have failed the groupID does not exist, but it succeeded")
+         except InteractionModelError as e:
+             asserts.assert_equal(e.status, Status.NotFound,
+                                  f"Send LeaveGroup command error should be {Status.NotFound} instead of {e.status}")
+ 
+         self.step(6)
++        membership_sub.reset()
+         resp: Clusters.Groupcast.Commands.LeaveGroupResponse = await self.send_single_cmd(Clusters.Groupcast.Commands.LeaveGroup(groupID=0))
+         asserts.assert_is_not_none(resp.endpoints, "LeaveGroupResponse endpoints should not be None")
+         asserts.assert_equal(resp.endpoints, [],
+                              f"LeaveGroupResponse cmd endpoints list {resp.endpoints} is not equal to an empty list")
+ 
+         self.step(7)
+-        membership_sub.reset()
+         event_sub.wait_for_event_expect_no_report(timeout_sec=5)
+ 
+         self.step(8)
+         membership_matcher = generate_membership_empty_matcher()
+         membership_sub.await_all_expected_report_matches(expected_matchers=[membership_matcher], timeout_sec=60)
+ 
+diff --git a/src/python_testing/TC_GC_2_5.py b/src/python_testing/TC_GC_2_5.py
+index 942952c989..b37dcdc1ba 100644
+--- a/src/python_testing/TC_GC_2_5.py
++++ b/src/python_testing/TC_GC_2_5.py
+@@ -157,19 +157,19 @@ class TC_GC_2_5(MatterBaseTest):
+         aux_acl = await self.read_single_attribute_check_success(Clusters.AccessControl, Clusters.AccessControl.Attributes.AuxiliaryACL, endpoint=0)
+         actual_set = get_auxiliary_acl_equivalence_set(aux_acl, parts_list)
+         asserts.assert_true((fabric_index, groupID1, endpoints_list[0]) in actual_set,
+                             f"Could not find valid AuxiliaryACL entry for FabricIndex {fabric_index}, Group G1 ({groupID1}) and Endpoint {endpoints_list[0]}")
+ 
+         self.step(4)
++        membership_sub.reset()
+         await self.send_single_cmd(Clusters.Groupcast.Commands.ConfigureAuxiliaryACL(
+             groupID=groupID1,
+             useAuxiliaryACL=False)
+         )
+ 
+         self.step("5a")
+-        membership_sub.reset()
+         membership_matcher = generate_membership_entry_matcher(groupID1, has_auxiliary_acl=False)
+         membership_sub.await_all_expected_report_matches(expected_matchers=[membership_matcher], timeout_sec=60)
+ 
+         self.step("5b")
+         event_data = event_sub.wait_for_event_report(Clusters.AccessControl.Events.AuxiliaryAccessUpdated, timeout_sec=60)
+         asserts.assert_equal(event_data.adminNodeID, self.default_controller.nodeId, "Event adminNodeID should match TH Node ID")
