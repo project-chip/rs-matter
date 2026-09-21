@@ -2040,6 +2040,30 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     // Session created successfully: decode, indicate packet payload slice and process further
                     return session.post_recv(&packet.header);
                 }
+
+                // A `SessionNotFound` is the peer telling us that a session *we*
+                // still hold is dead on its side (e.g. it rebooted). Drop it, so the
+                // exchange waiting on it fails at once with `NoSession` instead of
+                // exhausting its MRP retries, and the next attempt re-establishes it.
+                if MessageMeta::from(&packet.header.proto).is_sc_status()
+                    && matches!(
+                        Self::is_session_not_found(&mut packet.buf[packet.payload_start..]),
+                        Ok(true)
+                    )
+                {
+                    let peer = packet.peer.canonical();
+                    let removed = state.sessions.remove_where(|sess| {
+                        sess.is_encrypted() && sess.get_peer_addr().canonical() == peer
+                    });
+
+                    if removed > 0 {
+                        info!(
+                            "\n>>RCV {}\n      => Peer lost our session, dropping it",
+                            packet
+                        );
+                        self.transport().notify_session_removed();
+                    }
+                }
             } else {
                 #[cfg(feature = "groups")]
                 if packet.header.plain.is_group_session() {
@@ -2277,6 +2301,14 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             && report.proto_code == SCStatusCodes::CloseSession as u16;
 
         Ok(close_session)
+    }
+
+    fn is_session_not_found(payload: &mut [u8]) -> Result<bool, Error> {
+        let mut pb = ParseBuf::new(payload);
+        let report = StatusReport::read(&mut pb)?;
+
+        Ok(report.proto_id == PROTO_ID_SECURE_CHANNEL as u32
+            && report.proto_code == SCStatusCodes::SessionNotFound as u16)
     }
 
     async fn netw_recv<R>(mut recv: R, buf: &mut [u8]) -> Result<(usize, Address), Error>

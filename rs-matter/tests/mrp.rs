@@ -808,6 +808,110 @@ fn status_report_to_a_sessionless_peer_does_not_loop() {
 /// Every third packet is lost in both directions: all four interaction
 /// types still complete, and the link statistics show that the loss was
 /// recovered through retransmissions.
+/// A node whose session the peer no longer has must give it up after one round
+/// trip, not after its whole MRP retransmission ladder.
+///
+/// The peer answers the first message on the stale session with an unsecured
+/// `SessionNotFound`. It cannot name the session (it could not decrypt the
+/// message, so the exchange ID is unknown to it), so the node drops its secure
+/// sessions to that peer. That fails the waiting exchange at once with
+/// `NoSession`, and the next attempt re-establishes the session. Before, the
+/// report was ignored and the exchange retransmitted until MRP gave up.
+#[test]
+fn session_not_found_abandons_the_stale_session_immediately() {
+    init_env_logger();
+
+    spawn_with_large_stack(|| {
+        let device = new_matter();
+        let client = new_matter();
+
+        // Only the client believes the session exists.
+        install_session(&client, CLIENT_NODE_ID, DEVICE_NODE_ID);
+
+        let device_count = Cell::new(0u32);
+        let client_count = Cell::new(0u32);
+
+        let mut to_client_buf = [heapless::Vec::new(); 1];
+        let mut to_device_buf = [heapless::Vec::new(); 1];
+
+        let mut to_client = Pipe::<MAX_RX_PACKET_SIZE>::new(&mut to_client_buf);
+        let mut to_device = Pipe::<MAX_TX_PACKET_SIZE>::new(&mut to_device_buf);
+
+        let (device_send, client_recv) = to_client.split();
+        let (client_send, device_recv) = to_device.split();
+
+        let crypto = test_only_crypto();
+
+        let result = futures_lite::future::block_on(async {
+            let mut transports = pin!(select(
+                device.run(
+                    &crypto,
+                    CountingSend {
+                        pipe: device_send,
+                        count: &device_count,
+                    },
+                    PipeRecv(device_recv),
+                    NoNetwork,
+                ),
+                client.run(
+                    &crypto,
+                    CountingSend {
+                        pipe: client_send,
+                        count: &client_count,
+                    },
+                    PipeRecv(client_recv),
+                    NoNetwork,
+                ),
+            )
+            .coalesce());
+
+            let mut flow = pin!(async {
+                let mut exchange = initiate_exchange(&client).await?;
+                read_att1(&mut exchange).await
+            });
+
+            match select(&mut transports, &mut flow).await {
+                Either::First(r) => panic!("Transport exited prematurely: {r:?}"),
+                Either::Second(result) => result,
+            }
+        });
+
+        info!(
+            "packets offered: device={} client={}",
+            device_count.get(),
+            client_count.get()
+        );
+
+        // The exchange fails because its session was dropped...
+        let err = result.expect_err("a read on a session the peer does not have must fail");
+        assert_eq!(
+            err.code(),
+            ErrorCode::NoSession,
+            "unexpected failure: {err:?}"
+        );
+
+        // ...after one message and one answer, not after the retransmission ladder
+        // (which would put the client at `MRP_MAX_TRANSMISSIONS + 1` packets).
+        assert_eq!(
+            client_count.get(),
+            1,
+            "the client retransmitted on a dead session"
+        );
+        assert_eq!(
+            device_count.get(),
+            1,
+            "the device should answer exactly once"
+        );
+
+        // And the stale session is gone, so the next attempt establishes a new one.
+        assert_eq!(
+            client.remove_sessions(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID)),
+            0,
+            "the stale session was not dropped"
+        );
+    });
+}
+
 #[test]
 fn test_drop_every_third_packet() {
     init_env_logger();

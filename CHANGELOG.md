@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Process incoming "Session not found" messages from the peers by removing these sessions on our end (#562)
 * `Matter::remove_sessions` - a new API for controllers when commissioning/decommissioning a node (#562)
 * Fix: never answer with "no session" messages expecting no answer (#560)
 * Fix: faster clusters' codegen (#558)
