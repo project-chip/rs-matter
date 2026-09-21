@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Fix: `Commissioner::commission` should remove any stale sessions (#567)
 * Process incoming "Session not found" messages from the peers by removing these sessions on our end (#567)
 * `Matter::remove_sessions` - a new API for controllers when commissioning/decommissioning a node (#567)
+* Fix: make `tokio` and `tokio-stream` optional, gated behind `bluer` (#564)
+* Fix: gate the BlueZ zbus proxies behind target_os = "linux" (#562)
 * Fix: never answer with "no session" messages expecting no answer (#560)
 * Fix: faster clusters' codegen (#558)
 * Fixes for issues uncovered by new unit tests (#557):

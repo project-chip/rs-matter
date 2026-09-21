@@ -1765,9 +1765,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     // No need to propagate this further
                     debug!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
                 } else if meta.is_sc_status()
-                    && matches!(
-                        Self::is_close_session(&mut packet.buf[packet.payload_start..]),
-                        Ok(true)
+                    && Self::is_sc_status_code(
+                        &mut packet.buf[packet.payload_start..],
+                        SCStatusCodes::CloseSession,
                     )
                 {
                     warn!(
@@ -2046,15 +2046,15 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 // exchange waiting on it fails at once with `NoSession` instead of
                 // exhausting its MRP retries, and the next attempt re-establishes it.
                 if MessageMeta::from(&packet.header.proto).is_sc_status()
-                    && matches!(
-                        Self::is_session_not_found(&mut packet.buf[packet.payload_start..]),
-                        Ok(true)
+                    && Self::is_sc_status_code(
+                        &mut packet.buf[packet.payload_start..],
+                        SCStatusCodes::SessionNotFound,
                     )
                 {
-                    let peer = packet.peer.canonical();
-                    let removed = state.sessions.remove_where(|sess| {
-                        sess.is_encrypted() && sess.get_peer_addr().canonical() == peer
-                    });
+                    let peer = packet.peer;
+                    let removed = state
+                        .sessions
+                        .remove_where(|sess| sess.is_encrypted() && sess.is_peer(&peer));
 
                     if removed > 0 {
                         info!(
@@ -2293,22 +2293,13 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         Ok(())
     }
 
-    fn is_close_session(payload: &mut [u8]) -> Result<bool, Error> {
+    /// Whether `payload` is a Secure Channel Status Report carrying `code`.
+    fn is_sc_status_code(payload: &mut [u8], code: SCStatusCodes) -> bool {
         let mut pb = ParseBuf::new(payload);
-        let report = StatusReport::read(&mut pb)?;
 
-        let close_session = report.proto_id == PROTO_ID_SECURE_CHANNEL as u32
-            && report.proto_code == SCStatusCodes::CloseSession as u16;
-
-        Ok(close_session)
-    }
-
-    fn is_session_not_found(payload: &mut [u8]) -> Result<bool, Error> {
-        let mut pb = ParseBuf::new(payload);
-        let report = StatusReport::read(&mut pb)?;
-
-        Ok(report.proto_id == PROTO_ID_SECURE_CHANNEL as u32
-            && report.proto_code == SCStatusCodes::SessionNotFound as u16)
+        StatusReport::read(&mut pb).is_ok_and(|report| {
+            report.proto_id == PROTO_ID_SECURE_CHANNEL as u32 && report.proto_code == code as u16
+        })
     }
 
     async fn netw_recv<R>(mut recv: R, buf: &mut [u8]) -> Result<(usize, Address), Error>

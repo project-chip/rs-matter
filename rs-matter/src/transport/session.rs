@@ -415,10 +415,21 @@ impl Session {
     /// identity yet), so the peer *address* is what distinguishes one PASE
     /// session from another - which matters on a commissioner that may have
     /// several PASE sessions (to different devices) in flight at once.
+    /// Whether this session is with `peer`, compared canonically: a dual-stack
+    /// socket may report a peer as `::ffff:a.b.c.d` on receive while the session
+    /// stored the plain `V4` address it was created with (or vice versa). Only the
+    /// *comparison* is canonical, not the stored address used for reply routing.
+    /// See `Address::canonical`.
+    ///
+    /// Out of line on purpose: it sits on the receive path of every node, and one
+    /// shared copy is cheaper in flash than inlining it at each caller.
+    #[inline(never)]
+    pub(crate) fn is_peer(&self, peer: &Address) -> bool {
+        self.peer_addr.canonical() == peer.canonical()
+    }
+
     pub(crate) fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
-        matches!(self.mode, SessionMode::Pase { .. })
-            && self.peer_addr.canonical() == peer_addr.canonical()
-            && !self.reserved
+        matches!(self.mode, SessionMode::Pase { .. }) && self.is_peer(peer_addr) && !self.reserved
     }
 
     pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
@@ -437,13 +448,7 @@ impl Session {
         nodeid_matches
             && dest_nodeid_matches
             && self.local_sess_id == rx_plain.sess_id
-            // Compare canonically: a dual-stack socket may report a peer as
-            // `::ffff:a.b.c.d` on receive while the session stored the plain
-            // `V4` address it was created with (or vice versa). Canonicalizing
-            // only the *comparison* (not the stored address) lets the two match
-            // without disturbing the address used for reply routing. See
-            // `Address::canonical`.
-            && self.peer_addr.canonical() == rx_peer.canonical()
+            && self.is_peer(rx_peer)
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
     }
