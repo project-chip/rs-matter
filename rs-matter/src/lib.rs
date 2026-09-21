@@ -705,7 +705,8 @@ impl<'a> Matter<'a> {
     }
 
     /// Remove every session matching `predicate`, returning how many were
-    /// dropped.
+    /// dropped. Sessions still being established (reserved) are neither offered
+    /// to `predicate` nor removed.
     pub fn remove_sessions<F>(&self, predicate: F) -> usize
     where
         F: FnMut(&Session) -> bool,

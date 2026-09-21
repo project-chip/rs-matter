@@ -409,12 +409,6 @@ impl Session {
             && !self.reserved
     }
 
-    /// Whether this is a PASE session to the given peer address.
-    ///
-    /// PASE sessions are all keyed at fabric 0 / node 0 (no operational
-    /// identity yet), so the peer *address* is what distinguishes one PASE
-    /// session from another - which matters on a commissioner that may have
-    /// several PASE sessions (to different devices) in flight at once.
     /// Whether this session is with `peer`, compared canonically: a dual-stack
     /// socket may report a peer as `::ffff:a.b.c.d` on receive while the session
     /// stored the plain `V4` address it was created with (or vice versa). Only the
@@ -428,6 +422,12 @@ impl Session {
         self.peer_addr.canonical() == peer.canonical()
     }
 
+    /// Whether this is a PASE session to the given peer address.
+    ///
+    /// PASE sessions are all keyed at fabric 0 / node 0 (no operational
+    /// identity yet), so the peer *address* is what distinguishes one PASE
+    /// session from another - which matters on a commissioner that may have
+    /// several PASE sessions (to different devices) in flight at once.
     pub(crate) fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
         matches!(self.mode, SessionMode::Pase { .. }) && self.is_peer(peer_addr) && !self.reserved
     }
