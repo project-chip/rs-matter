@@ -762,6 +762,15 @@ impl ChipBuilder {
             }
         }
 
+        // Undo our patches before checking out: they leave tracked files
+        // modified, and `git checkout` aborts with "Your local changes would
+        // be overwritten by checkout" as soon as `chip_gitref` moves to a ref
+        // where those files differ - which is exactly what happens when the
+        // pin is bumped past the upstream fix a patch waits for. The
+        // `reset --hard` further down would clean the tree, but only *after*
+        // the checkout has already failed.
+        self.restore_chip_patch_paths(chip_dir);
+
         // Checkout the specified reference
         info!("Checking out Chip GIT reference: {chip_gitref}...");
 
@@ -869,6 +878,38 @@ impl ChipBuilder {
         }
 
         Ok(())
+    }
+
+    /// Restore every path touched by [`CHIP_PATCHES`] to its committed
+    /// content, so the tree is pristine for a subsequent `git checkout`.
+    ///
+    /// Best-effort per path: a path that the current checkout does not have
+    /// (the patch targets a file added later upstream) simply has nothing to
+    /// restore.
+    fn restore_chip_patch_paths(&self, chip_dir: &Path) {
+        for path in Self::chip_patch_paths() {
+            let mut cmd = Command::new("git");
+
+            cmd.current_dir(chip_dir)
+                .arg("checkout")
+                .arg("--quiet")
+                .arg("--")
+                .arg(path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+
+            let _ = cmd.status();
+        }
+    }
+
+    /// The repository-relative paths that [`CHIP_PATCHES`] modify, read off
+    /// the `+++ b/<path>` headers of the diffs themselves so the list cannot
+    /// drift away from the patches.
+    fn chip_patch_paths() -> impl Iterator<Item = &'static str> {
+        CHIP_PATCHES
+            .iter()
+            .flat_map(|(_, diff)| diff.lines().filter_map(|l| l.strip_prefix("+++ b/")))
     }
 
     /// Run `git apply` in `chip_dir`, feeding `diff` on stdin.
@@ -1030,5 +1071,43 @@ impl ChipBuilder {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChipBuilder, CHIP_PATCHES};
+
+    /// Every patch must yield at least one path.
+    ///
+    /// The paths are parsed off the `+++ b/<path>` headers, so a patch
+    /// regenerated without the `b/` prefix (e.g. `git diff --no-prefix`) would
+    /// silently yield none - turning `restore_chip_patch_paths` into a no-op
+    /// and re-introducing the "local changes would be overwritten by checkout"
+    /// failure the next time `CHIP_DEFAULT_GITREF` moves.
+    #[test]
+    fn every_chip_patch_declares_paths() {
+        for (name, diff) in CHIP_PATCHES {
+            let paths: Vec<_> = diff
+                .lines()
+                .filter_map(|l| l.strip_prefix("+++ b/"))
+                .collect();
+
+            assert!(
+                !paths.is_empty(),
+                "patch `{name}` yields no `+++ b/<path>` headers; \
+                 `restore_chip_patch_paths` would not clean it up"
+            );
+
+            for path in paths {
+                assert!(
+                    !path.is_empty() && !path.starts_with('/'),
+                    "patch `{name}` has a suspicious path: {path:?}"
+                );
+            }
+        }
+
+        // The parser used in production must agree with the above.
+        assert!(ChipBuilder::chip_patch_paths().count() >= CHIP_PATCHES.len());
     }
 }
