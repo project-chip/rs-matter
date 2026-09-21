@@ -6,7 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Miri support: fixed an aliasing issue in `PooledBuffers` and a `transmute` flagged by miri; unit tests for covering all unsafe code; miri CI run on those unit tests
+* Fix: never answer with "no session" messages expecting no answer (#560)
+* `Matter::remove_sessions_for_peer` - a new API for controllers when decommissioning a node (#560)
+* Fix: faster clusters' codegen (#558)
+* Fixes for issues uncovered by new unit tests (#557):
+  * Mbedtls accepted off-curve points on public-key import;
+  * Openssl/mbedtls panicked on CCM decrypt of input shorter than the tag;
+  * Derived tlv_iter emitted a struct start for datatype = "list" structs;
+  * TLVSequenceTLVIter mis-tracked container nesting (debug panic, missing end token);
+  * DirKvBlobStore::load failed on an exact-fit buffer; Dir/File stores now report `ErrorCode::BufferTooSmall`;
+  * ArmFailSafe(0) while idle should be a no-op;
+  * AddGroup should validate the name before mutating;
+  * `acl_add_init` now rejects PASE auth mode;
+  * A fresh session's replay window is seeded by the first received message;
+* Miri support: fixed an aliasing issue in `PooledBuffers` and a `transmute` flagged by miri; unit tests for covering all unsafe code; miri CI run on those unit tests (#556)
 
 ## [0.4.1] - 2026-09-17
 * Fix: `NameSliceIter::next_back` in the builtin mDNS responder always returned `None`, breaking reverse label iteration (#554)
