@@ -77,8 +77,10 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
@@ -162,7 +164,7 @@ fn main() -> Result<(), Error> {
     let energy_handler = elec_energy_meas::ElecEnergyMeasHandler::new(
         Dataver::new_rand(&mut rand),
         THERMOSTAT_ENDPOINT,
-        ElecEnergyDeviceLogic::new(&element),
+        ElecEnergyDeviceLogic::new(&kv, &element),
     );
 
     // The GeneralDiagnostics test-event triggers, which is how the CHIP
@@ -445,121 +447,65 @@ pub struct Accumulated {
 /// Electrical Sensor clusters report on.
 ///
 /// Its lifetime energy counter lives in the Matter KVS, so the harness's
-/// factory reset between tests clears it along with everything else.
-pub struct HeatingElement<'a> {
+/// factory reset between tests clears it along with everything else. The
+/// element only reads it, at construction; the one loop that closes a
+/// measurement period - [`ElecEnergyDeviceLogic::run`] - writes it back.
+pub struct HeatingElement {
+    state: Mutex<RefCell<ElementState>>,
+    /// Whether the lifetime counter started this boot at zero because there
+    /// was nothing to restore - which, for a device whose counter lives in the
+    /// Matter KVS, is what a factory reset leaves behind. Fixed at
+    /// construction, so it needs no lock.
+    reset_at_boot: bool,
+}
+
+/// The element's state, behind one lock the way `on_off` keeps its own.
+///
+/// It has to be a lock rather than a set of `Cell`s: the element is reachable
+/// from the `GenDiag` hook below, which the data model takes as a `dyn` trait
+/// object, and every `rs-matter` `dyn` trait extends `DynBase` - which under
+/// the `sync-mutex` feature means `Send + Sync`. Without that feature the
+/// mutex is a `NoopRawMutex` and costs nothing.
+struct ElementState {
     /// Whether the relay is closed and the element is drawing power.
-    heating: Cell<bool>,
+    heating: bool,
     /// The fake load a `TestEventTrigger` has switched in, if any, as the
     /// index of its sweep step. `None` means the readings come from the real
     /// relay.
-    fake: Cell<Option<usize>>,
+    fake: Option<usize>,
     /// When the energy counters were last brought up to date, in milliseconds
     /// since boot.
-    mark_ms: Cell<u64>,
+    mark_ms: u64,
     /// Energy drawn in the open measurement period, in milliwatt-seconds.
-    period_mws: Cell<i64>,
+    period_mws: i64,
     /// When the open measurement period began, in milliseconds since boot.
-    period_start_ms: Cell<u64>,
+    period_start_ms: u64,
     /// The last measurement period that actually drew something: the energy
     /// in it, in milliwatt-hours, and the window it covers in milliseconds
     /// since boot. `None` until the element has run at all, which is what
     /// makes `PeriodicEnergyImported` report null on a freshly reset device.
-    period: Cell<Option<(i64, u64, u64)>>,
+    period: Option<(i64, u64, u64)>,
     /// Energy drawn over the device's lifetime, in milliwatt-*seconds* so that
     /// a whole number of seconds at a whole number of milliwatts stays exact.
-    energy_mws: Cell<i64>,
+    energy_mws: i64,
     /// The lifetime figure, in milliwatt-hours, as last reported - so that a
     /// closing period can say whether `CumulativeEnergyImported` moved.
-    reported_mwh: Cell<i64>,
-    /// Whether the lifetime counter started this boot at zero because there
-    /// was nothing to restore - which, for a device whose counter lives in the
-    /// Matter KVS, is what a factory reset leaves behind.
-    reset_at_boot: bool,
-    kv: &'a dyn VendorKv,
+    reported_mwh: i64,
 }
 
-impl<'a> HeatingElement<'a> {
-    pub fn new(kv: &'a dyn VendorKv) -> Self {
-        let mut buf = [0u8; 8];
-
-        let (energy_mws, reset_at_boot) =
-            match kv.load_blob(vendor_kv::HEATING_ELEMENT_ENERGY_KEY, &mut buf) {
-                Ok(Some(8)) => (i64::from_le_bytes(buf), false),
-                _ => (0, true),
-            };
-
-        let now = embassy_time::Instant::now().as_millis();
-
-        Self {
-            heating: Cell::new(false),
-            fake: Cell::new(None),
-            mark_ms: Cell::new(now),
-            period_mws: Cell::new(0),
-            period_start_ms: Cell::new(now),
-            period: Cell::new(None),
-            energy_mws: Cell::new(energy_mws),
-            reported_mwh: Cell::new(energy_mws / 3600),
-            reset_at_boot,
-            kv,
-        }
-    }
-
-    fn save_state(&self) -> Result<(), Error> {
-        self.kv.store_blob(
-            vendor_kv::HEATING_ELEMENT_ENERGY_KEY,
-            &self.energy_mws.get().to_le_bytes(),
-        )
-    }
-
-    /// Open or close the relay.
-    fn set_heating(&self, heating: bool) {
-        if heating != self.heating.get() {
-            info!("Emulation: heating {}", if heating { "ON" } else { "OFF" });
-        }
-
-        // Bring the counters up to date at the old power before the relay
-        // changes it.
-        self.integrate();
-        self.heating.set(heating);
-    }
-
-    /// Switch in the fake 1 kW load a `TestEventTrigger` asks for, or - with
-    /// `None` - hand the readings back to the real relay.
-    ///
-    /// Either way the open measurement period is restarted, which is what the
-    /// SDK's own fake readings do (`bReset = true`): a period straddling the
-    /// switch would report energy at a power that was never drawn for all of
-    /// it.
-    fn set_fake_load(&self, fake: Option<usize>) {
-        self.integrate();
-
-        self.fake.set(fake);
-
-        let now = embassy_time::Instant::now().as_millis();
-
-        self.mark_ms.set(now);
-        self.period_mws.set(0);
-        self.period_start_ms.set(now);
-        self.period.set(None);
-    }
-
+impl ElementState {
     /// Whether a test-event fake load is currently switched in.
     fn faking(&self) -> bool {
-        self.fake.get().is_some()
-    }
-
-    /// Whether the element is currently drawing power.
-    fn heating(&self) -> bool {
-        self.heating.get()
+        self.fake.is_some()
     }
 
     /// The power drawn right now, in milliwatts.
     fn active_power_mw(&self) -> i64 {
-        match self.fake.get() {
+        match self.fake {
             Some(step) => {
                 ELEMENT_POWER_MW + FAKE_POWER_OFFSETS_MW[step % FAKE_POWER_OFFSETS_MW.len()]
             }
-            None if self.heating.get() => ELEMENT_POWER_MW,
+            None if self.heating => ELEMENT_POWER_MW,
             None => 0,
         }
     }
@@ -567,7 +513,7 @@ impl<'a> HeatingElement<'a> {
     /// The supply voltage right now, in millivolts. Nominal unless a fake load
     /// is sweeping it.
     fn voltage_mv(&self) -> i64 {
-        match self.fake.get() {
+        match self.fake {
             Some(step) => {
                 SUPPLY_VOLTAGE_MV + FAKE_VOLTAGE_OFFSETS_MV[step % FAKE_VOLTAGE_OFFSETS_MV.len()]
             }
@@ -583,7 +529,132 @@ impl<'a> HeatingElement<'a> {
 
     /// The energy drawn over the device's lifetime, in milliwatt-hours.
     fn energy_mwh(&self) -> i64 {
-        self.energy_mws.get() / 3600
+        self.energy_mws / 3600
+    }
+
+    /// Bring both energy counters up to now, at the power drawn since the last
+    /// time this ran.
+    ///
+    /// A real meter integrates continuously; this one integrates once per
+    /// sample, which is the same thing as long as the power only changes at a
+    /// sample boundary - and every path that changes it does this first.
+    fn integrate(&mut self) {
+        let now = embassy_time::Instant::now().as_millis();
+        let elapsed_ms = now.saturating_sub(self.mark_ms) as i64;
+
+        self.mark_ms = now;
+
+        let drawn_mws = self.active_power_mw() * elapsed_ms / 1000;
+
+        self.energy_mws += drawn_mws;
+        self.period_mws += drawn_mws;
+    }
+
+    /// Restart the open measurement period as of `now`.
+    fn restart_period(&mut self, now: u64) {
+        self.mark_ms = now;
+        self.period_mws = 0;
+        self.period_start_ms = now;
+        self.period = None;
+    }
+}
+
+impl HeatingElement {
+    pub fn new(kv: &dyn VendorKv) -> Self {
+        let mut buf = [0u8; 8];
+
+        let (energy_mws, reset_at_boot) =
+            match kv.load_blob(vendor_kv::HEATING_ELEMENT_ENERGY_KEY, &mut buf) {
+                Ok(Some(8)) => (i64::from_le_bytes(buf), false),
+                _ => (0, true),
+            };
+
+        let now = embassy_time::Instant::now().as_millis();
+
+        Self {
+            state: Mutex::new(RefCell::new(ElementState {
+                heating: false,
+                fake: None,
+                mark_ms: now,
+                period_mws: 0,
+                period_start_ms: now,
+                period: None,
+                energy_mws,
+                reported_mwh: energy_mws / 3600,
+            })),
+            reset_at_boot,
+        }
+    }
+
+    /// Open or close the relay.
+    fn set_heating(&self, heating: bool) {
+        let changed = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            // Bring the counters up to date at the old power before the relay
+            // changes it.
+            state.integrate();
+
+            let changed = state.heating != heating;
+            state.heating = heating;
+
+            changed
+        });
+
+        if changed {
+            info!("Emulation: heating {}", if heating { "ON" } else { "OFF" });
+        }
+    }
+
+    /// Switch in the fake 1 kW load a `TestEventTrigger` asks for, or - with
+    /// `None` - hand the readings back to the real relay.
+    ///
+    /// Either way the open measurement period is restarted, which is what the
+    /// SDK's own fake readings do (`bReset = true`): a period straddling the
+    /// switch would report energy at a power that was never drawn for all of
+    /// it.
+    fn set_fake_load(&self, fake: Option<usize>) {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            state.integrate();
+            state.fake = fake;
+
+            state.restart_period(embassy_time::Instant::now().as_millis());
+        });
+    }
+
+    /// Whether the element is currently drawing power.
+    fn heating(&self) -> bool {
+        self.state.lock(|state| state.borrow().heating)
+    }
+
+    /// The power drawn right now, in milliwatts.
+    fn active_power_mw(&self) -> i64 {
+        self.state.lock(|state| state.borrow().active_power_mw())
+    }
+
+    /// The supply voltage right now, in millivolts. Nominal unless a fake load
+    /// is sweeping it.
+    fn voltage_mv(&self) -> i64 {
+        self.state.lock(|state| state.borrow().voltage_mv())
+    }
+
+    /// The current drawn right now, in milliamps, derived from the power and
+    /// the supply voltage so the three reported readings stay consistent.
+    fn active_current_ma(&self) -> i64 {
+        self.state.lock(|state| state.borrow().active_current_ma())
+    }
+
+    /// The energy drawn over the device's lifetime, in milliwatt-*seconds*:
+    /// the unit the counter is persisted in.
+    fn energy_mws(&self) -> i64 {
+        self.state.lock(|state| state.borrow().energy_mws)
+    }
+
+    /// The energy drawn over the device's lifetime, in milliwatt-hours.
+    fn energy_mwh(&self) -> i64 {
+        self.state.lock(|state| state.borrow().energy_mwh())
     }
 
     /// When the lifetime counter was last zeroed, as far as this device can
@@ -600,75 +671,76 @@ impl<'a> HeatingElement<'a> {
     /// The last measurement period that drew anything: its energy in
     /// milliwatt-hours, and the window it covers in milliseconds since boot.
     fn last_period(&self) -> Option<(i64, u64, u64)> {
-        self.period.get()
-    }
-
-    /// Bring both energy counters up to now, at the power drawn since the last
-    /// time this ran.
-    ///
-    /// A real meter integrates continuously; this one integrates once per
-    /// sample, which is the same thing as long as the power only changes at a
-    /// sample boundary - and [`Self::set_heating`] and [`Self::set_fake_load`]
-    /// both call this first so that it does.
-    fn integrate(&self) {
-        let now = embassy_time::Instant::now().as_millis();
-        let elapsed_ms = now.saturating_sub(self.mark_ms.replace(now)) as i64;
-        let drawn_mws = self.active_power_mw() * elapsed_ms / 1000;
-
-        self.energy_mws.set(self.energy_mws.get() + drawn_mws);
-        self.period_mws.set(self.period_mws.get() + drawn_mws);
+        self.state.lock(|state| state.borrow().period)
     }
 
     /// One sampling step of the meter: integrate what has been drawn since the
     /// last one, then advance a fake load's sweep so the next sample reads
     /// differently.
     fn sample(&self) {
-        self.integrate();
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
 
-        if let Some(step) = self.fake.get() {
-            self.fake.set(Some(step.wrapping_add(1)));
-        }
+            state.integrate();
+
+            if let Some(step) = state.fake {
+                state.fake = Some(step.wrapping_add(1));
+            }
+        });
     }
 
-    /// Whether the open measurement period has run its course.
-    fn period_due(&self) -> bool {
-        let length = if self.faking() {
-            FAKE_PERIOD_MS
-        } else {
-            PERIOD_MS
-        };
+    /// Close the open measurement period if it has run its course, and report
+    /// which readings moved.
+    ///
+    /// Whether the period is due and the closing of it are one step under one
+    /// lock: asking first and closing afterwards would let the answer go stale
+    /// in between.
+    fn close_period_if_due(&self) -> Option<Accumulated> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
 
-        embassy_time::Instant::now().as_millis() - self.period_start_ms.get() >= length
-    }
+            // Shorter while a test-event fake load is switched in, because the
+            // CHIP energy suites read twice three seconds apart.
+            let length = if state.faking() {
+                FAKE_PERIOD_MS
+            } else {
+                PERIOD_MS
+            };
 
-    /// Close the open measurement period and report which readings moved.
-    fn close_period(&self) -> Accumulated {
-        self.integrate();
+            let end = embassy_time::Instant::now().as_millis();
 
-        let end = embassy_time::Instant::now().as_millis();
-        let start = self.period_start_ms.replace(end);
-        let drawn_mws = self.period_mws.replace(0);
+            if end - state.period_start_ms < length {
+                return None;
+            }
 
-        // A period in which nothing was drawn carries no information, and
-        // publishing one every tick would have an idle device emitting
-        // `PeriodicEnergyMeasured` forever. The window is still advanced, so
-        // the next period covers only the time the element actually ran.
-        if drawn_mws == 0 {
-            return Accumulated::default();
-        }
+            state.integrate();
 
-        self.period.set(Some((drawn_mws / 3600, start, end)));
+            let start = state.period_start_ms;
+            let drawn_mws = state.period_mws;
 
-        let reported = self.reported_mwh.replace(self.energy_mwh());
+            state.period_start_ms = end;
+            state.period_mws = 0;
 
-        if let Err(err) = self.save_state() {
-            error!("Error saving the energy counter: {}", err);
-        }
+            // A period in which nothing was drawn carries no information, and
+            // publishing one every tick would have an idle device emitting
+            // `PeriodicEnergyMeasured` forever. The window is still advanced,
+            // so the next period covers only the time the element actually ran.
+            if drawn_mws == 0 {
+                return Some(Accumulated::default());
+            }
 
-        Accumulated {
-            cumulative: self.energy_mwh() != reported,
-            periodic: true,
-        }
+            state.period = Some((drawn_mws / 3600, start, end));
+
+            let energy_mwh = state.energy_mwh();
+            let reported = state.reported_mwh;
+
+            state.reported_mwh = energy_mwh;
+
+            Some(Accumulated {
+                cumulative: energy_mwh != reported,
+                periodic: true,
+            })
+        })
     }
 }
 
@@ -730,20 +802,25 @@ impl Default for ThermostatPersistentState {
 /// A simulated heating thermostat, with the four non-volatile attributes kept
 /// in the Matter KVS.
 pub struct ThermostatDeviceLogic<'a> {
-    /// Volatile: a sensor reading, recomputed from [`AMBIENT`] on every boot.
-    local_temperature: Cell<i16>,
-    occupied_heating_setpoint: Cell<i16>,
-    min_heat_setpoint_limit: Cell<i16>,
-    max_heat_setpoint_limit: Cell<i16>,
-    system_mode: Cell<SystemModeEnum>,
+    state: Mutex<RefCell<ThermostatState>>,
     /// The load this thermostat switches. Its relay flag is the thermostat's
     /// output and the meters' input.
-    element: &'a HeatingElement<'a>,
+    element: &'a HeatingElement,
     kv: &'a dyn VendorKv,
 }
 
+/// The thermostat's own state, behind one lock - see [`ElementState`].
+struct ThermostatState {
+    /// Volatile: a sensor reading, recomputed from [`AMBIENT`] on every boot.
+    local_temperature: i16,
+    occupied_heating_setpoint: i16,
+    min_heat_setpoint_limit: i16,
+    max_heat_setpoint_limit: i16,
+    system_mode: SystemModeEnum,
+}
+
 impl<'a> ThermostatDeviceLogic<'a> {
-    pub fn new(kv: &'a dyn VendorKv, element: &'a HeatingElement<'a>) -> Self {
+    pub fn new(kv: &'a dyn VendorKv, element: &'a HeatingElement) -> Self {
         let mut buf = [0u8; ThermostatPersistentState::LEN];
 
         let state = match kv.load_blob(vendor_kv::THERMOSTAT_STATE_KEY, &mut buf) {
@@ -754,23 +831,29 @@ impl<'a> ThermostatDeviceLogic<'a> {
         };
 
         Self {
-            local_temperature: Cell::new(AMBIENT),
-            occupied_heating_setpoint: Cell::new(state.occupied_heating_setpoint),
-            min_heat_setpoint_limit: Cell::new(state.min_heat_setpoint_limit),
-            max_heat_setpoint_limit: Cell::new(state.max_heat_setpoint_limit),
-            system_mode: Cell::new(state.system_mode),
+            state: Mutex::new(RefCell::new(ThermostatState {
+                local_temperature: AMBIENT,
+                occupied_heating_setpoint: state.occupied_heating_setpoint,
+                min_heat_setpoint_limit: state.min_heat_setpoint_limit,
+                max_heat_setpoint_limit: state.max_heat_setpoint_limit,
+                system_mode: state.system_mode,
+            })),
             element,
             kv,
         }
     }
 
     fn save_state(&self) -> Result<(), Error> {
-        let state = ThermostatPersistentState {
-            system_mode: self.system_mode.get(),
-            occupied_heating_setpoint: self.occupied_heating_setpoint.get(),
-            min_heat_setpoint_limit: self.min_heat_setpoint_limit.get(),
-            max_heat_setpoint_limit: self.max_heat_setpoint_limit.get(),
-        };
+        let state = self.state.lock(|state| {
+            let state = state.borrow();
+
+            ThermostatPersistentState {
+                system_mode: state.system_mode,
+                occupied_heating_setpoint: state.occupied_heating_setpoint,
+                min_heat_setpoint_limit: state.min_heat_setpoint_limit,
+                max_heat_setpoint_limit: state.max_heat_setpoint_limit,
+            }
+        });
 
         self.kv
             .store_blob(vendor_kv::THERMOSTAT_STATE_KEY, &state.to_bytes())
@@ -779,15 +862,25 @@ impl<'a> ThermostatDeviceLogic<'a> {
     /// Advance the room simulation by one [`TICK`], returning `true` if the
     /// local temperature changed.
     fn tick(&self) -> bool {
-        let previous = self.local_temperature.get();
+        let heating = self.element.heating();
 
-        let temperature = if self.element.heating() {
-            previous.saturating_add(HEATING_RATE)
-        } else {
-            previous.saturating_sub(COOLING_RATE).max(AMBIENT)
-        };
+        let (previous, temperature) = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
 
-        self.local_temperature.set(temperature);
+            let previous = state.local_temperature;
+
+            let temperature = if heating {
+                previous.saturating_add(HEATING_RATE)
+            } else {
+                previous.saturating_sub(COOLING_RATE).max(AMBIENT)
+            };
+
+            state.local_temperature = temperature;
+
+            (previous, temperature)
+        });
+
+        // Out of the lock: the relay is the element's state, not ours.
         self.update_relay();
 
         temperature != previous
@@ -796,10 +889,17 @@ impl<'a> ThermostatDeviceLogic<'a> {
     /// Re-evaluate the heat demand, with a one-notch hysteresis band around the
     /// setpoint so the simulated relay does not chatter every tick.
     fn update_relay(&self) {
-        let setpoint = self.occupied_heating_setpoint.get();
-        let temperature = self.local_temperature.get();
+        let (system_mode, setpoint, temperature) = self.state.lock(|state| {
+            let state = state.borrow();
 
-        let heating = matches!(self.system_mode.get(), SystemModeEnum::Heat)
+            (
+                state.system_mode,
+                state.occupied_heating_setpoint,
+                state.local_temperature,
+            )
+        });
+
+        let heating = matches!(system_mode, SystemModeEnum::Heat)
             && if self.element.heating() {
                 temperature < setpoint.saturating_add(HEATING_RATE)
             } else {
@@ -834,42 +934,49 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
         ControlSequenceOfOperationEnum::HeatingOnly;
 
     fn local_temperature(&self) -> Nullable<i16> {
-        Nullable::some(self.local_temperature.get())
+        Nullable::some(self.state.lock(|state| state.borrow().local_temperature))
     }
 
     fn occupied_heating_setpoint(&self) -> i16 {
-        self.occupied_heating_setpoint.get()
+        self.state
+            .lock(|state| state.borrow().occupied_heating_setpoint)
     }
 
     fn set_occupied_heating_setpoint(&self, value: i16) -> Result<(), Error> {
-        self.occupied_heating_setpoint.set(value);
+        self.state
+            .lock(|state| state.borrow_mut().occupied_heating_setpoint = value);
         self.save_state()
     }
 
     fn min_heat_setpoint_limit(&self) -> i16 {
-        self.min_heat_setpoint_limit.get()
+        self.state
+            .lock(|state| state.borrow().min_heat_setpoint_limit)
     }
 
     fn set_min_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        self.min_heat_setpoint_limit.set(value);
+        self.state
+            .lock(|state| state.borrow_mut().min_heat_setpoint_limit = value);
         self.save_state()
     }
 
     fn max_heat_setpoint_limit(&self) -> i16 {
-        self.max_heat_setpoint_limit.get()
+        self.state
+            .lock(|state| state.borrow().max_heat_setpoint_limit)
     }
 
     fn set_max_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        self.max_heat_setpoint_limit.set(value);
+        self.state
+            .lock(|state| state.borrow_mut().max_heat_setpoint_limit = value);
         self.save_state()
     }
 
     fn system_mode(&self) -> SystemModeEnum {
-        self.system_mode.get()
+        self.state.lock(|state| state.borrow().system_mode)
     }
 
     fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error> {
-        self.system_mode.set(value);
+        self.state
+            .lock(|state| state.borrow_mut().system_mode = value);
         self.save_state()
     }
 
@@ -887,13 +994,15 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
     /// A heating-only device: the cooling setpoint is whatever the hook
     /// default returns, and means nothing here.
     fn apply(&self, system_mode: SystemModeEnum, heating_setpoint: i16, _cooling_setpoint: i16) {
+        let temperature = self.state.lock(|state| state.borrow().local_temperature);
+
         info!(
             "Emulation: system mode {:?}, heating setpoint {}.{:02}C, room {}.{:02}C",
             system_mode,
             heating_setpoint / 100,
             (heating_setpoint % 100).abs(),
-            self.local_temperature.get() / 100,
-            (self.local_temperature.get() % 100).abs(),
+            temperature / 100,
+            (temperature % 100).abs(),
         );
 
         // Re-evaluate the relay immediately rather than waiting a tick, so that
@@ -935,11 +1044,11 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
 /// requires a device with test event triggers enabled to be out of normal
 /// operation, which is exactly what this binary is.
 pub struct TestEventTriggers<'a> {
-    element: &'a HeatingElement<'a>,
+    element: &'a HeatingElement,
 }
 
 impl<'a> TestEventTriggers<'a> {
-    pub const fn new(element: &'a HeatingElement<'a>) -> Self {
+    pub const fn new(element: &'a HeatingElement) -> Self {
         Self { element }
     }
 }
@@ -999,17 +1108,17 @@ impl GenDiag for TestEventTriggers<'_> {
 
 /// What the element is drawing right now.
 pub struct ElecPwrDeviceLogic<'a> {
-    element: &'a HeatingElement<'a>,
+    element: &'a HeatingElement,
     /// The last `ActivePower` handed to a subscriber, so `run` only notifies
     /// when the reading actually moved.
-    reported_power_mw: Cell<i64>,
+    reported_power_mw: Mutex<Cell<i64>>,
 }
 
 impl<'a> ElecPwrDeviceLogic<'a> {
-    pub fn new(element: &'a HeatingElement<'a>) -> Self {
+    pub fn new(element: &'a HeatingElement) -> Self {
         Self {
             element,
-            reported_power_mw: Cell::new(element.active_power_mw()),
+            reported_power_mw: Mutex::new(Cell::new(element.active_power_mw())),
         }
     }
 }
@@ -1119,8 +1228,8 @@ impl ElecPwrMeasHooks for ElecPwrDeviceLogic<'_> {
 
             let power = self.element.active_power_mw();
 
-            if power != self.reported_power_mw.get() {
-                self.reported_power_mw.set(power);
+            if power != self.reported_power_mw.lock(|reported| reported.get()) {
+                self.reported_power_mw.lock(|reported| reported.set(power));
 
                 // `Voltage` and `ActiveCurrent` move with the same sample, so
                 // all three readings are re-reported together.
@@ -1134,12 +1243,27 @@ impl ElecPwrMeasHooks for ElecPwrDeviceLogic<'_> {
 
 /// What the element has drawn over the device's lifetime.
 pub struct ElecEnergyDeviceLogic<'a> {
-    element: &'a HeatingElement<'a>,
+    element: &'a HeatingElement,
+    kv: &'a dyn VendorKv,
 }
 
 impl<'a> ElecEnergyDeviceLogic<'a> {
-    pub fn new(element: &'a HeatingElement<'a>) -> Self {
-        Self { element }
+    pub fn new(kv: &'a dyn VendorKv, element: &'a HeatingElement) -> Self {
+        Self { element, kv }
+    }
+
+    /// Write the element's lifetime energy counter to the KVS.
+    ///
+    /// The counter is the backing store of `CumulativeEnergyImported`, and
+    /// this cluster's loop is the only thing that closes a measurement period,
+    /// so this is the one place it has to be saved from.
+    fn save_energy(&self) {
+        if let Err(err) = self.kv.store_blob(
+            vendor_kv::HEATING_ELEMENT_ENERGY_KEY,
+            &self.element.energy_mws().to_le_bytes(),
+        ) {
+            error!("Error saving the energy counter: {}", err);
+        }
     }
 }
 
@@ -1196,17 +1320,19 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
 
     async fn run<F: Fn(elec_energy_meas::OutOfBandMessage)>(&self, notify: F) {
         loop {
-            // Woken on the meter's sample clock, but a period only closes once
-            // it has run its course - which is shorter while a test-event fake
-            // load is switched in, because the CHIP energy suites read twice
-            // three seconds apart.
+            // Woken on the meter's sample clock, but a period only closes
+            // once it has run its course.
             embassy_time::Timer::after(METER_TICK).await;
 
-            if !self.element.period_due() {
+            let Some(moved) = self.element.close_period_if_due() else {
                 continue;
-            }
+            };
 
-            let moved = self.element.close_period();
+            // A period that drew something advanced the lifetime counter too,
+            // whether or not it moved by a whole milliwatt-hour.
+            if moved.periodic {
+                self.save_energy();
+            }
 
             // Two notifications from one tick, which the handler's pending
             // mask keeps apart - see `elec_energy_meas::OutOfBandMessage`.
