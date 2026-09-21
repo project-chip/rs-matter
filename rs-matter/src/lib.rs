@@ -60,7 +60,7 @@ use crate::sc::pase::{CommWindowState, Pase};
 use crate::tlv::{TLVElement, TLVTag, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
-use crate::transport::session::Sessions;
+use crate::transport::session::{Session, Sessions};
 use crate::transport::{
     PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
 };
@@ -704,11 +704,13 @@ impl<'a> Matter<'a> {
         self.with_state(|state| f(&mut state.rtc))
     }
 
-    /// Drop every secure session held with `peer_node_id` on `fabric_idx`,
-    /// returning how many were removed.
-    pub fn remove_sessions_for_peer(&self, fabric_idx: NonZeroU8, peer_node_id: u64) -> usize {
-        let removed =
-            self.with_state(|state| state.sessions.remove_for_node(fabric_idx, peer_node_id));
+    /// Remove every session matching `predicate`, returning how many were
+    /// dropped.
+    pub fn remove_sessions<F>(&self, predicate: F) -> usize
+    where
+        F: FnMut(&Session) -> bool,
+    {
+        let removed = self.with_state(move |state| state.sessions.remove_where(predicate));
 
         if removed > 0 {
             self.transport().notify_session_removed();

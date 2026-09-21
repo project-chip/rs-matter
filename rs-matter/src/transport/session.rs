@@ -1907,22 +1907,24 @@ impl Sessions {
         }
     }
 
-    /// Remove every session established with `peer_node_id` on `fabric_idx`,
-    /// returning how many were dropped.
-    pub(crate) fn remove_for_node(&mut self, fabric_idx: NonZeroU8, peer_node_id: u64) -> usize {
+    /// Remove every session matching `predicate`, returning how many were
+    /// dropped.
+    ///
+    /// Sessions still being established (reserved) are neither offered to the
+    /// predicate nor removed: yanking one out from under an in-flight handshake
+    /// would break invariants that handshake relies on.
+    pub fn remove_where<F>(&mut self, mut predicate: F) -> usize
+    where
+        F: FnMut(&Session) -> bool,
+    {
         let mut removed = 0;
 
         while let Some(index) = self
             .sessions
             .iter()
-            .position(|sess| sess.is_for_node(fabric_idx, peer_node_id))
+            .position(|sess| !sess.reserved && predicate(sess))
         {
-            info!(
-                "Dropping session with ID {} for peer node 0x{:016x} on fabric index {}",
-                self.sessions[index].id,
-                peer_node_id,
-                fabric_idx.get()
-            );
+            info!("Dropping session with ID {}", self.sessions[index].id);
             self.sessions.swap_remove(index);
             removed += 1;
         }
@@ -2599,9 +2601,18 @@ mod tests {
     /// else. A session left behind after the peer has discarded its half is
     /// what later provokes an unsecured `SessionNotFound` from the peer.
     #[test]
-    fn remove_for_node_targets_only_that_peer() {
+    fn remove_where_targets_only_the_matching_peer() {
         const DEV_A: u64 = 0x1111;
         const DEV_B: u64 = 0x2222;
+
+        // What a controller means by "this device's sessions".
+        let for_node = |fabric_idx: NonZeroU8, node_id: u64| {
+            move |sess: &Session| {
+                sess.is_encrypted()
+                    && sess.get_local_fabric_idx() == fabric_idx.get()
+                    && sess.get_peer_node_id() == Some(node_id)
+            }
+        };
 
         let mut sm = Sessions::new();
 
@@ -2611,7 +2622,7 @@ mod tests {
         // Same node ID, different fabric - must survive.
         let other_fabric = add_for_node(&mut sm, fab(2), DEV_A);
 
-        assert_eq!(sm.remove_for_node(fab(1), DEV_A), 2);
+        assert_eq!(sm.remove_where(for_node(fab(1), DEV_A)), 2);
 
         let left = ids(&sm);
         assert!(!left.contains(&a1));
@@ -2620,7 +2631,24 @@ mod tests {
         assert!(left.contains(&other_fabric));
 
         // Idempotent - a second teardown of the same peer is a no-op.
-        assert_eq!(sm.remove_for_node(fab(1), DEV_A), 0);
+        assert_eq!(sm.remove_where(for_node(fab(1), DEV_A)), 0);
+    }
+
+    /// A reserved session is mid-handshake: the predicate must never see it, let
+    /// alone remove it.
+    #[test]
+    fn remove_where_never_touches_a_reserved_session() {
+        let mut sm = Sessions::new();
+
+        let live = add_for_node(&mut sm, fab(1), 0x1111);
+        let reserved = unwrap!(sm.add(0, true, Address::default(), None, &TEST_DEV_DET)).id;
+
+        // A predicate that would otherwise take everything.
+        assert_eq!(sm.remove_where(|_| true), 1);
+
+        let left = ids(&sm);
+        assert!(!left.contains(&live));
+        assert!(left.contains(&reserved), "reserved session was removed");
     }
 
     /// The table fills up to `MAX_SESSIONS`, then refuses; removing a session

@@ -265,7 +265,7 @@ impl Transport {
     }
 
     /// Notify that a session has been removed.
-    pub(crate) fn notify_session_removed(&self) {
+    pub fn notify_session_removed(&self) {
         self.session_removed.notify();
     }
 
