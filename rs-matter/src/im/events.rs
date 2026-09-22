@@ -321,8 +321,22 @@ impl<const N: usize> EventsInner<N> {
             event_writer.tw().end_container()
         })();
 
-        if result.is_err() {
+        if let Err(e) = &result {
             event_writer.rewind_to(pos);
+
+            if e.code() == ErrorCode::ResourceExhausted {
+                // The event did not fit in an *empty* ring, so no amount of
+                // eviction would have helped. This is a build-time sizing
+                // mistake rather than a runtime condition, and the bare
+                // `ResourceExhausted` that propagates out of here is very hard
+                // to place - `AddNOC` in particular turns it into a failed
+                // commissioning - so name the culprit.
+                warn!(
+                    "Event {}/{}/{} does not fit in the {}-byte event ring buffer; \
+                     pick a larger `events-ringbuf-size-*` feature",
+                    endpoint_id, cluster_id, event_id, N
+                );
+            }
         }
 
         result

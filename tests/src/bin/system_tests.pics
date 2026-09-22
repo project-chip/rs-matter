@@ -413,8 +413,6 @@ PS.C.AM-WRITE=0
 PS.C.AO-READ=0
 PS.C.AO-WRITE=0
 
-# Thermostat User Configuration Cluster
-
 # Binding
 BIND.S=1
 BIND.S.A0000=1

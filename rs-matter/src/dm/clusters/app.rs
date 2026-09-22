@@ -20,6 +20,10 @@
 //!
 //! This currently includes:
 //! - `OnOff` and `LevelControl` — for demoing purposes.
+//! - `Thermostat` — a heating-only implementation of the HVAC cluster.
+//! - `PowerTopology`, `ElectricalPowerMeasurement` and
+//!   `ElectricalEnergyMeasurement` — the Electrical Sensor trio, reporting
+//!   what a device's equipment draws now and has drawn over time.
 //! - The Matter 1.5 camera / streaming clusters
 //!   (`CameraAvStreamManagement`, `CameraAvSettingsUserLevelManagement`,
 //!   `WebRTCTransportProvider`, `WebRTCTransportRequestor`,
@@ -32,9 +36,16 @@ pub mod cam_av_stream;
 pub mod chime;
 pub mod color_control;
 mod deferred_persist;
+pub mod elec_energy_meas;
+pub mod elec_pwr_meas;
 pub mod level_control;
+pub mod measurement;
 pub mod on_off;
+pub mod power_topology;
 pub mod push_av_stream;
+#[cfg(test)]
+pub mod test_util;
+pub mod thermostat;
 pub mod webrtc_prov;
 pub mod webrtc_req;
 pub mod zone_mgmt;
