@@ -15,38 +15,32 @@
  *    limitations under the License.
  */
 
-//! Implementation of the Matter Power Topology cluster (`0x009C`),
-//! `ClusterRevision` 1.
+//! Matter Power Topology cluster (`0x009C`), cluster revision 1.
 //!
-//! The cluster answers one question: *what* do the electrical measurements on
-//! this endpoint actually describe? It is mandatory for the Electrical Sensor
-//! device type ([`crate::dm::devices::DEV_TYPE_ELECTRICAL_SENSOR`]), which
-//! pairs it with [`super::elec_pwr_meas`] and/or [`super::elec_energy_meas`].
+//! Answers one question: *what* do the electrical measurements on this
+//! endpoint describe? Mandatory for the Electrical Sensor device type
+//! ([`crate::dm::devices::DEV_TYPE_ELECTRICAL_SENSOR`]), which pairs it with
+//! [`super::elec_pwr_meas`] and/or [`super::elec_energy_meas`].
 //!
-//! This handler implements the `NODE` (NodeTopology) answer: the measurements
-//! cover the whole node. That is the right answer for a single-purpose device —
-//! a thermostat driving one heating element, a smart plug, a water heater — and
-//! it is also the cheapest, because `NODE` makes both of the cluster's
-//! attributes non-conformant, leaving only the global ones. There is
-//! consequently nothing to configure and nothing for a consumer to implement:
+//! This handler gives the `NODE` answer - the measurements cover the whole
+//! node - which is right for a single-purpose device and also the cheapest,
+//! since `NODE` makes both of the cluster's own attributes non-conformant.
+//! There is nothing to configure and nothing for a consumer to implement:
 //! construct [`PowerTopologyHandler`] and chain it.
 //!
-//! The `TREE` and `SET` topologies, which describe measurements covering a
-//! subset of the node's endpoints, would need `AvailableEndpoints` and (with
-//! `DYPF`) `ActiveEndpoints`, and a handler that can enumerate them. They are
-//! not implemented.
+//! `TREE` and `SET`, which describe measurements covering a subset of the
+//! node's endpoints, would need `AvailableEndpoints`/`ActiveEndpoints` and a
+//! handler that can enumerate them. They are not implemented.
 //!
-//! Note that the IDL we generate from also carries an `ELECTRICAL_CIRCUIT`
-//! feature and an `ElectricalCircuitNodes` attribute. Neither is defined by the
-//! Matter 1.6 data model, so the generated accessors are deliberately left at
-//! their `AttributeNotFound` default.
+//! The IDL also carries an `ELECTRICAL_CIRCUIT` feature and an
+//! `ElectricalCircuitNodes` attribute, neither of which the data model
+//! defines, so their accessors stay at the `AttributeNotFound` default.
 
 use crate::dm::{Cluster, Dataver};
 use crate::with;
 
 pub use crate::dm::clusters::decl::power_topology::*;
 
-/// The `ClusterRevision` this handler implements (Matter 1.6).
 const CLUSTER_REVISION: u16 = 1;
 
 /// Cluster metadata exposed by [`PowerTopologyHandler`].

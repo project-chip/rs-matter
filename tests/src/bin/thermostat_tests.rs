@@ -374,9 +374,8 @@ const METER_ACCURACY: u16 = 500;
 /// One `Accuracy` entry: a quantity the simulated meter reads across
 /// `0..=$max`, at [`METER_ACCURACY`] throughout that range.
 ///
-/// Section 2.13.6.3's list is what tells a client which quantities the meter
-/// actually measures, so it has to carry an entry for every reading served -
-/// which is why it is as long as it is.
+/// The `Accuracy` list is what tells a client which quantities the meter
+/// actually measures, so it needs an entry for every reading served.
 macro_rules! meter_accuracy {
     ($type:ident, $max:expr) => {
         MeasurementAccuracy::new(
@@ -1293,8 +1292,8 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
     const ACCURACY: MeasurementAccuracy = meter_accuracy!(ElectricalEnergy, MAX_ENERGY_MWH);
 
     fn cumulative_energy_imported(&self) -> Option<EnergyMeasurement> {
-        // This device has no wall clock, so the reading is located in time by
-        // uptime alone - which is what section 2.12.5.2.5 asks for.
+        // No wall clock, so the reading is located in time by uptime alone,
+        // which is conformant.
         Some(EnergyMeasurement::cumulative(
             self.element.energy_mwh(),
             Timestamp::systime(embassy_time::Instant::now().as_millis()),
@@ -1305,8 +1304,8 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
         self.element.reset_at()
     }
 
-    /// Section 2.12.5.2: a periodic reading needs both ends of its window.
-    /// This device has no wall clock, so both are uptimes.
+    /// A periodic reading needs both ends of its window; with no wall clock,
+    /// both are uptimes.
     fn periodic_energy_imported(&self) -> Option<EnergyMeasurement> {
         let (energy, start, end) = self.element.last_period()?;
 

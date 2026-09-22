@@ -33,9 +33,8 @@ use crate::error::Error;
 use crate::im::Percent100ths;
 use crate::tlv::TLVBuilderParent;
 
-/// A `MeasurementAccuracyStruct` (Matter 1.6 Application Cluster spec section
-/// 2.1.4.4): how accurately the server measures one quantity, over one or more
-/// ranges of that quantity.
+/// A `MeasurementAccuracyStruct`: how accurately the server measures one
+/// quantity, over one or more ranges of it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MeasurementAccuracy {
@@ -101,9 +100,8 @@ impl MeasurementAccuracy {
     }
 }
 
-/// One entry of a `MeasurementAccuracyStruct`'s `AccuracyRanges` list
-/// (spec section 2.1.4.5): the accuracy that holds between `range_min` and
-/// `range_max`.
+/// One entry of a `MeasurementAccuracyStruct`'s `AccuracyRanges` list: the
+/// accuracy that holds between `range_min` and `range_max`.
 ///
 /// The percentage and fixed-quantity field groups are a `choice` of which at
 /// least one must be present, and within each group the fields cascade — a

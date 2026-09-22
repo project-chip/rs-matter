@@ -15,51 +15,30 @@
  *    limitations under the License.
  */
 
-//! Implementation of the Matter Electrical Energy Measurement cluster
-//! (`0x0091`), Matter 1.6 Application Cluster spec section 2.12,
-//! `ClusterRevision` 2.
+//! Matter Electrical Energy Measurement cluster (`0x0091`), cluster
+//! revision 2.
 //!
-//! Where [`super::elec_pwr_meas`] reports what the equipment is drawing right
-//! now, this cluster reports what it has drawn *over time*. Both hang off the
-//! Electrical Sensor device type
-//! ([`crate::dm::devices::DEV_TYPE_ELECTRICAL_SENSOR`]) alongside
-//! [`super::power_topology`].
+//! Where [`super::elec_pwr_meas`] reports what the equipment draws right now,
+//! this reports what it has drawn *over time*. Both hang off the Electrical
+//! Sensor device type ([`crate::dm::devices::DEV_TYPE_ELECTRICAL_SENSOR`])
+//! alongside [`super::power_topology`].
 //!
-//! This is an **import-only** implementation: the FeatureMap it accepts is
-//! `IMPE` plus at least one of `CUME` and `PERE`. A device that also generates
-//! (`EXPE`) needs the mirrored exported attributes, which are not served.
-//!
-//! Attributes served (section 2.12.6):
-//!
-//! | ID       | Name                       | Conformance   |
-//! | -------- | -------------------------- | ------------- |
-//! | `0x0000` | `Accuracy`                 | M             |
-//! | `0x0001` | `CumulativeEnergyImported` | `IMPE & CUME` |
-//! | `0x0003` | `PeriodicEnergyImported`   | `IMPE & PERE` |
-//!
-//! Events (section 2.12.7), each mandatory given its feature and emitted from
-//! [`ElecEnergyMeasHandler::run`] whenever the device reports a new reading:
-//!
-//! | ID     | Name                       | Conformance |
-//! | ------ | -------------------------- | ----------- |
-//! | `0x00` | `CumulativeEnergyMeasured` | `CUME`      |
-//! | `0x01` | `PeriodicEnergyMeasured`   | `PERE`      |
-//!
-//! The cluster has no commands.
+//! Import-only: the accepted FeatureMap is `IMPE` plus at least one of `CUME`
+//! and `PERE`. A device that also generates (`EXPE`) would need the mirrored
+//! exported attributes, which are not served. There are no commands.
 //!
 //! # Timestamps, and why this needs no Time Synchronization
 //!
 //! An `EnergyMeasurementStruct` locates its reading in time twice over: in UTC
-//! (`StartTimestamp`/`EndTimestamp`) and as time since boot
-//! (`StartSystime`/`EndSystime`). Sections 2.12.5.2.2 through 2.12.5.2.5 make
-//! the UTC pair conditional on the server having determined the time, and
-//! require the systime pair precisely when it has not. A device with no clock
-//! is therefore fully conformant reporting systime alone — see [`Timestamp`].
+//! and as time since boot. The UTC pair is conditional on the server having
+//! determined the time, and the systime pair is required precisely when it has
+//! not, so a device with no clock is fully conformant reporting systime alone
+//! - see [`Timestamp`].
 //!
-//! The other rule those sections state is that a *cumulative* reading has no
-//! beginning: it runs from the device's lifetime origin, so `StartTimestamp`
-//! and `StartSystime` "SHALL be omitted". The handler enforces that itself
-//! rather than trusting the hooks — see [`EnergyMeasurement::as_cumulative`].
+//! A *cumulative* reading has no beginning - it runs from the device's
+//! lifetime origin - so its start fields are omitted. The handler enforces
+//! that itself rather than trusting the hooks; see
+//! [`EnergyMeasurement::as_cumulative`].
 
 use core::pin::pin;
 
@@ -79,10 +58,9 @@ use super::measurement::{write_accuracy, MeasurementAccuracy};
 
 pub use crate::dm::clusters::decl::electrical_energy_measurement::*;
 
-/// The `ClusterRevision` this handler implements (Matter 1.6).
 const CLUSTER_REVISION: u16 = 2;
 
-/// The features this handler knows how to serve. Anything else in an
+/// Features this handler serves; anything else in an
 /// [`ElecEnergyMeasHooks::CLUSTER`] FeatureMap is rejected by
 /// [`ElecEnergyMeasHandler::validate`].
 const SUPPORTED_FEATURES: u32 = Feature::IMPORTED_ENERGY.bits()
@@ -91,10 +69,9 @@ const SUPPORTED_FEATURES: u32 = Feature::IMPORTED_ENERGY.bits()
 
 /// When a reading was taken.
 ///
-/// Both representations are optional and at least one must be present
-/// (sections 2.12.5.2.3 and 2.12.5.2.5): a device that has determined the time
-/// in UTC reports [`Timestamp::utc`], one that has not reports
-/// [`Timestamp::systime`], and a device that knows both may report both.
+/// Both representations are optional but at least one must be present: a
+/// device that has determined the time in UTC reports [`Timestamp::utc`], one
+/// that has not reports [`Timestamp::systime`], and either may report both.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Timestamp {
@@ -136,7 +113,7 @@ impl Timestamp {
     }
 }
 
-/// One `EnergyMeasurementStruct` worth of reading (section 2.12.5.2).
+/// One `EnergyMeasurementStruct` worth of reading.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EnergyMeasurement {
@@ -167,13 +144,12 @@ impl EnergyMeasurement {
         Self { energy, start, end }
     }
 
-    /// Sections 2.12.5.2.2 and 2.12.5.2.4: a cumulative reading has no
-    /// beginning, so `StartTimestamp` and `StartSystime` SHALL be omitted.
+    /// A cumulative reading has no beginning, so its start fields are
+    /// dropped.
     ///
-    /// Returns `None` when the reading cannot be encoded conformantly because
-    /// its end is unknown — sections 2.12.5.2.3 and 2.12.5.2.5 require one of
-    /// the two end fields. The attribute then reports null, which is what a
-    /// server with no reading to give is supposed to say.
+    /// `None` when the end is unknown and the reading therefore cannot be
+    /// encoded conformantly; the attribute then reports null, which is what a
+    /// server with no reading to give should say.
     fn as_cumulative(&self) -> Option<Self> {
         self.end.is_known().then_some(Self {
             energy: self.energy,
@@ -194,9 +170,9 @@ impl EnergyMeasurement {
 
 /// Messages passed to the `notify` closure of [`ElecEnergyMeasHooks::run`].
 ///
-/// Besides re-reporting the attribute, each of these emits the corresponding
-/// event — that is what makes a new reading visible to a subscriber that is
-/// watching events rather than polling.
+/// Each re-reports its attribute *and* emits the matching event, which is what
+/// makes a reading visible to a subscriber watching events rather than
+/// polling.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandMessage {
@@ -223,14 +199,12 @@ const PENDING_CUMULATIVE_IMPORTED: u8 = 1 << 0;
 const PENDING_PERIODIC_IMPORTED: u8 = 1 << 1;
 const PENDING_ALL: u8 = PENDING_CUMULATIVE_IMPORTED | PENDING_PERIODIC_IMPORTED;
 
-/// The pending-notification bit to attribute ID mapping, in ascending
-/// attribute order.
+/// Pending-notification bit to attribute ID, in ascending attribute order.
 ///
-/// `Accuracy` and `CumulativeEnergyReset` are deliberately absent. The first is
-/// a hooks const and so cannot move at all; the second changes only when the
-/// lifetime counter is zeroed, which on a real device means a factory reset -
-/// i.e. a reboot, after which a subscriber re-reads it anyway. Add a bit and a
-/// message for it if a device ever learns to zero the counter while running.
+/// `Accuracy` and `CumulativeEnergyReset` are absent: the first is a hooks
+/// const, the second changes only on a factory reset, i.e. a reboot, after
+/// which a subscriber re-reads it anyway. Add a bit if a device ever learns to
+/// zero the counter while running.
 const PENDING_ATTRS: &[(u8, AttributeId)] = &[
     (
         PENDING_CUMULATIVE_IMPORTED,
@@ -244,9 +218,9 @@ const PENDING_ATTRS: &[(u8, AttributeId)] = &[
 
 /// An import-only Electrical Energy Measurement cluster handler.
 ///
-/// The cluster is not coupled to any other cluster, so the handler needs no
-/// wiring step: construct it with [`ElecEnergyMeasHandler::new`] and chain it.
-/// Configuration validation happens on the `Startup` lifecycle operation.
+/// Not coupled to any other cluster, so it needs no wiring step: construct it
+/// with [`ElecEnergyMeasHandler::new`] and chain it. Validation happens on
+/// `Startup`.
 pub struct ElecEnergyMeasHandler<H: ElecEnergyMeasHooks> {
     dataver: Dataver,
     /// Needed to address `notify_attr_changed` and `emit_event` from
@@ -261,11 +235,6 @@ pub struct ElecEnergyMeasHandler<H: ElecEnergyMeasHooks> {
 
 impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
     /// Create a new `ElecEnergyMeasHandler` with the given hooks.
-    ///
-    /// # Arguments
-    /// - `dataver` - the cluster data version.
-    /// - `endpoint_id` - the endpoint hosting this cluster instance.
-    /// - `hooks` - the device-specific energy counters.
     pub const fn new(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {
         Self {
             dataver,
@@ -295,7 +264,7 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
         H::CLUSTER.event(event as _).is_some()
     }
 
-    /// The cumulative reading, normalised per section 2.12.5.2.
+    /// The cumulative reading, normalised.
     fn cumulative_imported(&self) -> Option<EnergyMeasurement> {
         self.hooks
             .cumulative_energy_imported()
@@ -303,7 +272,7 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
             .and_then(EnergyMeasurement::as_cumulative)
     }
 
-    /// The periodic reading, normalised per section 2.12.5.2.
+    /// The periodic reading, normalised.
     fn periodic_imported(&self) -> Option<EnergyMeasurement> {
         self.hooks
             .periodic_energy_imported()
@@ -313,8 +282,8 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
 
     /// Mark a set of readings as needing a re-report and wake [`Self::run`].
     ///
-    /// Public so that a consumer holding the handler can poke it directly,
-    /// besides the `notify` closure handed to [`ElecEnergyMeasHooks::run`].
+    /// Public so a consumer holding the handler can poke it directly, besides
+    /// the `notify` closure handed to [`ElecEnergyMeasHooks::run`].
     pub fn out_of_band_message(&self, message: OutOfBandMessage) {
         let bits = message.pending();
 
@@ -333,9 +302,9 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
 
     /// Emit one `notify_attr_changed` per pending attribute that is served.
     ///
-    /// Takes an [`AttrChangeNotifier`] rather than the [`HandlerContext`] it is
-    /// called with, so that the losslessness of the mask can be pinned down in
-    /// a unit test with a recording notifier.
+    /// Takes an [`AttrChangeNotifier`] rather than the [`HandlerContext`] it
+    /// is called with, so a unit test can pin the mask's losslessness down
+    /// with a recording notifier.
     fn notify_pending(&self, notifier: &impl AttrChangeNotifier, pending: u8) {
         for (bit, attr) in PENDING_ATTRS {
             if pending & bit != 0 && Self::serves(*attr) {
@@ -346,9 +315,8 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
 
     /// Emit the measurement events for the pending readings.
     ///
-    /// Emission is best-effort: a full event buffer must not take down the
-    /// handler's `run` task, so a failure is logged and the next reading tries
-    /// again.
+    /// Best-effort: a full event buffer must not take down the `run` task, so
+    /// a failure is logged and the next reading tries again.
     fn emit_pending(&self, ctx: impl HandlerContext, pending: u8) {
         if pending & PENDING_CUMULATIVE_IMPORTED != 0
             && Self::emits(EventId::CumulativeEnergyMeasured)
@@ -390,9 +358,8 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
     ///
     /// # Panics
     ///
-    /// Panics with a descriptive message if [`ElecEnergyMeasHooks::CLUSTER`] is
-    /// misconfigured. This is a programming error caught once at startup, not
-    /// a runtime condition, which is why it is a panic rather than an `Error`.
+    /// If [`ElecEnergyMeasHooks::CLUSTER`] is misconfigured - a programming
+    /// error caught once at startup, not a runtime condition.
     fn validate(&self) {
         if H::CLUSTER.revision != CLUSTER_REVISION {
             panic!(
@@ -412,8 +379,8 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
             );
         }
 
-        // Section 2.12.4: CUME and PERE are a choice of which at least one must
-        // be selected - without one there is no energy attribute at all.
+        // CUME and PERE are a choice of at least one - without either there
+        // is no energy attribute at all.
         if !Self::supports_any_feature(
             Feature::CUMULATIVE_ENERGY.bits() | Feature::PERIODIC_ENERGY.bits(),
         ) {
@@ -467,8 +434,7 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
             }
         }
 
-        // Section 2.12.6.1: the accuracy this cluster describes is that of its
-        // own measurement.
+        // The accuracy this cluster describes is that of its own measurement.
         if H::ACCURACY.measurement_type != MeasurementTypeEnum::ElectricalEnergy {
             panic!(
                 "ElectricalEnergyMeasurement validation: ACCURACY describes {:?}, expected ElectricalEnergy",
@@ -516,8 +482,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
 
     // Attribute accessors
 
-    /// Section 2.12.6.1: how accurately this server measures energy. Fixed at
-    /// manufacture.
+    /// How accurately this server measures energy. Fixed at manufacture.
     fn accuracy<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -526,7 +491,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
         write_accuracy(builder, &H::ACCURACY)
     }
 
-    /// Section 2.12.6.2: energy imported over the device's lifetime.
+    /// Energy imported over the device's lifetime.
     fn cumulative_energy_imported<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -538,8 +503,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
         }
     }
 
-    /// Section 2.12.6.4: energy imported during the most recent measurement
-    /// period.
+    /// Energy imported during the most recent measurement period.
     fn periodic_energy_imported<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -551,12 +515,10 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
         }
     }
 
-    /// Section 2.12.6.6: when the lifetime counters were last reset, or null
-    /// if they never have been.
+    /// When the lifetime counters were last reset, or null if never.
     ///
-    /// The exported half is always omitted: `EXPE` is rejected by
-    /// [`Self::validate`], and section 2.12.6.6's fields are each conditional
-    /// on their direction's feature.
+    /// The exported half is always omitted - each field is conditional on its
+    /// direction's feature, and `EXPE` is rejected by [`Self::validate`].
     fn cumulative_energy_reset<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -578,9 +540,8 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
 
 /// Encode one `EnergyMeasurementStruct`.
 ///
-/// `ApparentEnergy` and `ReactiveEnergy` are provisional in Matter 1.6 and
-/// their features are rejected by [`ElecEnergyMeasHandler::validate`], so they
-/// are always omitted.
+/// `ApparentEnergy` and `ReactiveEnergy` are provisional and their features
+/// rejected by [`ElecEnergyMeasHandler::validate`], so both are omitted.
 fn write_energy<P>(
     builder: EnergyMeasurementStructBuilder<P>,
     reading: &EnergyMeasurement,
@@ -601,67 +562,48 @@ where
 
 /// Device-specific hooks for the Electrical Energy Measurement cluster.
 pub trait ElecEnergyMeasHooks {
-    /// The cluster metadata, which selects the features, attributes and events
-    /// this instance serves. See [`ElecEnergyMeasHandler::validate`] for what a
-    /// serveable configuration has to look like.
+    /// The features, attributes and events this instance serves. See
+    /// [`ElecEnergyMeasHandler::validate`] for what a serveable configuration
+    /// is.
     const CLUSTER: Cluster<'static>;
 
-    /// The `Accuracy` attribute (section 2.12.6.1). Its `measurement_type` must
-    /// be [`MeasurementTypeEnum::ElectricalEnergy`].
-    ///
-    /// A const because metering accuracy is a property of the hardware.
+    /// The `Accuracy` attribute; its `measurement_type` must be
+    /// [`MeasurementTypeEnum::ElectricalEnergy`]. A const because metering
+    /// accuracy is a property of the hardware.
     const ACCURACY: MeasurementAccuracy;
 
-    /// `CumulativeEnergyImported` (section 2.12.6.2): energy imported over the
-    /// device's lifetime, or `None` when no reading is available.
+    /// Energy imported over the device's lifetime, or `None` when there is no
+    /// reading. Must survive a reboot, and only called under `CUME`.
     ///
-    /// This value SHALL survive a reboot for a device that claims a lifetime
-    /// total. Only called when the `CUME` feature is enabled; the default is
-    /// for devices that report periodic energy only.
-    ///
-    /// The `start` of the returned measurement is ignored — the handler drops
-    /// it, as section 2.12.5.2.2 requires.
+    /// The measurement's `start` is ignored - a cumulative reading has none.
     fn cumulative_energy_imported(&self) -> Option<EnergyMeasurement> {
         None
     }
 
-    /// `PeriodicEnergyImported` (section 2.12.6.4): energy imported during the
-    /// most recent measurement period. The server chooses the period, and
-    /// consecutive periods may overlap (section 2.12.4.4).
+    /// Energy imported during the most recent measurement period. The server
+    /// chooses the period, and consecutive periods may overlap.
     fn periodic_energy_imported(&self) -> Option<EnergyMeasurement> {
         None
     }
 
-    /// `CumulativeEnergyReset` (section 2.12.6.6): when
-    /// [`Self::cumulative_energy_imported`] was last set back to zero, or
-    /// `None` if it never has been.
-    ///
-    /// Only meaningful for a device that can be reset at all - a factory reset
-    /// is the usual occasion - which is why it is optional and defaults to
-    /// null. A device with no wall clock answers with
-    /// [`Timestamp::systime`], as everywhere else in this cluster.
+    /// When [`Self::cumulative_energy_imported`] was last zeroed, or `None`
+    /// if it never has been - usually a factory reset, which is why this is
+    /// optional. A device with no wall clock answers [`Timestamp::systime`].
     fn cumulative_energy_reset(&self) -> Option<Timestamp> {
         None
     }
 
-    /// Background task for out-of-band notifications to the handler.
+    /// Background task for out-of-band notifications: update the counter,
+    /// then call `notify` to re-report the attribute and emit its event.
     ///
-    /// This is where a device publishes a new reading: update the counter, then
-    /// call `notify` so the handler re-reports the attribute and emits the
-    /// matching measurement event.
-    ///
-    /// Note the direction. The example and the itest driver in this repository
-    /// poll their simulated element on a timer, because there is nothing else
-    /// a simulation can do, but that is not the shape to copy: a metering chip
-    /// signals when its accumulator has moved, and this future should await
-    /// *that*.
-    ///
-    /// This future MUST NOT return. Implementers should either loop forever or
-    /// await `core::future::pending::<()>()`, so the SDK's task does not
-    /// observe a completed future.
+    /// Note the direction. The example and itest driver poll a simulated
+    /// element on a timer because a simulation has nothing else to do, but
+    /// that is not the shape to copy - a metering chip signals when its
+    /// accumulator moves, and this future should await *that*.
     ///
     /// # Panics
-    /// The SDK will panic if this method returns.
+    /// This future must not return; the SDK panics if it does. Loop forever,
+    /// or await `core::future::pending::<()>()`.
     async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
         core::future::pending::<()>().await
     }
@@ -689,11 +631,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    //! Tests for the two things this handler decides on its own: the
-    //! section 2.12.5.2 timestamp rules, and whether a cluster configuration is
-    //! serveable at all.
-    //!
-    //! Both are context-free, so they need no live `Matter` instance.
+    //! The two things this handler decides on its own: the timestamp rules,
+    //! and whether a cluster configuration is serveable at all. Both are
+    //! context-free, so neither needs a live `Matter`.
 
     use embassy_futures::block_on;
 
@@ -767,10 +707,10 @@ mod tests {
         ElecEnergyMeasHandler::new(Dataver::new(1), 1, hooks)
     }
 
-    // --- Section 2.12.5.2: what a reading may and may not carry ---
+    // --- What a reading may and may not carry ---
 
-    /// Sections 2.12.5.2.2 and 2.12.5.2.4: a cumulative reading runs from the
-    /// device's lifetime origin, so it has no start.
+    /// A cumulative reading runs from the device's lifetime origin, so it has
+    /// no start.
     #[test]
     fn a_cumulative_reading_drops_the_period_start() {
         let reading = EnergyMeasurement::periodic(
@@ -796,8 +736,7 @@ mod tests {
         assert_eq!(reading.as_cumulative(), None);
     }
 
-    /// A device with no wall clock reports uptime alone - which is exactly
-    /// what section 2.12.5.2.5 asks of it.
+    /// A device with no wall clock reports uptime alone, which is conformant.
     #[test]
     fn a_systime_only_reading_is_encodable() {
         let reading = EnergyMeasurement::cumulative(42, Timestamp::systime(5_000));

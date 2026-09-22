@@ -15,59 +15,31 @@
  *    limitations under the License.
  */
 
-//! Implementation of the Matter Electrical Power Measurement cluster
-//! (`0x0090`), Matter 1.6 Application Cluster spec section 2.13,
-//! `ClusterRevision` 3.
+//! Matter Electrical Power Measurement cluster (`0x0090`), cluster
+//! revision 3.
 //!
-//! The cluster reports what the equipment on this endpoint is drawing *right
-//! now*. Its sibling [`super::elec_energy_meas`] reports what it has drawn over
-//! time; both hang off the Electrical Sensor device type
+//! Reports what the equipment on this endpoint is drawing *right now*; its
+//! sibling [`super::elec_energy_meas`] reports what it has drawn over time.
+//! Both hang off the Electrical Sensor device type
 //! ([`crate::dm::devices::DEV_TYPE_ELECTRICAL_SENSOR`]) alongside
 //! [`super::power_topology`].
 //!
-//! The device supplies the readings through [`ElecPwrMeasHooks`]; the handler
-//! owns the cluster metadata, the accuracy encoding and the re-reporting of
-//! readings that change behind the cluster's back.
-//!
-//! Attributes served (section 2.13.6):
-//!
-//! | ID       | Name                       | Conformance |
-//! | -------- | -------------------------- | ----------- |
-//! | `0x0000` | `PowerMode`                | M           |
-//! | `0x0001` | `NumberOfMeasurementTypes` | M           |
-//! | `0x0002` | `Accuracy`                 | M           |
-//! | `0x0004` | `Voltage`                  | O           |
-//! | `0x0005` | `ActiveCurrent`            | O           |
-//! | `0x0006` | `ReactiveCurrent`          | `[ALTC]`    |
-//! | `0x0007` | `ApparentCurrent`          | `[ALTC]`    |
-//! | `0x0008` | `ActivePower`              | M           |
-//! | `0x0009` | `ReactivePower`            | `[ALTC]`    |
-//! | `0x000A` | `ApparentPower`            | `[ALTC]`    |
-//! | `0x000B` | `RMSVoltage`               | `[ALTC]`    |
-//! | `0x000C` | `RMSCurrent`               | `[ALTC]`    |
-//! | `0x000D` | `RMSPower`                 | `[ALTC]`    |
-//! | `0x000E` | `Frequency`                | `[ALTC]`    |
-//! | `0x0011` | `PowerFactor`              | `[ALTC]`    |
+//! The device supplies readings through [`ElecPwrMeasHooks`]; the handler owns
+//! the metadata, the accuracy encoding and the re-reporting.
 //!
 //! Every reading but `ActivePower` is optional, and each one served needs its
-//! own entry in [`ElecPwrMeasHooks::ACCURACY`] - section 2.13.6.3's list is
-//! what tells a client which quantities the meter actually measures.
+//! own entry in [`ElecPwrMeasHooks::ACCURACY`] - that list is what tells a
+//! client which quantities the meter actually measures.
+//! `NumberOfMeasurementTypes` is its length rather than a free-standing
+//! number, so the two cannot drift apart.
 //!
-//! `NumberOfMeasurementTypes` is not a free-standing number: it is the length
-//! of the `Accuracy` list, so both come from [`ElecPwrMeasHooks::ACCURACY`] and
-//! cannot drift apart.
+//! One of `DC` and `AC` must be selected and `PowerMode` has to agree, both
+//! enforced by [`ElecPwrMeasHandler::validate`].
 //!
-//! The cluster has no commands. Its single event, `MeasurementPeriodRanges`, is
-//! mandatory only given the optional `Ranges` attribute, which this handler
-//! does not serve.
-//!
-//! Unsupported features, all of them optional in the spec:
-//! - `POLY` (polyphase power), `HARM` (harmonics) and `PWRQ` (power quality).
-//!   Each makes further attributes mandatory — `NeutralCurrent`,
-//!   `HarmonicCurrents`, `HarmonicPhases` — that this handler does not serve.
-//!
-//! One of `DC` and `AC` must be selected, and `PowerMode` has to agree with the
-//! choice; [`ElecPwrMeasHandler::validate`] enforces both.
+//! There are no commands. The single event, `MeasurementPeriodRanges`, is
+//! mandatory only given the optional `Ranges` attribute, which is not served -
+//! nor are `POLY`, `HARM` and `PWRQ`, each of which makes further attributes
+//! mandatory.
 
 use core::pin::pin;
 
@@ -90,10 +62,9 @@ use super::measurement::{write_accuracy, MeasurementAccuracy};
 
 pub use crate::dm::clusters::decl::electrical_power_measurement::*;
 
-/// The `ClusterRevision` this handler implements (Matter 1.6).
 const CLUSTER_REVISION: u16 = 3;
 
-/// The features this handler knows how to serve. Anything else in an
+/// Features this handler serves; anything else in an
 /// [`ElecPwrMeasHooks::CLUSTER`] FeatureMap is rejected by
 /// [`ElecPwrMeasHandler::validate`].
 const SUPPORTED_FEATURES: u32 =
@@ -101,9 +72,8 @@ const SUPPORTED_FEATURES: u32 =
 
 /// Messages passed to the `notify` closure of [`ElecPwrMeasHooks::run`].
 ///
-/// Every attribute this cluster serves is a live reading, so all of them arrive
-/// out of band — there is no write path that could notify on the device's
-/// behalf.
+/// Every attribute here is a live reading, so all of them arrive out of band -
+/// there is no write path that could notify on the device's behalf.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandMessage {
@@ -115,14 +85,12 @@ pub enum OutOfBandMessage {
     ActiveCurrent,
     /// [`ElecPwrMeasHooks::frequency`] changed.
     ///
-    /// Its own message because the supply frequency moves independently of the
-    /// load: a device metering a resistive element reports a new frequency
-    /// without any of the other readings having budged.
+    /// Its own message: supply frequency moves independently of the load.
     Frequency,
     /// [`ElecPwrMeasHooks::power_factor`] changed.
     ///
-    /// Likewise independent: the phase relationship is a property of the load,
-    /// not of how much of it is switched in.
+    /// Likewise independent: phase is a property of the load, not of how much
+    /// of it is switched in.
     PowerFactor,
     /// Any or all of the readings changed — the usual message for a device
     /// whose readings all come from one sampling tick.
@@ -194,31 +162,26 @@ const PENDING_ATTRS: &[(u16, AttributeId)] = &[
 
 /// An Electrical Power Measurement cluster handler.
 ///
-/// The cluster is not coupled to any other cluster, so the handler needs no
-/// wiring step: construct it with [`ElecPwrMeasHandler::new`] and chain it.
-/// Configuration validation happens on the `Startup` lifecycle operation.
+/// Not coupled to any other cluster, so it needs no wiring step: construct it
+/// with [`ElecPwrMeasHandler::new`] and chain it. Validation happens on
+/// `Startup`.
 pub struct ElecPwrMeasHandler<H: ElecPwrMeasHooks> {
     dataver: Dataver,
     /// Needed to address `notify_attr_changed` from [`Self::run`], which has
     /// only a [`HandlerContext`] and hence no notion of a "current" endpoint.
     endpoint_id: EndptId,
     hooks: H,
-    /// Bitmask of attributes awaiting a subscription re-report, fed by
+    /// Bitmask of attributes awaiting a re-report, fed by
     /// [`Self::out_of_band_message`] and drained by [`Self::run`].
     ///
     /// As in [`super::thermostat`], a mask rather than a `Signal` payload: a
-    /// `Signal` is a single slot that *replaces* on signal, so two readings
-    /// landing back to back would lose the first.
+    /// `Signal` replaces on signal, so two readings landing back to back would
+    /// lose the first.
     pending: Signal<u16>,
 }
 
 impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
     /// Create a new `ElecPwrMeasHandler` with the given hooks.
-    ///
-    /// # Arguments
-    /// - `dataver` - the cluster data version.
-    /// - `endpoint_id` - the endpoint hosting this cluster instance.
-    /// - `hooks` - the device-specific measurement source.
     pub const fn new(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {
         Self {
             dataver,
@@ -245,8 +208,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
 
     /// Mark a set of attributes as needing a re-report and wake [`Self::run`].
     ///
-    /// Public so that a consumer holding the handler can poke it directly,
-    /// besides the `notify` closure handed to [`ElecPwrMeasHooks::run`].
+    /// Public so a consumer holding the handler can poke it directly, besides
+    /// the `notify` closure handed to [`ElecPwrMeasHooks::run`].
     pub fn out_of_band_message(&self, message: OutOfBandMessage) {
         let bits = message.pending();
 
@@ -265,9 +228,9 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
 
     /// Emit one `notify_attr_changed` per pending attribute that is served.
     ///
-    /// Takes an [`AttrChangeNotifier`] rather than the [`HandlerContext`] it is
-    /// called with, so that the losslessness of the mask can be pinned down in
-    /// a unit test with a recording notifier.
+    /// Takes an [`AttrChangeNotifier`] rather than the [`HandlerContext`] it
+    /// is called with, so a unit test can pin the mask's losslessness down
+    /// with a recording notifier.
     fn notify_pending(&self, notifier: &impl AttrChangeNotifier, pending: u16) {
         for (bit, attr) in PENDING_ATTRS {
             if pending & bit != 0 && Self::serves(*attr) {
@@ -280,9 +243,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
     ///
     /// # Panics
     ///
-    /// Panics with a descriptive message if [`ElecPwrMeasHooks::CLUSTER`] is
-    /// misconfigured. This is a programming error caught once at startup, not
-    /// a runtime condition, which is why it is a panic rather than an `Error`.
+    /// If [`ElecPwrMeasHooks::CLUSTER`] is misconfigured - a programming error
+    /// caught once at startup, not a runtime condition.
     fn validate(&self) {
         if H::CLUSTER.revision != CLUSTER_REVISION {
             panic!(
@@ -291,8 +253,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
             );
         }
 
-        // Section 2.13.5: DC and AC are a choice of which at least one must be
-        // selected. There is no meaningful reading without one.
+        // DC and AC are a choice of at least one; there is no meaningful
+        // reading without one.
         if !Self::supports_any_feature(SUPPORTED_FEATURES) {
             panic!("ElectricalPowerMeasurement validation: one of the DC or AC features must be enabled");
         }
@@ -304,8 +266,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
             );
         }
 
-        // Section 2.13.6.1: `PowerMode` describes the supply the readings are
-        // taken from, so it has to agree with the feature selection.
+        // `PowerMode` describes the supply the readings are taken from, so it
+        // has to agree with the feature selection.
         let expected = if Self::supports_any_feature(Feature::ALTERNATING_CURRENT.bits()) {
             PowerModeEnum::AC
         } else {
@@ -333,8 +295,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
             }
         }
 
-        // Section 2.13.6: nine of the optional readings are `[ALTC]` - they
-        // describe an alternating supply and mean nothing on a DC one.
+        // Nine of the optional readings are `[ALTC]`: they describe an
+        // alternating supply and mean nothing on a DC one.
         if !Self::supports_any_feature(Feature::ALTERNATING_CURRENT.bits()) {
             for attr in [
                 AttributeId::ReactiveCurrent,
@@ -356,10 +318,9 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
             }
         }
 
-        // Section 2.13.7.1: the cluster's single event is mandatory given the
-        // optional `Ranges` attribute, which this handler does not serve. An
-        // event in the served set would therefore be advertised in `EventList`
-        // and never emitted.
+        // The single event is mandatory given the optional `Ranges`
+        // attribute, which this handler does not serve, so an event in the
+        // served set would be advertised in `EventList` and never emitted.
         if H::CLUSTER.events().next().is_some() {
             panic!("ElectricalPowerMeasurement validation: no event can be served without the Ranges attribute - pass `.with_events(with!())`");
         }
@@ -380,8 +341,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
             accuracy.validate("ElectricalPowerMeasurement");
         }
 
-        // Section 2.13.6.3: the `Accuracy` list describes the measurement types
-        // the server supports, so every served reading needs an entry.
+        // The `Accuracy` list describes the measurement types the server
+        // supports, so every served reading needs an entry.
         for (attr, measurement_type) in [
             (AttributeId::Voltage, MeasurementTypeEnum::Voltage),
             (
@@ -458,19 +419,19 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
 
     // Attribute accessors
 
-    /// Section 2.13.6.1: the kind of supply the readings describe. Fixed at
-    /// manufacture, and checked against the feature map by [`Self::validate`].
+    /// The kind of supply the readings describe. Fixed at manufacture, and
+    /// checked against the feature map by [`Self::validate`].
     fn power_mode(&self, _ctx: impl ReadContext) -> Result<PowerModeEnum, Error> {
         Ok(H::POWER_MODE)
     }
 
-    /// Section 2.13.6.2: the number of measurement types the server supports,
-    /// which is the length of the `Accuracy` list.
+    /// The number of measurement types supported: the `Accuracy` list's
+    /// length.
     fn number_of_measurement_types(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(H::ACCURACY.len() as u8)
     }
 
-    /// Section 2.13.6.3: how accurately each supported quantity is measured.
+    /// How accurately each supported quantity is measured.
     fn accuracy<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -549,108 +510,95 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
 
 /// Device-specific hooks for the Electrical Power Measurement cluster.
 ///
-/// Every reading is nullable: a device that cannot currently measure a quantity
-/// reports null rather than a stale or invented number (section 2.13.6).
+/// Every reading is optional: a device that cannot currently measure a
+/// quantity answers `None` rather than a stale or invented number.
 pub trait ElecPwrMeasHooks {
-    /// The cluster metadata, which selects the features and attributes this
-    /// instance serves. See [`ElecPwrMeasHandler::validate`] for what a
-    /// serveable configuration has to look like.
+    /// The features and attributes this instance serves. See
+    /// [`ElecPwrMeasHandler::validate`] for what a serveable configuration
+    /// is.
     const CLUSTER: Cluster<'static>;
 
-    /// `PowerMode` (section 2.13.6.1). A const because the supply a device is
+    /// `PowerMode`. A const because the supply a device is
     /// wired to does not change; it must agree with the `DC`/`AC` feature.
     const POWER_MODE: PowerModeEnum;
 
-    /// The `Accuracy` list (section 2.13.6.3), one entry per measurement type
-    /// served. Its length is reported as `NumberOfMeasurementTypes`.
-    ///
-    /// A const because metering accuracy is a property of the hardware.
+    /// The `Accuracy` list, one entry per measurement type served; its length
+    /// is reported as `NumberOfMeasurementTypes`. A const because metering
+    /// accuracy is a property of the hardware.
     const ACCURACY: &'static [MeasurementAccuracy];
 
-    /// `ActivePower` in milliwatts (section 2.13.6.9), or null when the reading
-    /// is unavailable.
+    /// `ActivePower` in milliwatts, or `None` when unavailable.
     fn active_power(&self) -> Option<PowerMilliW>;
 
-    /// `Voltage` in millivolts (section 2.13.6.5).
-    ///
-    /// Only called when the attribute is served; the default is for devices
-    /// that omit it.
+    /// `Voltage` in millivolts. Only called when the attribute is served; the
+    /// defaults throughout suit a device that omits it.
     fn voltage(&self) -> Option<VoltageMilliV> {
         None
     }
 
-    /// `ActiveCurrent` in milliamps (section 2.13.6.6).
+    /// `ActiveCurrent` in milliamps.
     fn active_current(&self) -> Option<AmperageMilliA> {
         None
     }
 
-    /// `ReactiveCurrent` in milliamps (section 2.13.6.7). `[ALTC]`.
+    /// `ReactiveCurrent` in milliamps. `[ALTC]`.
     fn reactive_current(&self) -> Option<AmperageMilliA> {
         None
     }
 
-    /// `ApparentCurrent` in milliamps (section 2.13.6.8). `[ALTC]`.
+    /// `ApparentCurrent` in milliamps. `[ALTC]`.
     fn apparent_current(&self) -> Option<AmperageMilliA> {
         None
     }
 
-    /// `ReactivePower` in millivolt-amperes reactive (section 2.13.6.10).
-    /// `[ALTC]`.
+    /// `ReactivePower` in millivolt-amperes reactive. `[ALTC]`.
     fn reactive_power(&self) -> Option<PowerMilliVAR> {
         None
     }
 
-    /// `ApparentPower` in millivolt-amperes (section 2.13.6.11). `[ALTC]`.
+    /// `ApparentPower` in millivolt-amperes. `[ALTC]`.
     fn apparent_power(&self) -> Option<PowerMilliVA> {
         None
     }
 
-    /// `RMSVoltage` in millivolts (section 2.13.6.12). `[ALTC]`.
+    /// `RMSVoltage` in millivolts. `[ALTC]`.
     fn rms_voltage(&self) -> Option<VoltageMilliV> {
         None
     }
 
-    /// `RMSCurrent` in milliamps (section 2.13.6.13). `[ALTC]`.
+    /// `RMSCurrent` in milliamps. `[ALTC]`.
     fn rms_current(&self) -> Option<AmperageMilliA> {
         None
     }
 
-    /// `RMSPower` in milliwatts (section 2.13.6.14). `[ALTC]`.
+    /// `RMSPower` in milliwatts. `[ALTC]`.
     fn rms_power(&self) -> Option<PowerMilliW> {
         None
     }
 
-    /// `Frequency` in millihertz (section 2.13.6.15), constrained to
-    /// `0..=1000000`. `[ALTC]`.
+    /// `Frequency` in millihertz, constrained to `0..=1000000`. `[ALTC]`.
     fn frequency(&self) -> Option<i64> {
         None
     }
 
-    /// `PowerFactor` in hundredths of a percent (section 2.13.6.18),
-    /// constrained to `-10000..=10000`. `[ALTC]`.
+    /// `PowerFactor` in hundredths of a percent, constrained to
+    /// `-10000..=10000`. `[ALTC]`.
     fn power_factor(&self) -> Option<i64> {
         None
     }
 
-    /// Background task for out-of-band notifications to the handler.
+    /// Background task for out-of-band notifications: sample the hardware,
+    /// then call `notify` to re-report the changed attributes.
     ///
-    /// This is where a device pushes new readings: sample the hardware, then
-    /// call `notify` so the handler re-reports the changed attributes to any
-    /// subscriber.
-    ///
-    /// Note the direction. The example and the itest driver in this repository
-    /// poll their simulated element on a timer, because there is nothing else
-    /// a simulation can do, but that is not the shape to copy: an ADC or a
-    /// metering chip raises an interrupt or fills a FIFO, and this future
-    /// should await *that* and call `notify` when it fires. Polling a real
-    /// meter faster than it samples only burns power.
-    ///
-    /// This future MUST NOT return. Implementers should either loop forever or
-    /// await `core::future::pending::<()>()`, so the SDK's task does not
-    /// observe a completed future.
+    /// Note the direction. The example and itest driver poll a simulated
+    /// element on a timer because a simulation has nothing else to do, but
+    /// that is not the shape to copy - an ADC or metering chip raises an
+    /// interrupt or fills a FIFO, and this future should await *that*. Polling
+    /// a real meter faster than it samples only burns power.
     ///
     /// # Panics
-    /// The SDK will panic if this method returns.
+    /// This future must not return; the SDK panics if it does. Loop forever,
+    /// or await `core::future::pending::<()>()`.
     async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
         core::future::pending::<()>().await
     }
@@ -746,8 +694,8 @@ mod tests {
         MeasurementAccuracy::new(MeasurementTypeEnum::ActivePower, 0, 1_000, RANGE),
     ];
 
-    /// Describes every reading `FullAcHooks` serves - section 2.13.6.3 wants
-    /// an `Accuracy` entry per served measurement type, and `validate` says so.
+    /// Describes every reading `FullAcHooks` serves - `validate` wants an
+    /// `Accuracy` entry per served measurement type.
     const ALL_ACCURACY: &[MeasurementAccuracy] = &[
         MeasurementAccuracy::new(MeasurementTypeEnum::Voltage, 0, 1_000, RANGE),
         MeasurementAccuracy::new(MeasurementTypeEnum::ActiveCurrent, 0, 1_000, RANGE),
@@ -1045,8 +993,8 @@ mod tests {
         handler(MockHooks::<POLY>).validate();
     }
 
-    /// Section 2.13.6: nine of the optional readings describe an alternating
-    /// supply, and a DC meter has no business advertising them.
+    /// Nine of the optional readings describe an alternating supply, and a DC
+    /// meter has no business advertising them.
     #[test]
     #[should_panic(expected = "is served without the AC feature")]
     fn validate_rejects_an_ac_only_reading_on_a_dc_meter() {

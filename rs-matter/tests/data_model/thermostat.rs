@@ -70,7 +70,7 @@ struct TestSetpointRaiseLowerReq {
     amount: i8,
 }
 
-/// TLV mirror of the `SetpointChange` event payload (section 4.3.13.4).
+/// TLV mirror of the `SetpointChange` event payload.
 ///
 /// Written by hand rather than derived because the `Occupancy` field at tag 1
 /// is `[OCC]`, which this device does not implement, so the tags are 0, 2, 3.
@@ -195,8 +195,8 @@ fn expect_read(
     );
 }
 
-/// Section 4.3.11.12: an in-range write lands, and an out-of-range one comes
-/// back as `CONSTRAINT_ERROR` rather than being clamped.
+/// An in-range write lands; an out-of-range one comes back as
+/// `CONSTRAINT_ERROR` rather than being clamped.
 #[test]
 fn test_occupied_heating_setpoint_write() {
     let (runner, logic) = thermostat();
@@ -227,9 +227,8 @@ fn test_occupied_heating_setpoint_write() {
     expect_read(&runner, &dm, AttributeId::OccupiedHeatingSetpoint, &2200i16);
 }
 
-/// Section 4.3.11.15/16: a limit write that conflicts with the setpoint drags
-/// the setpoint along, while one that conflicts with another *limit* is a
-/// `CONSTRAINT_ERROR`.
+/// A limit write that conflicts with the setpoint drags it along; one that
+/// conflicts with another *limit* is a `CONSTRAINT_ERROR`.
 #[test]
 fn test_setpoint_limit_writes() {
     let (runner, logic) = thermostat();
@@ -262,9 +261,8 @@ fn test_setpoint_limit_writes() {
     );
 }
 
-/// Section 4.3.11.22: `SystemMode` "SHALL be limited by the
-/// ControlSequenceOfOperation attribute", which for a heating-only thermostat
-/// leaves `Off` and `Heat`.
+/// `SystemMode` is limited by `ControlSequenceOfOperation`, which for a
+/// heating-only thermostat leaves `Off` and `Heat`.
 #[test]
 fn test_system_mode_write_is_limited_by_the_control_sequence() {
     let (runner, logic) = thermostat();
@@ -295,10 +293,8 @@ fn test_system_mode_write_is_limited_by_the_control_sequence() {
     expect_read(&runner, &dm, AttributeId::SystemMode, &SystemModeEnum::Heat);
 }
 
-/// Section 4.3.11.21: "the server SHALL silently ignore the write and the
-/// value of this attribute SHALL remain unchanged". Silently means `SUCCESS`,
-/// not `UNSUPPORTED_WRITE` - which is exactly the kind of distinction that is
-/// only visible on the wire.
+/// A write is silently ignored, and silently means `SUCCESS` rather than
+/// `UNSUPPORTED_WRITE` - a distinction only visible on the wire.
 #[test]
 fn test_control_sequence_of_operation_write_is_silently_ignored() {
     let (runner, logic) = thermostat();
@@ -320,9 +316,8 @@ fn test_control_sequence_of_operation_write_is_silently_ignored() {
     );
 }
 
-/// Section 4.3.12.1: the command clamps where an attribute write would error,
-/// and refuses a `Mode` the server has no setpoint for with
-/// `INVALID_COMMAND`.
+/// The command clamps where an attribute write would error, and refuses a
+/// `Mode` it has no setpoint for with `INVALID_COMMAND`.
 #[test]
 fn test_setpoint_raise_lower() {
     let (runner, logic) = thermostat();
@@ -362,7 +357,7 @@ fn test_setpoint_raise_lower() {
     );
     expect_read(&runner, &dm, AttributeId::OccupiedHeatingSetpoint, &1850i16);
 
-    // Section 4.3.12.1.1.2: no COOL feature, so `Cool` is INVALID_COMMAND.
+    // No COOL feature, so `Cool` is INVALID_COMMAND.
     invoke(
         TestSetpointRaiseLowerReq {
             mode: SetpointRaiseLowerModeEnum::Cool,
@@ -372,8 +367,7 @@ fn test_setpoint_raise_lower() {
     );
     expect_read(&runner, &dm, AttributeId::OccupiedHeatingSetpoint, &1850i16);
 
-    // Section 4.3.12.1.3: "the value is clamped to those limits. This is not
-    // considered an error condition."
+    // Out of range clamps rather than failing.
     invoke(
         TestSetpointRaiseLowerReq {
             mode: SetpointRaiseLowerModeEnum::Heat,
@@ -384,10 +378,9 @@ fn test_setpoint_raise_lower() {
     expect_read(&runner, &dm, AttributeId::OccupiedHeatingSetpoint, &3000i16);
 }
 
-/// Section 4.3.13.4: a setpoint write produces a `SetpointChange` naming the
-/// value before and after, and section 4.3.13.4.1 fixes the `SystemMode` field
-/// to `Heat` because it was a *heating* setpoint that moved - not because of
-/// what the `SystemMode` attribute says.
+/// A setpoint write produces a `SetpointChange` naming the value before and
+/// after, with `SystemMode` = `Heat` because a *heating* setpoint moved - not
+/// because of what the `SystemMode` attribute says.
 #[test]
 fn test_setpoint_change_event() {
     let (runner, logic) = thermostat();
@@ -421,8 +414,8 @@ fn test_setpoint_change_event() {
     );
 }
 
-/// Section 4.3.11.30-32: a change that arrived over Matter is `External`, and
-/// carries the delta and the timestamp the device's clock offered.
+/// A change that arrived over Matter is `External`, and carries the delta and
+/// the timestamp the device's clock offered.
 #[test]
 fn test_setpoint_change_source_attributes_report_an_external_write() {
     let (runner, logic) = thermostat();
