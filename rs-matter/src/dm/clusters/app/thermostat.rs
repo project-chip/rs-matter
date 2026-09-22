@@ -14,138 +14,31 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-//! Implementation of the Matter Thermostat cluster (`0x0201`), Matter 1.6
-//! Application Cluster spec section 4.3, `ClusterRevision` 11.
+//! Matter Thermostat cluster (`0x0201`), cluster revision 11.
 //!
-//! The FeatureMap this handler accepts is any combination of `HEAT`, `COOL`
-//! and `AUTO` (optionally plus `LTNE`), which covers the heating-only,
-//! cooling-only and full heat/cool/auto thermostats. See [`ThermostatHooks`]
-//! for the device-specific logic the consumer supplies.
+//! Serves any combination of `HEAT`, `COOL` and `AUTO`, optionally with
+//! `LTNE`; the device supplies its own logic and persistence through
+//! [`ThermostatHooks`].
 //!
-//! Key features:
-//! - Provides hooks for device-specific logic and persistence via the
-//!   [`ThermostatHooks`] trait.
-//! - Validates the cluster configuration and feature selection at startup.
-//! - Enforces the setpoint-limit constraint chain of spec section 4.3.6 across
-//!   every mutation path, including the asymmetry the spec requires: the
-//!   `SetpointRaiseLower` command clamps silently, while an attribute write
-//!   out of range is a `CONSTRAINT_ERROR`.
-//! - With `AUTO`, maintains the `MinSetpointDeadBand` between the heating and
-//!   cooling halves of that chain, adjusting the opposite setpoint rather than
-//!   rejecting the write where section 4.3.11 says to.
+//! Each temperature's four setpoint limits are individually optional, but the
+//! clamping and `CONSTRAINT_ERROR` rules are expressed in terms of them, so
+//! [`ThermostatHandler::validate`] demands all four or none.
 //!
-//! Attributes served (section 4.3.11):
+//! Not implemented: `OCC` and the unoccupied setpoints; `MSCH`, `PRES` and
+//! `TSUGGEST`, which need time synchronization and bring
+//! `AtomicRequest`/`AtomicResponse` with them; `SB`, deprecated in revision
+//! 10. The legacy weekly-schedule commands survive in the IDL we generate
+//! from, but the data model dropped the feature, so they are not served.
 //!
-//! | ID       | Name                         | Conformance    |
-//! | -------- | ---------------------------- | -------------- |
-//! | `0x0000` | `LocalTemperature`           | M              |
-//! | `0x0003` | `AbsMinHeatSetpointLimit`    | `[HEAT]`       |
-//! | `0x0004` | `AbsMaxHeatSetpointLimit`    | `[HEAT]`       |
-//! | `0x0005` | `AbsMinCoolSetpointLimit`    | `[COOL]`       |
-//! | `0x0006` | `AbsMaxCoolSetpointLimit`    | `[COOL]`       |
-//! | `0x0011` | `OccupiedCoolingSetpoint`    | `COOL`         |
-//! | `0x0012` | `OccupiedHeatingSetpoint`    | `HEAT`         |
-//! | `0x0015` | `MinHeatSetpointLimit`       | `[HEAT]`       |
-//! | `0x0016` | `MaxHeatSetpointLimit`       | `[HEAT]`       |
-//! | `0x0017` | `MinCoolSetpointLimit`       | `[COOL]`       |
-//! | `0x0018` | `MaxCoolSetpointLimit`       | `[COOL]`       |
-//! | `0x0019` | `MinSetpointDeadBand`        | `AUTO`         |
-//! | `0x001B` | `ControlSequenceOfOperation` | M              |
-//! | `0x001C` | `SystemMode`                 | M              |
-//! | `0x001E` | `ThermostatRunningMode`      | `[AUTO]`       |
-//! | `0x0029` | `ThermostatRunningState`     | O              |
-//! | `0x0030` | `SetpointChangeSource`       | O              |
-//! | `0x0031` | `SetpointChangeAmount`       | O              |
-//! | `0x0032` | `SetpointChangeSourceTimestamp` | O           |
+//! # Events
 //!
-//! The `Min`/`Max` setpoint limits are optional, but the `CONSTRAINT_ERROR`
-//! and clamping rules are written in terms of them, so each temperature's four
-//! limits are either all served or all omitted — see
-//! [`ThermostatHandler::validate`].
-//!
-//! `ThermostatRunningState` is the one place where the device's own control
-//! algorithm becomes visible over Matter, which is why it is answered by
-//! [`ThermostatHooks::running_state`] rather than derived by the handler.
-//! `ThermostatRunningMode`, in contrast, *is* derived — it is the same relay
-//! state narrowed to the "is it heating or cooling right now" question that
-//! `SystemMode = Auto` leaves open. Both are optional; omit them from the
-//! served set and the hook is never called.
-//!
-//! The last three (section 4.3.11.30-32) say *how* the setpoint last moved.
-//! They are the only spec-sanctioned way to tell a change the user made on the
-//! device itself from one that arrived over Matter: this handler records
-//! `Manual` for anything the device did behind the cluster's back and
-//! `External` for an attribute write or `SetpointRaiseLower`. `Schedule` is
-//! unreachable here - its conformance is `[MSCH]`, a feature this handler
-//! rejects. `SetpointChangeSourceTimestamp` needs a clock, and takes the
-//! node's own Last-Known-Good UTC time by default; a device with a better one
-//! overrides [`ThermostatHooks::utc_now_secs`].
-//!
-//! The only command served is `SetpointRaiseLower` (`0x00`), the sole
-//! unconditionally mandatory one (section 4.3.12.1).
-//!
-//! # Events (section 4.3.13)
-//!
-//! All of them are gated on the `TEVT` feature, and **every one is
-//! `provisional` in Matter 1.6 and still in 1.7**. Nothing in this crate turns
-//! `TEVT` on by default; a consumer that sets the bit is opting into an
-//! element set that must not ship on a certified product. The certification
-//! device-under-test in `tests/src/bin` deliberately leaves it off.
-//!
-//! With `TEVT` the applicable events are *mandatory*, not optional - each is
-//! `mandatoryConform{TEVT & ...}` - so the handler serves the whole set its
-//! state can support, and [`ThermostatHandler::validate`] rejects a partial
-//! one:
-//!
-//! | ID       | Name                     | Conformance      |
-//! | -------- | ------------------------ | ---------------- |
-//! | `0x00`   | `SystemModeChange`       | `TEVT`           |
-//! | `0x01`   | `LocalTemperatureChange` | `TEVT & !LTNE`   |
-//! | `0x03`   | `SetpointChange`         | `TEVT`           |
-//! | `0x04`   | `RunningStateChange`     | `TEVT`           |
-//! | `0x05`   | `RunningModeChange`      | `TEVT & AUTO`    |
-//!
-//! `OccupancyChange` (`0x02`), `ActiveScheduleChange` (`0x06`) and
-//! `ActivePresetChange` (`0x07`) need `OCC`, `MSCH` and `PRES`, which this
-//! handler does not implement, so they can never be served.
-//!
-//! Two rules are worth singling out:
-//!
-//! - `SetpointChange` is *source-agnostic*. Section 4.3.13.4 fires it whenever
-//!   any setpoint attribute changes, whoever changed it, and its `SystemMode`
-//!   field names **which setpoint moved** rather than the `SystemMode`
-//!   attribute (section 4.3.13.4.1) - a heating-only device reports `Heat`
-//!   even while it sits in `Off`. To tell a local change from a remote one, a
-//!   controller reads `SetpointChangeSource` alongside.
-//! - `LocalTemperatureChange` is rate-limited to once every 60 seconds
-//!   (section 4.3.13.2) and only fires on a "significant" change - a null
-//!   transition, or a movement of at least
-//!   [`ThermostatHooks::LOCAL_TEMPERATURE_EVENT_DELTA`].
-//!
-//! Events are emitted from the handler's `run` task, which diffs a shadow of
-//! the last reported state against the device. A consumer serving them must
-//! give its `InteractionModelState` a non-zero events buffer; with `NoEvents`
-//! every emission fails and is only logged.
-//!
-//! Unsupported features, all of them optional in the spec:
-//! - `OCC` (occupancy) and therefore the unoccupied setpoints.
-//! - `MSCH` (schedules), `PRES` (presets) and `TSUGGEST` (thermostat
-//!   suggestions), along with their commands and the global
-//!   `AtomicRequest`/`AtomicResponse` pair — atomic writes are only needed for
-//!   the `Presets`/`Schedules` attributes. These features additionally require
-//!   the device to support time synchronization.
-//! - `SB` (setback), deprecated in cluster revision 10.
-//!
-//! The legacy weekly-schedule feature was removed from the Matter 1.6 data
-//! model altogether; its commands (`0x01`..=`0x03`) survive in the IDL we
-//! generate from, but they are not served.
-//!
-//! There is no Scenes Management integration, and none is possible: section
-//! 1.4.7.5.5 says "a Scene Table Extension SHALL only use attributes with the
-//! Scene quality", and in the 1.6 data model no Thermostat attribute carries
-//! it — `OnOff`, `LevelControl` and `ColorControl` are the only clusters that
-//! do. The Thermostat scene extension of the older ZCL specifications did not
-//! survive into Matter.
+//! All are gated on `TEVT`, which is **provisional**: setting the bit opts
+//! into an element set that must not ship on a certified product, and nothing
+//! here turns it on. Under `TEVT` the applicable events are mandatory, so
+//! `validate` rejects a partial set. They are emitted from [`ThermostatHandler::run`],
+//! which diffs a shadow of the last reported state, and a consumer serving
+//! them needs a non-zero events buffer in its `InteractionModelState` -
+//! `NoEvents` fails every emission with nothing but a log line.
 
 use core::future::{ready, Future};
 use core::pin::pin;
@@ -166,36 +59,26 @@ use crate::utils::sync::Signal;
 
 pub use crate::dm::clusters::decl::thermostat::*;
 
-/// The `ClusterRevision` this handler implements (Matter 1.6).
 const CLUSTER_REVISION: u16 = 11;
 
-/// The features this handler knows how to serve. Anything else in a
+/// Features this handler serves; anything else in a
 /// [`ThermostatHooks::CLUSTER`] FeatureMap is rejected by
-/// [`ThermostatHandler::validate`].
-/// `EVENTS` is provisional in Matter 1.6 (and still in 1.7): a consumer that
-/// sets the bit is opting into an element set that must not ship on a
-/// certified product. Nothing in this crate enables it by default.
+/// [`ThermostatHandler::validate`]. `EVENTS` is provisional - see the module
+/// docs.
 const SUPPORTED_FEATURES: u32 = Feature::HEATING.bits()
     | Feature::COOLING.bits()
     | Feature::AUTO_MODE.bits()
     | Feature::LOCAL_TEMPERATURE_NOT_EXPOSED.bits()
     | Feature::EVENTS.bits();
 
-/// Section 4.3.13.2: "LocalTemperatureChange events SHALL NOT be generated
-/// more often than once every 60 seconds."
 const LOCAL_TEMPERATURE_EVENT_MIN_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Section 4.3.5: `MinSetpointDeadBand` is a `SignedTemperature`, in units of
-/// 0.1°C, while every setpoint is a `temperature`, in units of 0.01°C. "Where
-/// calculations or comparisons are performed, attribute values SHALL be
-/// converted to a common type."
+/// `MinSetpointDeadBand` is in 0.1°C, the setpoints in 0.01°C.
 const DEAD_BAND_SCALE: i16 = 10;
 
-/// Messages passed to the `notify` closure of [`ThermostatHooks::run`].
-///
-/// They tell the handler that the device changed an attribute behind the
-/// cluster's back — a new sensor reading, a turn of a knob on the device's own
-/// front panel — so that the handler can re-report it to any subscriber.
+/// Messages passed to the `notify` closure of [`ThermostatHooks::run`]: the
+/// device changed an attribute behind the cluster's back, so the handler has
+/// to re-report it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandMessage {
@@ -211,8 +94,8 @@ pub enum OutOfBandMessage {
     SetpointLimits,
     /// [`ThermostatHooks::running_state`] changed.
     ///
-    /// Only needed for a relay that moves on its own - one the handler drives
-    /// through [`ThermostatHooks::apply`] is re-reported by the handler itself.
+    /// Only for a relay that moves on its own; one the handler drives through
+    /// [`ThermostatHooks::apply`] it re-reports itself.
     RunningState,
     /// Any or all of the above changed.
     Update,
@@ -250,15 +133,10 @@ const PENDING_RUNNING_STATE: u16 = 1 << 8;
 
 /// "Sweep the shadow for events", rung by [`ThermostatHandler::apply`].
 ///
-/// Deliberately absent from both [`PENDING_ATTRS`] and [`PENDING_ALL`]: it
-/// re-reports nothing. Every event this handler serves is defined as "attribute
-/// X changed" (section 4.3.13), so the drain can decide all of them by diffing
-/// the shadow against the hooks - it needs a wake-up, not a bit per event.
-///
-/// The out-of-band path already wakes `run`. What the in-band paths lacked is
-/// exactly this: they re-report synchronously, from the context that carried
-/// the write, and so never touched the mask at all. `apply` is the one place
-/// they all pass through.
+/// Absent from [`PENDING_ATTRS`] and [`PENDING_ALL`]: it re-reports nothing.
+/// Every event is "attribute X changed", so the drain needs a wake-up, not a
+/// bit per event. The in-band paths re-report synchronously and never touch
+/// the mask; `apply` is the one place they all pass through.
 const PENDING_EVENT_SWEEP: u16 = 1 << 9;
 
 const PENDING_ALL: u16 = PENDING_LOCAL_TEMPERATURE
@@ -271,8 +149,7 @@ const PENDING_ALL: u16 = PENDING_LOCAL_TEMPERATURE
     | PENDING_MAX_COOL_LIMIT
     | PENDING_RUNNING_STATE;
 
-/// The pending-notification bit to attribute ID mapping, in ascending
-/// attribute order.
+/// Pending-notification bit to attribute ID, in ascending attribute order.
 ///
 /// `ThermostatRunningMode` shares the relay's bit: it is a narrowing of the
 /// same state, so the two never move independently.
@@ -297,48 +174,35 @@ const PENDING_ATTRS: &[(u16, AttributeId)] = &[
 
 /// A Thermostat cluster handler.
 ///
-/// The Thermostat cluster is not coupled to any other cluster, so the handler
-/// needs no wiring step: construct it with [`ThermostatHandler::new`] and chain
-/// it. Configuration validation and the repair of persisted state both happen
-/// on the `Startup` lifecycle operation.
+/// Not coupled to any other cluster, so it needs no wiring step: construct it
+/// with [`ThermostatHandler::new`] and chain it. Configuration validation and
+/// the repair of persisted state happen on `Startup`.
 pub struct ThermostatHandler<H: ThermostatHooks> {
     dataver: Dataver,
     /// Needed to address `notify_attr_changed` from [`Self::run`], which has
     /// only a [`HandlerContext`] and hence no notion of a "current" endpoint.
     endpoint_id: EndptId,
     hooks: H,
-    /// Bitmask of attributes awaiting a subscription re-report, fed by
+    /// Bitmask of attributes awaiting a re-report, fed by
     /// [`Self::out_of_band_message`] and drained by [`Self::run`].
     ///
-    /// A `Signal<Option<OutOfBandMessage>>` would be the more obvious choice,
-    /// but it is a single slot that *replaces* on signal: two out-of-band
-    /// changes landing back to back would lose the first. Accumulating into a
-    /// mask instead makes the path lossless.
-    ///
-    /// Carries [`PENDING_EVENT_SWEEP`] besides the attribute bits.
+    /// A mask rather than a `Signal` payload: a `Signal` is a single slot that
+    /// *replaces* on signal, so two changes landing back to back would lose
+    /// the first. Also carries [`PENDING_EVENT_SWEEP`].
     pending: Signal<u16>,
     /// What the last sweep left behind - see [`EventState`].
-    /// When `LocalTemperatureChange` was last emitted, for the 60-second floor
-    /// of section 4.3.13.2.
-    ///
-    /// `None` rather than a zero `Instant` so that the very first change is
-    /// not swallowed for a minute after boot - an embassy `Instant` counts
-    /// from boot, so zero is a *real* timestamp, not a sentinel.
     event_state: Mutex<RefCell<EventState>>,
-    /// Section 4.3.11.30-32: how the setpoint last moved. Bookkeeping about
-    /// the *path* a change took, which only the handler knows, so unlike the
-    /// rest of the cluster's state it does not live in the hooks.
+    /// How the setpoint last moved: bookkeeping about the *path* a change
+    /// took, which only the handler knows, so unlike the rest of the state it
+    /// does not live in the hooks.
     setpoint_change: SetpointChangeRecord,
 }
 
-/// The node's Last-Known-Good UTC time in Matter-epoch seconds, or `None`
-/// while nothing has set it.
+/// The node's Last-Known-Good UTC time in Matter-epoch seconds.
 ///
-/// Section 4.3.11.32 wants `SetpointChangeSourceTimestamp` "in UTC", and the
-/// node already tracks exactly that. Reading it here rather than asking the
-/// consumer to hand it back through [`ThermostatHooks::utc_now_secs`] keeps a
-/// device that has no clock of its own from having to hold a `&Matter` purely
-/// to answer a question the handler could answer itself.
+/// Reading it here rather than back through [`ThermostatHooks::utc_now_secs`]
+/// keeps a device with no clock of its own from holding a `&Matter` purely to
+/// answer this.
 fn node_utc_now_secs(ctx: &impl HandlerContext) -> Option<u32> {
     ctx.matter()
         .with_state(|state| state.rtc.utc_time().reliable_secs())
@@ -353,7 +217,7 @@ async fn wait_until(deadline: Option<Instant>) {
     }
 }
 
-/// The "significant change" half of section 4.3.13.2, without the rate limit.
+/// The "significant change" test, without the rate limit.
 fn local_temperature_change_significant(
     previous: Option<i16>,
     current: Option<i16>,
@@ -369,16 +233,8 @@ fn local_temperature_change_significant(
 
 /// Whether a `LocalTemperature` movement is worth a `LocalTemperatureChange`.
 ///
-/// Section 4.3.13.2: "This event SHALL be generated when the LocalTemperature
-/// attribute changes significantly. Significant changes are: Changes from null
-/// to not null, or from not null to null. Changes from one not-null value to
-/// another not-null value that are sufficiently large, as determined by the
-/// server." Then, as a separate and unconditional sentence:
-/// "LocalTemperatureChange events SHALL NOT be generated more often than once
-/// every 60 seconds."
-///
-/// So a null transition escapes the threshold but *not* the rate limit. A free
-/// function taking `now` so that both halves are testable without a clock.
+/// A null transition escapes the significance threshold but not the 60-second
+/// rate limit. Takes `now` so both halves are testable without a clock.
 fn local_temperature_event_due(
     previous: Option<i16>,
     current: Option<i16>,
@@ -400,9 +256,8 @@ fn local_temperature_event_due(
 
 /// Everything the five served events report, in one `Copy` value.
 ///
-/// `local_temperature` is an `Option<i16>` rather than a [`Nullable`] because
-/// `Nullable` has a `Drop` impl and so is not `Copy` - it cannot live in a
-/// [`Cell`]. It is converted at the boundary.
+/// `local_temperature` is an `Option<i16>`, not a [`Nullable`]: `Nullable` has
+/// a `Drop` impl, so it is not `Copy` and cannot live in a [`Cell`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Snapshot {
     local_temperature: Option<i16>,
@@ -415,10 +270,9 @@ struct Snapshot {
 
 /// A change a sweep decided to report, as plain values.
 ///
-/// Separating the decision from the TLV keeps every rule of section 4.3.13
-/// unit-testable: [`ThermostatHandler::take_events`] needs neither a context
-/// nor an emitter, and [`ThermostatHandler::emit_pending`] is then nothing but
-/// serialisation.
+/// Separating the decision from the TLV keeps the rules unit-testable:
+/// [`ThermostatHandler::take_events`] needs neither a context nor an emitter,
+/// leaving [`ThermostatHandler::emit_pending`] nothing but serialisation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum ThermostatEvent {
@@ -430,9 +284,9 @@ enum ThermostatEvent {
         current: Option<i16>,
     },
     Setpoint {
-        /// Section 4.3.13.4.1: which setpoint moved, *not* the `SystemMode`
-        /// attribute - a heating-only thermostat reports `Heat` here even
-        /// while its mode is `Off`.
+        /// Which setpoint moved, *not* the `SystemMode` attribute - a
+        /// heating-only thermostat reports `Heat` even while its mode is
+        /// `Off`.
         system_mode: SystemModeEnum,
         previous: Option<i16>,
         current: i16,
@@ -449,61 +303,58 @@ enum ThermostatEvent {
 
 /// What the event sweep has to remember between runs.
 ///
-/// Both fields are read, diffed and committed by [`ThermostatHandler::take_events`],
-/// so they share one lock: a sweep can never act on half of a newer one.
+/// Both fields are read, diffed and committed together by
+/// [`ThermostatHandler::take_events`], so they share one lock: a sweep can
+/// never act on half of a newer one.
 struct EventState {
-    /// Everything an event reports, as of the last sweep, so that the
-    /// `Previous*` fields of section 4.3.13 have something to name.
-    ///
-    /// The pending mask says only *that* something moved; by the time `run`
-    /// drains it, the old value is gone from the hooks. `None` means "not
-    /// seeded yet" - the first sweep seeds and emits nothing.
+    /// Everything an event reports as of the last sweep, so the `Previous*`
+    /// fields have something to name: the pending mask says only *that*
+    /// something moved, and by the time `run` drains it the old value is gone
+    /// from the hooks. `None` means "not seeded yet" - the first sweep seeds
+    /// and emits nothing.
     shadow: Option<Snapshot>,
     /// When `LocalTemperatureChange` was last emitted.
+    ///
+    /// `None` rather than a zero `Instant`: an embassy `Instant` counts from
+    /// boot, so zero is a real timestamp and would swallow the first change
+    /// for a minute.
     last_local_temperature: Option<Instant>,
 }
 
-/// Section 4.3.11.30-32, as a unit: the three attributes move together.
+/// The three `SetpointChange*` attributes as a unit: they move together.
 ///
-/// Its fields live behind one `Mutex<RefCell<_>>`, the way `on_off` keeps its
-/// cluster state: with the `sync-mutex` feature the handler is then `Sync`,
-/// and without it the mutex is a `NoopRawMutex` and costs nothing.
+/// One `Mutex<RefCell<_>>`, the way `on_off` keeps its cluster state: with
+/// `sync-mutex` the handler is `Sync`, and without it the mutex is a
+/// `NoopRawMutex` and costs nothing.
 struct SetpointChangeRecord(Mutex<RefCell<SetpointChangeState>>);
 
 /// The state behind a [`SetpointChangeRecord`].
 ///
-/// Named `...State` rather than `SetpointChange`, which is the generated
-/// event struct of section 4.3.13.4.
+/// Named `...State` because `SetpointChange` is the generated event struct.
 #[derive(Clone, Copy)]
 struct SetpointChangeState {
-    /// Section 4.3.11.30. The XML default is 0, i.e. `Manual`.
+    /// Defaults to `Manual`.
     source: SetpointChangeSourceEnum,
-    /// Section 4.3.11.31, in 0.01°C. `None` reads back as null - "the previous
-    /// setpoint was unknown".
+    /// In 0.01°C. `None` reads back as null - the previous setpoint is
+    /// unknown.
     amount: Option<i16>,
-    /// Section 4.3.11.32, in Matter-epoch seconds. Zero means "nothing
-    /// recorded since boot, or no reliable clock" - `epoch-s` is not nullable,
-    /// so there is no spec-blessed way to say "unknown".
+    /// In Matter-epoch seconds. Zero means "nothing recorded since boot, or
+    /// no reliable clock" - `epoch-s` is not nullable, so there is no way to
+    /// say "unknown".
     timestamp: u32,
     /// The `(heating, cooling)` pair as last *attributed* to a source.
     ///
     /// Distinct from [`Snapshot`], which only advances when an event is
-    /// emitted. The invariant is one sentence: an in-band change attributes
-    /// itself as it happens, so anything the sweep still finds unattributed
-    /// came from the device itself and is therefore `Manual`.
+    /// emitted. An in-band change attributes itself as it happens, so anything
+    /// the sweep still finds unattributed came from the device: `Manual`.
     attributed: Option<(i16, i16)>,
-    /// The node's UTC time as of the operation currently in flight.
+    /// The node's UTC time as of the operation in flight, filled in by
+    /// [`ThermostatHandler::arm_clock`].
     ///
-    /// Every mutation path below takes an [`AttrChangeNotifier`] rather than
-    /// the context that carried the request, so that each rule of section
-    /// 4.3.6 stays unit-testable without a live `Matter` - which also leaves
-    /// none of them able to read a clock. [`ThermostatHandler::arm_clock`]
-    /// fills this in at the one boundary that does hold a [`HandlerContext`],
-    /// which keeps that property and spares the consumer from wiring the
-    /// node's RTC back into its hooks by hand.
-    ///
-    /// Consumed rather than read, so a stamp armed by a write can never be
-    /// mistaken for the time of a later change the device made on its own.
+    /// The mutation paths take an [`AttrChangeNotifier`] rather than a
+    /// context, to stay unit-testable, which also leaves them unable to read a
+    /// clock. Consumed rather than read, so a stamp armed by a write cannot be
+    /// mistaken for a later change the device made on its own.
     armed: Option<u32>,
 }
 
@@ -519,7 +370,7 @@ impl SetpointChangeRecord {
     }
 
     /// The record as it stands. All five fields are `Copy`, so one read
-    /// serves the three attributes of section 4.3.11.30-32 and the sweep.
+    /// serves the three attributes and the sweep.
     fn get(&self) -> SetpointChangeState {
         self.0.lock(|state| *state.borrow())
     }
@@ -537,14 +388,10 @@ impl SetpointChangeRecord {
 
     /// Record a setpoint movement of `amount` from `source`, as of `now`.
     ///
-    /// `now` is whatever [`ThermostatHooks::utc_now_secs`] answered; a device
-    /// with a better clock than the node's therefore wins. Failing that the
-    /// stamp armed from the request's context is used. The armed slot is taken
-    /// either way, so it can never go stale.
-    ///
-    /// With no clock at all this stores zero rather than leaving the previous
-    /// stamp in place: a stale timestamp against a fresh amount is an active
-    /// lie, while zero is conventionally "unknown".
+    /// `now` is [`ThermostatHooks::utc_now_secs`] if answered, else the armed
+    /// stamp; the armed slot is taken either way, so it cannot go stale. With
+    /// no clock this stores zero rather than leaving a stale stamp against a
+    /// fresh amount.
     fn record(&self, source: SetpointChangeSourceEnum, amount: i16, now: Option<u32>) {
         self.0.lock(|state| {
             let mut state = state.borrow_mut();
@@ -560,11 +407,6 @@ impl SetpointChangeRecord {
 
 impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// Create a new `ThermostatHandler` with the given hooks.
-    ///
-    /// # Arguments
-    /// - `dataver` - the cluster data version.
-    /// - `endpoint_id` - the endpoint hosting this cluster instance.
-    /// - `hooks` - the device-specific thermostat logic and persistence.
     pub const fn new(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {
         Self {
             dataver,
@@ -584,7 +426,6 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         HandlerAsyncAdaptor(self)
     }
 
-    /// Whether the configured FeatureMap contains all of `features`.
     fn supports_feature(features: u32) -> bool {
         H::CLUSTER.feature_map & features != 0
     }
@@ -600,7 +441,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// Whether this thermostat supports `SystemMode = Auto`, and with it the
-    /// deadband half of section 4.3.6.
+    /// deadband rules.
     fn auto() -> bool {
         Self::supports_feature(Feature::AUTO_MODE.bits())
     }
@@ -610,8 +451,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         H::CLUSTER.attribute(attr as _).is_some()
     }
 
-    /// Whether the user-configurable heating limits are served. They are
-    /// either all present or all absent - [`Self::validate`] enforces that.
+    /// Whether the user-configurable heating limits are served. All four or
+    /// none - [`Self::validate`] enforces that.
     fn has_heat_limits() -> bool {
         Self::serves(AttributeId::MinHeatSetpointLimit)
     }
@@ -621,9 +462,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Self::serves(AttributeId::MinCoolSetpointLimit)
     }
 
-    /// `MinSetpointDeadBand` converted to the setpoints' own units, or zero
-    /// when the cluster has no deadband at all. Section 4.3.6: the deadband
-    /// clauses apply "if, and only if, the AUTO feature is supported".
+    /// `MinSetpointDeadBand` in the setpoints' own units, or zero without
+    /// `AUTO` - the deadband rules apply only under that feature.
     fn dead_band() -> i16 {
         if Self::auto() {
             H::MIN_SETPOINT_DEAD_BAND as i16 * DEAD_BAND_SCALE
@@ -632,8 +472,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    /// The effective lower bound on the heating setpoint: the user-configurable
-    /// limit when served, else the manufacturer's absolute limit.
+    /// The effective lower bound on the heating setpoint: the
+    /// user-configurable limit when served, else the absolute one.
     fn min_heat_setpoint(&self) -> i16 {
         if Self::has_heat_limits() {
             self.hooks.min_heat_setpoint_limit()
@@ -671,8 +511,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Clamp a candidate heating setpoint into the effective limits.
     ///
-    /// Takes an `i32` because the `SetpointRaiseLower` arithmetic can overflow
-    /// `i16` before it is clamped.
+    /// Takes an `i32`: the `SetpointRaiseLower` arithmetic can overflow `i16`
+    /// before it is clamped.
     fn clamp_heat_setpoint(&self, value: i32) -> i16 {
         value.clamp(
             self.min_heat_setpoint() as i32,
@@ -688,11 +528,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         ) as i16
     }
 
-    /// Section 4.3.10.16: which `SystemMode` values the configured
-    /// `ControlSequenceOfOperation` leaves possible. With `HeatingOnly` /
-    /// `HeatingWithReheat` "cool and precooling are not possible"; with
-    /// `CoolingOnly` / `CoolingWithReheat` "heat and emergency are not
-    /// possible".
+    /// Which `SystemMode` values the configured `ControlSequenceOfOperation`
+    /// leaves possible: the heating sequences rule out cool and precooling,
+    /// the cooling ones rule out heat and emergency heat.
     fn sequence_heats() -> bool {
         matches!(
             H::CONTROL_SEQUENCE_OF_OPERATION,
@@ -716,11 +554,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Whether `mode` is a `SystemMode` this thermostat can be put into.
     ///
-    /// Section 4.3.11.22: "Its value SHALL be limited by the
-    /// ControlSequenceOfOperation attribute." Of the values that survive that
-    /// limit, `Precooling`, `EmergencyHeat`, `FanOnly`, `Dry` and `Sleep` need
-    /// equipment - second-stage emergency heat, a fan, a dehumidifier - that
-    /// this handler knows nothing about, so they are refused too.
+    /// Limited by `ControlSequenceOfOperation`, and then further: of the
+    /// values that survive, `Precooling`, `EmergencyHeat`, `FanOnly`, `Dry`
+    /// and `Sleep` need equipment this handler knows nothing about.
     fn is_supported_system_mode(mode: SystemModeEnum) -> bool {
         match mode {
             SystemModeEnum::Off => true,
@@ -731,13 +567,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    /// The relays a thermostat in this configuration can have.
-    ///
-    /// Section 4.3.11.29: "Unimplemented outputs SHALL be treated as if they
-    /// were Off", and a server whose `ControlSequenceOfOperation` rules
-    /// cooling out has no cooling relay to report on, whatever
-    /// [`ThermostatHooks::running_state`] says. A fan is always possible: a
-    /// forced-air furnace has one.
+    /// The relays a thermostat in this configuration can have; unimplemented
+    /// outputs report Off whatever [`ThermostatHooks::running_state`] says. A
+    /// fan is always possible - a forced-air furnace has one.
     fn relay_mask() -> RelayStateBitmap {
         let mut mask =
             RelayStateBitmap::FAN | RelayStateBitmap::FAN_STAGE_2 | RelayStateBitmap::FAN_STAGE_3;
@@ -753,19 +585,17 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         mask
     }
 
-    /// `ThermostatRunningState` (section 4.3.11.29), as this handler reports
-    /// it - see [`Self::relay_mask`].
+    /// `ThermostatRunningState` as this handler reports it - see
+    /// [`Self::relay_mask`].
     fn running_state(&self) -> RelayStateBitmap {
         self.hooks.running_state().intersection(Self::relay_mask())
     }
 
-    /// `ThermostatRunningMode` (section 4.3.11.23): "the same values as
-    /// SystemModeEnum but can only be Off, Cool or Heat [...] intended to
-    /// provide additional information when the thermostat's system mode is in
-    /// auto mode."
+    /// `ThermostatRunningMode`: which of heating or cooling the equipment is
+    /// doing, the question `SystemMode = Auto` leaves open.
     ///
-    /// Derived from the relay state rather than hooked separately: which of
-    /// the two the equipment is doing right now *is* which relay is closed.
+    /// Derived from the relay state rather than hooked separately - the answer
+    /// *is* which relay is closed.
     fn running_mode(&self) -> ThermostatRunningModeEnum {
         let state = self.running_state();
 
@@ -781,10 +611,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// Push the current control state onto the device, re-reporting
     /// `ThermostatRunningState` if the relay moved as a result.
     ///
-    /// This is the only path by which the handler itself can change heat or
-    /// cool demand, so it is the only one that has to watch for it; a relay
-    /// that moves on the device's own account reports through
-    /// [`OutOfBandMessage::RunningState`] instead.
+    /// The only path by which the handler itself can change demand, so the
+    /// only one that has to watch for it; a relay moving on the device's own
+    /// account reports through [`OutOfBandMessage::RunningState`].
     fn apply(&self, notifier: &impl AttrChangeNotifier) {
         let before = self.running_state();
 
@@ -811,16 +640,11 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    /// Stash the node's clock for the operation about to run.
-    ///
-    /// Called from each [`ClusterAsyncHandler`] method that can move a
-    /// setpoint, and from the sweep in [`Self::run`] - the boundaries that
-    /// hold a [`HandlerContext`]. Everything below them takes only an
-    /// [`AttrChangeNotifier`], by design; see `SetpointChangeRecord::armed`.
+    /// Stash the node's clock for the operation about to run - see
+    /// `SetpointChangeState::armed`.
     ///
     /// Skipped when `SetpointChangeSourceTimestamp` is not served, so a device
-    /// that does not report the stamp never pays for the state lock
-    /// [`crate::Matter::with_state`] takes.
+    /// that does not report the stamp never pays for the state lock.
     fn arm_clock(&self, ctx: &impl HandlerContext) {
         if Self::serves(AttributeId::SetpointChangeSourceTimestamp) {
             self.setpoint_change.arm(node_utc_now_secs(ctx));
@@ -829,8 +653,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Mark a set of attributes as needing a re-report and wake [`Self::run`].
     ///
-    /// Public so that a consumer holding the handler can poke it directly,
-    /// besides the `notify` closure handed to [`ThermostatHooks::run`].
+    /// Public so a consumer holding the handler can poke it directly, besides
+    /// the `notify` closure handed to [`ThermostatHooks::run`].
     pub fn out_of_band_message(&self, message: OutOfBandMessage) {
         // An out-of-band change has nothing but the doorbell, so it asks for
         // the event sweep too - nobody else will.
@@ -854,9 +678,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Emit one `notify_attr_changed` per pending attribute.
     ///
-    /// Takes an [`AttrChangeNotifier`] rather than the [`HandlerContext`] it is
-    /// called with, so that the losslessness of the mask can be pinned down in
-    /// a unit test with a counting notifier.
+    /// Takes an [`AttrChangeNotifier`] rather than the [`HandlerContext`] it
+    /// is called with, so a unit test can pin the mask's losslessness down
+    /// with a counting notifier.
     fn notify_pending(&self, notifier: &impl AttrChangeNotifier, pending: u16) {
         for (bit, attr) in PENDING_ATTRS {
             if pending & bit != 0 {
@@ -873,7 +697,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    // Events (section 4.3.13)
+    // Events
 
     /// Whether the given event is part of the served set.
     fn emits(event: EventId) -> bool {
@@ -882,19 +706,16 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Whether this configuration serves any event at all.
     ///
-    /// The whole sweep is skipped when it does not, so an event-free
-    /// deployment - which is every one that has not opted into the provisional
-    /// `TEVT` feature - pays nothing for this machinery.
+    /// The whole sweep is skipped when it does not, so a deployment that has
+    /// not opted into `TEVT` pays nothing for this machinery.
     fn emits_any() -> bool {
         H::CLUSTER.events().next().is_some()
     }
 
-    /// `LocalTemperature` as the attribute reports it (section 4.3.11.2).
+    /// `LocalTemperature` as the attribute reports it.
     ///
-    /// Shared with the accessor so that `LocalTemperatureChange` can never
-    /// disagree with the attribute it mirrors: section 4.3.13.2 says the event
-    /// carries "the current value of the LocalTemperature attribute", and
-    /// under `LTNE` that value is always null.
+    /// Shared with the accessor so `LocalTemperatureChange` can never disagree
+    /// with the attribute it mirrors - under `LTNE` both are always null.
     fn reported_local_temperature(&self) -> Option<i16> {
         if Self::supports_feature(Feature::LOCAL_TEMPERATURE_NOT_EXPOSED.bits()) {
             None
@@ -915,15 +736,12 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    /// Prime the shadow so that the first sweep has something to diff against.
+    /// Prime the shadow so the first sweep has something to diff against.
     ///
-    /// Called from the top of [`Self::run`] rather than from
-    /// `lifecycle(Startup)`: `Startup` is not delivered in every embedding
-    /// (the in-crate end-to-end runner does not), while `run` always is, and
-    /// is polled before any exchange can arrive.
-    ///
-    /// Without this the first sweep would report all five events at once, with
-    /// every `Previous*` omitted - noise that says nothing happened.
+    /// From the top of [`Self::run`], not `lifecycle(Startup)`: `Startup` is
+    /// not delivered in every embedding (the in-crate e2e runner does not),
+    /// while `run` always is, and is polled before any exchange arrives.
+    /// Without it the first sweep would report all five events at once.
     fn seed_events(&self) {
         let snapshot = self.snapshot();
 
@@ -934,14 +752,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Diff the shadow against the device and decide what to report.
     ///
-    /// Takes no context and no emitter, so every rule in section 4.3.13 can be
-    /// pinned down by a unit test. `now` is a parameter rather than an
-    /// `Instant::now()` so that the 60-second floor is testable too.
-    ///
-    /// Commits as it goes: a field advances only when an event for it is
-    /// produced. That is load-bearing for `LocalTemperature` - advancing the
-    /// shadow on a suppressed change would let a slow drift in sub-threshold
-    /// steps climb forever without ever reporting.
+    /// Takes no context or emitter and `now` is a parameter, so every rule is
+    /// unit-testable. Commits as it goes: a field advances only when an event
+    /// for it is produced, or a slow sub-threshold drift would climb forever
+    /// unreported.
     fn take_events(&self, now: Instant) -> heapless::Vec<ThermostatEvent, 6> {
         let mut events = heapless::Vec::new();
 
@@ -1062,19 +876,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Attribute a setpoint movement that arrived over Matter.
     ///
-    /// Called from [`Self::store_heating_setpoint`] and its cooling twin, at
-    /// the point where the previous value is still in hand. Section 4.3.11.30:
-    /// `External` is "Externally-initiated setpoint change (e.g., DRLC cluster
-    /// command, attribute write)".
-    ///
-    /// Only the setpoint the client actually addressed is attributed. The
-    /// deadband may drag the *opposite* setpoint along (section 4.3.11.12),
-    /// but that is a side effect, not the change the client made, and
-    /// `SetpointChangeAmount` is singular - "the delta between the current
-    /// active OccupiedCoolingSetpoint or OccupiedHeatingSetpoint and the
-    /// previous active setpoint". It still produces its own `SetpointChange`
-    /// event, which is right: section 4.3.13.4 fires on *any* of the four
-    /// setpoint attributes changing.
+    /// Only the setpoint the client addressed: the deadband may drag the
+    /// opposite one along, but that is a side effect, and
+    /// `SetpointChangeAmount` is singular. It still gets its own
+    /// `SetpointChange`, which fires on any setpoint changing.
     fn attribute_external_change(&self, notifier: &impl AttrChangeNotifier, amount: i16) {
         self.setpoint_change.record(
             SetpointChangeSourceEnum::External,
@@ -1087,19 +892,18 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Claim the current setpoint pair as attributed.
     ///
-    /// Called at the *end* of each `store_*`, once the deadband has had its
-    /// say: claiming earlier would leave the setpoint the deadband dragged
-    /// along looking unattributed, and the sweep would call it `Manual`.
+    /// At the *end* of each `store_*`, once the deadband has had its say:
+    /// claiming earlier would leave the setpoint it dragged along looking
+    /// unattributed, and the sweep would call it `Manual`.
     fn claim_setpoints(&self) {
         self.setpoint_change.attribute(self.served_setpoints());
     }
 
-    /// The `(heating, cooling)` pair, with the half this configuration does
-    /// not serve pinned to zero.
+    /// The `(heating, cooling)` pair, with the unserved half pinned to zero.
     ///
-    /// The hook behind an unserved setpoint returns whatever its default is,
-    /// which is not a setpoint anybody can change - letting it into the
-    /// comparison would attribute a phantom change to the front panel.
+    /// An unserved hook returns its default, which nobody can change - letting
+    /// it into the comparison would attribute a phantom change to the front
+    /// panel.
     fn served_setpoints(&self) -> (i16, i16) {
         let heating = if Self::heats() {
             self.hooks.occupied_heating_setpoint()
@@ -1116,13 +920,12 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         (heating, cooling)
     }
 
-    /// When a `LocalTemperatureChange` that the 60-second floor deferred
-    /// becomes due, if one is waiting.
+    /// When a `LocalTemperatureChange` the 60-second floor deferred becomes
+    /// due, if one is waiting.
     ///
-    /// Without this the deferred event would simply be dropped: the sweep only
-    /// runs when something rings the doorbell, and a temperature that moves
-    /// once and then settles rings it no more. The shadow does not advance on
-    /// a suppressed change, so the event is still owed.
+    /// Without this the deferred event would be dropped: the sweep runs only
+    /// when something rings the doorbell, and a temperature that moves once
+    /// and then settles rings it no more.
     fn deferred_local_temperature_deadline(&self) -> Option<Instant> {
         if !Self::emits(EventId::LocalTemperatureChange) {
             return None;
@@ -1152,12 +955,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Attribute any setpoint movement the in-band paths did not claim.
     ///
-    /// [`Self::store_heating_setpoint`] and its cooling twin record `External`
-    /// as they happen, so whatever is left over came from the device itself -
-    /// the knob on the front panel - and is `Manual` (section 4.3.11.30).
-    ///
-    /// `Schedule` is unreachable here: its conformance is `[MSCH]`, and
-    /// [`Self::validate`] rejects that feature.
+    /// They record `External` as they happen, so whatever is left came from
+    /// the device itself - the knob on the front panel - and is `Manual`.
+    /// `Schedule` is unreachable: it needs `MSCH`, which
+    /// [`Self::validate`] rejects.
     fn attribute_local_setpoint_change(&self, notifier: &impl AttrChangeNotifier) {
         let current = self.served_setpoints();
 
@@ -1170,8 +971,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             return;
         }
 
-        // Whichever moved; if both did, the heating one is reported, matching
-        // the singular "the current active ... setpoint" of section 4.3.11.31.
+        // Whichever moved; if both did, the heating one, since
+        // `SetpointChangeAmount` is singular.
         let amount = if current.0 != attributed.0 {
             current.0.saturating_sub(attributed.0)
         } else {
@@ -1188,7 +989,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         self.notify_source_attrs(notifier);
     }
 
-    /// Re-report whichever of the three section 4.3.11.30-32 attributes are
+    /// Re-report whichever of the three `SetpointChange*` attributes are
     /// served.
     fn notify_source_attrs(&self, notifier: &impl AttrChangeNotifier) {
         self.notify(notifier, AttributeId::SetpointChangeSource);
@@ -1198,14 +999,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
     /// Serialise the swept events onto the wire.
     ///
-    /// Takes a bare [`EventEmitter`] rather than the [`HandlerContext`] it is
-    /// called with, so that nothing but the TLV writing needs a live `Matter`.
-    ///
-    /// Emission is best-effort: a full event buffer must not take down the
-    /// handler's `run` task, so a failure is logged and the next change tries
-    /// again. The shadow has already advanced, so that one event's
-    /// `Previous*` is lost - the same trade the other measurement handlers
-    /// make.
+    /// Takes a bare [`EventEmitter`], so nothing but the TLV writing needs a
+    /// live `Matter`. Best-effort: a full event buffer must not take down the
+    /// `run` task, so a failure is logged and the next change tries again. The
+    /// shadow has already advanced, so that one event's `Previous*` is lost.
     fn emit_pending(&self, emitter: &impl EventEmitter, events: &[ThermostatEvent]) {
         for event in events {
             let emitted = match *event {
@@ -1231,8 +1028,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
                 } => SetpointChange::emit_for(emitter, self.endpoint_id, |event| {
                     event
                         .system_mode(system_mode)?
-                        // Section 4.3.13.4.2: the field is `[OCC]`, and this
-                        // handler does not implement occupancy.
+                        // `[OCC]`, which this handler does not implement.
                         .occupancy(None)?
                         .previous_setpoint(previous)?
                         .current_setpoint(current)?
@@ -1265,11 +1061,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// Store an already-range-checked `OccupiedHeatingSetpoint`, keeping the
     /// deadband against the cooling setpoint.
     ///
-    /// Section 4.3.11.12: "If this attribute is set to a value that is greater
-    /// than (OccupiedCoolingSetpoint - MinSetpointDeadBand), the value of
-    /// OccupiedCoolingSetpoint SHALL be adjusted to (OccupiedHeatingSetpoint +
-    /// MinSetpointDeadBand)." Note that it is the *other* setpoint that moves:
-    /// this one is not rejected and not clamped.
+    /// It is the *other* setpoint that moves to make room: this one is neither
+    /// rejected nor clamped.
     fn store_heating_setpoint(
         &self,
         notifier: &impl AttrChangeNotifier,
@@ -1286,10 +1079,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         let dead_band = Self::dead_band();
 
         if Self::auto() && value > self.hooks.occupied_cooling_setpoint() - dead_band {
-            // The limit chain of section 4.3.6 keeps
+            // The limit chain keeps
             // `MaxHeatSetpointLimit <= MaxCoolSetpointLimit - MinSetpointDeadBand`,
-            // so the clamp here can never actually bite; it is in place for
-            // the one case it can - a device that restored limits which
+            // so this clamp can only bite for a device whose restored limits
             // `repair` has not run over yet.
             let cooling = self.clamp_cool_setpoint(value as i32 + dead_band as i32);
 
@@ -1305,8 +1097,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// Store an already-range-checked `OccupiedCoolingSetpoint`, keeping the
-    /// deadband against the heating setpoint - section 4.3.11.11, the mirror
-    /// image of [`Self::store_heating_setpoint`].
+    /// deadband against the heating setpoint - the mirror image of
+    /// [`Self::store_heating_setpoint`].
     fn store_cooling_setpoint(
         &self,
         notifier: &impl AttrChangeNotifier,
@@ -1336,13 +1128,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `OccupiedHeatingSetpoint` write, section 4.3.11.12: "If an attempt is
-    /// made to set this attribute to a value greater than MaxHeatSetpointLimit
-    /// or less than MinHeatSetpointLimit, a response with the status code
-    /// CONSTRAINT_ERROR SHALL be returned."
-    ///
-    /// Note the contrast with `SetpointRaiseLower`, which clamps instead - see
-    /// [`Self::raise_lower_setpoint`].
+    /// `OccupiedHeatingSetpoint` write: out of range is a
+    /// `CONSTRAINT_ERROR`, in contrast to `SetpointRaiseLower`, which clamps -
+    /// see [`Self::raise_lower_setpoint`].
     fn write_occupied_heating_setpoint(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1358,8 +1146,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `OccupiedCoolingSetpoint` write, section 4.3.11.11 - the mirror image
-    /// of [`Self::write_occupied_heating_setpoint`].
+    /// `OccupiedCoolingSetpoint` write - the mirror image of
+    /// [`Self::write_occupied_heating_setpoint`].
     fn write_occupied_cooling_setpoint(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1375,19 +1163,12 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `MinHeatSetpointLimit` write, section 4.3.11.15: "If an attempt is made
-    /// to set this attribute to a value which conflicts with setpoint values
-    /// then those setpoints SHALL be adjusted by the minimum amount to permit
-    /// this attribute to be set to the desired value. If an attempt is made to
-    /// set this attribute to a value which is not consistent with the
-    /// constraints and cannot be resolved by modifying setpoints then a
-    /// response with the status code CONSTRAINT_ERROR SHALL be returned."
-    ///
-    /// Raising the floor above `MaxHeatSetpointLimit`, dropping it below
-    /// `AbsMinHeatSetpointLimit`, or - with `AUTO` - pushing it past
-    /// `MinCoolSetpointLimit - MinSetpointDeadBand` all break the section
-    /// 4.3.6 chain against another *limit*, which no setpoint adjustment can
-    /// fix. Those are the `CONSTRAINT_ERROR` cases.
+    /// `MinHeatSetpointLimit` write: a conflicting setpoint is dragged along,
+    /// but a conflict with another *limit* is a `CONSTRAINT_ERROR`, since no
+    /// setpoint adjustment can resolve it. That means raising the floor above
+    /// `MaxHeatSetpointLimit`, dropping it below `AbsMinHeatSetpointLimit`,
+    /// or - with `AUTO` - pushing it past
+    /// `MinCoolSetpointLimit - MinSetpointDeadBand`.
     fn write_min_heat_setpoint_limit(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1415,7 +1196,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `MaxHeatSetpointLimit` write, section 4.3.11.16 - the mirror image of
+    /// `MaxHeatSetpointLimit` write - the mirror image of
     /// [`Self::write_min_heat_setpoint_limit`].
     fn write_max_heat_setpoint_limit(
         &self,
@@ -1442,7 +1223,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `MinCoolSetpointLimit` write, section 4.3.11.17 - the cooling half of
+    /// `MinCoolSetpointLimit` write - the cooling half of
     /// [`Self::write_min_heat_setpoint_limit`].
     fn write_min_cool_setpoint_limit(
         &self,
@@ -1469,7 +1250,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `MaxCoolSetpointLimit` write, section 4.3.11.18.
+    /// `MaxCoolSetpointLimit` write.
     fn write_max_cool_setpoint_limit(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1495,9 +1276,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// `SystemMode` write, section 4.3.11.22: the value "SHALL be limited by
-    /// the ControlSequenceOfOperation attribute" - see
-    /// [`Self::is_supported_system_mode`].
+    /// `SystemMode` write - see [`Self::is_supported_system_mode`] for which
+    /// values a given configuration accepts.
     fn write_system_mode(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1515,23 +1295,12 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         Ok(())
     }
 
-    /// The `SetpointRaiseLower` command, section 4.3.12.1.
+    /// The `SetpointRaiseLower` command.
     ///
-    /// - `Mode = Heat` / `Mode = Cool`: "if the server does not support the
-    ///   HEAT [COOL] feature then it SHALL respond with INVALID_COMMAND".
-    /// - `Mode = Both`: "The client MAY indicate Both regardless of the server
-    ///   feature support. The server SHALL only adjust the setpoint that it
-    ///   supports and not respond with an error."
-    /// - `amount` is "the amount (possibly negative) that should be added to
-    ///   the setpoint(s), in steps of 0.1degC", whereas the setpoint attributes
-    ///   are in 0.01degC - hence the factor of ten.
-    /// - "If the resulting value is outside the limits imposed by
-    ///   MinCoolSetpointLimit, MaxCoolSetpointLimit, MinHeatSetpointLimit and
-    ///   MaxHeatSetpointLimit, the value is clamped to those limits. This is
-    ///   not considered an error condition."
-    /// - And where a clamped setpoint would then break the deadband, sections
-    ///   4.3.12.1.1.1/2 say the *other* setpoint moves to make room, which is
-    ///   what [`Self::store_heating_setpoint`] does anyway.
+    /// `amount` is in 0.1°C, the setpoints in 0.01°C - hence the factor of
+    /// ten. Results are clamped rather than refused, unlike an attribute
+    /// write. `Both` is accepted whatever the feature set; `Heat` or `Cool`
+    /// against a missing feature is `INVALID_COMMAND`.
     fn raise_lower_setpoint(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1579,13 +1348,11 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    /// Check the served event set against the conformance of section 4.3.13.
+    /// Check the served event set against its conformance.
     ///
-    /// Every event this cluster defines is `otherwiseConform{provisional,
-    /// mandatory{TEVT & ...}}`, so `TEVT` both unlocks the set and makes the
-    /// applicable part of it mandatory - there is no "serve one event and not
-    /// the others". The three this handler cannot support are gated on
-    /// features it rejects outright.
+    /// `TEVT` both unlocks the events and makes the applicable ones mandatory,
+    /// so there is no "serve one and not the others". The three this handler
+    /// cannot support are gated on features it rejects outright.
     fn validate_events() {
         let tevt = Self::supports_feature(Feature::EVENTS.bits());
 
@@ -1645,14 +1412,12 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             }
         }
 
-        // Section 4.3.11.31, a SHOULD rather than a SHALL: "devices
-        // implementing SetpointChangeAmount SHOULD also implement
-        // SetpointChangeSource". Everything else in `validate` is a SHALL, so
-        // this warns rather than panicking.
+        // A SHOULD rather than a SHALL, unlike everything else in `validate`,
+        // so it warns rather than panicking.
         if Self::serves(AttributeId::SetpointChangeAmount)
             && !Self::serves(AttributeId::SetpointChangeSource)
         {
-            warn!("Thermostat: SetpointChangeAmount is served without SetpointChangeSource; section 4.3.11.31 says it SHOULD be");
+            warn!("Thermostat: SetpointChangeAmount is served without SetpointChangeSource, which it should be");
         }
 
         if Self::serves(AttributeId::SetpointChangeSourceTimestamp)
@@ -1673,9 +1438,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     ///
     /// # Panics
     ///
-    /// Panics with a descriptive message if [`ThermostatHooks::CLUSTER`] is
-    /// misconfigured. This is a programming error caught once at startup, not
-    /// a runtime condition, which is why it is a panic rather than an `Error`.
+    /// If [`ThermostatHooks::CLUSTER`] is misconfigured - a programming error
+    /// caught once at startup, not a runtime condition.
     fn validate(&self) {
         if H::CLUSTER.revision != CLUSTER_REVISION {
             panic!(
@@ -1692,8 +1456,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             );
         }
 
-        // Section 4.3.4: HEAT and COOL are both `AUTO, O.a+` - at least one of
-        // the pair, and both of them once AUTO is in play.
+        // HEAT and COOL are `AUTO, O.a+`: at least one of the pair, and both
+        // once AUTO is in play.
         if !Self::heats() && !Self::cools() {
             panic!(
                 "Thermostat validation: at least one of the HEAT and COOL features must be enabled"
@@ -1704,10 +1468,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             panic!("Thermostat validation: the AUTO feature requires both HEAT and COOL - there is nothing to switch between otherwise");
         }
 
-        // Mandatory attributes: section 4.3.11 marks `LocalTemperature`,
-        // `ControlSequenceOfOperation` and `SystemMode` as `M`, the occupied
-        // setpoints as mandatory given their feature, and
-        // `MinSetpointDeadBand` as mandatory given `AUTO`.
+        // Mandatory attributes, either outright or given their feature.
         for (attr, required, why) in [
             (AttributeId::LocalTemperature, true, "M"),
             (AttributeId::ControlSequenceOfOperation, true, "M"),
@@ -1732,10 +1493,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
 
         // The setpoint limits are individually optional, but the constraint
-        // chain of section 4.3.6 and the `CONSTRAINT_ERROR` rules of sections
-        // 4.3.11.12/15/16 are written in terms of all four of a temperature's
-        // limits. Serving a strict subset would leave one end of the chain
-        // unenforceable.
+        // chain and the `CONSTRAINT_ERROR` rules are written in terms of all
+        // four, so a strict subset leaves one end unenforceable.
         Self::validate_limit_set(
             &[
                 AttributeId::AbsMinHeatSetpointLimit,
@@ -1764,8 +1523,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             panic!("Thermostat validation: the cooling setpoint limits are served without the COOL feature");
         }
 
-        // With AUTO the deadband clauses of section 4.3.6 tie the two halves
-        // of the chain together, so half a chain cannot be enforced.
+        // With AUTO the deadband ties the two halves of the chain together,
+        // so half a chain cannot be enforced.
         if Self::auto() && Self::has_heat_limits() != Self::has_cool_limits() {
             panic!("Thermostat validation: with AUTO the heating and cooling setpoint limits must either both be served or both be absent");
         }
@@ -1802,9 +1561,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
 
         if Self::auto() {
-            // Section 4.3.11.19 constrains `MinSetpointDeadBand` to 0..=127 -
-            // 0.0degC to 12.7degC. (Before cluster revision 8 the ceiling was
-            // 2.5degC.)
+            // `MinSetpointDeadBand` is constrained to 0..=127, i.e. up to
+            // 12.7°C. (Before cluster revision 8 the ceiling was 2.5°C.)
             if H::MIN_SETPOINT_DEAD_BAND < 0 {
                 panic!(
                     "Thermostat validation: MIN_SETPOINT_DEAD_BAND ({}) must not be negative",
@@ -1812,36 +1570,32 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
                 );
             }
 
-            // Section 4.3.6, the two deadband clauses over the device limits.
-            // Unlike the user-configurable ones these are compiled in, so a
-            // violation can only ever be a programming error.
+            // The deadband clauses over the device limits. Unlike the
+            // user-configurable ones these are compiled in, so a violation is
+            // always a programming error.
             let dead_band = Self::dead_band();
 
             if H::ABS_MIN_HEAT_SETPOINT > H::ABS_MIN_COOL_SETPOINT - dead_band
                 || H::ABS_MAX_HEAT_SETPOINT > H::ABS_MAX_COOL_SETPOINT - dead_band
             {
-                panic!("Thermostat validation: with AUTO, section 4.3.6 requires ABS_MIN_HEAT_SETPOINT <= ABS_MIN_COOL_SETPOINT - MIN_SETPOINT_DEAD_BAND and the same for the maxima");
+                panic!("Thermostat validation: with AUTO, ABS_MIN_HEAT_SETPOINT must be <= ABS_MIN_COOL_SETPOINT - MIN_SETPOINT_DEAD_BAND, and the same for the maxima");
             }
         }
 
-        // Section 4.3.10.16: the control sequence decides which system modes
-        // are possible at all, so a server that advertises HEAT and a
-        // cooling-only sequence has a mandatory `OccupiedHeatingSetpoint` it
-        // can never act on.
+        // The control sequence decides which system modes are possible at
+        // all, so a server advertising HEAT with a cooling-only sequence has a
+        // mandatory `OccupiedHeatingSetpoint` it can never act on.
         if Self::heats() != Self::sequence_heats() || Self::cools() != Self::sequence_cools() {
             panic!("Thermostat validation: CONTROL_SEQUENCE_OF_OPERATION does not match the HEAT/COOL features");
         }
     }
 
-    /// Pull persisted state back into the section 4.3.6 constraint chain.
+    /// Pull persisted state back inside the setpoint-limit constraints.
     ///
-    /// The limits and the setpoints are non-volatile and restored by the
-    /// consumer, while the absolute limits and the deadband are compiled in. A
-    /// firmware update that narrows `ABS_MIN_HEAT_SETPOINT`/
-    /// `ABS_MAX_HEAT_SETPOINT`, or widens `MIN_SETPOINT_DEAD_BAND`, or a
-    /// corrupt restore, can therefore leave stored values out of bounds. Fix
-    /// them up once at startup rather than leaving the cluster reporting values
-    /// it would reject on a write.
+    /// The restored limits and setpoints are non-volatile while the absolute
+    /// limits and deadband are compiled in, so a firmware update that narrows
+    /// them can leave stored values out of bounds - better fixed at startup
+    /// than reported as values the cluster would reject on a write.
     fn repair(&self) -> Result<(), Error> {
         let dead_band = Self::dead_band();
 
@@ -1882,8 +1636,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             }
         }
 
-        // Section 4.3.6 with AUTO: MinHeatSetpointLimit <= (MinCoolSetpointLimit -
-        // MinSetpointDeadBand), and the same for the maxima. `validate` has
+        // With AUTO: MinHeatSetpointLimit <= MinCoolSetpointLimit -
+        // MinSetpointDeadBand, and the same for the maxima. `validate` has
         // already established that the *absolute* limits leave room for the
         // deadband, so pulling the heating limits down is always possible.
         if Self::auto() && Self::has_heat_limits() {
@@ -1985,9 +1739,9 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         self.seed_events();
 
         loop {
-            // Re-armed every turn: a temperature event the 60-second floor of
-            // section 4.3.13.2 held back is owed, and nothing else may ring
-            // the doorbell again to deliver it.
+            // Re-armed every turn: a temperature event the 60-second floor
+            // held back is owed, and nothing else may ring the doorbell again
+            // to deliver it.
             let deferred = self.deferred_local_temperature_deadline();
 
             match select3(
@@ -2021,10 +1775,9 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
 
     // Attribute accessors
 
-    /// Section 4.3.11.2: the Calculated Local Temperature, or null when it is
-    /// unavailable. With the `LTNE` feature the attribute "SHALL always report
-    /// null" - the equipment still controls off the calculated value, there is
-    /// simply no feedback for it over Matter.
+    /// The Calculated Local Temperature, or null when unavailable. Under
+    /// `LTNE` it is always null: the equipment still controls off the
+    /// calculated value, there is simply no feedback for it over Matter.
     async fn local_temperature(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
         Ok(Nullable::new(self.reported_local_temperature()))
     }
@@ -2099,8 +1852,8 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         ready(Ok(self.hooks.max_cool_setpoint_limit()))
     }
 
-    /// Section 4.3.11.19: "the minimum difference between the Heat Setpoint
-    /// and the Cool Setpoint", in units of 0.1degC.
+    /// The minimum difference between the heating and cooling setpoints, in
+    /// 0.1°C.
     fn min_setpoint_dead_band(
         &self,
         _ctx: impl ReadContext,
@@ -2127,8 +1880,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Ok(self.running_mode())
     }
 
-    /// Section 4.3.11.29: "the current relay state of the heat, cool, and fan
-    /// relays. Unimplemented outputs SHALL be treated as if they were Off."
+    /// The current relay state; unimplemented outputs report Off.
     async fn thermostat_running_state(
         &self,
         _ctx: impl ReadContext,
@@ -2136,12 +1888,10 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Ok(self.running_state())
     }
 
-    /// Section 4.3.11.30: "the source of the current active
-    /// OccupiedCoolingSetpoint or OccupiedHeatingSetpoint (i.e., who or what
-    /// determined the current setpoint)."
+    /// Who or what determined the current setpoint.
     ///
-    /// Only ever `Manual` or `External` here: `Schedule` is `[MSCH]`, and
-    /// [`Self::validate`] rejects that feature.
+    /// Only ever `Manual` or `External` here: `Schedule` needs `MSCH`, which
+    /// [`Self::validate`] rejects.
     async fn setpoint_change_source(
         &self,
         _ctx: impl ReadContext,
@@ -2149,21 +1899,17 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Ok(self.setpoint_change.get().source)
     }
 
-    /// Section 4.3.11.31: "the delta between the current active
-    /// OccupiedCoolingSetpoint or OccupiedHeatingSetpoint and the previous
-    /// active setpoint [...] The null value indicates that the previous
-    /// setpoint was unknown."
+    /// The delta between the current active setpoint and the previous one;
+    /// null when the previous one was unknown.
     async fn setpoint_change_amount(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
         Ok(Nullable::new(self.setpoint_change.get().amount))
     }
 
-    /// Section 4.3.11.32: "the time in UTC at which the SetpointChangeAmount
-    /// attribute change was recorded", in Matter-epoch seconds.
+    /// When `SetpointChangeAmount` was recorded, in Matter-epoch seconds.
     ///
-    /// Zero until a setpoint has moved while the node (or
-    /// [`ThermostatHooks::utc_now_secs`]) had a reliable clock to offer -
-    /// `epoch-s` is not nullable, so there is no way to say "unknown"
-    /// outright.
+    /// Zero until a setpoint moves while the node - or
+    /// [`ThermostatHooks::utc_now_secs`] - has a reliable clock to offer:
+    /// `epoch-s` is not nullable, so there is no way to say "unknown".
     async fn setpoint_change_source_timestamp(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(self.setpoint_change.get().timestamp)
     }
@@ -2236,11 +1982,9 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         ready(self.write_max_cool_setpoint_limit(&ctx, value))
     }
 
-    /// Section 4.3.11.19: "For backwards compatibility, this attribute is
-    /// optionally writeable. However any writes to this attribute SHALL be
-    /// silently ignored." Same shape as
-    /// [`Self::set_control_sequence_of_operation`], and the same reason the
-    /// value is a hooks const with no setter.
+    /// Writes are silently ignored, which is why the value is a hooks const
+    /// with no setter - same shape as
+    /// [`Self::set_control_sequence_of_operation`].
     async fn set_min_setpoint_dead_band(
         &self,
         _ctx: impl WriteContext,
@@ -2249,12 +1993,8 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Ok(())
     }
 
-    /// Section 4.3.11.21: "If an attempt is made to write to this attribute,
-    /// the server SHALL silently ignore the write and the value of this
-    /// attribute SHALL remain unchanged. This behavior is in place for
-    /// backwards compatibility with existing thermostats."
-    ///
-    /// "Silently" means `SUCCESS` with no state change - not
+    /// Writes are silently ignored, for backwards compatibility with older
+    /// thermostats. "Silently" means `SUCCESS` with no state change - not
     /// `UNSUPPORTED_WRITE`, and no change notification either.
     async fn set_control_sequence_of_operation(
         &self,
@@ -2355,204 +2095,154 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     }
 }
 
-/// The device-specific half of a thermostat.
+/// The device-specific half of a thermostat: the handler owns the spec rules,
+/// the hooks own the hardware and the persistence.
 ///
-/// The handler owns every spec rule; the hooks own the hardware and the
-/// persistence. Each `set_*` method below backs a non-volatile attribute and
-/// SHALL persist its value across reboots. None of them should validate or
-/// clamp - the handler has already done that, and re-checking here would only
-/// let the two disagree.
-///
-/// The cooling half has defaults throughout, so a heating-only device
-/// implements exactly what it did before the `COOL` feature existed; the same
-/// goes the other way for the heating half.
+/// Each `set_*` backs a non-volatile attribute and must persist across
+/// reboots. None should validate or clamp - the handler already has. Both
+/// halves default throughout, so a heating-only device implements only the
+/// heating side.
 pub trait ThermostatHooks {
-    /// The cluster metadata, which selects the features, attributes and
-    /// commands this instance serves. See [`ThermostatHandler::validate`] for
-    /// what a valid configuration has to look like.
+    /// The features, attributes and commands this instance serves. See
+    /// [`ThermostatHandler::validate`] for what a valid configuration is.
     const CLUSTER: Cluster<'static>;
 
-    /// `AbsMinHeatSetpointLimit` (section 4.3.11.5): "the absolute minimum
-    /// level that the heating setpoint MAY be set to. This is a limitation
-    /// imposed by the manufacturer." Its `fixed` quality is why it is a const.
-    ///
-    /// In 0.01°C; the spec default is 700 (7.00°C).
+    /// `AbsMinHeatSetpointLimit`, in 0.01°C: the manufacturer's floor under
+    /// the heating setpoint. A const because the attribute is `fixed`.
     const ABS_MIN_HEAT_SETPOINT: i16 = 700;
 
-    /// `AbsMaxHeatSetpointLimit` (section 4.3.11.6), in 0.01°C; the spec
-    /// default is 3000 (30.00°C).
+    /// `AbsMaxHeatSetpointLimit`, in 0.01°C.
     const ABS_MAX_HEAT_SETPOINT: i16 = 3000;
 
-    /// `AbsMinCoolSetpointLimit` (section 4.3.11.7), in 0.01°C; the spec
-    /// default is 1600 (16.00°C).
+    /// `AbsMinCoolSetpointLimit`, in 0.01°C.
     const ABS_MIN_COOL_SETPOINT: i16 = 1600;
 
-    /// `AbsMaxCoolSetpointLimit` (section 4.3.11.8), in 0.01°C; the spec
-    /// default is 3200 (32.00°C).
+    /// `AbsMaxCoolSetpointLimit`, in 0.01°C.
     const ABS_MAX_COOL_SETPOINT: i16 = 3200;
 
-    /// `MinSetpointDeadBand` (section 4.3.11.19): "the minimum difference
-    /// between the Heat Setpoint and the Cool Setpoint", in units of 0.1°C and
-    /// constrained to 0..=127. Only consulted with the `AUTO` feature, which
-    /// is the only case in which the deadband clauses of section 4.3.6 apply
-    /// at all.
-    ///
-    /// A const because writes to the attribute "SHALL be silently ignored", so
-    /// it never changes. The spec default is 20 (2.0°C).
+    /// `MinSetpointDeadBand`: the minimum gap between the heating and cooling
+    /// setpoints, in 0.1°C, constrained to `0..=127` and only consulted under
+    /// `AUTO`. A const because writes to the attribute are silently ignored.
     const MIN_SETPOINT_DEAD_BAND: i8 = 20;
 
-    /// `ControlSequenceOfOperation` (section 4.3.11.21). A const because
-    /// writes to the attribute are silently ignored, so it never changes.
-    ///
-    /// It has to agree with the `HEAT` and `COOL` features - see
+    /// `ControlSequenceOfOperation`. A const because writes are silently
+    /// ignored; it has to agree with the `HEAT` and `COOL` features - see
     /// [`ThermostatHandler::validate`].
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         ControlSequenceOfOperationEnum::HeatingOnly;
 
-    /// The Calculated Local Temperature in 0.01°C, or `None` when the reading
-    /// is unavailable (section 4.3.11.1).
+    /// The Calculated Local Temperature in 0.01°C, or `None` when there is no
+    /// reading.
     fn local_temperature(&self) -> Option<i16>;
 
-    /// Raw `OccupiedHeatingSetpoint` getter, in 0.01°C.
-    ///
-    /// Only called with the `HEAT` feature; the default is the value least
-    /// likely to disturb the deadband arithmetic of a cooling-only device.
+    /// `OccupiedHeatingSetpoint`, in 0.01°C. Only called under `HEAT`; the
+    /// default is the value least likely to disturb a cooling-only device's
+    /// deadband arithmetic.
     fn occupied_heating_setpoint(&self) -> i16 {
         Self::ABS_MIN_HEAT_SETPOINT
     }
 
-    /// Raw `OccupiedHeatingSetpoint` setter. This value SHALL be persisted
-    /// across reboots.
+    /// `OccupiedHeatingSetpoint` setter.
     fn set_occupied_heating_setpoint(&self, _value: i16) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
-    /// Raw `OccupiedCoolingSetpoint` getter, in 0.01°C.
-    ///
-    /// Only called with the `COOL` feature.
+    /// `OccupiedCoolingSetpoint`, in 0.01°C. Only called under `COOL`.
     fn occupied_cooling_setpoint(&self) -> i16 {
         Self::ABS_MAX_COOL_SETPOINT
     }
 
-    /// Raw `OccupiedCoolingSetpoint` setter. This value SHALL be persisted
-    /// across reboots.
+    /// `OccupiedCoolingSetpoint` setter.
     fn set_occupied_cooling_setpoint(&self, _value: i16) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
-    /// Raw `MinHeatSetpointLimit` getter, in 0.01°C.
-    ///
-    /// Only called when the setpoint-limit attributes are served; the default
-    /// returns [`Self::ABS_MIN_HEAT_SETPOINT`] for devices that omit them.
+    /// `MinHeatSetpointLimit`, in 0.01°C. Only called when the setpoint-limit
+    /// attributes are served; the default suits a device that omits them.
     fn min_heat_setpoint_limit(&self) -> i16 {
         Self::ABS_MIN_HEAT_SETPOINT
     }
 
-    /// Raw `MinHeatSetpointLimit` setter. This value SHALL be persisted across
-    /// reboots.
+    /// `MinHeatSetpointLimit` setter.
     fn set_min_heat_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
-    /// Raw `MaxHeatSetpointLimit` getter, in 0.01°C.
+    /// `MaxHeatSetpointLimit`, in 0.01°C.
     fn max_heat_setpoint_limit(&self) -> i16 {
         Self::ABS_MAX_HEAT_SETPOINT
     }
 
-    /// Raw `MaxHeatSetpointLimit` setter. This value SHALL be persisted across
-    /// reboots.
+    /// `MaxHeatSetpointLimit` setter.
     fn set_max_heat_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
-    /// Raw `MinCoolSetpointLimit` getter, in 0.01°C.
+    /// `MinCoolSetpointLimit`, in 0.01°C.
     fn min_cool_setpoint_limit(&self) -> i16 {
         Self::ABS_MIN_COOL_SETPOINT
     }
 
-    /// Raw `MinCoolSetpointLimit` setter. This value SHALL be persisted across
-    /// reboots.
+    /// `MinCoolSetpointLimit` setter.
     fn set_min_cool_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
-    /// Raw `MaxCoolSetpointLimit` getter, in 0.01°C.
+    /// `MaxCoolSetpointLimit`, in 0.01°C.
     fn max_cool_setpoint_limit(&self) -> i16 {
         Self::ABS_MAX_COOL_SETPOINT
     }
 
-    /// Raw `MaxCoolSetpointLimit` setter. This value SHALL be persisted across
-    /// reboots.
+    /// `MaxCoolSetpointLimit` setter.
     fn set_max_cool_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
-    /// Raw `SystemMode` getter.
+    /// `SystemMode`.
     fn system_mode(&self) -> SystemModeEnum;
 
-    /// Raw `SystemMode` setter. This value SHALL be persisted across reboots.
+    /// `SystemMode` setter.
     fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error>;
 
-    /// `ThermostatRunningState` (section 4.3.11.29): which relays the
-    /// equipment currently has energised.
+    /// Which relays the equipment currently has energised - the one place the
+    /// device's own control algorithm becomes visible over Matter.
     ///
-    /// This is the one place where the device's own control algorithm - the
-    /// thing [`Self::apply`] feeds - becomes visible over Matter, so it is the
-    /// device that answers it, not the cluster. The default reports nothing
-    /// energised, which is the right answer for a device that omits the
-    /// attribute, and a conformant one for a device that cannot tell.
-    ///
-    /// The handler masks the result to the relays the configured feature set
-    /// allows, so a stray `Cool` bit from a heating-only device never reaches
-    /// the wire. `ThermostatRunningMode` is derived from the same answer.
+    /// The handler masks this to the relays the feature set allows and derives
+    /// `ThermostatRunningMode` from it. The default reports nothing energised,
+    /// which is conformant for a device that cannot tell.
     fn running_state(&self) -> RelayStateBitmap {
         RelayStateBitmap::empty()
     }
 
-    /// Push the resolved control state onto the equipment.
+    /// Push the resolved control state onto the equipment, after every change
+    /// to `SystemMode` or a setpoint and once at startup.
     ///
-    /// Called after every change to `SystemMode` or either setpoint, and once
-    /// at startup. The Matter spec deliberately does not define the control
-    /// algorithm, so turning `(mode, setpoints, local temperature)` into heat
-    /// or cool demand - with whatever hysteresis or PI loop the hardware needs
-    /// - is the device's business, not the cluster's.
-    ///
-    /// The setpoint for a temperature the device does not serve is whatever
-    /// the corresponding hook default returns, and should be ignored.
+    /// Matter leaves the control algorithm undefined, so the hysteresis or PI
+    /// loop is the device's business. The setpoint for a temperature it does
+    /// not serve is a hook default, and should be ignored.
     fn apply(&self, system_mode: SystemModeEnum, heating_setpoint: i16, cooling_setpoint: i16);
 
-    /// The current UTC time in Matter-epoch seconds (seconds since
-    /// 2000-01-01T00:00:00Z), or `None` while the device has no reliable
-    /// clock.
+    /// The current UTC time in Matter-epoch seconds, or `None` without a
+    /// reliable clock.
     ///
-    /// **An override, not a requirement.** Leave it alone and
-    /// `SetpointChangeSourceTimestamp` (section 4.3.11.32) is stamped from the
-    /// node's own Last-Known-Good UTC time, which the handler reads through
-    /// its context. Implement it only when the device has a clock it trusts
-    /// more than the node's - a real RTC, or a time source of its own - in
-    /// which case this wins.
-    ///
-    /// Only consulted when `SetpointChangeSourceTimestamp` is served.
+    /// An override: left alone, `SetpointChangeSourceTimestamp` takes the
+    /// node's own Last-Known-Good time. Only that attribute consults it.
     fn utc_now_secs(&self) -> Option<u32> {
         None
     }
 
-    /// How far `LocalTemperature` must move before it is worth a
-    /// `LocalTemperatureChange` event, in 0.01°C.
+    /// How far `LocalTemperature` must move to be worth a
+    /// `LocalTemperatureChange`, in 0.01°C.
     ///
-    /// Section 4.3.13.2 leaves the threshold to the server - "sufficiently
-    /// large, as determined by the server" - and only fixes the 60-second
-    /// floor, which the handler applies regardless. The default is 0.50°C.
+    /// The threshold is the server's to choose; the 60-second floor is not,
+    /// and the handler applies it regardless.
     const LOCAL_TEMPERATURE_EVENT_DELTA: i16 = 50;
 
     /// Background task for out-of-band notifications to the handler.
     ///
-    /// This future MUST NOT return. Implementers should either loop forever or
-    /// await `core::future::pending::<()>()`, so the SDK's task does not
-    /// observe a completed future.
-    ///
     /// # Panics
-    /// The SDK will panic if this method returns.
+    /// This future must not return; the SDK panics if it does. Loop forever,
+    /// or await `core::future::pending::<()>()`.
     async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
         core::future::pending::<()>().await
     }
@@ -2678,10 +2368,9 @@ pub mod test {
 
     /// A simulated heating thermostat.
     ///
-    /// Note that a real device would persist the four non-volatile attributes;
-    /// this one keeps them in RAM, so they reset on restart. See
-    /// `examples/src/bin/dimmable_light.rs` and `tests/src/bin/light_tests.rs`
-    /// for file- and KV-backed persistence of hook state.
+    /// Keeps the four non-volatile attributes in RAM, so they reset on
+    /// restart; see `examples/src/bin/dimmable_light.rs` and
+    /// `tests/src/bin/light_tests.rs` for real persistence.
     pub struct TestThermostatDeviceLogic {
         state: Mutex<RefCell<TestThermostatState>>,
     }
@@ -2698,8 +2387,7 @@ pub mod test {
     }
 
     impl TestThermostatDeviceLogic {
-        /// Create a new simulated thermostat, idle at [`AMBIENT`] with the
-        /// spec-default setpoint of 20.00°C.
+        /// Idle at [`AMBIENT`], with a 20.00°C setpoint.
         pub const fn new() -> Self {
             Self {
                 state: Mutex::new(RefCell::new(TestThermostatState {
@@ -2718,8 +2406,7 @@ pub mod test {
             self.state.lock(|state| state.borrow().heating)
         }
 
-        /// Advance the room simulation by one [`TICK`], returning `true` if the
-        /// local temperature changed.
+        /// Advance the room by one [`TICK`]; `true` if the temperature moved.
         fn tick(&self) -> bool {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
@@ -2756,16 +2443,10 @@ pub mod test {
     }
 
     impl ThermostatHooks for TestThermostatDeviceLogic {
-        /// A heating-only thermostat: the `HEAT` feature, the four mandatory
-        /// attributes plus the optional heat setpoint limits, and the one
-        /// mandatory command.
-        ///
-        /// It also opts into `TEVT` and the section 4.3.11.30-32 trio, so that
-        /// the event and setpoint-attribution paths are exercised somewhere.
-        /// `TEVT` is *provisional* in Matter 1.6 and 1.7 - this is a test
-        /// fixture, and a shippable device should not copy that part. The
-        /// certification device-under-test in `tests/src/bin` deliberately
-        /// does not.
+        /// A heating-only thermostat, plus `TEVT` and the `SetpointChange*`
+        /// trio so the event and attribution paths are exercised somewhere.
+        /// `TEVT` is provisional: a shippable device should not copy that
+        /// part, and the certification DUT does not.
         const CLUSTER: Cluster<'static> = thermostat_cluster::FULL_CLUSTER
             .with_revision(11)
             .with_features(
@@ -2846,8 +2527,7 @@ pub mod test {
             Ok(())
         }
 
-        /// The simulated equipment is a single-stage heater with no fan, so
-        /// the only relay it ever has energised is `Heat`.
+        /// A single-stage heater with no fan: only `Heat` is ever energised.
         fn running_state(&self) -> RelayStateBitmap {
             if self.heating() {
                 RelayStateBitmap::HEAT
@@ -2856,8 +2536,7 @@ pub mod test {
             }
         }
 
-        /// A heating-only device: the cooling setpoint is whatever the hook
-        /// default returns, and means nothing here.
+        /// Heating-only: the cooling setpoint is a hook default and unused.
         fn apply(
             &self,
             system_mode: SystemModeEnum,
@@ -2970,17 +2649,16 @@ mod tests {
                 has(thermostat_cluster::Feature::AUTO_MODE)
             }
             AttributeId::ThermostatRunningState => true,
-            // Deliberately *not* the section 4.3.11.30-32 trio: they are not
-            // feature-gated, so serving them here would add three re-reports
-            // to every setpoint write and disturb the notification-order
-            // assertions the rest of these tests make. `SourceMockHooks`
-            // serves them instead.
+            // Deliberately *not* the `SetpointChange*` trio: it is not
+            // feature-gated, so serving it here would add three re-reports to
+            // every setpoint write and disturb the notification-order
+            // assertions. `SourceMockHooks` serves it instead.
             _ => false,
         }
     }
 
-    /// The served event set, mirroring [`mock_attrs`]: the conformance of
-    /// section 4.3.13, driven off the feature map.
+    /// The served event set, mirroring [`mock_attrs`]: conformance driven off
+    /// the feature map.
     fn mock_events(event: &Event, _revision: u16, features: u32) -> bool {
         let has = |feature: thermostat_cluster::Feature| features & feature.bits() != 0;
 
@@ -3201,9 +2879,9 @@ mod tests {
         handler
     }
 
-    /// Hooks that additionally serve the section 4.3.11.30-32 trio, which
-    /// `mock_attrs` deliberately leaves out. A newtype so that the extra
-    /// re-reports land only in the tests that ask for them.
+    /// Hooks that additionally serve the `SetpointChange*` trio, which
+    /// `mock_attrs` leaves out. A newtype, so the extra re-reports land only
+    /// in the tests that ask for them.
     struct SourceMockHooks<const F: u32>(MockHooks<F>);
 
     impl<const F: u32> SourceMockHooks<F> {
@@ -3331,8 +3009,8 @@ mod tests {
         mock_handler::<AUTO>().validate();
     }
 
-    /// Section 4.3.11.2: with `LTNE` the attribute "SHALL always report null",
-    /// whatever the sensor says.
+    /// With `LTNE` the attribute always reports null, whatever the sensor
+    /// says.
     #[test]
     fn local_temperature_is_null_with_ltne() {
         assert!(!ThermostatHandler::<MockHooks<HEAT>>::supports_feature(
@@ -3345,9 +3023,8 @@ mod tests {
         assert_eq!(mock_handler::<HEAT>().hooks.local_temperature(), Some(1900));
     }
 
-    /// Section 4.3.11.22: `SystemMode` is limited by
-    /// `ControlSequenceOfOperation`; with `HeatingOnly` only `Off` and `Heat`
-    /// remain.
+    /// `SystemMode` is limited by `ControlSequenceOfOperation`: with
+    /// `HeatingOnly` only `Off` and `Heat` remain.
     #[test]
     fn system_mode_write_rejects_unsupported_modes() {
         let handler = mock_handler::<HEAT>();
@@ -3429,8 +3106,8 @@ mod tests {
         }
     }
 
-    /// Section 4.3.11.12: out-of-range writes are a `CONSTRAINT_ERROR`, in
-    /// contrast to `SetpointRaiseLower`, which clamps.
+    /// Out-of-range writes are a `CONSTRAINT_ERROR`, unlike
+    /// `SetpointRaiseLower`, which clamps.
     #[test]
     fn occupied_heating_setpoint_write_out_of_range_is_constraint_error() {
         let handler = mock_handler::<HEAT>();
@@ -3461,7 +3138,7 @@ mod tests {
         assert_eq!(handler.hooks.occupied_heating_setpoint(), 1500);
     }
 
-    /// Section 4.3.11.11, the cooling mirror of the same rule.
+    /// The cooling mirror of the same rule.
     #[test]
     fn occupied_cooling_setpoint_write_out_of_range_is_constraint_error() {
         let handler = mock_handler::<COOL>();
@@ -3491,8 +3168,8 @@ mod tests {
         assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2000);
     }
 
-    /// Section 4.3.11.15/16: a limit write that conflicts with the setpoint
-    /// drags the setpoint along by the minimum amount.
+    /// A limit write that conflicts with the setpoint drags the setpoint
+    /// along by the minimum amount.
     #[test]
     fn setpoint_limit_writes_adjust_the_setpoint() {
         let handler = mock_handler::<HEAT>();
@@ -3529,9 +3206,9 @@ mod tests {
         assert_eq!(cooling.hooks.occupied_cooling_setpoint(), 2400);
     }
 
-    /// Section 4.3.6: user-configurable limits stay inside the device limits
-    /// and do not cross each other. Those writes cannot be resolved by moving a
-    /// setpoint, so they are a `CONSTRAINT_ERROR`.
+    /// User-configurable limits stay inside the device limits and do not
+    /// cross each other. No setpoint move can resolve those, so they are a
+    /// `CONSTRAINT_ERROR`.
     #[test]
     fn setpoint_limit_writes_outside_the_constraint_chain_are_rejected() {
         let handler = mock_handler::<HEAT>();
@@ -3569,10 +3246,9 @@ mod tests {
         );
     }
 
-    /// Section 4.3.6, the deadband clauses: with `AUTO` the two halves of the
-    /// limit chain are tied together, and a limit write that would close the
-    /// gap is a `CONSTRAINT_ERROR` - there is no setpoint that could be moved
-    /// to resolve a conflict between two *limits*.
+    /// With `AUTO` the deadband ties the two halves of the limit chain
+    /// together, and a write closing the gap is a `CONSTRAINT_ERROR` - no
+    /// setpoint move resolves a conflict between two *limits*.
     #[test]
     fn auto_keeps_the_deadband_between_the_limits() {
         let handler = mock_handler::<AUTO>();
@@ -3619,10 +3295,8 @@ mod tests {
             .unwrap();
     }
 
-    /// Section 4.3.11.12: "If this attribute is set to a value that is greater
-    /// than (OccupiedCoolingSetpoint - MinSetpointDeadBand), the value of
-    /// OccupiedCoolingSetpoint SHALL be adjusted". The write itself succeeds -
-    /// it is the *other* setpoint that gives way.
+    /// A setpoint write that would close the deadband succeeds - it is the
+    /// *other* setpoint that gives way.
     #[test]
     fn auto_moves_the_opposite_setpoint_to_keep_the_deadband() {
         let handler = mock_handler::<AUTO>();
@@ -3643,7 +3317,7 @@ mod tests {
         assert_eq!(handler.hooks.occupied_heating_setpoint(), 2500);
         assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2500 + DEAD_BAND);
 
-        // Section 4.3.11.11, the mirror image: the heating setpoint gives way.
+        // The mirror image: the heating setpoint gives way.
         handler
             .write_occupied_cooling_setpoint(NULL_CTX, 2000)
             .unwrap();
@@ -3670,8 +3344,8 @@ mod tests {
         assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2800);
     }
 
-    /// Section 4.3.12.1.1.1/2: a server without the feature "SHALL respond
-    /// with INVALID_COMMAND" to the corresponding mode.
+    /// A server without the feature answers `INVALID_COMMAND` to the
+    /// corresponding mode.
     #[test]
     fn setpoint_raise_lower_rejects_a_mode_it_has_no_setpoint_for() {
         let heating = mock_handler::<HEAT>();
@@ -3691,9 +3365,9 @@ mod tests {
         assert_eq!(cooling.hooks.occupied_cooling_setpoint(), 2600);
     }
 
-    /// Section 4.3.12.1.2: `Amount` is in steps of 0.1degC while the setpoint
-    /// attribute is in 0.01degC. Section 4.3.12.1.1.3: `Both` is accepted
-    /// regardless of feature support and adjusts only what the server has.
+    /// `Amount` is in 0.1°C while the setpoint attribute is in 0.01°C, and
+    /// `Both` is accepted whatever the feature set, adjusting only what the
+    /// server has.
     #[test]
     fn setpoint_raise_lower_applies_tenths_of_a_degree() {
         for mode in [
@@ -3710,8 +3384,8 @@ mod tests {
         }
     }
 
-    /// Section 4.3.12.1.1.3: `Both` on a server with both setpoints moves both
-    /// and, with `AUTO`, keeps the deadband as it goes.
+    /// `Both` on a server with both setpoints moves both and, with `AUTO`,
+    /// keeps the deadband as it goes.
     #[test]
     fn setpoint_raise_lower_both_moves_both_setpoints() {
         let handler = mock_handler::<AUTO>();
@@ -3731,10 +3405,8 @@ mod tests {
         assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2400);
     }
 
-    /// Section 4.3.12.1.1.1: "If the server supports the AUTO feature and the
-    /// resulting setpoint would be invalid solely due to MinSetpointDeadBand
-    /// then the Cooling setpoint SHALL be increased sufficiently to maintain
-    /// the deadband."
+    /// Under `AUTO`, a result invalid solely because of the deadband pushes
+    /// the cooling setpoint up rather than failing.
     #[test]
     fn setpoint_raise_lower_heat_pushes_the_cooling_setpoint() {
         let handler = mock_handler::<AUTO>();
@@ -3756,9 +3428,7 @@ mod tests {
         assert_eq!(handler.hooks.occupied_heating_setpoint(), 1800 - DEAD_BAND);
     }
 
-    /// Section 4.3.12.1.3: "If the resulting value is outside the limits [...]
-    /// the value is clamped to those limits. This is not considered an error
-    /// condition."
+    /// A result outside the limits is clamped, not an error.
     #[test]
     fn setpoint_raise_lower_clamps_without_erroring() {
         let handler = mock_handler::<HEAT>();
@@ -3781,10 +3451,9 @@ mod tests {
         assert_eq!(handler.hooks.occupied_heating_setpoint(), 1500);
     }
 
-    /// Section 4.3.11.21: the `ControlSequenceOfOperation` a thermostat
-    /// reports is fixed, and writes to it are silently ignored - which is why
-    /// it is a hooks const with no setter at all. Section 4.3.11.19 says the
-    /// same about `MinSetpointDeadBand`.
+    /// `ControlSequenceOfOperation` and `MinSetpointDeadBand` are fixed and
+    /// silently ignore writes, which is why both are hooks consts with no
+    /// setter.
     #[test]
     fn the_fixed_attributes_are_hooks_consts() {
         assert_eq!(
@@ -3801,7 +3470,7 @@ mod tests {
         );
     }
 
-    /// Section 4.3.6: startup pulls persisted state back into the chain.
+    /// Startup pulls persisted state back into the constraint chain.
     #[test]
     fn repair_restores_the_constraint_chain() {
         let handler = mock_handler::<HEAT>();
@@ -3945,8 +3614,8 @@ mod tests {
         );
     }
 
-    /// And the full heat/cool/auto shape, which is what the extra attributes
-    /// of section 4.3.11 hang off.
+    /// And the full heat/cool/auto shape, which the extra attributes hang
+    /// off.
     #[test]
     fn serves_the_auto_element_set() {
         let cluster = <MockHooks<AUTO> as ThermostatHooks>::CLUSTER;
@@ -4003,9 +3672,8 @@ mod tests {
         mock_handler::<HEAT_AUTO>().validate();
     }
 
-    /// `ControlSequenceOfOperation` decides which system modes are possible at
-    /// all (section 4.3.10.16), so a feature it rules out is a feature the
-    /// device can never act on.
+    /// `ControlSequenceOfOperation` decides which system modes are possible
+    /// at all, so a feature it rules out is one the device can never act on.
     #[test]
     #[should_panic(expected = "CONTROL_SEQUENCE_OF_OPERATION does not match")]
     fn validate_rejects_a_sequence_that_contradicts_the_features() {
@@ -4210,10 +3878,8 @@ mod tests {
         );
     }
 
-    /// Section 4.3.11.29: "the current relay state of the heat, cool, and fan
-    /// relays. Unimplemented outputs SHALL be treated as if they were Off." A
-    /// heating-only server has no cooling relay, so a `Cool` bit from a
-    /// confused device never reaches the wire.
+    /// Unimplemented outputs report Off: a heating-only server has no cooling
+    /// relay, so a `Cool` bit from a confused device never reaches the wire.
     #[test]
     fn running_state_is_masked_to_the_relays_the_features_allow() {
         let handler = mock_handler::<HEAT>();
@@ -4252,9 +3918,8 @@ mod tests {
         );
     }
 
-    /// Section 4.3.11.23: `ThermostatRunningMode` answers "which way is this
-    /// `Auto` thermostat going right now", which is exactly which relay is
-    /// closed.
+    /// `ThermostatRunningMode` answers which way an `Auto` thermostat is
+    /// going, which is exactly which relay is closed.
     #[test]
     fn running_mode_narrows_the_relay_state() {
         let handler = mock_handler::<AUTO>();
@@ -4319,12 +3984,10 @@ mod tests {
         );
     }
 
-    /// Section 4.3.11.12 and the ACL metadata that comes with it:
-    /// `OccupiedHeatingSetpoint` is the one writable attribute on this cluster
-    /// that an `operate`-privileged fabric may change - a thermostat is worth
-    /// nothing if adjusting the temperature needs an administrator. The
-    /// setpoint *limits* are commissioning-time configuration and stay at
-    /// `manage`.
+    /// `OccupiedHeatingSetpoint` is the one attribute an `operate`-privileged
+    /// fabric may write - a thermostat is worth nothing if changing the
+    /// temperature needs an administrator. The limits are commissioning-time
+    /// configuration and stay at `manage`.
     #[test]
     fn only_the_setpoints_are_writable_with_operate_privilege() {
         let cluster = <MockHooks<AUTO> as ThermostatHooks>::CLUSTER;
@@ -4410,7 +4073,7 @@ mod tests {
         };
     }
 
-    // Events (section 4.3.13)
+    // Events
 
     /// The served set follows the conformance: nothing without `TEVT`, and
     /// with it everything whose secondary gate is open.
@@ -4524,8 +4187,8 @@ mod tests {
         assert!(handler.take_events(Instant::from_secs(0)).is_empty());
     }
 
-    /// Section 4.3.13.4: the event fires on any setpoint change, and section
-    /// 4.3.13.4.1 fixes `SystemMode` to *which* setpoint moved.
+    /// The event fires on any setpoint change, and its `SystemMode` names
+    /// *which* setpoint moved.
     #[test]
     fn an_out_of_band_setpoint_change_yields_a_setpoint_change() {
         let handler = seeded_handler::<HEAT_EVT>();
@@ -4545,9 +4208,8 @@ mod tests {
         );
     }
 
-    /// Section 4.3.13.4.1 again, from the other side: a heating-only
-    /// thermostat sitting in `Off` still reports `Heat`, because the field
-    /// names the setpoint, not the mode.
+    /// The same from the other side: a heating-only thermostat sitting in
+    /// `Off` still reports `Heat`, because the field names the setpoint.
     #[test]
     fn the_setpoint_change_system_mode_names_the_setpoint_not_the_mode() {
         let handler = seeded_handler::<AUTO_EVT>();
@@ -4666,9 +4328,8 @@ mod tests {
         );
     }
 
-    /// Section 4.3.13.2, the three clauses: the threshold, the null
-    /// transitions that bypass it, and the 60-second floor that nothing
-    /// bypasses.
+    /// The three clauses: the threshold, the null transitions that bypass
+    /// it, and the 60-second floor that nothing bypasses.
     #[test]
     fn local_temperature_significance_and_rate_limit() {
         const DELTA: i16 = 50;
@@ -4856,7 +4517,7 @@ mod tests {
         assert_eq!(handler.deferred_local_temperature_deadline(), None);
     }
 
-    // Section 4.3.11.30-32: who moved the setpoint
+    // Who moved the setpoint
 
     /// A write that arrived over Matter is `External`.
     #[test]

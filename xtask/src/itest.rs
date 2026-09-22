@@ -47,7 +47,7 @@
 //! - **It hardcodes upstream `all-clusters-app`'s own configuration.**
 //!   `TestThermostat` writes `SystemMode` = `Sleep` and then `Dry`, and
 //!   requires both to succeed. Both are `<optionalConform/>` values in
-//!   the 1.6 data model, and `thermostat_tests` is a heating-only
+//!   the data model, and `thermostat_tests` is a heating-only
 //!   thermostat with neither a fan nor a dehumidifier, so it refuses
 //!   them with `CONSTRAINT_ERROR` - conformantly. The suite pins the
 //!   CHIP example app's value set, not the cluster; see

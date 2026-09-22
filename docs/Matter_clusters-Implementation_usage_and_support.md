@@ -405,7 +405,7 @@ Blank entries indicate that an assessment has not yet been made to identify if t
 |                                                       |    |    |    |    |    |       |
 | **4. HVAC**                                           |    |    |    |    |    |       |
 | PumpConfigurationAndControl                           | ✅ |    |    |    |    |       |
-| Thermostat                                            | ✅ | ⚫ | ✅ | ⚫ |    | `HEAT`, `COOL` and `AUTO`, plus the optional `SetpointChangeSource`/`Amount`/`Timestamp`; events are served only if the consumer opts into `TEVT`, which is provisional in 1.6; occupancy, schedules, presets and suggestions are not implemented |
+| Thermostat                                            | ✅ | ⚫ | ✅ | ⚫ |    | `HEAT`, `COOL` and `AUTO`, plus the optional `SetpointChangeSource`/`Amount`/`Timestamp`; events are served only if the consumer opts into `TEVT`, which is provisional; occupancy, schedules, presets and suggestions are not implemented |
 | FanControl                                            | ✅ | ⚫ | ❌ | ⚫ |    |       |
 | ThermostatUserInterfaceConfiguration                  | ✅ |    |    |    |    |       |
 |                                                       |    |    |    |    |    |       |

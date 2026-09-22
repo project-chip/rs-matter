@@ -14,7 +14,7 @@ TSTAT.S=1
 
 # Features. `HEAT` (F00) only: no cooling, no occupancy, no setback, no auto
 # mode, no schedules, no presets, no events, no suggestions. F03 does not
-# exist in Matter 1.6 - the legacy weekly-schedule feature was dropped.
+# exist - the legacy weekly-schedule feature was dropped from the data model.
 TSTAT.S.F00=1
 TSTAT.S.F01=0
 TSTAT.S.F02=0
