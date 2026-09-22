@@ -75,7 +75,6 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -933,8 +932,8 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         ControlSequenceOfOperationEnum::HeatingOnly;
 
-    fn local_temperature(&self) -> Nullable<i16> {
-        Nullable::some(self.state.lock(|state| state.borrow().local_temperature))
+    fn local_temperature(&self) -> Option<i16> {
+        Some(self.state.lock(|state| state.borrow().local_temperature))
     }
 
     fn occupied_heating_setpoint(&self) -> i16 {
@@ -1163,16 +1162,16 @@ impl ElecPwrMeasHooks for ElecPwrDeviceLogic<'_> {
         meter_accuracy!(PowerFactor, MAX_POWER_FACTOR),
     ];
 
-    fn active_power(&self) -> Nullable<i64> {
-        Nullable::some(self.element.active_power_mw())
+    fn active_power(&self) -> Option<i64> {
+        Some(self.element.active_power_mw())
     }
 
-    fn voltage(&self) -> Nullable<i64> {
-        Nullable::some(self.element.voltage_mv())
+    fn voltage(&self) -> Option<i64> {
+        Some(self.element.voltage_mv())
     }
 
-    fn active_current(&self) -> Nullable<i64> {
-        Nullable::some(self.element.active_current_ma())
+    fn active_current(&self) -> Option<i64> {
+        Some(self.element.active_current_ma())
     }
 
     // A resistive element on a sinusoidal supply draws all of its current in
@@ -1181,40 +1180,40 @@ impl ElecPwrMeasHooks for ElecPwrDeviceLogic<'_> {
     // measure each of these rather than deriving them, which is the whole
     // reason the spec has them as separate readings.
 
-    fn rms_voltage(&self) -> Nullable<i64> {
-        Nullable::some(self.element.voltage_mv())
+    fn rms_voltage(&self) -> Option<i64> {
+        Some(self.element.voltage_mv())
     }
 
-    fn rms_current(&self) -> Nullable<i64> {
-        Nullable::some(self.element.active_current_ma())
+    fn rms_current(&self) -> Option<i64> {
+        Some(self.element.active_current_ma())
     }
 
-    fn rms_power(&self) -> Nullable<i64> {
-        Nullable::some(self.element.active_power_mw())
+    fn rms_power(&self) -> Option<i64> {
+        Some(self.element.active_power_mw())
     }
 
-    fn apparent_current(&self) -> Nullable<i64> {
-        Nullable::some(self.element.active_current_ma())
+    fn apparent_current(&self) -> Option<i64> {
+        Some(self.element.active_current_ma())
     }
 
-    fn apparent_power(&self) -> Nullable<i64> {
-        Nullable::some(self.element.active_power_mw())
+    fn apparent_power(&self) -> Option<i64> {
+        Some(self.element.active_power_mw())
     }
 
-    fn reactive_current(&self) -> Nullable<i64> {
-        Nullable::some(0)
+    fn reactive_current(&self) -> Option<i64> {
+        Some(0)
     }
 
-    fn reactive_power(&self) -> Nullable<i64> {
-        Nullable::some(0)
+    fn reactive_power(&self) -> Option<i64> {
+        Some(0)
     }
 
-    fn frequency(&self) -> Nullable<i64> {
-        Nullable::some(SUPPLY_FREQUENCY_MHZ)
+    fn frequency(&self) -> Option<i64> {
+        Some(SUPPLY_FREQUENCY_MHZ)
     }
 
-    fn power_factor(&self) -> Nullable<i64> {
-        Nullable::some(UNITY_POWER_FACTOR)
+    fn power_factor(&self) -> Option<i64> {
+        Some(UNITY_POWER_FACTOR)
     }
 
     async fn run<F: Fn(elec_pwr_meas::OutOfBandMessage)>(&self, notify: F) {

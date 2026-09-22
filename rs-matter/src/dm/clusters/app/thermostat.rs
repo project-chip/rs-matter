@@ -899,7 +899,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         if Self::supports_feature(Feature::LOCAL_TEMPERATURE_NOT_EXPOSED.bits()) {
             None
         } else {
-            self.hooks.local_temperature().into_option()
+            self.hooks.local_temperature()
         }
     }
 
@@ -2409,9 +2409,9 @@ pub trait ThermostatHooks {
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         ControlSequenceOfOperationEnum::HeatingOnly;
 
-    /// The Calculated Local Temperature in 0.01°C, or null when the reading is
-    /// unavailable (section 4.3.11.1).
-    fn local_temperature(&self) -> Nullable<i16>;
+    /// The Calculated Local Temperature in 0.01°C, or `None` when the reading
+    /// is unavailable (section 4.3.11.1).
+    fn local_temperature(&self) -> Option<i16>;
 
     /// Raw `OccupiedHeatingSetpoint` getter, in 0.01°C.
     ///
@@ -2576,7 +2576,7 @@ where
         (*self).utc_now_secs()
     }
 
-    fn local_temperature(&self) -> Nullable<i16> {
+    fn local_temperature(&self) -> Option<i16> {
         (*self).local_temperature()
     }
 
@@ -2658,7 +2658,6 @@ pub mod test {
     use crate::dm::clusters::decl::thermostat as thermostat_cluster;
     use crate::dm::Cluster;
     use crate::error::Error;
-    use crate::tlv::Nullable;
     use crate::with;
 
     use super::{OutOfBandMessage, RelayStateBitmap, SystemModeEnum, ThermostatHooks};
@@ -2800,8 +2799,8 @@ pub mod test {
             Some(1000)
         }
 
-        fn local_temperature(&self) -> Nullable<i16> {
-            Nullable::some(self.state.lock(|state| state.borrow().local_temperature))
+        fn local_temperature(&self) -> Option<i16> {
+            Some(self.state.lock(|state| state.borrow().local_temperature))
         }
 
         fn occupied_heating_setpoint(&self) -> i16 {
@@ -2923,7 +2922,6 @@ mod tests {
         Privilege, Quality,
     };
     use crate::error::{Error, ErrorCode};
-    use crate::tlv::Nullable;
     use crate::utils::cell::RefCell;
     use crate::utils::sync::blocking::Mutex;
     use crate::with;
@@ -3078,8 +3076,8 @@ mod tests {
                 ControlSequenceOfOperationEnum::HeatingOnly
             };
 
-        fn local_temperature(&self) -> Nullable<i16> {
-            Nullable::new(self.get(|state| state.local_temperature))
+        fn local_temperature(&self) -> Option<i16> {
+            self.get(|state| state.local_temperature)
         }
 
         fn occupied_heating_setpoint(&self) -> i16 {
@@ -3238,7 +3236,7 @@ mod tests {
             Some(1000)
         }
 
-        fn local_temperature(&self) -> Nullable<i16> {
+        fn local_temperature(&self) -> Option<i16> {
             self.0.local_temperature()
         }
 
@@ -3344,10 +3342,7 @@ mod tests {
             super::Feature::LOCAL_TEMPERATURE_NOT_EXPOSED.bits()
         ));
 
-        assert_eq!(
-            mock_handler::<HEAT>().hooks.local_temperature(),
-            Nullable::some(1900)
-        );
+        assert_eq!(mock_handler::<HEAT>().hooks.local_temperature(), Some(1900));
     }
 
     /// Section 4.3.11.22: `SystemMode` is limited by
@@ -4021,8 +4016,8 @@ mod tests {
             const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
                 ControlSequenceOfOperationEnum::CoolingOnly;
 
-            fn local_temperature(&self) -> Nullable<i16> {
-                Nullable::none()
+            fn local_temperature(&self) -> Option<i16> {
+                None
             }
 
             fn system_mode(&self) -> SystemModeEnum {
@@ -4395,8 +4390,8 @@ mod tests {
             impl ThermostatHooks for $name {
                 const CLUSTER: Cluster<'static> = $cluster;
 
-                fn local_temperature(&self) -> Nullable<i16> {
-                    Nullable::none()
+                fn local_temperature(&self) -> Option<i16> {
+                    None
                 }
                 fn occupied_heating_setpoint(&self) -> i16 {
                     2000

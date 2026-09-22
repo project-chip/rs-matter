@@ -280,8 +280,8 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
         HandlerAdaptor(self)
     }
 
-    /// Whether the configured FeatureMap contains all of `features`.
-    fn supports_feature(features: u32) -> bool {
+    /// Whether the configured FeatureMap contains *any* of `features`.
+    fn supports_any_feature(features: u32) -> bool {
         H::CLUSTER.feature_map & features != 0
     }
 
@@ -401,7 +401,7 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
             );
         }
 
-        if !Self::supports_feature(Feature::IMPORTED_ENERGY.bits()) {
+        if !Self::supports_any_feature(Feature::IMPORTED_ENERGY.bits()) {
             panic!("ElectricalEnergyMeasurement validation: the IMPE feature must be enabled - this handler only implements imported energy");
         }
 
@@ -414,7 +414,7 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
 
         // Section 2.12.4: CUME and PERE are a choice of which at least one must
         // be selected - without one there is no energy attribute at all.
-        if !Self::supports_feature(
+        if !Self::supports_any_feature(
             Feature::CUMULATIVE_ENERGY.bits() | Feature::PERIODIC_ENERGY.bits(),
         ) {
             panic!("ElectricalEnergyMeasurement validation: one of the CUME or PERE features must be enabled");
@@ -438,7 +438,7 @@ impl<H: ElecEnergyMeasHooks> ElecEnergyMeasHandler<H> {
                 EventId::PeriodicEnergyMeasured,
             ),
         ] {
-            if !Self::supports_feature(feature.bits()) {
+            if !Self::supports_any_feature(feature.bits()) {
                 // The mirror image: an event in the served set is advertised in
                 // `EventList`, and without its feature nothing would ever emit
                 // it.
