@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Thermostat, Electrical Power Measurement, Electrical Energy Measurement and Power Topology cluster handlers, plus the Thermostat and Electrical Sensor device types (#568)
+* Log which event overflowed the event ring buffer, and how big it is (#568)
 * Make the `fabrics`, `sessions`, `rtc` and `basic_info_settings` fields in `MatterState` public and deprecate `Matter::with_rtc` (#570)
 * New APIs: `Session::is_reserved`, `Session::is_expired`, `Session::expire`, `Sessions::iter_mut`, `Sessions::remove_where`, `Sessions::expire_where` (#570)
 * Fix: session removal notification should support multiple waiters (#570)
