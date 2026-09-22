@@ -33,7 +33,7 @@ use futures_lite::StreamExt;
 use rand::Rng;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
-use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
+use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks};
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
@@ -46,14 +46,13 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, LifecycleOp, Node};
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{KvBlobStoreAccess, VENDOR_KEYS_START};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
@@ -90,19 +89,19 @@ fn main() -> Result<(), Error> {
     let mut rand = crypto.rand()?;
 
     // OnOff cluster setup
-    let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new(&kv));
+    let on_off_handler = on_off::OnOffHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
+        OnOffDeviceLogic::new(&kv),
+    );
 
     // LevelControl cluster setup
     let level_control_handler = level_control::LevelControlHandler::new(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x11,
         LevelControlDeviceLogic::new(),
-        level_control::AttributeDefaults {
-            on_level: Nullable::some(42),
-            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-            ..Default::default()
-        },
     );
 
     // Cluster wiring, validation and initialisation
@@ -215,11 +214,11 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             )
             .chain(
                 |e, c| e == 1 && c == ON_OFF_CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             )
             .chain(
                 |e, c| e == 1 && c == LevelControlDeviceLogic::CLUSTER.id,
-                level_control::HandlerAsyncAdaptor(level_control),
+                Async(level_control::HandlerAdaptor(level_control)),
             ),
     )
 }
@@ -227,7 +226,6 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 // Implementing the LevelControl business logic
 pub struct LevelControlDeviceLogic {
     current_level: Cell<Option<u8>>,
-    start_up_current_level: Cell<Option<u8>>,
 }
 
 impl Default for LevelControlDeviceLogic {
@@ -240,7 +238,6 @@ impl LevelControlDeviceLogic {
     pub const fn new() -> Self {
         Self {
             current_level: Cell::new(Some(1)),
-            start_up_current_level: Cell::new(None),
         }
     }
 }
@@ -249,6 +246,8 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     const MIN_LEVEL: u8 = 1;
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
+    const ON_LEVEL: Option<u8> = Some(42);
+    const OPTIONS: OptionsBitmap = OptionsBitmap::EXECUTE_IF_OFF;
     const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
         .with_features(
             level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
@@ -294,64 +293,9 @@ impl LevelControlHooks for LevelControlDeviceLogic {
         );
         self.current_level.set(level);
     }
-
-    fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
-        Ok(self.start_up_current_level.get())
-    }
-
-    fn set_start_up_current_level(&self, value: Option<u8>) -> Result<(), Error> {
-        self.start_up_current_level.set(value);
-        Ok(())
-    }
 }
 
 // Implementing the OnOff business logic
-
-// A simple serializer and deserializer for persisting the OnOff state in a single byte.
-// Stores the on_off state in the first bit.
-// Stores the start_up_on_off state in the remaining bits.
-#[derive(Default)]
-struct OnOffPersistentState {
-    on_off: bool,
-    start_up_on_off: Option<StartUpOnOffEnum>,
-}
-
-impl OnOffPersistentState {
-    fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
-        trace!(
-            "to_bytes_from_values: got on_off: {} | start_up_on_off: {:?}",
-            on_off,
-            start_up_on_off
-        );
-        let on_off = on_off as u8;
-        let start_up_on_off: u8 = match start_up_on_off {
-            Some(StartUpOnOffEnum::Off) => 0,
-            Some(StartUpOnOffEnum::On) => 1,
-            Some(StartUpOnOffEnum::Toggle) => 2,
-            None => 3,
-        };
-        trace!(
-            "to_bytes_from_values: vals before writing on_off: {} | start_up_on_off: {}",
-            on_off,
-            start_up_on_off
-        );
-        trace!("final val: {}", on_off + (start_up_on_off << 1));
-        on_off + (start_up_on_off << 1)
-    }
-
-    fn from_bytes(data: u8) -> Result<Self, Error> {
-        Ok(Self {
-            on_off: data & 1 != 0,
-            start_up_on_off: match data >> 1 {
-                0 => Some(StartUpOnOffEnum::Off),
-                1 => Some(StartUpOnOffEnum::On),
-                2 => Some(StartUpOnOffEnum::Toggle),
-                3 => None,
-                _ => return Err(ErrorCode::Failure.into()),
-            },
-        })
-    }
-}
 
 /// The key under which [`OnOffDeviceLogic`] persists its state, in the key
 /// range the Matter KV store leaves to the application.
@@ -386,7 +330,6 @@ const ON_OFF_CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
 /// erased on [`LifecycleOp::FactoryReset`].
 pub struct OnOffDeviceLogic<K> {
     on_off: Cell<bool>,
-    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
     kv: K,
 }
 
@@ -394,7 +337,6 @@ impl<K: KvBlobStoreAccess> OnOffDeviceLogic<K> {
     pub const fn new(kv: K) -> Self {
         Self {
             on_off: Cell::new(false),
-            start_up_on_off: Cell::new(None),
             kv,
         }
     }
@@ -406,27 +348,17 @@ impl<K: KvBlobStoreAccess> OnOffDeviceLogic<K> {
                 .map(|data| data.and_then(|data| data.first().copied()))
         })?;
 
-        let state = match data {
-            Some(data) => {
-                trace!("OnOffDeviceLogic: loaded {:0x}", data);
-                OnOffPersistentState::from_bytes(data)?
-            }
-            None => OnOffPersistentState::default(),
-        };
+        trace!("OnOffDeviceLogic: loaded {:?}", data);
 
-        self.on_off.set(state.on_off);
-        self.start_up_on_off.set(state.start_up_on_off);
+        self.on_off.set(data.is_some_and(|data| data != 0));
 
         Ok(())
     }
 
     fn save_state(&self) -> Result<(), Error> {
-        let value = OnOffPersistentState::to_bytes_from_values(
-            self.on_off.get(),
-            self.start_up_on_off.get(),
-        );
+        let value = self.on_off.get() as u8;
 
-        trace!("OnOffDeviceLogic: saving {:0x}", value);
+        trace!("OnOffDeviceLogic: saving {}", value);
 
         self.kv
             .access(|store, buf| store.store(ON_OFF_STATE_KEY, &[value], buf))
@@ -434,7 +366,6 @@ impl<K: KvBlobStoreAccess> OnOffDeviceLogic<K> {
 
     fn erase_state(&self) -> Result<(), Error> {
         self.on_off.set(false);
-        self.start_up_on_off.set(None);
 
         self.kv
             .access(|store, buf| store.remove(ON_OFF_STATE_KEY, buf))
@@ -462,18 +393,6 @@ impl<K: KvBlobStoreAccess> OnOffHooks for OnOffDeviceLogic<K> {
         if let Err(err) = self.save_state() {
             error!("Error saving state: {}", err);
         }
-    }
-
-    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
-        match self.start_up_on_off.get() {
-            Some(value) => Nullable::some(value),
-            None => Nullable::none(),
-        }
-    }
-
-    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
-        self.start_up_on_off.set(value.into_option());
-        self.save_state()
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {

@@ -149,6 +149,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(true),
     );
 
@@ -296,7 +297,7 @@ where
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             ),
     )
 }

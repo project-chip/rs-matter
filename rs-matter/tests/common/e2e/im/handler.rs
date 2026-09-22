@@ -18,8 +18,7 @@
 use rs_matter::crypto::{Crypto, Rng};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{
-    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
-    OnOffHooks,
+    self, test::TestOnOffDeviceLogic, ClusterHandler as _, NoLevelControl, OnOffHandler, OnOffHooks,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
@@ -39,7 +38,7 @@ use super::echo_cluster::{self, EchoHandler};
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     handler_chain_type!(
-        FnMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
+        FnMatcher => Async<on_off::HandlerAdaptor<OnOffHandler<'a, OH, LH>>>,
         FnMatcher => Async<EchoHandler>,
         FnMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
         FnMatcher => Async<EchoHandler>
@@ -83,7 +82,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             );
 
         Self(handler)
@@ -149,6 +148,7 @@ impl<C: Crypto> E2eRunner<C> {
         let on_off_handler = on_off::OnOffHandler::new_standalone(
             Dataver::new_rand(&mut rand),
             1,
+            rs_matter::persist::VENDOR_KEYS_START + 0x10,
             TestOnOffDeviceLogic::new(false),
         );
 

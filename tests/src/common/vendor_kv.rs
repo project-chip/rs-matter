@@ -21,7 +21,7 @@
 //! KVS under the vendor key range.
 //!
 //! The drivers model devices whose application state outlives a restart - a
-//! light's OnOff state, its startup color temperature - because several tests
+//! light's OnOff state - because several tests
 //! restart the DUT mid-run and then assert on what came back.
 //!
 //! Keeping that state in the same store as the Matter state is what makes a
@@ -33,11 +33,8 @@
 use rs_matter::error::Error;
 use rs_matter::persist::{KvBlobStoreAccess, VENDOR_KEYS_START};
 
-/// The OnOff state and `StartUpOnOff` of the light, as one byte.
+/// The OnOff state of the light, as one byte.
 pub const ON_OFF_STATE_KEY: u16 = VENDOR_KEYS_START;
-
-/// `StartUpColorTemperatureMireds`, as a little-endian `u16`. Absent for null.
-pub const START_UP_CT_KEY: u16 = VENDOR_KEYS_START + 1;
 
 /// An object-safe view of a [`KvBlobStoreAccess`].
 ///
