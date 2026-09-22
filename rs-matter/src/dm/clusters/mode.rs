@@ -466,6 +466,24 @@ pub trait ModeHooks {
 
         Err(ModeChangeError::generic("Mode changes are not supported"))
     }
+
+    /// Lifecycle operation, forwarded by the cluster handler before it
+    /// reacts to the operation itself.
+    ///
+    /// Hooks that persist device state load it on [`LifecycleOp::Startup`],
+    /// since the handler reads that state right after, and erase it on
+    /// [`LifecycleOp::FactoryReset`]. The storage is wired into the hooks by
+    /// the application, e.g. the same [`crate::persist::KvBlobStoreAccess`]
+    /// passed to the `InteractionModel`, which also serves the setters that
+    /// save the state.
+    ///
+    /// If one hooks instance serves several handlers, it receives each
+    /// operation once per handler.
+    ///
+    /// The default implementation does nothing.
+    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<T> ModeHooks for &T
@@ -486,6 +504,10 @@ where
 
     fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
         (*self).change_to_mode(mode)
+    }
+
+    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (*self).lifecycle(op)
     }
 }
 
@@ -703,6 +725,10 @@ where
         _ctx: impl HandlerContext,
         op: LifecycleOp,
     ) -> Result<(), Error> {
+        // The hooks go first, so that on startup they load the persisted
+        // `CurrentMode` before it is checked below.
+        self.hooks.lifecycle(op)?;
+
         if matches!(op, LifecycleOp::Startup) {
             self.validate();
             self.repair_current_mode();

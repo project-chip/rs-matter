@@ -18,12 +18,13 @@
 //! Implementation of the Matter Color Control cluster.
 
 use core::cell::Cell;
-use core::future::{pending, ready, Future};
+use core::future::{pending, Future};
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_time::{Duration, Instant, Timer};
 
+use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::dm::clusters::app::level_control::{LevelControlHooks, NoOnOff};
 use crate::dm::clusters::app::on_off::{NoLevelControl, OnOffHandler, OnOffHooks};
 use crate::dm::clusters::decl::scenes_management::{
@@ -32,10 +33,11 @@ use crate::dm::clusters::decl::scenes_management::{
 use crate::dm::clusters::scenes::{SceneClusterHandler, SceneInvalidator};
 use crate::dm::{
     AttrChangeNotifier, AttrId, Cluster, ClusterId, Dataver, EndptId, HandlerContext,
-    InvokeContext, ReadContext, WriteContext,
+    InvokeContext, LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
+use crate::persist::{KvBlobStoreAccess, Persist};
+use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
@@ -43,35 +45,17 @@ use crate::utils::sync::Signal;
 pub use crate::dm::clusters::decl::color_control::*;
 
 /// Messages passed to the `notify` closure in `ColorControlHooks::run()`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandMessage {
-    /// Out-of-band physical-state update — Matter attributes should
-    /// be re-read from the hooks.
-    Update,
+    /// The device changed its colour by itself (e.g. via a physical control),
+    /// and the Matter state should follow. The device is not driven.
+    ///
+    /// Ends any transition or colour loop in progress. A colour whose feature
+    /// is not enabled is ignored.
+    Update(SetDeviceColor),
 }
 
-/// Default values for the handler-internal attribute state seeded at
-/// `init` time. Currently only `options` and `start_up_color_temperature_mireds`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
-pub struct AttributeDefaults {
-    pub options: OptionsBitmap,
-}
-
-impl AttributeDefaults {
-    pub const fn new() -> Self {
-        Self {
-            options: OptionsBitmap::from_bits_truncate(0),
-        }
-    }
-}
-
-/// Device-supplied state + I/O for the Color Control cluster.
-///
-/// Implementers expose the device's persisted color attributes,
-/// physical color-temperature limits, and three actuator hooks (XY,
-/// hue+saturation, color-temperature). Getters return cached state;
-/// setters are synchronous and cheap.
 /// Colour-set command passed to [`ColorControlHooks::set_device_color`].
 /// The variant carried by the command identifies the colour space the
 /// cluster has decided to drive the device in.
@@ -327,16 +311,38 @@ fn ct_mireds_to_xy_f32_pair(mireds: u16) -> (u16, u16) {
 
 /// Device-supplied bindings for the Color Control cluster.
 ///
-/// The cluster owns and persists all attribute state internally; the
-/// hooks only need to (a) describe the device's static capabilities
-/// (features + physical CT bounds) and (b) push the current colour
-/// onto the hardware via [`Self::set_device_color`]. Optionally,
-/// devices that persist `StartUpColorTemperatureMireds` across
-/// reboots can override the two persistence hooks.
+/// The handler owns every attribute and persists the non-volatile ones
+/// (the colour, the colour loop and the configuration attributes) under
+/// the KV key it is constructed with. The hooks (a) describe the device's
+/// static capabilities and initial values, (b) push the colour onto the
+/// hardware via [`Self::set_device_color`] and (c) report colour changes
+/// the device makes by itself from [`Self::run`].
 pub trait ColorControlHooks {
     /// Cluster metadata for this device — typically `FULL_CLUSTER`
     /// passed through `.with_features(...).with_attrs(...).with_cmds(...)`.
     const CLUSTER: Cluster<'static>;
+
+    /// The initial colour, and with it the initial colour mode, used until
+    /// the handler has persisted one.
+    ///
+    /// `None` starts in the first mode supported by the features (xy, then
+    /// hue + saturation, then colour temperature) with the spec default
+    /// values. A colour whose feature is not enabled is ignored.
+    const COLOR: Option<SetDeviceColor> = None;
+
+    /// How long the colour has to stay unchanged before the handler persists
+    /// it, in milliseconds. Transitions keep changing it, so they are
+    /// persisted once, when they end; this delay also bounds the flash writes
+    /// caused by a burst of commands, at the cost of losing the last change
+    /// on a power loss within this window.
+    const PERSIST_DELAY_MS: u32 = 3000;
+
+    /// The initial value of the `Options` attribute.
+    const OPTIONS: OptionsBitmap = OptionsBitmap::empty();
+
+    /// The initial value of the `StartUpColorTemperatureMireds` attribute
+    /// (`None` = null).
+    const START_UP_COLOR_TEMPERATURE_MIREDS: Option<u16> = None;
 
     /// `ColorCapabilities` bitmap as reported via the attribute of
     /// the same name. Should mirror the `Feature` bits enabled in
@@ -356,21 +362,10 @@ pub trait ColorControlHooks {
 
     /// Drive the device to the requested colour. Called by the
     /// cluster on every colour-mutation step (commands, transitions,
-    /// the colour loop, and scene recall). `Err(())` surfaces as
-    /// `Failure`.
+    /// the colour loop, and scene recall), and on startup with the
+    /// restored colour. `Err(())` surfaces as `Failure`.
     #[allow(clippy::result_unit_err)]
     fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()>;
-
-    /// Optional read for the spec-mandated non-volatile
-    /// `StartUpColorTemperatureMireds`. Devices that don't persist
-    /// it leave the default which reports `AttributeNotFound`.
-    fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    fn set_start_up_color_temperature_mireds(&self, _value: Nullable<u16>) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
 
     /// Background task for out-of-band notifications. The future MUST
     /// NOT return — implementers should loop or `pending::<()>().await`.
@@ -385,6 +380,14 @@ where
 {
     const CLUSTER: Cluster<'static> = T::CLUSTER;
 
+    const OPTIONS: OptionsBitmap = T::OPTIONS;
+
+    const START_UP_COLOR_TEMPERATURE_MIREDS: Option<u16> = T::START_UP_COLOR_TEMPERATURE_MIREDS;
+
+    const COLOR: Option<SetDeviceColor> = T::COLOR;
+
+    const PERSIST_DELAY_MS: u32 = T::PERSIST_DELAY_MS;
+
     const COLOR_CAPABILITIES: ColorCapabilitiesBitmap = T::COLOR_CAPABILITIES;
 
     const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = T::COLOR_TEMP_PHYSICAL_MIN_MIREDS;
@@ -395,14 +398,6 @@ where
 
     fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()> {
         (*self).set_device_color(target)
-    }
-
-    fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
-        (*self).start_up_color_temperature_mireds()
-    }
-
-    fn set_start_up_color_temperature_mireds(&self, value: Nullable<u16>) -> Result<(), Error> {
-        (*self).set_start_up_color_temperature_mireds(value)
     }
 
     fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
@@ -486,14 +481,41 @@ const SATURATION_MAX: u8 = 254;
 /// Spec maximum for `CurrentX` / `CurrentY` (i.e., 0xFEFF).
 const XY_MAX: u16 = 0xFEFF;
 
-/// Handler-internal cluster state. Device-persisted attributes live
-/// in the hooks.
+/// The configuration attributes.
+#[derive(Debug, Clone, PartialEq, Eq, FromTLV, ToTLV)]
+struct ConfigAttrs {
+    options: OptionsBitmap,
+    start_up_color_temperature_mireds: Option<u16>,
+}
+
+/// The non-volatile colour and colour-loop attributes.
+#[derive(Debug, Clone, PartialEq, Eq, FromTLV, ToTLV)]
+struct ColorAttrs {
+    enhanced_color_mode: EnhancedColorModeEnum,
+    enhanced_current_hue: u16,
+    current_saturation: u8,
+    current_x: u16,
+    current_y: u16,
+    color_temperature_mireds: u16,
+    color_loop_active: bool,
+    color_loop_direction: ColorLoopDirectionEnum,
+    color_loop_time: u16,
+    color_loop_start_enhanced_hue: u16,
+    color_loop_stored_enhanced_hue: u16,
+}
+
+/// The attributes the handler persists under its KV key.
+#[derive(Debug, Clone, PartialEq, Eq, FromTLV, ToTLV)]
+struct PersistedAttrs {
+    config: ConfigAttrs,
+    color: ColorAttrs,
+}
+
 /// Cluster-internal state. Owns every Matter Color Control attribute
-/// value (previously exposed via hook getter/setter pairs) plus
-/// transition bookkeeping. Devices only see the abstracted
+/// value plus transition bookkeeping. Devices only see the abstracted
 /// [`SetDeviceColor`] actuator.
 struct ColorControlState {
-    options: OptionsBitmap,
+    config: ConfigAttrs,
     remaining_time: u16,
     last_hue_notification: Instant,
     last_saturation_notification: Instant,
@@ -516,9 +538,28 @@ struct ColorControlState {
 }
 
 impl ColorControlState {
-    const fn new(defaults: AttributeDefaults) -> Self {
+    /// The state of a freshly started cluster, before anything is restored:
+    /// the first colour mode supported by the features, with the spec
+    /// default values.
+    const fn new(
+        config: ConfigAttrs,
+        feature_map: u32,
+        ct_min_mireds: u16,
+        ct_max_mireds: u16,
+    ) -> Self {
+        let enhanced_color_mode = Self::default_color_mode(feature_map);
+
+        // The spec default, brought within the physical limits of the device.
+        let color_temperature_mireds = if 0x00FA < ct_min_mireds {
+            ct_min_mireds
+        } else if 0x00FA > ct_max_mireds {
+            ct_max_mireds
+        } else {
+            0x00FA
+        };
+
         Self {
-            options: defaults.options,
+            config,
             remaining_time: 0,
             last_hue_notification: Instant::from_millis(0),
             last_saturation_notification: Instant::from_millis(0),
@@ -526,18 +567,140 @@ impl ColorControlState {
             last_color_temperature_notification: Instant::from_millis(0),
             enhanced_current_hue: 0,
             current_saturation: 0,
-            // Default xy chromaticity (warm-white-ish).
             current_x: 0x616B,
             current_y: 0x607D,
-            color_temperature_mireds: 250,
-            color_mode: ColorModeEnum::ColorTemperatureMireds,
-            enhanced_color_mode: EnhancedColorModeEnum::ColorTemperatureMireds,
+            color_temperature_mireds,
+            color_mode: color_mode_of(enhanced_color_mode),
+            enhanced_color_mode,
             color_loop_active: false,
             color_loop_direction: ColorLoopDirectionEnum::Increment,
-            color_loop_time: 25,
+            color_loop_time: 0x0019,
             color_loop_start_enhanced_hue: 0x2300,
             color_loop_stored_enhanced_hue: 0,
         }
+    }
+
+    /// The first colour mode supported by `feature_map`, in the order
+    /// xy, hue + saturation, colour temperature. Falls back to xy
+    /// (the spec default) when no colour feature is enabled.
+    const fn default_color_mode(feature_map: u32) -> EnhancedColorModeEnum {
+        if feature_map & Feature::XY.bits() != 0 {
+            EnhancedColorModeEnum::CurrentXAndCurrentY
+        } else if feature_map & Feature::HUE_AND_SATURATION.bits() != 0 {
+            EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+        } else if feature_map & Feature::COLOR_TEMPERATURE.bits() != 0 {
+            EnhancedColorModeEnum::ColorTemperatureMireds
+        } else {
+            EnhancedColorModeEnum::CurrentXAndCurrentY
+        }
+    }
+
+    /// The current values of the non-volatile colour attributes.
+    fn color(&self) -> ColorAttrs {
+        ColorAttrs {
+            enhanced_color_mode: self.enhanced_color_mode,
+            enhanced_current_hue: self.enhanced_current_hue,
+            current_saturation: self.current_saturation,
+            current_x: self.current_x,
+            current_y: self.current_y,
+            color_temperature_mireds: self.color_temperature_mireds,
+            color_loop_active: self.color_loop_active,
+            color_loop_direction: self.color_loop_direction,
+            color_loop_time: self.color_loop_time,
+            color_loop_start_enhanced_hue: self.color_loop_start_enhanced_hue,
+            color_loop_stored_enhanced_hue: self.color_loop_stored_enhanced_hue,
+        }
+    }
+
+    /// Take over restored colour attributes. A colour mode (or colour loop)
+    /// whose feature is not enabled - e.g. after a firmware update changed the
+    /// features - falls back to the default colour mode.
+    fn set_color(&mut self, color: ColorAttrs, feature_map: u32) {
+        let mode_feature = match color.enhanced_color_mode {
+            EnhancedColorModeEnum::CurrentHueAndCurrentSaturation => {
+                Feature::HUE_AND_SATURATION.bits()
+            }
+            EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation => {
+                Feature::ENHANCED_HUE.bits()
+            }
+            EnhancedColorModeEnum::CurrentXAndCurrentY => Feature::XY.bits(),
+            EnhancedColorModeEnum::ColorTemperatureMireds => Feature::COLOR_TEMPERATURE.bits(),
+        };
+
+        self.enhanced_color_mode = if feature_map & mode_feature != 0 {
+            color.enhanced_color_mode
+        } else {
+            Self::default_color_mode(feature_map)
+        };
+        self.color_mode = color_mode_of(self.enhanced_color_mode);
+        self.enhanced_current_hue = color.enhanced_current_hue;
+        self.current_saturation = color.current_saturation.min(SATURATION_MAX);
+        self.current_x = color.current_x.min(XY_MAX);
+        self.current_y = color.current_y.min(XY_MAX);
+        self.color_temperature_mireds = color.color_temperature_mireds;
+        self.color_loop_active =
+            color.color_loop_active && feature_map & Feature::COLOR_LOOP.bits() != 0;
+        self.color_loop_direction = color.color_loop_direction;
+        self.color_loop_time = color.color_loop_time;
+        self.color_loop_start_enhanced_hue = color.color_loop_start_enhanced_hue;
+        self.color_loop_stored_enhanced_hue = color.color_loop_stored_enhanced_hue;
+    }
+
+    /// Seed the colour mode and the attributes of that mode from a
+    /// colour reported by the device. Returns `false` (leaving the
+    /// state untouched) if the colour's feature is not in `feature_map`.
+    fn set_from_device_color(
+        &mut self,
+        color: SetDeviceColor,
+        feature_map: u32,
+        ct_min_mireds: u16,
+        ct_max_mireds: u16,
+    ) -> bool {
+        let enhanced_color_mode = match color {
+            SetDeviceColor::Xy { x, y } => {
+                if feature_map & Feature::XY.bits() == 0 {
+                    return false;
+                }
+
+                self.current_x = x.min(XY_MAX);
+                self.current_y = y.min(XY_MAX);
+
+                EnhancedColorModeEnum::CurrentXAndCurrentY
+            }
+            SetDeviceColor::HueSaturation {
+                enhanced_hue,
+                saturation,
+            } => {
+                if feature_map & Feature::HUE_AND_SATURATION.bits() == 0 {
+                    return false;
+                }
+
+                self.enhanced_current_hue = enhanced_hue;
+                self.current_saturation = saturation.min(SATURATION_MAX);
+
+                // The non-enhanced hue commands only ever set the high byte,
+                // so a non-zero low byte means the hue came from an enhanced one.
+                if feature_map & Feature::ENHANCED_HUE.bits() != 0 && enhanced_hue & 0xFF != 0 {
+                    EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation
+                } else {
+                    EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+                }
+            }
+            SetDeviceColor::ColorTemperature { mireds } => {
+                if feature_map & Feature::COLOR_TEMPERATURE.bits() == 0 {
+                    return false;
+                }
+
+                self.color_temperature_mireds = mireds.clamp(ct_min_mireds, ct_max_mireds);
+
+                EnhancedColorModeEnum::ColorTemperatureMireds
+            }
+        };
+
+        self.color_mode = color_mode_of(enhanced_color_mode);
+        self.enhanced_color_mode = enhanced_color_mode;
+
+        true
     }
 
     /// Mirrors LevelControl's quiet-reporting rule: notify when
@@ -574,24 +737,21 @@ impl ColorControlState {
 pub struct ColorControlHandler<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> {
     dataver: Dataver,
     endpoint_id: EndptId,
+    kv_key: u16,
     hooks: H,
     on_off_handler: Mutex<Cell<Option<&'a OnOffHandler<'a, OH, LH>>>>,
     scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
     state: Mutex<RefCell<ColorControlState>>,
     #[allow(dead_code)]
     task_signal: Signal<Option<Task>>,
+    persist: DeferredPersist,
 }
 
 impl<H: ColorControlHooks> ColorControlHandler<'_, H, NoOnOff, NoLevelControl> {
     /// Standalone ColorControl handler — not coupled to OnOff. Calls
-    /// `init(None)` automatically.
-    pub fn new_standalone(
-        dataver: Dataver,
-        endpoint_id: EndptId,
-        hooks: H,
-        attribute_defaults: AttributeDefaults,
-    ) -> Self {
-        let this = Self::new_internal(dataver, endpoint_id, hooks, attribute_defaults);
+    /// `init(None)` automatically. See [`ColorControlHandler::new`] for `kv_key`.
+    pub fn new_standalone(dataver: Dataver, endpoint_id: EndptId, kv_key: u16, hooks: H) -> Self {
+        let this = Self::new_internal(dataver, endpoint_id, kv_key, hooks);
         this.init(None);
         this
     }
@@ -600,64 +760,278 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H, NoOnOff, NoLevelControl> {
 impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     ColorControlHandler<'a, H, OH, LH>
 {
-    const fn new_internal(
-        dataver: Dataver,
-        endpoint_id: EndptId,
-        hooks: H,
-        attribute_defaults: AttributeDefaults,
-    ) -> Self {
+    const fn new_internal(dataver: Dataver, endpoint_id: EndptId, kv_key: u16, hooks: H) -> Self {
         Self {
             dataver,
             endpoint_id,
+            kv_key,
             hooks,
             on_off_handler: Mutex::new(Cell::new(None)),
             scene_invalidator: Mutex::new(Cell::new(None)),
-            state: Mutex::new(RefCell::new(ColorControlState::new(attribute_defaults))),
+            state: Mutex::new(RefCell::new(Self::initial_state())),
             task_signal: Signal::new(None),
+            persist: DeferredPersist::new(),
         }
     }
 
     /// Construct a handler without driving `init` (no validation, no
     /// startup behaviour). Useful for unit tests and for the
     /// scenes-integration-only skeleton path.
-    pub const fn new(
-        dataver: Dataver,
-        endpoint_id: EndptId,
-        hooks: H,
-        attribute_defaults: AttributeDefaults,
-    ) -> Self {
-        Self::new_internal(dataver, endpoint_id, hooks, attribute_defaults)
+    ///
+    /// `kv_key` is the KV store key under which the handler persists its
+    /// non-volatile attributes (the colour, the colour loop, `Options` and
+    /// `StartUpColorTemperatureMireds`). It
+    /// must be unique across everything stored in the KV store, e.g. a key in
+    /// the vendor range starting at [`crate::persist::VENDOR_KEYS_START`].
+    pub const fn new(dataver: Dataver, endpoint_id: EndptId, kv_key: u16, hooks: H) -> Self {
+        Self::new_internal(dataver, endpoint_id, kv_key, hooks)
     }
 
-    /// Wire the optional coupled OnOff handler, validate the cluster
-    /// configuration, and apply `StartUpColorTemperatureMireds` if set.
+    /// The initial values of the configuration attributes, as supplied by the hooks.
+    const fn initial_config() -> ConfigAttrs {
+        ConfigAttrs {
+            options: H::OPTIONS,
+            start_up_color_temperature_mireds: H::START_UP_COLOR_TEMPERATURE_MIREDS,
+        }
+    }
+
+    /// The state at construction: the initial attribute values supplied by
+    /// the hooks, and the first colour mode supported by the features.
+    const fn initial_state() -> ColorControlState {
+        ColorControlState::new(
+            Self::initial_config(),
+            H::CLUSTER.feature_map,
+            H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
+            H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
+        )
+    }
+
+    /// Restore the attributes persisted under the handler's KV key.
+    /// Returns `false` if there is nothing persisted yet.
+    fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<bool, Error> {
+        let Some(persisted) = Persist::new(kv).load_tlv::<PersistedAttrs>(self.kv_key)? else {
+            return Ok(false);
+        };
+
+        self.with_state(|s| {
+            s.config = persisted.config;
+            s.set_color(persisted.color, H::CLUSTER.feature_map);
+        });
+
+        Ok(true)
+    }
+
+    /// The attributes to persist, as they are now.
+    fn persisted(&self) -> PersistedAttrs {
+        self.with_state(|s| PersistedAttrs {
+            config: s.config.clone(),
+            color: s.color(),
+        })
+    }
+
+    /// Save the persisted attributes now.
+    fn save(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        self.persist.clear();
+
+        Persist::new(kv).store_tlv(self.kv_key, self.persisted())
+    }
+
+    /// Record a change of the non-volatile colour attributes, to be persisted
+    /// once they settle. Colour-loop steps are not recorded: the loop keeps
+    /// changing the hue for as long as it runs.
+    fn color_changed(&self) {
+        if !self.with_state(|s| s.color_loop_active) {
+            self.persist.mark_dirty();
+        }
+    }
+
+    /// Update the configuration attributes with `f`, save them and only then
+    /// commit them, so that a failed save fails the write.
+    fn write_config<F>(&self, ctx: impl WriteContext, f: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut ConfigAttrs),
+    {
+        let mut persisted = self.persisted();
+        f(&mut persisted.config);
+
+        Persist::new(ctx.kv()).store_tlv(self.kv_key, &persisted)?;
+        self.persist.clear();
+
+        self.with_state_notify(ctx, |s| s.config = persisted.config);
+
+        Ok(())
+    }
+
+    /// Wire the optional coupled OnOff handler and validate the cluster
+    /// configuration.
+    ///
+    /// The persisted colour and `StartUpColorTemperatureMireds` are applied
+    /// later, on [`LifecycleOp::Startup`].
     pub fn init(&self, on_off_handler: Option<&'a OnOffHandler<'a, OH, LH>>) {
         self.on_off_handler.lock(|h| h.set(on_off_handler));
         self.validate();
+    }
+
+    /// Bring the colour up on power-up: the restored colour (or, if nothing is
+    /// persisted yet, [`ColorControlHooks::COLOR`]), overridden by
+    /// `StartUpColorTemperatureMireds` if set. The device is then driven to that
+    /// colour, or the restored colour loop is resumed.
+    fn startup<N: AttrChangeNotifier>(&self, ctx: &N, restored: bool) {
+        if !restored {
+            if let Some(color) = H::COLOR {
+                if !self.set_color_from(color) {
+                    warn!("ColorControlHooks::COLOR is a color whose feature is not enabled; ignoring");
+                }
+            }
+        }
 
         // StartUpColorTemperatureMireds: if non-null, force the
         // cluster's ColorTemperatureMireds to the supplied value on
         // power-up — but only when the feature is enabled and the
-        // attribute is reachable from the hooks.
-        if H::CLUSTER.feature_map & Feature::COLOR_TEMPERATURE.bits() != 0 {
-            if let Ok(value) = self.hooks.start_up_color_temperature_mireds() {
-                if let Some(mireds) = value.into_option() {
-                    let clamped = mireds.clamp(
-                        H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
-                        H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
-                    );
-                    if self
-                        .hooks
-                        .set_device_color(SetDeviceColor::ColorTemperature { mireds: clamped })
-                        .is_ok()
-                    {
-                        self.with_state(|s| {
-                            s.color_temperature_mireds = clamped;
-                            s.color_mode = ColorModeEnum::ColorTemperatureMireds;
-                            s.enhanced_color_mode = EnhancedColorModeEnum::ColorTemperatureMireds;
-                        });
-                    }
+        // attribute is exposed.
+        let start_up_mireds = if H::CLUSTER.feature_map & Feature::COLOR_TEMPERATURE.bits() != 0
+            && H::CLUSTER
+                .attribute(AttributeId::StartUpColorTemperatureMireds as _)
+                .is_some()
+        {
+            self.with_state(|s| s.config.start_up_color_temperature_mireds)
+        } else {
+            None
+        };
+
+        if let Some(mireds) = start_up_mireds {
+            let clamped = mireds.clamp(
+                H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
+                H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
+            );
+
+            self.with_state(|s| {
+                s.color_temperature_mireds = clamped;
+                s.color_mode = ColorModeEnum::ColorTemperatureMireds;
+                s.enhanced_color_mode = EnhancedColorModeEnum::ColorTemperatureMireds;
+                s.color_loop_active = false;
+            });
+
+            self.persist.mark_dirty();
+        }
+
+        // Put the device in the state the (restored) attributes represent.
+        let color_loop = self.with_state(|s| {
+            s.color_loop_active
+                .then_some((s.color_loop_direction, s.color_loop_time))
+        });
+
+        if let Some((direction, time_secs)) = color_loop {
+            self.drive_device_hue_saturation();
+            self.task_signal.signal(Task::ColorLoop {
+                direction,
+                time_secs,
+            });
+        } else {
+            self.drive_device();
+        }
+
+        ctx.notify_cluster_changed(self.endpoint_id, Self::cluster_id());
+    }
+
+    /// Stop any transition or colour loop, reset the configuration attributes
+    /// to their initial values and drop any pending save. The device keeps its
+    /// current colour.
+    fn factory_reset<N: AttrChangeNotifier>(&self, ctx: &N) {
+        self.task_signal.signal(Task::Stop);
+        self.persist.clear();
+
+        self.with_state(|s| {
+            s.config = Self::initial_config();
+            s.color_loop_active = false;
+            s.remaining_time = 0;
+        });
+
+        ctx.notify_cluster_changed(self.endpoint_id, Self::cluster_id());
+    }
+
+    /// Seed the colour mode and the attributes of that mode from `color`.
+    /// Returns `false` (leaving the state untouched) if the colour's feature
+    /// is not enabled.
+    fn set_color_from(&self, color: SetDeviceColor) -> bool {
+        self.with_state(|s| {
+            s.set_from_device_color(
+                color,
+                H::CLUSTER.feature_map,
+                H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
+                H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
+            )
+        })
+    }
+
+    /// Drive the device to the colour of the current colour mode.
+    fn drive_device(&self) {
+        match self.with_state(|s| s.enhanced_color_mode) {
+            EnhancedColorModeEnum::CurrentXAndCurrentY => self.drive_device_xy(),
+            EnhancedColorModeEnum::ColorTemperatureMireds => self.drive_device_color_temperature(),
+            EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+            | EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation => {
+                self.drive_device_hue_saturation()
+            }
+        }
+    }
+
+    /// Notify every current-colour attribute (and the colour mode) the
+    /// cluster exposes.
+    fn notify_color_changed<N: AttrChangeNotifier>(&self, ctx: &N) {
+        for attr in [
+            AttributeId::CurrentHue,
+            AttributeId::EnhancedCurrentHue,
+            AttributeId::CurrentSaturation,
+            AttributeId::CurrentX,
+            AttributeId::CurrentY,
+            AttributeId::ColorTemperatureMireds,
+            AttributeId::ColorMode,
+            AttributeId::EnhancedColorMode,
+            AttributeId::RemainingTime,
+        ] {
+            if H::CLUSTER.attribute(attr as _).is_some() {
+                ctx.notify_attr_changed(self.endpoint_id, Self::cluster_id(), attr as _);
+            }
+        }
+    }
+
+    fn handle_out_of_band_message<N: AttrChangeNotifier>(
+        &self,
+        ctx: &N,
+        message: OutOfBandMessage,
+    ) {
+        match message {
+            OutOfBandMessage::Update(color) => {
+                if !self.set_color_from(color) {
+                    warn!("OutOfBandMessage::Update carries a color whose feature is not enabled; ignoring");
+                    return;
                 }
+
+                // The device changed its colour on its own, which ends any
+                // transition or colour loop driven by the cluster.
+                self.task_signal.signal(Task::Stop);
+
+                let loop_was_active = self.with_state(|s| {
+                    let active = s.color_loop_active;
+                    s.color_loop_active = false;
+                    s.remaining_time = 0;
+                    active
+                });
+
+                self.persist.mark_dirty();
+
+                self.notify_color_changed(ctx);
+
+                if loop_was_active {
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::cluster_id(),
+                        AttributeId::ColorLoopActive as _,
+                    );
+                }
+
+                self.notify_scenable_changed();
             }
         }
     }
@@ -686,9 +1060,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             panic!("ColorControl validation: missing required attributes: ColorMode, Options, NumberOfPrimaries, EnhancedColorMode, or ColorCapabilities");
         }
 
+        let features = H::CLUSTER.feature_map;
+
         // StopMoveStep is required whenever any of the move/step
         // feature families is enabled.
-        let features = H::CLUSTER.feature_map;
         let any_move_feature = features
             & (Feature::HUE_AND_SATURATION.bits()
                 | Feature::XY.bits()
@@ -835,8 +1210,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     /// Attach a [`SceneInvalidator`] — typically the
@@ -882,6 +1257,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.with_state(|s| s.color_mode = ColorModeEnum::CurrentXAndCurrentY);
         self.with_state(|s| s.enhanced_color_mode = EnhancedColorModeEnum::CurrentXAndCurrentY);
 
+        self.color_changed();
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
 
         ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentX as _);
@@ -908,6 +1285,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.with_state(|s| s.color_temperature_mireds = mireds);
         self.with_state(|s| s.color_mode = ColorModeEnum::ColorTemperatureMireds);
         self.with_state(|s| s.enhanced_color_mode = EnhancedColorModeEnum::ColorTemperatureMireds);
+
+        self.color_changed();
 
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
 
@@ -943,6 +1322,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.with_state(|s| {
             s.enhanced_color_mode = EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
         });
+
+        self.color_changed();
 
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
 
@@ -984,6 +1365,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             s.enhanced_color_mode = EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation
         });
 
+        self.color_changed();
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
 
         ctx.notify_attr_changed(
@@ -1020,6 +1403,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.with_state(|s| s.color_loop_active = true);
         self.with_state(|s| s.color_loop_direction = direction);
         self.with_state(|s| s.color_loop_time = time);
+
+        self.persist.mark_dirty();
 
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
 
@@ -1073,7 +1458,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if options_mask.contains(OptionsBitmap::EXECUTE_IF_OFF) {
             options_override.contains(OptionsBitmap::EXECUTE_IF_OFF)
         } else {
-            self.with_state(|s| s.options.contains(OptionsBitmap::EXECUTE_IF_OFF))
+            self.with_state(|s| s.config.options.contains(OptionsBitmap::EXECUTE_IF_OFF))
         }
     }
 
@@ -1130,6 +1515,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
         };
         self.with_state(|s| s.enhanced_color_mode = enhanced_mode);
+
+        self.color_changed();
 
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
@@ -1190,6 +1577,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 s.enhanced_color_mode = EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
             });
         }
+
+        self.color_changed();
 
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
@@ -1444,6 +1833,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.with_state(|s| s.color_mode = ColorModeEnum::CurrentXAndCurrentY);
         self.with_state(|s| s.enhanced_color_mode = EnhancedColorModeEnum::CurrentXAndCurrentY);
 
+        self.color_changed();
+
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
             let elapsed = now - s.last_xy_notification;
@@ -1502,6 +1893,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.with_state(|s| s.color_temperature_mireds = new_mireds);
         self.with_state(|s| s.color_mode = ColorModeEnum::ColorTemperatureMireds);
         self.with_state(|s| s.enhanced_color_mode = EnhancedColorModeEnum::ColorTemperatureMireds);
+
+        self.color_changed();
 
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
@@ -2576,6 +2969,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             );
         }
 
+        // The colour-loop attributes are non-volatile.
+        self.persist.mark_dirty();
+
         // 2. Process the action.
         if !update_flags.contains(UpdateFlagsBitmap::UPDATE_ACTION) {
             return Ok(());
@@ -2653,42 +3049,71 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     }
 }
 
-// ---- ClusterAsyncHandler implementation ----
+// ---- ClusterHandler implementation ----
 
-impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler
+impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterHandler
     for ColorControlHandler<'_, H, OH, LH>
 {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        match op {
+            LifecycleOp::Startup => {
+                let restored = self.load_persisted(ctx.kv())?;
+                self.startup(&ctx, restored);
+
+                Ok(())
+            }
+            LifecycleOp::FactoryReset => {
+                self.factory_reset(&ctx);
+
+                Persist::new(ctx.kv()).remove(self.kv_key)
+            }
+            LifecycleOp::FabricRemoval { .. } => Ok(()),
+        }
+    }
+
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        let mut hooks_fut = pin!(self.hooks.run(|_message| {
-            // No out-of-band handling yet.
-        }));
+        let mut persist = pin!(self
+            .persist
+            .run(H::PERSIST_DELAY_MS, || self.save(ctx.kv())));
+
+        let mut hooks_fut = pin!(self
+            .hooks
+            .run(|message| self.handle_out_of_band_message(&ctx, message)));
 
         loop {
-            let result = select(&mut hooks_fut, self.task_signal.wait_signalled()).await;
+            let result = select3(
+                &mut hooks_fut,
+                self.task_signal.wait_signalled(),
+                &mut persist,
+            )
+            .await;
 
             let mut task = match result {
-                Either::First(_) => {
+                Either3::First(_) => {
                     panic!("ColorControlHooks::run returned; implementers MUST not return.")
                 }
-                Either::Second(task) => task,
+                Either3::Second(task) => task,
+                Either3::Third(_) => unreachable!(),
             };
 
             loop {
-                let result = select3(
+                let result = select4(
                     &mut hooks_fut,
                     self.task_manager(&ctx, task),
                     self.task_signal.wait_signalled(),
+                    &mut persist,
                 )
                 .await;
 
                 match result {
-                    Either3::First(_) => {
+                    Either4::First(_) => {
                         panic!("ColorControlHooks::run returned; implementers MUST not return.")
                     }
-                    Either3::Second(_) => break,
-                    Either3::Third(new_task) => task = new_task,
+                    Either4::Second(_) => break,
+                    Either4::Third(new_task) => task = new_task,
+                    Either4::Fourth(_) => unreachable!(),
                 };
             }
         }
@@ -2704,169 +3129,128 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
 
     // ---- Attribute reads ----
 
-    fn current_hue(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        ready(Ok((self.with_state(|s| s.enhanced_current_hue) >> 8) as u8))
+    fn current_hue(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok((self.with_state(|s| s.enhanced_current_hue) >> 8) as u8)
     }
 
-    fn current_saturation(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u8, Error>> {
-        ready(Ok(self.with_state(|s| s.current_saturation)))
+    fn current_saturation(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.with_state(|s| s.current_saturation))
     }
 
-    fn remaining_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.remaining_time)))
+    fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.remaining_time))
     }
 
-    fn current_x(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.current_x)))
+    fn current_x(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.current_x))
     }
 
-    fn current_y(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.current_y)))
+    fn current_y(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.current_y))
     }
 
-    fn color_temperature_mireds(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.color_temperature_mireds)))
+    fn color_temperature_mireds(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.color_temperature_mireds))
     }
 
-    async fn color_mode(&self, _ctx: impl ReadContext) -> Result<ColorModeEnum, Error> {
+    fn color_mode(&self, _ctx: impl ReadContext) -> Result<ColorModeEnum, Error> {
         Ok(self.with_state(|s| s.color_mode))
     }
 
-    async fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
-        Ok(self.with_state(|s| s.options))
+    fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
+        Ok(self.with_state(|s| s.config.options))
     }
 
-    async fn number_of_primaries(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn number_of_primaries(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         // Devices that don't enumerate primaries report null.
         Ok(Nullable::none())
     }
 
-    fn enhanced_current_hue(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.enhanced_current_hue)))
+    fn enhanced_current_hue(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.enhanced_current_hue))
     }
 
-    async fn enhanced_color_mode(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<EnhancedColorModeEnum, Error> {
+    fn enhanced_color_mode(&self, _ctx: impl ReadContext) -> Result<EnhancedColorModeEnum, Error> {
         Ok(self.with_state(|s| s.enhanced_color_mode))
     }
 
-    fn color_loop_active(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        ready(Ok(self.with_state(|s| s.color_loop_active) as u8))
+    fn color_loop_active(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.with_state(|s| s.color_loop_active) as u8)
     }
 
-    fn color_loop_direction(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u8, Error>> {
-        ready(Ok(self.with_state(|s| s.color_loop_direction) as u8))
+    fn color_loop_direction(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.with_state(|s| s.color_loop_direction) as u8)
     }
 
-    fn color_loop_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.color_loop_time)))
+    fn color_loop_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.color_loop_time))
     }
 
-    fn color_loop_start_enhanced_hue(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.color_loop_start_enhanced_hue)))
+    fn color_loop_start_enhanced_hue(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.color_loop_start_enhanced_hue))
     }
 
-    fn color_loop_stored_enhanced_hue(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(self.with_state(|s| s.color_loop_stored_enhanced_hue)))
+    fn color_loop_stored_enhanced_hue(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.with_state(|s| s.color_loop_stored_enhanced_hue))
     }
 
-    async fn color_capabilities(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<ColorCapabilitiesBitmap, Error> {
+    fn color_capabilities(&self, _ctx: impl ReadContext) -> Result<ColorCapabilitiesBitmap, Error> {
         Ok(H::COLOR_CAPABILITIES)
     }
 
-    fn color_temp_physical_min_mireds(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(H::COLOR_TEMP_PHYSICAL_MIN_MIREDS))
+    fn color_temp_physical_min_mireds(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(H::COLOR_TEMP_PHYSICAL_MIN_MIREDS)
     }
 
-    fn color_temp_physical_max_mireds(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(H::COLOR_TEMP_PHYSICAL_MAX_MIREDS))
+    fn color_temp_physical_max_mireds(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(H::COLOR_TEMP_PHYSICAL_MAX_MIREDS)
     }
 
-    fn couple_color_temp_to_level_min_mireds(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(H::COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS))
+    fn couple_color_temp_to_level_min_mireds(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(H::COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS)
     }
 
     fn start_up_color_temperature_mireds(
         &self,
         _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<Nullable<u16>, Error>> {
-        ready(self.hooks.start_up_color_temperature_mireds())
+    ) -> Result<Nullable<u16>, Error> {
+        Ok(self
+            .with_state(|s| s.config.start_up_color_temperature_mireds)
+            .into())
     }
 
     // ---- Attribute writes ----
 
-    async fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
+    fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
         // Only `EXECUTE_IF_OFF` (bit 0) is defined; other bits are reserved.
         if value.bits() & !OptionsBitmap::EXECUTE_IF_OFF.bits() != 0 {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        self.with_state_notify(ctx, |s| {
-            s.options = value;
-        });
-
-        Ok(())
+        self.write_config(ctx, |config| config.options = value)
     }
 
     fn set_start_up_color_temperature_mireds(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u16>,
-    ) -> impl Future<Output = Result<(), Error>> {
-        ready('a: {
-            // Non-null values must lie in 1..=65279 (the spec's
-            // `temperatureMireds` reserves 0 and 65280..=65535).
-            if let Some(v) = value.clone().into_option() {
-                if v == 0 || v > 0xFEFF {
-                    break 'a Err(ErrorCode::ConstraintError.into());
-                }
+    ) -> Result<(), Error> {
+        // Non-null values must lie in 1..=65279 (the spec's
+        // `temperatureMireds` reserves 0 and 65280..=65535).
+        if let Some(v) = value.clone().into_option() {
+            if v == 0 || v > 0xFEFF {
+                return Err(ErrorCode::ConstraintError.into());
             }
+        }
 
-            let res = self.hooks.set_start_up_color_temperature_mireds(value);
-
-            if res.is_ok() {
-                ctx.notify_changed();
-            }
-
-            res
+        self.write_config(ctx, |config| {
+            config.start_up_color_temperature_mireds = value.into_option()
         })
     }
 
     // ---- Command handlers ----
 
-    async fn handle_move_to_hue(
+    fn handle_move_to_hue(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToHueRequest<'_>,
@@ -2880,7 +3264,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_hue(
+    fn handle_move_hue(
         &self,
         _ctx: impl InvokeContext,
         request: MoveHueRequest<'_>,
@@ -2894,7 +3278,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_step_hue(
+    fn handle_step_hue(
         &self,
         _ctx: impl InvokeContext,
         request: StepHueRequest<'_>,
@@ -2908,7 +3292,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_to_saturation(
+    fn handle_move_to_saturation(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToSaturationRequest<'_>,
@@ -2921,7 +3305,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_saturation(
+    fn handle_move_saturation(
         &self,
         _ctx: impl InvokeContext,
         request: MoveSaturationRequest<'_>,
@@ -2934,7 +3318,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_step_saturation(
+    fn handle_step_saturation(
         &self,
         _ctx: impl InvokeContext,
         request: StepSaturationRequest<'_>,
@@ -2948,7 +3332,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_to_hue_and_saturation(
+    fn handle_move_to_hue_and_saturation(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToHueAndSaturationRequest<'_>,
@@ -2964,7 +3348,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_to_color(
+    fn handle_move_to_color(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToColorRequest<'_>,
@@ -2978,7 +3362,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_color(
+    fn handle_move_color(
         &self,
         _ctx: impl InvokeContext,
         request: MoveColorRequest<'_>,
@@ -2991,7 +3375,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_step_color(
+    fn handle_step_color(
         &self,
         _ctx: impl InvokeContext,
         request: StepColorRequest<'_>,
@@ -3005,7 +3389,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_move_to_color_temperature(
+    fn handle_move_to_color_temperature(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToColorTemperatureRequest<'_>,
@@ -3018,7 +3402,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_enhanced_move_to_hue(
+    fn handle_enhanced_move_to_hue(
         &self,
         _ctx: impl InvokeContext,
         request: EnhancedMoveToHueRequest<'_>,
@@ -3032,7 +3416,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_enhanced_move_hue(
+    fn handle_enhanced_move_hue(
         &self,
         _ctx: impl InvokeContext,
         request: EnhancedMoveHueRequest<'_>,
@@ -3045,7 +3429,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_enhanced_step_hue(
+    fn handle_enhanced_step_hue(
         &self,
         _ctx: impl InvokeContext,
         request: EnhancedStepHueRequest<'_>,
@@ -3059,7 +3443,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_enhanced_move_to_hue_and_saturation(
+    fn handle_enhanced_move_to_hue_and_saturation(
         &self,
         _ctx: impl InvokeContext,
         request: EnhancedMoveToHueAndSaturationRequest<'_>,
@@ -3075,7 +3459,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_color_loop_set(
+    fn handle_color_loop_set(
         &self,
         ctx: impl InvokeContext,
         request: ColorLoopSetRequest<'_>,
@@ -3092,7 +3476,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_stop_move_step(
+    fn handle_stop_move_step(
         &self,
         _ctx: impl InvokeContext,
         request: StopMoveStepRequest<'_>,
@@ -3100,7 +3484,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         self.cmd_stop_move_step(request.options_mask()?, request.options_override()?)
     }
 
-    async fn handle_move_color_temperature(
+    fn handle_move_color_temperature(
         &self,
         _ctx: impl InvokeContext,
         request: MoveColorTemperatureRequest<'_>,
@@ -3115,7 +3499,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         )
     }
 
-    async fn handle_step_color_temperature(
+    fn handle_step_color_temperature(
         &self,
         _ctx: impl InvokeContext,
         request: StepColorTemperatureRequest<'_>,
@@ -3284,6 +3668,10 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             let time = color_loop_time.unwrap_or(0x0019);
 
             self.apply_color_loop(ctx, direction, time, true);
+            self.task_signal.signal(Task::ColorLoop {
+                direction,
+                time_secs: time,
+            });
 
             return Ok(());
         }
@@ -3292,6 +3680,17 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             return Ok(());
         };
 
+        // The recalled colour replaces any running transition or colour loop.
+        self.task_signal.signal(Task::Stop);
+
+        if self.with_state(|s| core::mem::replace(&mut s.color_loop_active, false)) {
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                Self::cluster_id(),
+                AttributeId::ColorLoopActive as _,
+            );
+        }
+
         match mode {
             EnhancedColorModeEnum::CurrentXAndCurrentY => {
                 let (Some(x), Some(y)) = (current_x, current_y) else {
@@ -3299,6 +3698,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 };
 
                 self.apply_xy(ctx, x, y, true);
+                self.drive_device_xy();
             }
             EnhancedColorModeEnum::ColorTemperatureMireds => {
                 let Some(mireds) = color_temperature_mireds else {
@@ -3306,6 +3706,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 };
 
                 self.apply_color_temperature(ctx, mireds, true);
+                self.drive_device_color_temperature();
             }
             EnhancedColorModeEnum::CurrentHueAndCurrentSaturation => {
                 // `CurrentHue` is the high byte of `EnhancedCurrentHue`.
@@ -3317,6 +3718,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 };
 
                 self.apply_hue_saturation(ctx, hue, sat, true);
+                self.drive_device_hue_saturation();
             }
             EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation => {
                 let (Some(hue), Some(sat)) = (enhanced_current_hue, current_saturation) else {
@@ -3324,10 +3726,23 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 };
 
                 self.apply_enhanced_hue_saturation(ctx, hue, sat, true);
+                self.drive_device_hue_saturation();
             }
         }
 
         Ok(())
+    }
+}
+
+/// The `ColorMode` matching an `EnhancedColorMode`.
+const fn color_mode_of(mode: EnhancedColorModeEnum) -> ColorModeEnum {
+    match mode {
+        EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+        | EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation => {
+            ColorModeEnum::CurrentHueAndCurrentSaturation
+        }
+        EnhancedColorModeEnum::CurrentXAndCurrentY => ColorModeEnum::CurrentXAndCurrentY,
+        EnhancedColorModeEnum::ColorTemperatureMireds => ColorModeEnum::ColorTemperatureMireds,
     }
 }
 
@@ -3366,24 +3781,25 @@ pub mod test {
     };
     use crate::dm::clusters::decl::color_control::{AttributeId, CommandId, Feature, FULL_CLUSTER};
     use crate::dm::Cluster;
-    use crate::error::Error;
-    use crate::tlv::Nullable;
     use crate::with;
 
     /// All-features-enabled [`ColorControlHooks`] for tests, demos
-    /// and the bundled `light_tests` example. The cluster owns every
-    /// piece of state internally; this stub only persists
-    /// `StartUpColorTemperatureMireds` in RAM (lost on reboot — real
-    /// devices would wire flash here) and discards actuator writes.
+    /// and the bundled `light_tests` example. This stub drives no
+    /// hardware; it only records the colour it was last set to.
     pub struct TestColorControlDeviceLogic {
-        start_up_color_temperature_mireds: Cell<Option<u16>>,
+        color: Cell<Option<SetDeviceColor>>,
     }
 
     impl TestColorControlDeviceLogic {
         pub const fn new() -> Self {
             Self {
-                start_up_color_temperature_mireds: Cell::new(None),
+                color: Cell::new(None),
             }
+        }
+
+        /// The colour the (simulated) device was last set to.
+        pub fn color(&self) -> Option<SetDeviceColor> {
+            self.color.get()
         }
     }
 
@@ -3461,21 +3877,12 @@ pub mod test {
         const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
         const COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS: u16 = Self::COLOR_TEMP_PHYSICAL_MIN_MIREDS;
 
-        fn set_device_color(&self, _target: SetDeviceColor) -> Result<(), ()> {
-            // No-op actuator: real devices would drive their LED here.
-            Ok(())
-        }
+        // Tests restart the device right after a change, so persist at once.
+        const PERSIST_DELAY_MS: u32 = 0;
 
-        fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
-            Ok(match self.start_up_color_temperature_mireds.get() {
-                Some(v) => Nullable::some(v),
-                None => Nullable::none(),
-            })
-        }
-
-        fn set_start_up_color_temperature_mireds(&self, value: Nullable<u16>) -> Result<(), Error> {
-            self.start_up_color_temperature_mireds
-                .set(value.into_option());
+        fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()> {
+            // Real devices would drive their LED here.
+            self.color.set(Some(target));
             Ok(())
         }
     }
@@ -3492,6 +3899,8 @@ mod tests {
     use crate::utils::storage::WriteBuf;
     use crate::with;
 
+    const KV_KEY: u16 = crate::persist::VENDOR_KEYS_START;
+
     /// `()` is a no-op `AttrChangeNotifier`, which is all the apply
     /// helpers use — avoids mocking a full `HandlerContext`.
     const NULL_CTX: &() = &();
@@ -3499,11 +3908,43 @@ mod tests {
     /// `MockHooks<F>` carries its feature bitmap at the type level so
     /// the cluster's `H::CLUSTER` const is feature-gated per
     /// instantiation. Use `MockHooks::<{Feature::XY.bits()}>::new()`.
-    struct MockHooks<const F: u32>;
+    /// It also records the last colour sent to the device.
+    struct MockHooks<const F: u32> {
+        color: Cell<Option<SetDeviceColor>>,
+    }
 
     impl<const F: u32> MockHooks<F> {
         fn new() -> Self {
-            Self
+            Self {
+                color: Cell::new(None),
+            }
+        }
+    }
+
+    /// Hooks choosing the initial colour, and with it the initial mode.
+    struct RedHooks;
+
+    impl ColorControlHooks for RedHooks {
+        const CLUSTER: Cluster<'static> = FULL_CLUSTER
+            .with_features(Feature::XY.bits() | Feature::HUE_AND_SATURATION.bits())
+            .with_attrs(with!(required))
+            .with_cmds(with!());
+
+        const COLOR_CAPABILITIES: ColorCapabilitiesBitmap =
+            ColorCapabilitiesBitmap::from_bits_truncate(
+                Feature::XY.bits() as u16 | Feature::HUE_AND_SATURATION.bits() as u16,
+            );
+
+        const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153;
+        const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
+
+        const COLOR: Option<SetDeviceColor> = Some(SetDeviceColor::HueSaturation {
+            enhanced_hue: 0,
+            saturation: 254,
+        });
+
+        fn set_device_color(&self, _target: SetDeviceColor) -> Result<(), ()> {
+            Ok(())
         }
     }
 
@@ -3519,7 +3960,8 @@ mod tests {
         const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153;
         const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
 
-        fn set_device_color(&self, _target: SetDeviceColor) -> Result<(), ()> {
+        fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()> {
+            self.color.set(Some(target));
             Ok(())
         }
     }
@@ -3550,7 +3992,7 @@ mod tests {
     fn handler<const F: u32>() -> ColorControlHandler<'static, MockHooks<F>, NoOnOff, NoLevelControl>
     {
         let hooks = MockHooks::<F>::new();
-        ColorControlHandler::new(Dataver::new(1), 1, hooks, AttributeDefaults::default())
+        ColorControlHandler::new(Dataver::new(1), 1, KV_KEY, hooks)
     }
 
     // ---- is_scenable_attribute ----
@@ -3907,7 +4349,7 @@ mod tests {
         let inv = CountingInvalidator::new();
         let hooks = MockHooks::<{ Feature::XY.bits() }>::new();
         let h: ColorControlHandler<'_, _, NoOnOff, NoLevelControl> =
-            ColorControlHandler::new(Dataver::new(1), 1, hooks, AttributeDefaults::default());
+            ColorControlHandler::new(Dataver::new(1), 1, KV_KEY, hooks);
         let h = h.with_scene_invalidator(&inv);
 
         let mut buf = [0u8; 128];
@@ -3931,7 +4373,7 @@ mod tests {
         let inv = CountingInvalidator::new();
         let hooks = MockHooks::<{ Feature::XY.bits() }>::new();
         let h: ColorControlHandler<'_, _, NoOnOff, NoLevelControl> =
-            ColorControlHandler::new(Dataver::new(1), 1, hooks, AttributeDefaults::default());
+            ColorControlHandler::new(Dataver::new(1), 1, KV_KEY, hooks);
         let h = h.with_scene_invalidator(&inv);
 
         h.apply_xy(NULL_CTX, 0x1111, 0x2222, false);
@@ -4091,5 +4533,311 @@ mod tests {
         );
         // Should be very saturated.
         assert!(sat > 240, "expected high saturation, got {sat}");
+    }
+
+    // ---- initial state ----
+
+    fn mode_of<const F: u32>(
+        h: &ColorControlHandler<'_, MockHooks<F>, NoOnOff, NoLevelControl>,
+    ) -> (ColorModeEnum, EnhancedColorModeEnum) {
+        h.with_state(|s| (s.color_mode, s.enhanced_color_mode))
+    }
+
+    #[test]
+    fn default_color_mode_follows_features() {
+        const XY_HS: u32 = Feature::XY.bits() | Feature::HUE_AND_SATURATION.bits();
+        assert_eq!(
+            mode_of(&handler::<XY_HS>()),
+            (
+                ColorModeEnum::CurrentXAndCurrentY,
+                EnhancedColorModeEnum::CurrentXAndCurrentY
+            )
+        );
+
+        const HS_CT: u32 = Feature::HUE_AND_SATURATION.bits() | Feature::COLOR_TEMPERATURE.bits();
+        assert_eq!(
+            mode_of(&handler::<HS_CT>()),
+            (
+                ColorModeEnum::CurrentHueAndCurrentSaturation,
+                EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+            )
+        );
+
+        const CT: u32 = Feature::COLOR_TEMPERATURE.bits();
+        assert_eq!(
+            mode_of(&handler::<CT>()),
+            (
+                ColorModeEnum::ColorTemperatureMireds,
+                EnhancedColorModeEnum::ColorTemperatureMireds
+            )
+        );
+    }
+
+    // ---- out-of-band colour changes ----
+
+    #[test]
+    fn out_of_band_update_sets_color_and_mode() {
+        const F: u32 = Feature::XY.bits() | Feature::COLOR_TEMPERATURE.bits();
+        let h = handler::<F>();
+
+        h.handle_out_of_band_message(
+            NULL_CTX,
+            OutOfBandMessage::Update(SetDeviceColor::ColorTemperature { mireds: 1000 }),
+        );
+
+        assert_eq!(
+            mode_of(&h),
+            (
+                ColorModeEnum::ColorTemperatureMireds,
+                EnhancedColorModeEnum::ColorTemperatureMireds
+            )
+        );
+        // Clamped to the physical maximum.
+        assert_eq!(h.with_state(|s| s.color_temperature_mireds), 500);
+        // The device already shows the colour, so it is not driven.
+        assert_eq!(h.hooks.color.get(), None);
+    }
+
+    #[test]
+    fn out_of_band_update_with_unsupported_feature_is_ignored() {
+        const F: u32 = Feature::XY.bits() | Feature::HUE_AND_SATURATION.bits();
+        let h = handler::<F>();
+
+        h.handle_out_of_band_message(
+            NULL_CTX,
+            OutOfBandMessage::Update(SetDeviceColor::ColorTemperature { mireds: 300 }),
+        );
+
+        assert_eq!(
+            mode_of(&h),
+            (
+                ColorModeEnum::CurrentXAndCurrentY,
+                EnhancedColorModeEnum::CurrentXAndCurrentY
+            )
+        );
+        assert_eq!(h.with_state(|s| s.color_temperature_mireds), 0x00FA);
+    }
+
+    #[test]
+    fn out_of_band_update_hue_picks_enhanced_mode_from_low_byte() {
+        const F: u32 = Feature::HUE_AND_SATURATION.bits() | Feature::ENHANCED_HUE.bits();
+        let h = handler::<F>();
+
+        h.handle_out_of_band_message(
+            NULL_CTX,
+            OutOfBandMessage::Update(SetDeviceColor::HueSaturation {
+                enhanced_hue: 0x4200,
+                saturation: 100,
+            }),
+        );
+        assert_eq!(
+            h.with_state(|s| s.enhanced_color_mode),
+            EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+        );
+
+        h.handle_out_of_band_message(
+            NULL_CTX,
+            OutOfBandMessage::Update(SetDeviceColor::HueSaturation {
+                enhanced_hue: 0x4201,
+                saturation: 100,
+            }),
+        );
+        assert_eq!(
+            h.with_state(|s| s.enhanced_color_mode),
+            EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation
+        );
+    }
+
+    #[test]
+    fn out_of_band_update_ends_color_loop() {
+        const F: u32 = Feature::XY.bits() | Feature::HUE_AND_SATURATION.bits();
+        let h = handler::<F>();
+        h.with_state(|s| s.color_loop_active = true);
+
+        h.handle_out_of_band_message(
+            NULL_CTX,
+            OutOfBandMessage::Update(SetDeviceColor::HueSaturation {
+                enhanced_hue: 0x8000,
+                saturation: 254,
+            }),
+        );
+
+        assert_eq!(
+            h.with_state(|s| (
+                s.enhanced_current_hue,
+                s.current_saturation,
+                s.color_loop_active
+            )),
+            (0x8000, 254, false)
+        );
+    }
+
+    // ---- scene recall drives the device ----
+
+    #[test]
+    fn scene_apply_drives_device() {
+        let h = handler::<{ Feature::XY.bits() }>();
+
+        let mut buf = [0u8; 256];
+        let len = build_xy_avps(
+            &mut buf,
+            0x1000,
+            0x2000,
+            EnhancedColorModeEnum::CurrentXAndCurrentY,
+        );
+        let arr: TLVArray<'_, AttributeValuePairStruct<'_>> =
+            TLVArray::new(TLVElement::new(&buf[..len])).unwrap();
+        h.apply_inner(NULL_CTX, &arr, 0).unwrap();
+
+        assert_eq!(
+            h.hooks.color.get(),
+            Some(SetDeviceColor::Xy {
+                x: 0x1000,
+                y: 0x2000
+            })
+        );
+    }
+
+    // ---- lifecycle ----
+
+    #[test]
+    fn startup_without_persisted_state_uses_hooks_color() {
+        let h = ColorControlHandler::<_, NoOnOff, NoLevelControl>::new(
+            Dataver::new(1),
+            1,
+            KV_KEY,
+            RedHooks,
+        );
+
+        h.startup(NULL_CTX, false);
+
+        assert_eq!(
+            h.with_state(|s| (s.color_mode, s.enhanced_current_hue, s.current_saturation)),
+            (ColorModeEnum::CurrentHueAndCurrentSaturation, 0, 254)
+        );
+    }
+
+    #[test]
+    fn startup_drives_device_to_restored_color() {
+        const F: u32 = Feature::XY.bits() | Feature::HUE_AND_SATURATION.bits();
+        let h = handler::<F>();
+
+        h.with_state(|s| {
+            s.current_x = 0x1234;
+            s.current_y = 0x2345;
+            s.enhanced_color_mode = EnhancedColorModeEnum::CurrentXAndCurrentY;
+            s.color_mode = ColorModeEnum::CurrentXAndCurrentY;
+        });
+        h.startup(NULL_CTX, true);
+
+        assert_eq!(
+            h.hooks.color.get(),
+            Some(SetDeviceColor::Xy {
+                x: 0x1234,
+                y: 0x2345
+            })
+        );
+    }
+
+    #[test]
+    fn startup_applies_start_up_color_temperature() {
+        // Exposes `StartUpColorTemperatureMireds`; physical range 153..=500.
+        let h = ColorControlHandler::<_, NoOnOff, NoLevelControl>::new(
+            Dataver::new(1),
+            1,
+            KV_KEY,
+            test::TestColorControlDeviceLogic::new(),
+        );
+
+        h.with_state(|s| s.config.start_up_color_temperature_mireds = Some(1000));
+        h.startup(NULL_CTX, true);
+
+        assert_eq!(
+            h.with_state(|s| (s.color_mode, s.enhanced_color_mode)),
+            (
+                ColorModeEnum::ColorTemperatureMireds,
+                EnhancedColorModeEnum::ColorTemperatureMireds
+            )
+        );
+        assert_eq!(
+            h.hooks.color(),
+            Some(SetDeviceColor::ColorTemperature { mireds: 500 })
+        );
+    }
+
+    #[test]
+    fn factory_reset_keeps_color_and_resets_config() {
+        const F: u32 = Feature::XY.bits() | Feature::COLOR_TEMPERATURE.bits();
+        let h = handler::<F>();
+
+        h.with_state(|s| {
+            s.config.options = OptionsBitmap::EXECUTE_IF_OFF;
+            s.config.start_up_color_temperature_mireds = Some(300);
+            s.current_x = 1;
+        });
+        h.factory_reset(NULL_CTX);
+
+        assert_eq!(
+            h.with_state(|s| (
+                s.config.options,
+                s.config.start_up_color_temperature_mireds,
+                s.current_x
+            )),
+            (OptionsBitmap::empty(), None, 1)
+        );
+    }
+
+    #[test]
+    fn default_color_temperature_is_within_physical_limits() {
+        // A device whose physical range starts above the 250-mired spec default.
+        let state = ColorControlState::new(
+            ConfigAttrs {
+                options: OptionsBitmap::empty(),
+                start_up_color_temperature_mireds: None,
+            },
+            Feature::COLOR_TEMPERATURE.bits(),
+            300,
+            500,
+        );
+
+        assert_eq!(state.color_temperature_mireds, 300);
+        assert_eq!(
+            state.enhanced_color_mode,
+            EnhancedColorModeEnum::ColorTemperatureMireds
+        );
+    }
+
+    #[test]
+    fn persisted_attributes_round_trip() {
+        use crate::fabric::tests::MemKvBlobStore;
+        use crate::persist::SharedKvBlobStore;
+        use crate::utils::cell::RefCell;
+
+        const F: u32 = Feature::HUE_AND_SATURATION.bits()
+            | Feature::ENHANCED_HUE.bits()
+            | Feature::COLOR_LOOP.bits();
+
+        let buf = Mutex::new(RefCell::new([0u8; 256]));
+        let kv = SharedKvBlobStore::new(MemKvBlobStore::default(), &buf);
+
+        let h = handler::<F>();
+        h.with_state(|s| {
+            s.config.options = OptionsBitmap::EXECUTE_IF_OFF;
+            s.enhanced_current_hue = 0x1234;
+            s.current_saturation = 99;
+            s.enhanced_color_mode = EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation;
+            s.color_loop_active = true;
+            s.color_loop_time = 7;
+        });
+        h.save(&kv).unwrap();
+
+        let restored = handler::<F>();
+        assert!(restored.load_persisted(&kv).unwrap());
+
+        assert_eq!(restored.persisted(), h.persisted());
+        assert_eq!(
+            restored.with_state(|s| s.color_mode),
+            ColorModeEnum::CurrentHueAndCurrentSaturation
+        );
     }
 }

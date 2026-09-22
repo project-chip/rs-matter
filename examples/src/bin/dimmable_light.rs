@@ -18,25 +18,21 @@
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
 #![allow(clippy::uninlined_format_args)]
 
-use core::cell::Cell;
 use core::pin::pin;
 
-use std::fs;
-use std::io::{Read, Write};
 use std::net::UdpSocket;
-use std::path::PathBuf;
 
 use embassy_futures::select::select3;
 
 use async_signal::{Signal, Signals};
-use log::{error, info, trace};
+use log::info;
 
 use futures_lite::StreamExt;
 
 use rand::Rng;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
-use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
+use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks};
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
@@ -49,13 +45,12 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
@@ -92,19 +87,19 @@ fn main() -> Result<(), Error> {
     let mut rand = crypto.rand()?;
 
     // OnOff cluster setup
-    let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new());
+    let on_off_handler = on_off::OnOffHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
+        OnOffDeviceLogic::new(),
+    );
 
     // LevelControl cluster setup
     let level_control_handler = level_control::LevelControlHandler::new(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x11,
         LevelControlDeviceLogic::new(),
-        level_control::AttributeDefaults {
-            on_level: Nullable::some(42),
-            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-            ..Default::default()
-        },
     );
 
     // Cluster wiring, validation and initialisation
@@ -217,20 +212,20 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             )
             .chain(
                 |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             )
             .chain(
                 |e, c| e == 1 && c == LevelControlDeviceLogic::CLUSTER.id,
-                level_control::HandlerAsyncAdaptor(level_control),
+                Async(level_control::HandlerAdaptor(level_control)),
             ),
     )
 }
 
 // Implementing the LevelControl business logic
-pub struct LevelControlDeviceLogic {
-    current_level: Cell<Option<u8>>,
-    start_up_current_level: Cell<Option<u8>>,
-}
+//
+// The cluster handler owns and persists every attribute, including `CurrentLevel`;
+// the device logic only drives the hardware.
+pub struct LevelControlDeviceLogic;
 
 impl Default for LevelControlDeviceLogic {
     fn default() -> Self {
@@ -240,10 +235,7 @@ impl Default for LevelControlDeviceLogic {
 
 impl LevelControlDeviceLogic {
     pub const fn new() -> Self {
-        Self {
-            current_level: Cell::new(Some(1)),
-            start_up_current_level: Cell::new(None),
-        }
+        Self
     }
 }
 
@@ -251,6 +243,9 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     const MIN_LEVEL: u8 = 1;
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
+    const ON_LEVEL: Option<u8> = Some(42);
+    const OPTIONS: OptionsBitmap = OptionsBitmap::EXECUTE_IF_OFF;
+    const CURRENT_LEVEL: Option<u8> = Some(1);
     const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
         .with_features(
             level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
@@ -282,130 +277,22 @@ impl LevelControlHooks for LevelControlDeviceLogic {
 
     fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
         // This is where business logic is implemented to physically change the level of the device.
+        info!("LevelControlDeviceLogic: setting level to {}", level);
         Ok(Some(level))
-    }
-
-    fn current_level(&self) -> Option<u8> {
-        self.current_level.get()
-    }
-
-    fn set_current_level(&self, level: Option<u8>) {
-        info!(
-            "LevelControlDeviceLogic::set_current_level: setting level to {:?}",
-            level
-        );
-        self.current_level.set(level);
-    }
-
-    fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
-        Ok(self.start_up_current_level.get())
-    }
-
-    fn set_start_up_current_level(&self, value: Option<u8>) -> Result<(), Error> {
-        self.start_up_current_level.set(value);
-        Ok(())
     }
 }
 
 // Implementing the OnOff business logic
 
-// A simple serializer and deserializer for persisting the OnOff state in a single byte.
-// Stores the on_off state in the first bit.
-// Stores the start_up_on_off state in the remaining bits.
+//
+// The cluster handler owns and persists the `OnOff` attribute; the device logic
+// only drives the hardware.
 #[derive(Default)]
-struct OnOffPersistentState {
-    on_off: bool,
-    start_up_on_off: Option<StartUpOnOffEnum>,
-}
-
-impl OnOffPersistentState {
-    fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
-        trace!(
-            "to_bytes_from_values: got on_off: {} | start_up_on_off: {:?}",
-            on_off,
-            start_up_on_off
-        );
-        let on_off = on_off as u8;
-        let start_up_on_off: u8 = match start_up_on_off {
-            Some(StartUpOnOffEnum::Off) => 0,
-            Some(StartUpOnOffEnum::On) => 1,
-            Some(StartUpOnOffEnum::Toggle) => 2,
-            None => 3,
-        };
-        trace!(
-            "to_bytes_from_values: vals before writing on_off: {} | start_up_on_off: {}",
-            on_off,
-            start_up_on_off
-        );
-        trace!("final val: {}", on_off + (start_up_on_off << 1));
-        on_off + (start_up_on_off << 1)
-    }
-
-    fn from_bytes(data: u8) -> Result<Self, Error> {
-        Ok(Self {
-            on_off: data & 1 != 0,
-            start_up_on_off: match data >> 1 {
-                0 => Some(StartUpOnOffEnum::Off),
-                1 => Some(StartUpOnOffEnum::On),
-                2 => Some(StartUpOnOffEnum::Toggle),
-                3 => None,
-                _ => return Err(ErrorCode::Failure.into()),
-            },
-        })
-    }
-}
-
-#[derive(Default)]
-pub struct OnOffDeviceLogic {
-    on_off: Cell<bool>,
-    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
-    storage_path: PathBuf,
-}
-
-const STORAGE_FILE_NAME: &str = "rs-matter-on-off-state";
+pub struct OnOffDeviceLogic;
 
 impl OnOffDeviceLogic {
-    pub fn new() -> Self {
-        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
-        info!(
-            "OnOffDeviceLogic using storage path: {}",
-            storage_path.as_path().to_str().unwrap_or("none")
-        );
-
-        let persisted_state = match fs::File::open(storage_path.as_path()) {
-            Ok(mut file) => {
-                let mut buf: [u8; 1] = [0];
-                file.read_exact(&mut buf).unwrap();
-
-                trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
-
-                OnOffPersistentState::from_bytes(buf[0]).unwrap()
-            }
-            Err(_) => OnOffPersistentState::default(),
-        };
-
-        Self {
-            on_off: Cell::new(persisted_state.on_off),
-            start_up_on_off: Cell::new(persisted_state.start_up_on_off),
-            storage_path,
-        }
-    }
-
-    fn save_state(&self) -> Result<(), Error> {
-        let mut file = fs::File::create(self.storage_path.as_path())?;
-
-        let value = OnOffPersistentState::to_bytes_from_values(
-            self.on_off.get(),
-            self.start_up_on_off.get(),
-        );
-
-        let buf = &[value];
-
-        trace!("save_storage: wrote {:0x}", value);
-
-        file.write_all(buf)?;
-
-        Ok(())
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -430,28 +317,9 @@ impl OnOffHooks for OnOffDeviceLogic {
                 | on_off_cluster::CommandId::OnWithTimedOff
         ));
 
-    fn on_off(&self) -> bool {
-        self.on_off.get()
-    }
-
     fn set_on_off(&self, on: bool) {
-        self.on_off.set(on);
+        // This is where business logic is implemented to physically switch the device.
         info!("OnOff state set to: {}", on);
-        if let Err(err) = self.save_state() {
-            error!("Error saving state: {}", err);
-        }
-    }
-
-    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
-        match self.start_up_on_off.get() {
-            Some(value) => Nullable::some(value),
-            None => Nullable::none(),
-        }
-    }
-
-    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
-        self.start_up_on_off.set(value.into_option());
-        self.save_state()
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {

@@ -575,6 +575,18 @@ pub trait TimeZones {
 
     /// Handle `SetDSTOffset`.
     fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error>;
+
+    /// Lifecycle operation, forwarded by the Time Synchronization handler.
+    ///
+    /// `TimeZone` and `DSTOffset` are non-volatile: providers that keep them
+    /// load them on [`LifecycleOp::Startup`] and erase them on
+    /// [`LifecycleOp::FactoryReset`], using storage wired in by the
+    /// application.
+    ///
+    /// The default implementation does nothing.
+    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<T> TimeZones for &T
@@ -614,6 +626,10 @@ where
     fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
         (*self).set_dst_offset(request)
     }
+
+    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (*self).lifecycle(op)
+    }
 }
 
 /// Data provider for the `NTP_CLIENT` feature.
@@ -628,6 +644,17 @@ pub trait NtpClient {
 
     /// Handle `SetDefaultNTP`.
     fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error>;
+
+    /// Lifecycle operation, forwarded by the Time Synchronization handler.
+    ///
+    /// `DefaultNTP` is non-volatile: providers that keep it load it on
+    /// [`LifecycleOp::Startup`] and erase it on [`LifecycleOp::FactoryReset`],
+    /// using storage wired in by the application.
+    ///
+    /// The default implementation does nothing.
+    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<T> NtpClient for &T
@@ -644,6 +671,10 @@ where
 
     fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error> {
         (*self).set_default_ntp(request)
+    }
+
+    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (*self).lifecycle(op)
     }
 }
 
@@ -1484,8 +1515,17 @@ impl ClusterHandler for TimeSyncHandler<'_> {
     }
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        if let Some(time_zones) = self.time_zones {
+            time_zones.lifecycle(op)?;
+        }
+
+        if let Some(ntp_client) = self.ntp_client {
+            ntp_client.lifecycle(op)?;
+        }
+
         // Only the batteries-included `TimeZoneStore` shape persists anything
-        // of its own; custom `TimeZones` providers own their storage, and the
+        // of its own; custom providers own their storage (and got the
+        // operation just above), and the
         // Matter-wide RTC half of this cluster (`UTCTime` / `TrustedTimeSource`)
         // is driven by `Matter::startup` / `Matter::factory_reset`.
         let Some(store) = self.tz_store else {

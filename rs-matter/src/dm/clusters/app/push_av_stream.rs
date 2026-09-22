@@ -67,11 +67,15 @@
 use core::cell::{Cell, RefCell};
 
 use crate::dm::FabricIndex;
-use crate::dm::{ArrayAttributeRead, Cluster, Dataver, EndptId, InvokeContext, ReadContext};
+use crate::dm::{
+    ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, LifecycleOp,
+    ReadContext,
+};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, TLVElement, TLVTag, ToTLV};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::Notification;
 use crate::with;
 
 #[allow(unused_imports)]
@@ -274,12 +278,16 @@ where
 
 struct State<const NC: usize> {
     connections: Vec<PushConnection, NC>,
+    /// IDs of connections dropped because their fabric was removed, for which
+    /// [`PushAvStreamHooks::on_deallocate`] is still to be called.
+    removed: Vec<u16, NC>,
 }
 
 impl<const NC: usize> State<NC> {
     const fn new() -> Self {
         Self {
             connections: Vec::new(),
+            removed: Vec::new(),
         }
     }
 }
@@ -295,6 +303,7 @@ where
     hooks: H,
     state: Mutex<RefCell<State<NC>>>,
     next_id: Mutex<Cell<u16>>,
+    removed_signal: Notification,
 }
 
 impl<'a, H, const NC: usize> PushAvStreamHandler<'a, H, NC>
@@ -334,6 +343,7 @@ where
             hooks,
             state: Mutex::new(RefCell::new(State::new())),
             next_id: Mutex::new(Cell::new(1)),
+            removed_signal: Notification::new(),
         }
     }
 
@@ -351,6 +361,54 @@ where
     /// Snapshot the current connections. Useful for diagnostics.
     pub fn connections(&self) -> Vec<PushConnection, NC> {
         self.state.lock(|cell| cell.borrow().connections.clone())
+    }
+
+    /// Drop the connections owned by `fab_idx` and queue them for
+    /// [`PushAvStreamHooks::on_deallocate`], which is called from the
+    /// handler's `run` task. Returns `true` if any connection was dropped.
+    fn remove_fabric_connections(&self, fab_idx: FabricIndex) -> bool {
+        let removed = self.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            let state = &mut *state;
+
+            let before = state.connections.len();
+
+            for c in state
+                .connections
+                .iter()
+                .filter(|c| c.fabric_index == fab_idx)
+            {
+                if state.removed.push(c.connection_id).is_err() {
+                    warn!(
+                        "push_av_stream: no room to queue the deallocation of connection {}",
+                        c.connection_id
+                    );
+                }
+            }
+
+            state.connections.retain(|c| c.fabric_index != fab_idx);
+
+            before != state.connections.len()
+        });
+
+        if removed {
+            self.removed_signal.notify();
+        }
+
+        removed
+    }
+
+    /// Call [`PushAvStreamHooks::on_deallocate`] for the connections dropped
+    /// on fabric removal.
+    async fn deallocate_removed_connections(&self) {
+        while let Some(connection_id) = self.state.lock(|cell| cell.borrow_mut().removed.pop()) {
+            if let Err(err) = self.hooks.on_deallocate(connection_id).await {
+                warn!(
+                    "push_av_stream: on_deallocate({}) failed after fabric removal: {:?}",
+                    connection_id, err
+                );
+            }
+        }
     }
 
     /// Allocate the next free `connection_id` (wraps to 1 on `u16`
@@ -396,6 +454,29 @@ where
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        if let LifecycleOp::FabricRemoval { fab_idx } = op {
+            if self.remove_fabric_connections(fab_idx.get()) {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::CurrentConnections as _,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: impl HandlerContext) -> Result<(), Error> {
+        // Tell the hooks about the connections dropped on fabric removal. This
+        // is done here because `lifecycle` is synchronous and the hooks are not.
+        loop {
+            self.removed_signal.wait().await;
+            self.deallocate_removed_connections().await;
+        }
     }
 
     // ----- Attributes -----
@@ -747,4 +828,78 @@ fn write_connection<P: TLVBuilderParent>(
         element.to_tlv(&TLVTag::Context(2), b.writer())?;
     }
     b.fabric_index(Some(c.fabric_index))?.end()
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::RefCell;
+
+    use super::*;
+
+    /// Records the connections the handler deallocates.
+    struct RecordingHooks {
+        deallocated: RefCell<Vec<u16, 4>>,
+    }
+
+    impl PushAvStreamHooks for RecordingHooks {
+        async fn on_allocate(
+            &self,
+            _connection_id: u16,
+            _fabric_index: FabricIndex,
+            _request: &AllocatePushTransportRequest<'_>,
+        ) -> Result<(), PushAvError> {
+            Ok(())
+        }
+
+        async fn on_deallocate(&self, connection_id: u16) -> Result<(), PushAvError> {
+            unwrap!(self.deallocated.borrow_mut().push(connection_id));
+            Ok(())
+        }
+    }
+
+    fn connection(connection_id: u16, fabric_index: FabricIndex) -> PushConnection {
+        PushConnection {
+            connection_id,
+            fabric_index,
+            status: TransportStatusEnum::Active,
+            transport_options: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn fabric_removal_drops_and_deallocates_its_connections() {
+        let handler = PushAvStreamHandler::<_, 4>::new(
+            Dataver::new(1),
+            1,
+            PushAvStreamConfig {
+                supported_formats: &[],
+            },
+            RecordingHooks {
+                deallocated: RefCell::new(Vec::new()),
+            },
+        );
+
+        handler.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            for c in [connection(1, 1), connection(2, 2), connection(3, 1)] {
+                unwrap!(state.connections.push(c));
+            }
+        });
+
+        assert!(handler.remove_fabric_connections(1));
+        assert!(!handler.remove_fabric_connections(1));
+
+        let remaining: std::vec::Vec<_> = handler
+            .connections()
+            .iter()
+            .map(|c| c.connection_id)
+            .collect();
+        assert_eq!(remaining, [2]);
+
+        futures_lite::future::block_on(handler.deallocate_removed_connections());
+
+        let mut deallocated = handler.hooks.deallocated.borrow().clone();
+        deallocated.sort_unstable();
+        assert_eq!(deallocated.as_slice(), [1, 3]);
+    }
 }

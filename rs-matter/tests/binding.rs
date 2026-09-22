@@ -244,7 +244,7 @@ fn light_data_model<'a, OH: OnOffHooks>(
             )
             .chain(
                 |e, c| e == LIGHT_ENDPOINT && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             ),
     )
 }
@@ -327,6 +327,7 @@ async fn run_test() -> Result<(), Error> {
     let b_on_off = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut b_rand),
         LIGHT_ENDPOINT,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(false),
     );
 

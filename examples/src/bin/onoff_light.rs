@@ -226,6 +226,7 @@ fn main() -> Result<(), Error> {
     let on_off_handler = on_off::OnOffHandler::<_, NoLevelControl>::new(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(true),
     )
     .with_on_mode_applier(&mode_select_handler);
@@ -320,7 +321,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, MH: ModeSelectHooks>(
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             )
             .chain(
                 |e, c| e == 1 && c == LightPatternLogic::CLUSTER.id,

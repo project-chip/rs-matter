@@ -93,11 +93,13 @@ fn main() -> Result<(), Error> {
     let on_off_handler_ep2 = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         2,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(false),
     );
     let on_off_handler_ep3 = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         3,
+        rs_matter::persist::VENDOR_KEYS_START + 0x11,
         TestOnOffDeviceLogic::new(false),
     );
 
@@ -244,7 +246,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 |e, c| e == 2 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off_ep2),
+                Async(on_off::HandlerAdaptor(on_off_ep2)),
             )
             .chain(
                 |e, c| e == 2 && c == BridgedHandler::CLUSTER.id,
@@ -260,7 +262,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 |e, c| e == 3 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off_ep3),
+                Async(on_off::HandlerAdaptor(on_off_ep3)),
             )
             .chain(
                 |e, c| e == 3 && c == BridgedHandler::CLUSTER.id,

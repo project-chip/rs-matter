@@ -130,8 +130,7 @@ use embassy_futures::select::select4;
 use rand::Rng;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::{
-    self, test::TestLevelControlDeviceLogic, AttributeDefaults, LevelControlHandler,
-    LevelControlHooks, OptionsBitmap,
+    self, test::TestLevelControlDeviceLogic, LevelControlHandler, LevelControlHooks,
 };
 use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks,
@@ -150,7 +149,6 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
@@ -174,15 +172,13 @@ fn main() -> Result<(), Error> {
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, network store).
-    let mut state: EthInteractionModelState =
-        EthInteractionModelState::new(EthNetwork::new_default());
+    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
-    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
+    matter.startup(&kv)?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
@@ -193,6 +189,7 @@ fn main() -> Result<(), Error> {
     let on_off_handler = on_off::OnOffHandler::new(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(true),
     );
 
@@ -200,15 +197,8 @@ fn main() -> Result<(), Error> {
     let level_control_handler = LevelControlHandler::new(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x11,
         TestLevelControlDeviceLogic::new(),
-        AttributeDefaults {
-            on_level: Nullable::some(42),
-            options: OptionsBitmap::EXECUTE_IF_OFF,
-            on_off_transition_time: 0,
-            on_transition_time: Nullable::none(),
-            off_transition_time: Nullable::none(),
-            default_move_rate: Nullable::none(),
-        },
     );
 
     // Cluster wiring, validation and initialisation
@@ -224,6 +214,10 @@ fn main() -> Result<(), Error> {
         &kv,
         &state,
     );
+
+    // Bring the Data Model to its operational state: re-hydrate its persisted
+    // state and deliver the `Startup` lifecycle op to all cluster handlers.
+    futures_lite::future::block_on(im.startup())?;
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -243,7 +237,7 @@ fn main() -> Result<(), Error> {
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    if !matter.is_commissioned() {
+    if !matter.has_fabrics() {
         // If the device is not commissioned yet, print the QR text and code to the console
         // and enable basic commissioning
 
@@ -294,11 +288,11 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             )
             .chain(
                 |e, c| e == 1 && c == TestLevelControlDeviceLogic::CLUSTER.id,
-                level_control::HandlerAsyncAdaptor(level_control),
+                Async(level_control::HandlerAdaptor(level_control)),
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off),
+                Async(on_off::HandlerAdaptor(on_off)),
             ),
     )
 }

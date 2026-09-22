@@ -233,6 +233,7 @@ fn main() -> Result<(), Error> {
     let on_off_handler_1 = OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(false),
     );
 
@@ -240,6 +241,7 @@ fn main() -> Result<(), Error> {
     let on_off_handler_2 = OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         2,
+        rs_matter::persist::VENDOR_KEYS_START + 0x11,
         TestOnOffDeviceLogic::new(false),
     );
 
@@ -1130,7 +1132,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off_1),
+                Async(on_off::HandlerAdaptor(on_off_1)),
             )
             .chain(
                 |e, c| e == 1 && c == SCENES_FULL_CLUSTER.id,
@@ -1172,7 +1174,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 |e, c| e == 2 && c == TestOnOffDeviceLogic::CLUSTER.id,
-                on_off::HandlerAsyncAdaptor(on_off_2),
+                Async(on_off::HandlerAdaptor(on_off_2)),
             )
             .chain(
                 |e, c| e == 2 && c == SCENES_FULL_CLUSTER.id,

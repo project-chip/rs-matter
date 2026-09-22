@@ -20,7 +20,7 @@
 use cfg_if::cfg_if;
 
 use crate::error::Error;
-use crate::tlv::{TLVTag, ToTLV};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
@@ -415,6 +415,24 @@ where
             tlv.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
             Ok(Some(wb.get_tail()))
+        })
+    }
+
+    /// Load a value that implements the `FromTLV` trait from the storage with
+    /// the specified key, or `None` if there is no value under that key.
+    pub fn load_tlv<T>(&mut self, key: u16) -> Result<Option<T>, Error>
+    where
+        T: for<'a> FromTLV<'a>,
+    {
+        self.kvb.access(|kvb, buf| {
+            if buf.is_empty() {
+                // A no-op access (e.g. a dummy store with an empty buffer) has nothing persisted
+                return Ok(None);
+            }
+
+            kvb.load(key, buf)?
+                .map(|data| T::from_tlv(&TLVElement::new(data)))
+                .transpose()
         })
     }
 
