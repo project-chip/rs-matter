@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::utils::init::{init, Init};
@@ -61,5 +63,54 @@ where
     /// Wait for the notification.
     pub async fn wait(&self) {
         self.signal.wait_signalled().await;
+    }
+}
+
+/// A notification primitive that allows for notifying multiple waiters,
+/// as long as all waiters are scheduled from a single async task (or else the notification would busy-loop).
+pub(crate) struct MultiNotification<M = MatterRawMutex> {
+    signal: Signal<u32, M>,
+}
+
+impl<M> Default for MultiNotification<M>
+where
+    M: RawMutex,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<M> MultiNotification<M>
+where
+    M: RawMutex,
+{
+    /// Create a new `MultiNotification`.
+    pub const fn new() -> Self {
+        Self {
+            signal: Signal::new(0),
+        }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            signal <- Signal::init(0),
+        })
+    }
+
+    /// Notify all waiters.
+    pub fn notify(&self) {
+        self.signal.modify(|v| {
+            *v = v.wrapping_add(1);
+            (true, ())
+        });
+    }
+
+    /// Wait for the notification.
+    pub fn wait(&self) -> impl Future<Output = ()> + '_ {
+        let initial = self.signal.access(|v| *v);
+
+        self.signal
+            .wait(move |v| if *v != initial { Some(()) } else { None })
     }
 }

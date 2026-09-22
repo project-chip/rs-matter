@@ -60,7 +60,7 @@ use crate::utils::storage::Vec;
 use crate::utils::storage::{pooled::Buffers, ParseBuf, WriteBuf};
 
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{IfMutex, IfMutexGuard, Notification, Signal};
+use crate::utils::sync::{IfMutex, IfMutexGuard, MultiNotification, Notification, Signal};
 use crate::{Matter, MATTER_PORT};
 
 use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
@@ -137,7 +137,7 @@ pub struct Transport {
     /// [`Transport::browse_commissionable`] callers and the running mDNS responder.
     mdns_browse: Signal<MdnsBrowseState>,
     /// A notification that a session had been removed
-    session_removed: Notification,
+    session_removed: MultiNotification,
     /// A notification that the groups have been modified.
     /// Unused without the `groups` feature, but kept unconditionally so the
     /// in-place `Transport` initializer needs no feature-specific variant.
@@ -172,7 +172,7 @@ impl Transport {
             mdns_changed: Notification::new(),
             mdns_resolve: Signal::new(MdnsResolveState::Idle),
             mdns_browse: Signal::new(MdnsBrowseState::Idle),
-            session_removed: Notification::new(),
+            session_removed: MultiNotification::new(),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
             counters: Mutex::new(RefCell::new(MessageCounters::new())),
@@ -191,7 +191,7 @@ impl Transport {
             mdns_changed <- Notification::init(),
             mdns_resolve <- Signal::init(MdnsResolveState::Idle),
             mdns_browse <- Signal::init(MdnsBrowseState::Idle),
-            session_removed <- Notification::init(),
+            session_removed <- MultiNotification::init(),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
             counters <- Mutex::init(RefCell::init(MessageCounters::new())),

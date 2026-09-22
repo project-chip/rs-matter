@@ -902,7 +902,9 @@ fn session_not_found_abandons_the_stale_session_immediately() {
 
         // And the stale session is gone, so the next attempt establishes a new one.
         assert_eq!(
-            client.remove_sessions(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID)),
+            client.with_state(|state| state
+                .sessions
+                .remove_where(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID))),
             0,
             "the stale session was not dropped"
         );

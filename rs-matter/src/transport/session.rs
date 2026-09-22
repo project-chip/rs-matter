@@ -28,6 +28,7 @@ use crate::crypto::{
     CryptoSensitive, Kdf,
 };
 use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 #[cfg(feature = "groups")]
 use crate::fabric::Fabrics;
@@ -457,9 +458,20 @@ impl Session {
         self.id == session_id
     }
 
+    /// Return `true` if the session is reserved, `false` otherwise.
+    pub fn is_reserved(&self) -> bool {
+        self.reserved
+    }
+
     /// Return `true` if the session is expired.
-    pub(crate) fn is_expired(&self) -> bool {
+    pub fn is_expired(&self) -> bool {
         self.expired
+    }
+
+    /// Expire the session, marking it as no longer valid.
+    pub fn expire(&mut self) {
+        info!("Expiring session with ID {}", self.id);
+        self.expired = true;
     }
 
     /// How long to wait for the peer's answer on this session before giving up
@@ -1902,10 +1914,12 @@ impl Sessions {
         Ok(unwrap!(self.sessions.last_mut()))
     }
 
-    /// This assumes that the higher layer has taken care of doing anything required
-    /// as per the spec before the session is removed
+    /// Remove the session with the given ID, if it exists.
+    ///
+    /// Returns `Some(Session)` if a session with the given ID was found and removed, or `None` otherwise.
     pub fn remove(&mut self, id: u32) -> Option<Session> {
         if let Some(index) = self.sessions.iter().position(|sess| sess.id == id) {
+            info!("Removing session with ID {}", self.sessions[index].id);
             Some(self.sessions.swap_remove(index))
         } else {
             None
@@ -1929,7 +1943,7 @@ impl Sessions {
             .iter()
             .position(|sess| !sess.reserved && predicate(sess))
         {
-            info!("Dropping session with ID {}", self.sessions[index].id);
+            info!("Removing session with ID {}", self.sessions[index].id);
             self.sessions.swap_remove(index);
             removed += 1;
         }
@@ -1937,39 +1951,69 @@ impl Sessions {
         removed
     }
 
-    /// This assumes that the higher layer has taken care of doing anything required
-    /// as per the spec before the sessions are removed or expired
-    pub(crate) fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8, expire_sess_id: Option<u32>) {
-        while let Some(index) = self.sessions.iter().position(|sess| {
-            sess.get_local_fabric_idx() == fabric_idx.get() && Some(sess.id) != expire_sess_id
-        }) {
-            info!(
-                "Dropping session with ID {} for fabric index {} immediately",
-                self.sessions[index].id, fabric_idx
-            );
-            self.sessions.swap_remove(index);
-        }
+    /// Expire every session matching `predicate`, returning how many were
+    /// expired.
+    ///
+    /// Sessions still being established (reserved) are neither offered to the
+    /// predicate nor removed: yanking one out from under an in-flight handshake
+    /// would break invariants that handshake relies on.
+    pub fn expire_where<F>(&mut self, mut predicate: F) -> usize
+    where
+        F: FnMut(&Session) -> bool,
+    {
+        let mut expired = 0;
 
-        if let Some(expire_sess_id) = expire_sess_id {
-            let expire_sess = self
-                .sessions
-                .iter_mut()
-                .find(|sess| sess.id == expire_sess_id);
-            if let Some(expire_sess) = expire_sess {
-                expire_sess.expired = true;
-                info!(
-                    "Marking session with ID {} as expired for fabric index {}",
-                    expire_sess_id,
-                    fabric_idx.get()
-                );
-            } else {
-                warn!(
-                    "No session with ID {} found for fabric index {} to mark as expired",
-                    expire_sess_id,
-                    fabric_idx.get()
-                );
+        for sess in self.sessions.iter_mut() {
+            if !sess.reserved && predicate(sess) {
+                sess.expire();
+                expired += 1;
             }
         }
+
+        expired
+    }
+
+    /// Remove every session associated with the given fabric, optionally expiring a specific session instead of removing it.
+    ///
+    /// Returns the number of sessions removed or expired.
+    pub(crate) fn remove_for_fabric(
+        &mut self,
+        fabric_idx: NonZeroU8,
+        expire_sess_id: Option<u32>,
+    ) -> usize {
+        let mut removed = self.remove_where(|sess| {
+            sess.get_local_fabric_idx() == fabric_idx.get() && Some(sess.id) != expire_sess_id
+        });
+        removed += self.expire_where(|sess| Some(sess.id) == expire_sess_id);
+
+        removed
+    }
+
+    /// Remove every CASE session associated with the given fabric and given peer id
+    ///
+    /// Returns the number of sessions removed.
+    pub(crate) fn remove_case_for_peer(&mut self, fab_idx: NonZeroU8, peer_id: NodeId) -> usize {
+        self.remove_where(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Case { .. })
+                && sess.get_local_fabric_idx() == fab_idx.get()
+                && sess.get_peer_node_id() == Some(peer_id)
+        })
+    }
+
+    /// Remove every PASE session, optionally expiring a specific session instead of removing it.
+    ///
+    /// Returns the number of sessions removed or expired.
+    pub(crate) fn remove_pase(&mut self, expire_sess_id: Option<u32>) -> usize {
+        let mut removed = self.remove_where(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+                && Some(sess.id) != expire_sess_id
+        });
+        removed += self.expire_where(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+                && Some(sess.id) == expire_sess_id
+        });
+
+        removed
     }
 
     pub fn get(&mut self, id: u32) -> Option<&mut Session> {
@@ -2099,47 +2143,9 @@ impl Sessions {
         self.sessions.iter()
     }
 
-    /// Drop every PASE session, whether unpromoted (still
-    /// `SessionMode::Pase { fab_idx: 0 }`) or already promoted to a
-    /// fabric. Used by:
-    ///
-    /// * `RevokeCommissioning` and a fail-safe expiry over a PASE
-    ///   session (Matter Core spec): when the
-    ///   commissioning window is torn down, any in-flight PASE sessions
-    ///   associated with it must be terminated. A PASE that was
-    ///   promoted via `AddNOC` is rolled back by the same fail-safe
-    ///   expiry, so its session must go too.
-    /// * `CommissioningComplete` (Matter Core spec): once the device
-    ///   transitions to operational state,
-    ///   all PASE sessions SHALL be terminated. Without this each
-    ///   commissioning round leaks the promoted PASE it ran on, and
-    ///   the session table eventually exhausts — visible as `BUSY` on
-    ///   the next round's `PBKDFParamRequest`.
-    ///
-    /// `expire_sess_id` is the optional ID of a session that should NOT
-    /// be removed immediately — typically the session that issued the
-    /// triggering command, so its response can still be sent. That
-    /// session is marked as `expired` instead, so it stops accepting
-    /// new exchanges but the in-flight one can complete; the transport
-    /// reclaims the slot via the usual LRU eviction path.
-    pub fn remove_pase(&mut self, expire_sess_id: Option<u32>) {
-        while let Some(index) = self.sessions.iter().position(|sess| {
-            matches!(sess.get_session_mode(), SessionMode::Pase { .. })
-                && Some(sess.id) != expire_sess_id
-        }) {
-            info!("Dropping PASE session with ID {}", self.sessions[index].id);
-            self.sessions.swap_remove(index);
-        }
-
-        if let Some(expire_sess_id) = expire_sess_id {
-            if let Some(sess) = self.sessions.iter_mut().find(|sess| {
-                sess.id == expire_sess_id
-                    && matches!(sess.get_session_mode(), SessionMode::Pase { .. })
-            }) {
-                sess.expired = true;
-                info!("Marking PASE session with ID {} as expired", expire_sess_id);
-            }
-        }
+    /// Mutably iterate over the sessions
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Session> {
+        self.sessions.iter_mut()
     }
 }
 
