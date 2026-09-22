@@ -81,6 +81,14 @@ where
         })
     }
 
+    /// Access the state `S` immutably without waking up the waiters.
+    pub fn access<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&S) -> R,
+    {
+        self.modify(|state| (false, f(state)))
+    }
+
     // Modify the state `S` and wake up the waiters if necessary.
     pub fn modify<F, R>(&self, f: F) -> R
     where

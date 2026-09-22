@@ -137,8 +137,8 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
         if let Some(utc_us) = result.into_option() {
             let mut persist = Persist::new(kv);
 
-            self.matter.with_rtc(|rtc| {
-                rtc.set_utc_time_persist(
+            self.matter.with_state(|state| {
+                state.rtc.set_utc_time_persist(
                     utc_us,
                     GranularityEnum::SecondsGranularity,
                     TimeSourceEnum::NodeTimeCluster,

@@ -71,7 +71,6 @@ use crate::onboard::noc::NocGenerator;
 use crate::tlv::{FromTLV, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
-use crate::transport::session::SessionMode;
 use crate::transport::TransportPreference;
 use crate::Matter;
 
@@ -281,11 +280,12 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         // out. Left in place, phase 2 would resume it and lose an attempt finding
         // out it is dead - fatal when it is given a single one.
         let fab_idx = self.fab_idx;
-        self.matter.remove_sessions(|sess| {
-            matches!(sess.get_session_mode(), SessionMode::Case { .. })
-                && sess.get_local_fabric_idx() == fab_idx.get()
-                && sess.get_peer_node_id() == Some(device_node_id)
+        self.matter.with_state(|state| {
+            state.sessions.remove_case_for_peer(fab_idx, device_node_id);
         });
+
+        // Notify that a session was removed
+        self.matter.transport().notify_session_removed();
 
         // The first PASE step (ArmFailSafe) establishes the PASE session via
         // `initiate_pase`; the rest reuse it.

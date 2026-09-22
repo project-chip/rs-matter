@@ -329,7 +329,7 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     // `test_commission` mints a fresh controller fabric, so the device simply
     // gains a second fabric (no `AddNOC` conflict with the first).
     info!("=== Phase 5: device reboots, then the same controller commissions it again ===");
-    device_matter.remove_sessions(|_| true);
+    device_matter.with_state(|state| state.sessions.remove_where(|_| true));
     device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
 
     test_commission(matter, crypto, peer_addr, use_tcp).await?;
@@ -466,8 +466,8 @@ async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
     };
 
     // Start both nodes clean.
-    matter.remove_sessions(pase_to_device);
-    device_matter.remove_sessions(|_| true);
+    matter.with_state(|state| state.sessions.remove_where(pase_to_device));
+    device_matter.with_state(|state| state.sessions.remove_where(|_| true));
     device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
 
     // First run: leaves a CASE session to `(controller_fab_idx, DEVICE_NODE_ID)`.
@@ -484,12 +484,11 @@ async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
 
     // Factory-reset the device without a word to the controller, whose CASE
     // session to it is now stale.
-    device_matter.remove_sessions(|_| true);
+    device_matter.with_state(|state| state.sessions.remove_where(|_| true));
     device_matter.with_state(|state| state.fabrics.remove(first.fabric_index))?;
     device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
-
     // A fresh PASE session for phase 1, so nothing there clears the stale one.
-    matter.remove_sessions(pase_to_device);
+    matter.with_state(|state| state.sessions.remove_where(pase_to_device));
 
     // Second run: same fabric and node ID, a single phase 2 attempt.
     let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];

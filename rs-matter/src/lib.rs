@@ -60,7 +60,7 @@ use crate::sc::pase::{CommWindowState, Pase};
 use crate::tlv::{TLVElement, TLVTag, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
-use crate::transport::session::{Session, Sessions};
+use crate::transport::session::Sessions;
 use crate::transport::{
     PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
 };
@@ -697,27 +697,14 @@ impl<'a> Matter<'a> {
     }
 
     /// Access the Real-Time-clock by invoking a closure with a mutable reference to it.
+    #[deprecated(
+        note = "Access the RTC through with_state instead. This method will be removed in a future release."
+    )]
     pub fn with_rtc<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Rtc) -> R,
     {
         self.with_state(|state| f(&mut state.rtc))
-    }
-
-    /// Remove every session matching `predicate`, returning how many were
-    /// dropped. Sessions still being established (reserved) are neither offered
-    /// to `predicate` nor removed.
-    pub fn remove_sessions<F>(&self, predicate: F) -> usize
-    where
-        F: FnMut(&Session) -> bool,
-    {
-        let removed = self.with_state(move |state| state.sessions.remove_where(predicate));
-
-        if removed > 0 {
-            self.transport().notify_session_removed();
-        }
-
-        removed
     }
 
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -1091,11 +1078,9 @@ impl<'a> Matter<'a> {
 /// Public for unit tests.
 pub struct MatterState {
     /// All fabrics
-    ///
-    /// Public for unit tests
     pub fabrics: Fabrics,
     /// All sessions
-    sessions: Sessions,
+    pub sessions: Sessions,
     /// CASE session resumption cache
     ///
     /// Public for unit tests
@@ -1106,9 +1091,9 @@ pub struct MatterState {
     /// The Failsafe state
     failsafe: FailSafe,
     /// The mutable basic information settings
-    basic_info_settings: BasicInfoSettings,
+    pub basic_info_settings: BasicInfoSettings,
     /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
-    rtc: Rtc,
+    pub rtc: Rtc,
     /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT key.
     /// The ICD Management handler keeps this in sync with its registration set.
     icd_mode: Option<OperatingModeEnum>,
