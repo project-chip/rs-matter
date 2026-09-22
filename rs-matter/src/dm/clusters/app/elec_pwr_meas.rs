@@ -233,8 +233,8 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
         HandlerAdaptor(self)
     }
 
-    /// Whether the configured FeatureMap contains all of `features`.
-    fn supports_feature(features: u32) -> bool {
+    /// Whether the configured FeatureMap contains *any* of `features`.
+    fn supports_any_feature(features: u32) -> bool {
         H::CLUSTER.feature_map & features != 0
     }
 
@@ -293,7 +293,7 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
 
         // Section 2.13.5: DC and AC are a choice of which at least one must be
         // selected. There is no meaningful reading without one.
-        if !Self::supports_feature(SUPPORTED_FEATURES) {
+        if !Self::supports_any_feature(SUPPORTED_FEATURES) {
             panic!("ElectricalPowerMeasurement validation: one of the DC or AC features must be enabled");
         }
 
@@ -306,7 +306,7 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
 
         // Section 2.13.6.1: `PowerMode` describes the supply the readings are
         // taken from, so it has to agree with the feature selection.
-        let expected = if Self::supports_feature(Feature::ALTERNATING_CURRENT.bits()) {
+        let expected = if Self::supports_any_feature(Feature::ALTERNATING_CURRENT.bits()) {
             PowerModeEnum::AC
         } else {
             PowerModeEnum::DC
@@ -335,7 +335,7 @@ impl<H: ElecPwrMeasHooks> ElecPwrMeasHandler<H> {
 
         // Section 2.13.6: nine of the optional readings are `[ALTC]` - they
         // describe an alternating supply and mean nothing on a DC one.
-        if !Self::supports_feature(Feature::ALTERNATING_CURRENT.bits()) {
+        if !Self::supports_any_feature(Feature::ALTERNATING_CURRENT.bits()) {
             for attr in [
                 AttributeId::ReactiveCurrent,
                 AttributeId::ApparentCurrent,
@@ -499,51 +499,51 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
     }
 
     fn voltage(&self, _ctx: impl ReadContext) -> Result<Nullable<VoltageMilliV>, Error> {
-        Ok(self.hooks.voltage())
+        Ok(self.hooks.voltage().into())
     }
 
     fn active_current(&self, _ctx: impl ReadContext) -> Result<Nullable<AmperageMilliA>, Error> {
-        Ok(self.hooks.active_current())
+        Ok(self.hooks.active_current().into())
     }
 
     fn active_power(&self, _ctx: impl ReadContext) -> Result<Nullable<PowerMilliW>, Error> {
-        Ok(self.hooks.active_power())
+        Ok(self.hooks.active_power().into())
     }
 
     fn reactive_current(&self, _ctx: impl ReadContext) -> Result<Nullable<AmperageMilliA>, Error> {
-        Ok(self.hooks.reactive_current())
+        Ok(self.hooks.reactive_current().into())
     }
 
     fn apparent_current(&self, _ctx: impl ReadContext) -> Result<Nullable<AmperageMilliA>, Error> {
-        Ok(self.hooks.apparent_current())
+        Ok(self.hooks.apparent_current().into())
     }
 
     fn reactive_power(&self, _ctx: impl ReadContext) -> Result<Nullable<PowerMilliVAR>, Error> {
-        Ok(self.hooks.reactive_power())
+        Ok(self.hooks.reactive_power().into())
     }
 
     fn apparent_power(&self, _ctx: impl ReadContext) -> Result<Nullable<PowerMilliVA>, Error> {
-        Ok(self.hooks.apparent_power())
+        Ok(self.hooks.apparent_power().into())
     }
 
     fn rms_voltage(&self, _ctx: impl ReadContext) -> Result<Nullable<VoltageMilliV>, Error> {
-        Ok(self.hooks.rms_voltage())
+        Ok(self.hooks.rms_voltage().into())
     }
 
     fn rms_current(&self, _ctx: impl ReadContext) -> Result<Nullable<AmperageMilliA>, Error> {
-        Ok(self.hooks.rms_current())
+        Ok(self.hooks.rms_current().into())
     }
 
     fn rms_power(&self, _ctx: impl ReadContext) -> Result<Nullable<PowerMilliW>, Error> {
-        Ok(self.hooks.rms_power())
+        Ok(self.hooks.rms_power().into())
     }
 
     fn frequency(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
-        Ok(self.hooks.frequency())
+        Ok(self.hooks.frequency().into())
     }
 
     fn power_factor(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
-        Ok(self.hooks.power_factor())
+        Ok(self.hooks.power_factor().into())
     }
 }
 
@@ -569,67 +569,67 @@ pub trait ElecPwrMeasHooks {
 
     /// `ActivePower` in milliwatts (section 2.13.6.9), or null when the reading
     /// is unavailable.
-    fn active_power(&self) -> Nullable<PowerMilliW>;
+    fn active_power(&self) -> Option<PowerMilliW>;
 
     /// `Voltage` in millivolts (section 2.13.6.5).
     ///
     /// Only called when the attribute is served; the default is for devices
     /// that omit it.
-    fn voltage(&self) -> Nullable<VoltageMilliV> {
-        Nullable::none()
+    fn voltage(&self) -> Option<VoltageMilliV> {
+        None
     }
 
     /// `ActiveCurrent` in milliamps (section 2.13.6.6).
-    fn active_current(&self) -> Nullable<AmperageMilliA> {
-        Nullable::none()
+    fn active_current(&self) -> Option<AmperageMilliA> {
+        None
     }
 
     /// `ReactiveCurrent` in milliamps (section 2.13.6.7). `[ALTC]`.
-    fn reactive_current(&self) -> Nullable<AmperageMilliA> {
-        Nullable::none()
+    fn reactive_current(&self) -> Option<AmperageMilliA> {
+        None
     }
 
     /// `ApparentCurrent` in milliamps (section 2.13.6.8). `[ALTC]`.
-    fn apparent_current(&self) -> Nullable<AmperageMilliA> {
-        Nullable::none()
+    fn apparent_current(&self) -> Option<AmperageMilliA> {
+        None
     }
 
     /// `ReactivePower` in millivolt-amperes reactive (section 2.13.6.10).
     /// `[ALTC]`.
-    fn reactive_power(&self) -> Nullable<PowerMilliVAR> {
-        Nullable::none()
+    fn reactive_power(&self) -> Option<PowerMilliVAR> {
+        None
     }
 
     /// `ApparentPower` in millivolt-amperes (section 2.13.6.11). `[ALTC]`.
-    fn apparent_power(&self) -> Nullable<PowerMilliVA> {
-        Nullable::none()
+    fn apparent_power(&self) -> Option<PowerMilliVA> {
+        None
     }
 
     /// `RMSVoltage` in millivolts (section 2.13.6.12). `[ALTC]`.
-    fn rms_voltage(&self) -> Nullable<VoltageMilliV> {
-        Nullable::none()
+    fn rms_voltage(&self) -> Option<VoltageMilliV> {
+        None
     }
 
     /// `RMSCurrent` in milliamps (section 2.13.6.13). `[ALTC]`.
-    fn rms_current(&self) -> Nullable<AmperageMilliA> {
-        Nullable::none()
+    fn rms_current(&self) -> Option<AmperageMilliA> {
+        None
     }
 
     /// `RMSPower` in milliwatts (section 2.13.6.14). `[ALTC]`.
-    fn rms_power(&self) -> Nullable<PowerMilliW> {
-        Nullable::none()
+    fn rms_power(&self) -> Option<PowerMilliW> {
+        None
     }
 
     /// `Frequency` in millihertz (section 2.13.6.15), constrained to
     /// `0..=1000000`. `[ALTC]`.
-    fn frequency(&self) -> Nullable<i64> {
-        Nullable::none()
+    fn frequency(&self) -> Option<i64> {
+        None
     }
 
     /// `PowerFactor` in hundredths of a percent (section 2.13.6.18),
     /// constrained to `-10000..=10000`. `[ALTC]`.
-    fn power_factor(&self) -> Nullable<i64> {
-        Nullable::none()
+    fn power_factor(&self) -> Option<i64> {
+        None
     }
 
     /// Background task for out-of-band notifications to the handler.
@@ -664,51 +664,51 @@ where
     const POWER_MODE: PowerModeEnum = T::POWER_MODE;
     const ACCURACY: &'static [MeasurementAccuracy] = T::ACCURACY;
 
-    fn active_power(&self) -> Nullable<PowerMilliW> {
+    fn active_power(&self) -> Option<PowerMilliW> {
         (*self).active_power()
     }
 
-    fn voltage(&self) -> Nullable<VoltageMilliV> {
+    fn voltage(&self) -> Option<VoltageMilliV> {
         (*self).voltage()
     }
 
-    fn active_current(&self) -> Nullable<AmperageMilliA> {
+    fn active_current(&self) -> Option<AmperageMilliA> {
         (*self).active_current()
     }
 
-    fn reactive_current(&self) -> Nullable<AmperageMilliA> {
+    fn reactive_current(&self) -> Option<AmperageMilliA> {
         (*self).reactive_current()
     }
 
-    fn apparent_current(&self) -> Nullable<AmperageMilliA> {
+    fn apparent_current(&self) -> Option<AmperageMilliA> {
         (*self).apparent_current()
     }
 
-    fn reactive_power(&self) -> Nullable<PowerMilliVAR> {
+    fn reactive_power(&self) -> Option<PowerMilliVAR> {
         (*self).reactive_power()
     }
 
-    fn apparent_power(&self) -> Nullable<PowerMilliVA> {
+    fn apparent_power(&self) -> Option<PowerMilliVA> {
         (*self).apparent_power()
     }
 
-    fn rms_voltage(&self) -> Nullable<VoltageMilliV> {
+    fn rms_voltage(&self) -> Option<VoltageMilliV> {
         (*self).rms_voltage()
     }
 
-    fn rms_current(&self) -> Nullable<AmperageMilliA> {
+    fn rms_current(&self) -> Option<AmperageMilliA> {
         (*self).rms_current()
     }
 
-    fn rms_power(&self) -> Nullable<PowerMilliW> {
+    fn rms_power(&self) -> Option<PowerMilliW> {
         (*self).rms_power()
     }
 
-    fn frequency(&self) -> Nullable<i64> {
+    fn frequency(&self) -> Option<i64> {
         (*self).frequency()
     }
 
-    fn power_factor(&self) -> Nullable<i64> {
+    fn power_factor(&self) -> Option<i64> {
         (*self).power_factor()
     }
 
@@ -732,7 +732,6 @@ mod tests {
     use crate::dm::clusters::decl::electrical_power_measurement as cluster;
     use crate::dm::{AttrId, Dataver};
     use crate::im::PowerMilliW;
-    use crate::tlv::Nullable;
     use crate::with;
 
     use super::super::measurement::{MeasurementAccuracy, MeasurementAccuracyRange};
@@ -793,16 +792,16 @@ mod tests {
         const POWER_MODE: PowerModeEnum = PowerModeEnum::AC;
         const ACCURACY: &'static [MeasurementAccuracy] = FULL_ACCURACY;
 
-        fn active_power(&self) -> Nullable<PowerMilliW> {
-            Nullable::some(1_000)
+        fn active_power(&self) -> Option<PowerMilliW> {
+            Some(1_000)
         }
 
-        fn voltage(&self) -> Nullable<VoltageMilliV> {
-            Nullable::some(230_000)
+        fn voltage(&self) -> Option<VoltageMilliV> {
+            Some(230_000)
         }
 
-        fn active_current(&self) -> Nullable<AmperageMilliA> {
-            Nullable::some(4_348)
+        fn active_current(&self) -> Option<AmperageMilliA> {
+            Some(4_348)
         }
     }
 
@@ -814,8 +813,8 @@ mod tests {
         const POWER_MODE: PowerModeEnum = PowerModeEnum::DC;
         const ACCURACY: &'static [MeasurementAccuracy] = FULL_ACCURACY;
 
-        fn active_power(&self) -> Nullable<PowerMilliW> {
-            Nullable::none()
+        fn active_power(&self) -> Option<PowerMilliW> {
+            None
         }
     }
 
@@ -827,12 +826,12 @@ mod tests {
         const POWER_MODE: PowerModeEnum = PowerModeEnum::AC;
         const ACCURACY: &'static [MeasurementAccuracy] = PARTIAL_ACCURACY;
 
-        fn active_power(&self) -> Nullable<PowerMilliW> {
-            Nullable::none()
+        fn active_power(&self) -> Option<PowerMilliW> {
+            None
         }
 
-        fn voltage(&self) -> Nullable<VoltageMilliV> {
-            Nullable::some(230_000)
+        fn voltage(&self) -> Option<VoltageMilliV> {
+            Some(230_000)
         }
     }
 
@@ -854,8 +853,8 @@ mod tests {
             const POWER_MODE: PowerModeEnum = PowerModeEnum::DC;
             const ACCURACY: &'static [MeasurementAccuracy] = FULL_ACCURACY;
 
-            fn active_power(&self) -> Nullable<PowerMilliW> {
-                Nullable::none()
+            fn active_power(&self) -> Option<PowerMilliW> {
+                None
             }
         }
 
@@ -980,8 +979,8 @@ mod tests {
         const POWER_MODE: PowerModeEnum = PowerModeEnum::AC;
         const ACCURACY: &'static [MeasurementAccuracy] = ALL_ACCURACY;
 
-        fn active_power(&self) -> Nullable<PowerMilliW> {
-            Nullable::some(1_000)
+        fn active_power(&self) -> Option<PowerMilliW> {
+            Some(1_000)
         }
     }
 
@@ -1064,8 +1063,8 @@ mod tests {
             const POWER_MODE: PowerModeEnum = PowerModeEnum::DC;
             const ACCURACY: &'static [MeasurementAccuracy] = FULL_ACCURACY;
 
-            fn active_power(&self) -> Nullable<PowerMilliW> {
-                Nullable::none()
+            fn active_power(&self) -> Option<PowerMilliW> {
+                None
             }
         }
 
