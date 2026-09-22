@@ -341,7 +341,7 @@ pub struct ThermostatHandler<H: ThermostatHooks> {
 /// to answer a question the handler could answer itself.
 fn node_utc_now_secs(ctx: &impl HandlerContext) -> Option<u32> {
     ctx.matter()
-        .with_rtc(|rtc| rtc.utc_time().reliable_secs())
+        .with_state(|state| state.rtc.utc_time().reliable_secs())
         .map(|secs| secs.try_into().unwrap_or(u32::MAX))
 }
 
@@ -820,7 +820,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     ///
     /// Skipped when `SetpointChangeSourceTimestamp` is not served, so a device
     /// that does not report the stamp never pays for the state lock
-    /// [`crate::Matter::with_rtc`] takes.
+    /// [`crate::Matter::with_state`] takes.
     fn arm_clock(&self, ctx: &impl HandlerContext) {
         if Self::serves(AttributeId::SetpointChangeSourceTimestamp) {
             self.setpoint_change.arm(node_utc_now_secs(ctx));
