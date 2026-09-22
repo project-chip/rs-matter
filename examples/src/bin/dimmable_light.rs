@@ -18,7 +18,6 @@
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
 #![allow(clippy::uninlined_format_args)]
 
-use core::cell::Cell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -26,7 +25,7 @@ use std::net::UdpSocket;
 use embassy_futures::select::select3;
 
 use async_signal::{Signal, Signals};
-use log::{error, info, trace};
+use log::info;
 
 use futures_lite::StreamExt;
 
@@ -45,12 +44,11 @@ use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, LifecycleOp, Node};
+use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{KvBlobStoreAccess, VENDOR_KEYS_START};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -93,7 +91,7 @@ fn main() -> Result<(), Error> {
         Dataver::new_rand(&mut rand),
         1,
         rs_matter::persist::VENDOR_KEYS_START + 0x10,
-        OnOffDeviceLogic::new(&kv),
+        OnOffDeviceLogic::new(),
     );
 
     // LevelControl cluster setup
@@ -185,7 +183,7 @@ const NODE: Node<'static> = Node {
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
-                ON_OFF_CLUSTER,
+                OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
             ),
         ),
@@ -213,7 +211,7 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
-                |e, c| e == 1 && c == ON_OFF_CLUSTER.id,
+                |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,
                 Async(on_off::HandlerAdaptor(on_off)),
             )
             .chain(
@@ -224,9 +222,10 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 }
 
 // Implementing the LevelControl business logic
-pub struct LevelControlDeviceLogic {
-    current_level: Cell<Option<u8>>,
-}
+//
+// The cluster handler owns and persists every attribute, including `CurrentLevel`;
+// the device logic only drives the hardware.
+pub struct LevelControlDeviceLogic;
 
 impl Default for LevelControlDeviceLogic {
     fn default() -> Self {
@@ -236,9 +235,7 @@ impl Default for LevelControlDeviceLogic {
 
 impl LevelControlDeviceLogic {
     pub const fn new() -> Self {
-        Self {
-            current_level: Cell::new(Some(1)),
-        }
+        Self
     }
 }
 
@@ -248,6 +245,7 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     const FASTEST_RATE: u8 = 50;
     const ON_LEVEL: Option<u8> = Some(42);
     const OPTIONS: OptionsBitmap = OptionsBitmap::EXECUTE_IF_OFF;
+    const CURRENT_LEVEL: Option<u8> = Some(1);
     const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
         .with_features(
             level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
@@ -279,120 +277,49 @@ impl LevelControlHooks for LevelControlDeviceLogic {
 
     fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
         // This is where business logic is implemented to physically change the level of the device.
+        info!("LevelControlDeviceLogic: setting level to {}", level);
         Ok(Some(level))
-    }
-
-    fn current_level(&self) -> Option<u8> {
-        self.current_level.get()
-    }
-
-    fn set_current_level(&self, level: Option<u8>) {
-        info!(
-            "LevelControlDeviceLogic::set_current_level: setting level to {:?}",
-            level
-        );
-        self.current_level.set(level);
     }
 }
 
 // Implementing the OnOff business logic
 
-/// The key under which [`OnOffDeviceLogic`] persists its state, in the key
-/// range the Matter KV store leaves to the application.
-const ON_OFF_STATE_KEY: u16 = VENDOR_KEYS_START;
+//
+// The cluster handler owns and persists the `OnOff` attribute; the device logic
+// only drives the hardware.
+#[derive(Default)]
+pub struct OnOffDeviceLogic;
 
-/// The OnOff cluster metadata. A standalone const rather than
-/// `OnOffDeviceLogic::CLUSTER`, since `OnOffDeviceLogic` is generic.
-const ON_OFF_CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
-    .with_revision(6)
-    .with_features(on_off_cluster::Feature::LIGHTING.bits())
-    .with_attrs(with!(
-        required;
-        on_off_cluster::AttributeId::OnOff
-        | on_off_cluster::AttributeId::GlobalSceneControl
-        | on_off_cluster::AttributeId::OnTime
-        | on_off_cluster::AttributeId::OffWaitTime
-        | on_off_cluster::AttributeId::StartUpOnOff
-    ))
-    .with_cmds(with!(
-        on_off_cluster::CommandId::Off
-            | on_off_cluster::CommandId::On
-            | on_off_cluster::CommandId::Toggle
-            | on_off_cluster::CommandId::OffWithEffect
-            | on_off_cluster::CommandId::OnWithRecallGlobalScene
-            | on_off_cluster::CommandId::OnWithTimedOff
-    ));
-
-/// OnOff hooks that persist their state in the same KV store as the rest of
-/// the Matter state, so that a factory reset erases it too.
-///
-/// The state is loaded on [`LifecycleOp::Startup`], saved by the setters and
-/// erased on [`LifecycleOp::FactoryReset`].
-pub struct OnOffDeviceLogic<K> {
-    on_off: Cell<bool>,
-    kv: K,
-}
-
-impl<K: KvBlobStoreAccess> OnOffDeviceLogic<K> {
-    pub const fn new(kv: K) -> Self {
-        Self {
-            on_off: Cell::new(false),
-            kv,
-        }
-    }
-
-    fn load_state(&self) -> Result<(), Error> {
-        let data = self.kv.access(|store, buf| {
-            store
-                .load(ON_OFF_STATE_KEY, buf)
-                .map(|data| data.and_then(|data| data.first().copied()))
-        })?;
-
-        trace!("OnOffDeviceLogic: loaded {:?}", data);
-
-        self.on_off.set(data.is_some_and(|data| data != 0));
-
-        Ok(())
-    }
-
-    fn save_state(&self) -> Result<(), Error> {
-        let value = self.on_off.get() as u8;
-
-        trace!("OnOffDeviceLogic: saving {}", value);
-
-        self.kv
-            .access(|store, buf| store.store(ON_OFF_STATE_KEY, &[value], buf))
-    }
-
-    fn erase_state(&self) -> Result<(), Error> {
-        self.on_off.set(false);
-
-        self.kv
-            .access(|store, buf| store.remove(ON_OFF_STATE_KEY, buf))
+impl OnOffDeviceLogic {
+    pub const fn new() -> Self {
+        Self
     }
 }
 
-impl<K: KvBlobStoreAccess> OnOffHooks for OnOffDeviceLogic<K> {
-    const CLUSTER: Cluster<'static> = ON_OFF_CLUSTER;
-
-    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
-        match op {
-            LifecycleOp::Startup => self.load_state(),
-            LifecycleOp::FactoryReset => self.erase_state(),
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
-        }
-    }
-
-    fn on_off(&self) -> bool {
-        self.on_off.get()
-    }
+impl OnOffHooks for OnOffDeviceLogic {
+    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+        .with_revision(6)
+        .with_features(on_off_cluster::Feature::LIGHTING.bits())
+        .with_attrs(with!(
+            required;
+            on_off_cluster::AttributeId::OnOff
+            | on_off_cluster::AttributeId::GlobalSceneControl
+            | on_off_cluster::AttributeId::OnTime
+            | on_off_cluster::AttributeId::OffWaitTime
+            | on_off_cluster::AttributeId::StartUpOnOff
+        ))
+        .with_cmds(with!(
+            on_off_cluster::CommandId::Off
+                | on_off_cluster::CommandId::On
+                | on_off_cluster::CommandId::Toggle
+                | on_off_cluster::CommandId::OffWithEffect
+                | on_off_cluster::CommandId::OnWithRecallGlobalScene
+                | on_off_cluster::CommandId::OnWithTimedOff
+        ));
 
     fn set_on_off(&self, on: bool) {
-        self.on_off.set(on);
+        // This is where business logic is implemented to physically switch the device.
         info!("OnOff state set to: {}", on);
-        if let Err(err) = self.save_state() {
-            error!("Error saving state: {}", err);
-        }
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {

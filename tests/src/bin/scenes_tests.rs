@@ -21,7 +21,6 @@
 #![recursion_limit = "256"]
 #![allow(clippy::uninlined_format_args)]
 
-use core::cell::Cell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -29,7 +28,7 @@ use std::net::UdpSocket;
 use embassy_futures::select::select3;
 
 use async_signal::{Signal, Signals};
-use log::{error, info};
+use log::info;
 
 use futures_lite::StreamExt;
 
@@ -69,8 +68,6 @@ use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
 
-use vendor_kv::VendorKv;
-
 #[path = "../common/args.rs"]
 mod args;
 
@@ -79,9 +76,6 @@ mod logging;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
-
-#[path = "../common/vendor_kv.rs"]
-mod vendor_kv;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -145,7 +139,7 @@ fn main() -> Result<(), Error> {
         Dataver::new_rand(&mut rand),
         1,
         rs_matter::persist::VENDOR_KEYS_START + 0x10,
-        OnOffDeviceLogic::new(&kv),
+        OnOffDeviceLogic::new(),
     )
     .with_scene_invalidator(scenes_state);
 
@@ -342,9 +336,7 @@ where
 }
 
 // Implementing the LevelControl business logic
-pub struct LevelControlDeviceLogic {
-    current_level: Cell<Option<u8>>,
-}
+pub struct LevelControlDeviceLogic;
 
 impl Default for LevelControlDeviceLogic {
     fn default() -> Self {
@@ -354,9 +346,7 @@ impl Default for LevelControlDeviceLogic {
 
 impl LevelControlDeviceLogic {
     pub const fn new() -> Self {
-        Self {
-            current_level: Cell::new(Some(1)),
-        }
+        Self
     }
 }
 
@@ -366,6 +356,9 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     const FASTEST_RATE: u8 = 50;
     const ON_LEVEL: Option<u8> = Some(42);
     const OPTIONS: OptionsBitmap = OptionsBitmap::EXECUTE_IF_OFF;
+    const CURRENT_LEVEL: Option<u8> = Some(1);
+    // Tests restart the device right after a change, so persist at once.
+    const PERSIST_DELAY_MS: u32 = 0;
     const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
         .with_features(
             level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
@@ -399,18 +392,6 @@ impl LevelControlHooks for LevelControlDeviceLogic {
         // This is where business logic is implemented to physically change the level of the device.
         Ok(Some(level))
     }
-
-    fn current_level(&self) -> Option<u8> {
-        self.current_level.get()
-    }
-
-    fn set_current_level(&self, level: Option<u8>) {
-        info!(
-            "LevelControlDeviceLogic::set_current_level: setting level to {:?}",
-            level
-        );
-        self.current_level.set(level);
-    }
 }
 
 // Implementing the OnOff business logic
@@ -418,33 +399,16 @@ impl LevelControlHooks for LevelControlDeviceLogic {
 // A simple serializer and deserializer for persisting the OnOff state in a single byte.
 // Stores the on_off state in the first bit.
 // Stores the start_up_on_off state in the remaining bits.
-pub struct OnOffDeviceLogic<'a> {
-    on_off: Cell<bool>,
-    kv: &'a dyn VendorKv,
-}
+#[derive(Default)]
+pub struct OnOffDeviceLogic;
 
-impl<'a> OnOffDeviceLogic<'a> {
-    pub fn new(kv: &'a dyn VendorKv) -> Self {
-        let mut buf: [u8; 1] = [0];
-
-        let on_off = matches!(
-            kv.load_blob(vendor_kv::ON_OFF_STATE_KEY, &mut buf),
-            Ok(Some(1))
-        ) && buf[0] != 0;
-
-        Self {
-            on_off: Cell::new(on_off),
-            kv,
-        }
-    }
-
-    fn save_state(&self) -> Result<(), Error> {
-        self.kv
-            .store_blob(vendor_kv::ON_OFF_STATE_KEY, &[self.on_off.get() as u8])
+impl OnOffDeviceLogic {
+    pub const fn new() -> Self {
+        Self
     }
 }
 
-impl OnOffHooks for OnOffDeviceLogic<'_> {
+impl OnOffHooks for OnOffDeviceLogic {
     const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
         .with_revision(6)
         .with_features(on_off_cluster::Feature::LIGHTING.bits())
@@ -465,16 +429,11 @@ impl OnOffHooks for OnOffDeviceLogic<'_> {
                 | on_off_cluster::CommandId::OnWithTimedOff
         ));
 
-    fn on_off(&self) -> bool {
-        self.on_off.get()
-    }
+    // Tests restart the device right after a change, so persist at once.
+    const PERSIST_DELAY_MS: u32 = 0;
 
     fn set_on_off(&self, on: bool) {
-        self.on_off.set(on);
         info!("OnOff state set to: {}", on);
-        if let Err(err) = self.save_state() {
-            error!("Error saving state: {}", err);
-        }
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
