@@ -150,11 +150,12 @@ fn data_model(logic: &TestThermostatDeviceLogic) -> impl DataModel + '_ {
                     |e, c| {
                         e == EP && c == <TestThermostatDeviceLogic as ThermostatHooks>::CLUSTER.id
                     },
-                    thermostat::HandlerAsyncAdaptor(ThermostatHandler::new(
+                    Async(thermostat::HandlerAdaptor(ThermostatHandler::new(
                         Dataver::new(3),
                         EP,
+                        rs_matter::persist::VENDOR_KEYS_START,
                         logic,
-                    )),
+                    ))),
                     EmptyHandler,
                 ),
             ),

@@ -138,6 +138,7 @@ fn main() -> Result<(), Error> {
     let thermostat_handler = thermostat::ThermostatHandler::new(
         Dataver::new_rand(&mut rand),
         THERMOSTAT_ENDPOINT,
+        rs_matter::persist::VENDOR_KEYS_START + 0x10,
         ThermostatDeviceLogic::new(&element),
     );
 
@@ -275,7 +276,7 @@ fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHook
             )
             .chain(
                 |e, c| e == THERMOSTAT_ENDPOINT && c == ThermostatDeviceLogic::CLUSTER.id,
-                thermostat::HandlerAsyncAdaptor(thermostat),
+                Async(thermostat::HandlerAdaptor(thermostat)),
             )
             .chain(
                 |e, c| e == THERMOSTAT_ENDPOINT && c == power_topology::CLUSTER.id,
@@ -635,8 +636,10 @@ impl Default for HeatingElement {
 
 // Implementing the Thermostat business logic
 
-/// A simulated heating thermostat with file-backed persistence of the four
-/// non-volatile attributes.
+/// A simulated heating thermostat.
+///
+/// The cluster handler owns and persists every attribute; this logic keeps the
+/// room simulation and the control state the handler pushes onto it.
 pub struct ThermostatDeviceLogic<'a> {
     state: Mutex<RefCell<ThermostatState>>,
     /// The load this thermostat switches. Its relay flag is the thermostat's
@@ -647,9 +650,8 @@ pub struct ThermostatDeviceLogic<'a> {
 /// The thermostat's own state, behind one lock - see [`ElementState`].
 struct ThermostatState {
     local_temperature: i16,
+    /// The control state the handler last pushed via `apply`.
     occupied_heating_setpoint: i16,
-    min_heat_setpoint_limit: i16,
-    max_heat_setpoint_limit: i16,
     system_mode: SystemModeEnum,
     /// Counts `run` ticks, so the simulated front panel can nudge the setpoint
     /// once in a while.
@@ -659,96 +661,13 @@ struct ThermostatState {
 impl<'a> ThermostatDeviceLogic<'a> {
     pub fn new(element: &'a HeatingElement) -> Self {
         Self {
-            state: Mutex::new(RefCell::new(Self::load_state())),
+            state: Mutex::new(RefCell::new(ThermostatState {
+                local_temperature: AMBIENT,
+                occupied_heating_setpoint: Self::OCCUPIED_HEATING_SETPOINT,
+                system_mode: Self::SYSTEM_MODE,
+                ticks: 0,
+            })),
             element,
-        }
-    }
-
-    /// The blob laid out by [`Self::save_state`]: `SystemMode`, then
-    /// `OccupiedHeatingSetpoint`, `MinHeatSetpointLimit` and
-    /// `MaxHeatSetpointLimit` as little-endian `i16`s. The same four the DUT
-    /// keeps under `vendor_kv::THERMOSTAT_STATE_KEY`.
-    ///
-    /// `LocalTemperature` is deliberately absent: it is a live sensor reading,
-    /// not non-volatile state, and restoring a stale room temperature across a
-    /// restart would only make the simulation lie.
-    const STATE_LEN: usize = 7;
-
-    /// Where the non-volatile attributes are kept between runs. A real device
-    /// would put them in its own KV store; see `tests/src/bin/light_tests.rs`
-    /// for the `HandlerContext::kv` route.
-    fn state_path() -> PathBuf {
-        std::env::temp_dir().join("rs-matter-example-thermostat-state")
-    }
-
-    /// The persisted state, or the power-on defaults when there is none.
-    ///
-    /// `LocalTemperature` and the tick counter are always started fresh: the
-    /// first is a live sensor reading, the second is nobody's business but the
-    /// simulated front panel's.
-    fn load_state() -> ThermostatState {
-        let default = ThermostatState {
-            local_temperature: AMBIENT,
-            occupied_heating_setpoint: 2000,
-            min_heat_setpoint_limit: Self::ABS_MIN_HEAT_SETPOINT,
-            max_heat_setpoint_limit: Self::ABS_MAX_HEAT_SETPOINT,
-            system_mode: SystemModeEnum::Off,
-            ticks: 0,
-        };
-
-        let mut buf = [0u8; Self::STATE_LEN];
-
-        let Ok(mut file) = fs::File::open(Self::state_path()) else {
-            return default;
-        };
-
-        if file.read_exact(&mut buf).is_err() {
-            trace!("Thermostat: no usable persisted state");
-            return default;
-        }
-
-        // Only the two modes a heating-only thermostat can be in; anything
-        // else would be rejected by the handler's startup repair anyway.
-        let system_mode = match buf[0] {
-            m if m == SystemModeEnum::Off as u8 => SystemModeEnum::Off,
-            m if m == SystemModeEnum::Heat as u8 => SystemModeEnum::Heat,
-            _ => {
-                trace!("Thermostat: persisted SystemMode is not a supported value");
-                return default;
-            }
-        };
-
-        ThermostatState {
-            system_mode,
-            occupied_heating_setpoint: i16::from_le_bytes([buf[1], buf[2]]),
-            min_heat_setpoint_limit: i16::from_le_bytes([buf[3], buf[4]]),
-            max_heat_setpoint_limit: i16::from_le_bytes([buf[5], buf[6]]),
-            ..default
-        }
-    }
-
-    /// Write the four non-volatile attributes out. The file write happens with
-    /// the lock released - see [`HeatingElement::save_state`].
-    fn save_state(&self) {
-        let buf = self.state.lock(|state| {
-            let state = state.borrow();
-
-            let mut buf = [0u8; Self::STATE_LEN];
-
-            buf[0] = state.system_mode as u8;
-            buf[1..3].copy_from_slice(&state.occupied_heating_setpoint.to_le_bytes());
-            buf[3..5].copy_from_slice(&state.min_heat_setpoint_limit.to_le_bytes());
-            buf[5..7].copy_from_slice(&state.max_heat_setpoint_limit.to_le_bytes());
-
-            buf
-        });
-
-        let saved = fs::File::create(Self::state_path())
-            .and_then(|mut file| file.write_all(&buf))
-            .is_ok();
-
-        if !saved {
-            error!("Thermostat: could not persist the cluster state");
         }
     }
 
@@ -758,33 +677,29 @@ impl<'a> ThermostatDeviceLogic<'a> {
     /// Because this happens behind the cluster's back, the handler attributes
     /// it to `Manual` rather than `External` - the whole point of
     /// `SetpointChangeSource`.
-    fn nudge_setpoint(&self) {
+    /// The handler clamps the result into the configured limits and pushes it
+    /// back through `apply`, so this only has to move it in one direction and
+    /// let it bounce.
+    fn nudge_setpoint(&self) -> i16 {
         const STEP: i16 = 50;
 
-        let (previous, next) = self.state.lock(|state| {
-            let mut state = state.borrow_mut();
+        let previous = self
+            .state
+            .lock(|state| state.borrow().occupied_heating_setpoint);
 
-            let previous = state.occupied_heating_setpoint;
-
-            let next = if previous.saturating_add(STEP) > state.max_heat_setpoint_limit {
-                state.min_heat_setpoint_limit
-            } else {
-                previous.saturating_add(STEP)
-            };
-
-            state.occupied_heating_setpoint = next;
-
-            (previous, next)
-        });
-
-        self.save_state();
-        self.update_relay();
+        let next = if previous.saturating_add(STEP) > Self::ABS_MAX_HEAT_SETPOINT {
+            Self::ABS_MIN_HEAT_SETPOINT
+        } else {
+            previous.saturating_add(STEP)
+        };
 
         info!(
             "Emulation: front panel moved the heating setpoint {:.2}C -> {:.2}C",
             previous as f32 / 100.0,
             next as f32 / 100.0
         );
+
+        next
     }
 
     /// Advance the room simulation by one [`TICK`], returning `true` if the
@@ -868,63 +783,15 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         ControlSequenceOfOperationEnum::HeatingOnly;
 
+    /// Idle at 20.00°C, as the simulation starts.
+    const OCCUPIED_HEATING_SETPOINT: i16 = 2000;
+
     // `utc_now_secs` is deliberately not implemented: this device has no clock
     // of its own, so `SetpointChangeSourceTimestamp` is stamped from the node's
     // Last-Known-Good UTC time, which the handler reads for itself.
 
     fn local_temperature(&self) -> Option<i16> {
         Some(self.state.lock(|state| state.borrow().local_temperature))
-    }
-
-    fn occupied_heating_setpoint(&self) -> i16 {
-        self.state
-            .lock(|state| state.borrow().occupied_heating_setpoint)
-    }
-
-    fn set_occupied_heating_setpoint(&self, value: i16) -> Result<(), Error> {
-        self.state
-            .lock(|state| state.borrow_mut().occupied_heating_setpoint = value);
-        self.save_state();
-
-        Ok(())
-    }
-
-    fn min_heat_setpoint_limit(&self) -> i16 {
-        self.state
-            .lock(|state| state.borrow().min_heat_setpoint_limit)
-    }
-
-    fn set_min_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        self.state
-            .lock(|state| state.borrow_mut().min_heat_setpoint_limit = value);
-        self.save_state();
-
-        Ok(())
-    }
-
-    fn max_heat_setpoint_limit(&self) -> i16 {
-        self.state
-            .lock(|state| state.borrow().max_heat_setpoint_limit)
-    }
-
-    fn set_max_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        self.state
-            .lock(|state| state.borrow_mut().max_heat_setpoint_limit = value);
-        self.save_state();
-
-        Ok(())
-    }
-
-    fn system_mode(&self) -> SystemModeEnum {
-        self.state.lock(|state| state.borrow().system_mode)
-    }
-
-    fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error> {
-        self.state
-            .lock(|state| state.borrow_mut().system_mode = value);
-        self.save_state();
-
-        Ok(())
     }
 
     /// The simulated equipment is a single-stage heater with no fan, so the
@@ -941,7 +808,14 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
     /// A heating-only device: the cooling setpoint is whatever the hook
     /// default returns, and means nothing here.
     fn apply(&self, system_mode: SystemModeEnum, heating_setpoint: i16, _cooling_setpoint: i16) {
-        let temperature = self.state.lock(|state| state.borrow().local_temperature);
+        let temperature = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            state.system_mode = system_mode;
+            state.occupied_heating_setpoint = heating_setpoint;
+
+            state.local_temperature
+        });
 
         info!(
             "Emulation: system mode {:?}, heating setpoint {}.{:02}C, room {}.{:02}C",
@@ -976,8 +850,9 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
             });
 
             if ticks.is_multiple_of(12) {
-                self.nudge_setpoint();
-                notify(OutOfBandMessage::OccupiedHeatingSetpoint);
+                notify(OutOfBandMessage::OccupiedHeatingSetpoint(
+                    self.nudge_setpoint(),
+                ));
             }
 
             if self.tick() {

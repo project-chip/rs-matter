@@ -33,9 +33,8 @@
 use rs_matter::error::Error;
 use rs_matter::persist::{KvBlobStoreAccess, VENDOR_KEYS_START};
 
-/// The Thermostat cluster's four non-volatile attributes, as seven bytes:
-/// `SystemMode` then `OccupiedHeatingSetpoint`, `MinHeatSetpointLimit` and
-/// `MaxHeatSetpointLimit` as little-endian `i16`s.
+/// The key the Thermostat cluster handler persists its non-volatile
+/// attributes under. The handler owns the blob; this only reserves the key.
 pub const THERMOSTAT_STATE_KEY: u16 = VENDOR_KEYS_START;
 
 /// The heating element's lifetime energy counter, as a little-endian `i64` in

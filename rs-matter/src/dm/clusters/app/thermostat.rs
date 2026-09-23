@@ -40,19 +40,22 @@
 //! them needs a non-zero events buffer in its `InteractionModelState` -
 //! `NoEvents` fails every emission with nothing but a log line.
 
-use core::future::{ready, Future};
+use core::cell::Cell;
+use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_time::{Duration, Instant, Timer};
 
+use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::dm::types::EndptId;
 use crate::dm::{
     AttrChangeNotifier, AttrId, Cluster, Dataver, EventEmitter, HandlerContext, InvokeContext,
     LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{Nullable, TLVBuilderParent};
+use crate::persist::{KvBlobStoreAccess, Persist};
+use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
@@ -77,28 +80,37 @@ const LOCAL_TEMPERATURE_EVENT_MIN_INTERVAL: Duration = Duration::from_secs(60);
 const DEAD_BAND_SCALE: i16 = 10;
 
 /// Messages passed to the `notify` closure of [`ThermostatHooks::run`]: the
-/// device changed an attribute behind the cluster's back, so the handler has
-/// to re-report it.
+/// device changed something behind the cluster's back - the knob on the front
+/// panel - so the handler has to take it over and re-report it.
+///
+/// The attributes the handler owns are carried by value; the equipment is not
+/// driven in response, since it is already in that state. A value outside the
+/// attribute's limits is clamped into them.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandMessage {
     /// [`ThermostatHooks::local_temperature`] changed.
     LocalTemperature,
-    /// [`ThermostatHooks::occupied_heating_setpoint`] changed.
-    OccupiedHeatingSetpoint,
-    /// [`ThermostatHooks::occupied_cooling_setpoint`] changed.
-    OccupiedCoolingSetpoint,
-    /// [`ThermostatHooks::system_mode`] changed.
-    SystemMode,
-    /// Any of the four user-configurable setpoint limits changed.
-    SetpointLimits,
     /// [`ThermostatHooks::running_state`] changed.
     ///
     /// Only for a relay that moves on its own; one the handler drives through
     /// [`ThermostatHooks::apply`] it re-reports itself.
     RunningState,
-    /// Any or all of the above changed.
+    /// Both of the above changed.
     Update,
+    /// The device set `OccupiedHeatingSetpoint` itself.
+    OccupiedHeatingSetpoint(i16),
+    /// The device set `OccupiedCoolingSetpoint` itself.
+    OccupiedCoolingSetpoint(i16),
+    /// The device set `SystemMode` itself. An unsupported mode is ignored.
+    SystemMode(SystemModeEnum),
+    /// The device set the user-configurable setpoint limits itself.
+    SetpointLimits {
+        min_heat: i16,
+        max_heat: i16,
+        min_cool: i16,
+        max_cool: i16,
+    },
 }
 
 impl OutOfBandMessage {
@@ -106,17 +118,17 @@ impl OutOfBandMessage {
     const fn pending(&self) -> u16 {
         match self {
             Self::LocalTemperature => PENDING_LOCAL_TEMPERATURE,
-            Self::OccupiedHeatingSetpoint => PENDING_OCCUPIED_HEATING_SETPOINT,
-            Self::OccupiedCoolingSetpoint => PENDING_OCCUPIED_COOLING_SETPOINT,
-            Self::SystemMode => PENDING_SYSTEM_MODE,
-            Self::SetpointLimits => {
+            Self::OccupiedHeatingSetpoint(_) => PENDING_OCCUPIED_HEATING_SETPOINT,
+            Self::OccupiedCoolingSetpoint(_) => PENDING_OCCUPIED_COOLING_SETPOINT,
+            Self::SystemMode(_) => PENDING_SYSTEM_MODE,
+            Self::SetpointLimits { .. } => {
                 PENDING_MIN_HEAT_LIMIT
                     | PENDING_MAX_HEAT_LIMIT
                     | PENDING_MIN_COOL_LIMIT
                     | PENDING_MAX_COOL_LIMIT
             }
             Self::RunningState => PENDING_RUNNING_STATE,
-            Self::Update => PENDING_ALL,
+            Self::Update => PENDING_LOCAL_TEMPERATURE | PENDING_RUNNING_STATE,
         }
     }
 }
@@ -133,21 +145,11 @@ const PENDING_RUNNING_STATE: u16 = 1 << 8;
 
 /// "Sweep the shadow for events", rung by [`ThermostatHandler::apply`].
 ///
-/// Absent from [`PENDING_ATTRS`] and [`PENDING_ALL`]: it re-reports nothing.
+/// Absent from [`PENDING_ATTRS`]: it re-reports nothing.
 /// Every event is "attribute X changed", so the drain needs a wake-up, not a
 /// bit per event. The in-band paths re-report synchronously and never touch
 /// the mask; `apply` is the one place they all pass through.
 const PENDING_EVENT_SWEEP: u16 = 1 << 9;
-
-const PENDING_ALL: u16 = PENDING_LOCAL_TEMPERATURE
-    | PENDING_OCCUPIED_HEATING_SETPOINT
-    | PENDING_OCCUPIED_COOLING_SETPOINT
-    | PENDING_SYSTEM_MODE
-    | PENDING_MIN_HEAT_LIMIT
-    | PENDING_MAX_HEAT_LIMIT
-    | PENDING_MIN_COOL_LIMIT
-    | PENDING_MAX_COOL_LIMIT
-    | PENDING_RUNNING_STATE;
 
 /// Pending-notification bit to attribute ID, in ascending attribute order.
 ///
@@ -172,6 +174,33 @@ const PENDING_ATTRS: &[(u16, AttributeId)] = &[
     (PENDING_RUNNING_STATE, AttributeId::ThermostatRunningState),
 ];
 
+/// The non-volatile attributes the handler owns and persists under its KV key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromTLV, ToTLV)]
+struct PersistedAttrs {
+    occupied_heating_setpoint: i16,
+    occupied_cooling_setpoint: i16,
+    min_heat_setpoint_limit: i16,
+    max_heat_setpoint_limit: i16,
+    min_cool_setpoint_limit: i16,
+    max_cool_setpoint_limit: i16,
+    system_mode: SystemModeEnum,
+}
+
+impl PersistedAttrs {
+    /// The initial values, as supplied by the hooks.
+    const fn new<H: ThermostatHooks>() -> Self {
+        Self {
+            occupied_heating_setpoint: H::OCCUPIED_HEATING_SETPOINT,
+            occupied_cooling_setpoint: H::OCCUPIED_COOLING_SETPOINT,
+            min_heat_setpoint_limit: H::MIN_HEAT_SETPOINT_LIMIT,
+            max_heat_setpoint_limit: H::MAX_HEAT_SETPOINT_LIMIT,
+            min_cool_setpoint_limit: H::MIN_COOL_SETPOINT_LIMIT,
+            max_cool_setpoint_limit: H::MAX_COOL_SETPOINT_LIMIT,
+            system_mode: H::SYSTEM_MODE,
+        }
+    }
+}
+
 /// A Thermostat cluster handler.
 ///
 /// Not coupled to any other cluster, so it needs no wiring step: construct it
@@ -183,6 +212,11 @@ pub struct ThermostatHandler<H: ThermostatHooks> {
     /// only a [`HandlerContext`] and hence no notion of a "current" endpoint.
     endpoint_id: EndptId,
     hooks: H,
+    /// The KV store key the non-volatile attributes are persisted under.
+    kv_key: u16,
+    /// The attributes the handler owns and persists.
+    attrs: Mutex<Cell<PersistedAttrs>>,
+    persist: DeferredPersist,
     /// Bitmask of attributes awaiting a re-report, fed by
     /// [`Self::out_of_band_message`] and drained by [`Self::run`].
     ///
@@ -407,11 +441,20 @@ impl SetpointChangeRecord {
 
 impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// Create a new `ThermostatHandler` with the given hooks.
-    pub const fn new(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {
+    ///
+    /// `kv_key` is the KV store key under which the handler persists the
+    /// non-volatile attributes it owns (the setpoints, the user-configurable
+    /// setpoint limits and `SystemMode`). It must be unique across everything
+    /// stored in the KV store, e.g. a key in the vendor range starting at
+    /// [`crate::persist::VENDOR_KEYS_START`].
+    pub const fn new(dataver: Dataver, endpoint_id: EndptId, kv_key: u16, hooks: H) -> Self {
         Self {
             dataver,
             endpoint_id,
             hooks,
+            kv_key,
+            attrs: Mutex::new(Cell::new(PersistedAttrs::new::<H>())),
+            persist: DeferredPersist::new(),
             pending: Signal::new(0),
             event_state: Mutex::new(RefCell::new(EventState {
                 shadow: None,
@@ -422,8 +465,62 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait.
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
+    }
+
+    /// The non-volatile attributes the handler owns, as they are now.
+    fn attrs(&self) -> PersistedAttrs {
+        self.attrs.lock(|attrs| attrs.get())
+    }
+
+    /// Update the non-volatile attributes, to be persisted once they settle.
+    fn update_attrs<F>(&self, f: F)
+    where
+        F: FnOnce(&mut PersistedAttrs),
+    {
+        let changed = self.attrs.lock(|attrs| {
+            let mut updated = attrs.get();
+            f(&mut updated);
+
+            let changed = updated != attrs.get();
+            attrs.set(updated);
+
+            changed
+        });
+
+        if changed {
+            self.persist.mark_dirty();
+        }
+    }
+
+    /// Restore the attributes persisted under the handler's KV key, if any.
+    fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        if let Some(persisted) = Persist::new(kv).load_tlv::<PersistedAttrs>(self.kv_key)? {
+            self.attrs.lock(|attrs| attrs.set(persisted));
+        }
+
+        Ok(())
+    }
+
+    /// Save the persisted attributes now.
+    fn save(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        self.persist.clear();
+
+        Persist::new(kv).store_tlv(self.kv_key, self.attrs())
+    }
+
+    /// Reset the attributes to their initial values, drop any pending save and
+    /// remove the persisted ones. The equipment keeps running as it is until
+    /// the next `apply`.
+    fn factory_reset(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        self.persist.clear();
+        self.attrs
+            .lock(|attrs| attrs.set(PersistedAttrs::new::<H>()));
+
+        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+
+        Persist::new(ctx.kv()).remove(self.kv_key)
     }
 
     fn supports_feature(features: u32) -> bool {
@@ -476,7 +573,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// user-configurable limit when served, else the absolute one.
     fn min_heat_setpoint(&self) -> i16 {
         if Self::has_heat_limits() {
-            self.hooks.min_heat_setpoint_limit()
+            self.attrs().min_heat_setpoint_limit
         } else {
             H::ABS_MIN_HEAT_SETPOINT
         }
@@ -485,7 +582,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// The effective upper bound on the heating setpoint.
     fn max_heat_setpoint(&self) -> i16 {
         if Self::has_heat_limits() {
-            self.hooks.max_heat_setpoint_limit()
+            self.attrs().max_heat_setpoint_limit
         } else {
             H::ABS_MAX_HEAT_SETPOINT
         }
@@ -494,7 +591,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// The effective lower bound on the cooling setpoint.
     fn min_cool_setpoint(&self) -> i16 {
         if Self::has_cool_limits() {
-            self.hooks.min_cool_setpoint_limit()
+            self.attrs().min_cool_setpoint_limit
         } else {
             H::ABS_MIN_COOL_SETPOINT
         }
@@ -503,7 +600,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// The effective upper bound on the cooling setpoint.
     fn max_cool_setpoint(&self) -> i16 {
         if Self::has_cool_limits() {
-            self.hooks.max_cool_setpoint_limit()
+            self.attrs().max_cool_setpoint_limit
         } else {
             H::ABS_MAX_COOL_SETPOINT
         }
@@ -618,9 +715,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         let before = self.running_state();
 
         self.hooks.apply(
-            self.hooks.system_mode(),
-            self.hooks.occupied_heating_setpoint(),
-            self.hooks.occupied_cooling_setpoint(),
+            self.attrs().system_mode,
+            self.attrs().occupied_heating_setpoint,
+            self.attrs().occupied_cooling_setpoint,
         );
 
         if self.running_state() != before {
@@ -651,11 +748,59 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         }
     }
 
-    /// Mark a set of attributes as needing a re-report and wake [`Self::run`].
+    /// Take over an out-of-band change, and mark the attributes it touches as
+    /// needing a re-report by [`Self::run`].
     ///
     /// Public so a consumer holding the handler can poke it directly, besides
     /// the `notify` closure handed to [`ThermostatHooks::run`].
     pub fn out_of_band_message(&self, message: OutOfBandMessage) {
+        match message {
+            OutOfBandMessage::OccupiedHeatingSetpoint(value) => {
+                let value = self.clamp_heat_setpoint(value as _);
+                self.update_attrs(|attrs| attrs.occupied_heating_setpoint = value);
+            }
+            OutOfBandMessage::OccupiedCoolingSetpoint(value) => {
+                let value = self.clamp_cool_setpoint(value as _);
+                self.update_attrs(|attrs| attrs.occupied_cooling_setpoint = value);
+            }
+            OutOfBandMessage::SystemMode(value) => {
+                if !Self::is_supported_system_mode(value) {
+                    warn!("Thermostat: out-of-band SystemMode is not supported; ignoring");
+                    return;
+                }
+
+                self.update_attrs(|attrs| attrs.system_mode = value);
+            }
+            OutOfBandMessage::SetpointLimits {
+                min_heat,
+                max_heat,
+                min_cool,
+                max_cool,
+            } => {
+                self.update_attrs(|attrs| {
+                    attrs.min_heat_setpoint_limit =
+                        min_heat.clamp(H::ABS_MIN_HEAT_SETPOINT, H::ABS_MAX_HEAT_SETPOINT);
+                    attrs.max_heat_setpoint_limit =
+                        max_heat.clamp(H::ABS_MIN_HEAT_SETPOINT, H::ABS_MAX_HEAT_SETPOINT);
+                    attrs.min_cool_setpoint_limit =
+                        min_cool.clamp(H::ABS_MIN_COOL_SETPOINT, H::ABS_MAX_COOL_SETPOINT);
+                    attrs.max_cool_setpoint_limit =
+                        max_cool.clamp(H::ABS_MIN_COOL_SETPOINT, H::ABS_MAX_COOL_SETPOINT);
+                });
+
+                // The new limits may cut across the setpoints.
+                if let Err(err) = self.repair() {
+                    warn!(
+                        "Thermostat: repairing after out-of-band limits failed: {:?}",
+                        err
+                    );
+                }
+            }
+            OutOfBandMessage::LocalTemperature
+            | OutOfBandMessage::RunningState
+            | OutOfBandMessage::Update => (),
+        }
+
         // An out-of-band change has nothing but the doorbell, so it asks for
         // the event sweep too - nobody else will.
         self.raise(message.pending() | PENDING_EVENT_SWEEP);
@@ -728,9 +873,9 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             local_temperature: self.reported_local_temperature(),
-            heating_setpoint: self.hooks.occupied_heating_setpoint(),
-            cooling_setpoint: self.hooks.occupied_cooling_setpoint(),
-            system_mode: self.hooks.system_mode(),
+            heating_setpoint: self.attrs().occupied_heating_setpoint,
+            cooling_setpoint: self.attrs().occupied_cooling_setpoint,
+            system_mode: self.attrs().system_mode,
             running_state: self.running_state(),
             running_mode: self.running_mode(),
         }
@@ -906,13 +1051,13 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// panel.
     fn served_setpoints(&self) -> (i16, i16) {
         let heating = if Self::heats() {
-            self.hooks.occupied_heating_setpoint()
+            self.attrs().occupied_heating_setpoint
         } else {
             0
         };
 
         let cooling = if Self::cools() {
-            self.hooks.occupied_cooling_setpoint()
+            self.attrs().occupied_cooling_setpoint
         } else {
             0
         };
@@ -1068,25 +1213,25 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         notifier: &impl AttrChangeNotifier,
         value: i16,
     ) -> Result<(), Error> {
-        let previous = self.hooks.occupied_heating_setpoint();
+        let previous = self.attrs().occupied_heating_setpoint;
 
         if value != previous {
-            self.hooks.set_occupied_heating_setpoint(value)?;
+            self.update_attrs(|attrs| attrs.occupied_heating_setpoint = value);
             self.notify(notifier, AttributeId::OccupiedHeatingSetpoint);
             self.attribute_external_change(notifier, value.saturating_sub(previous));
         }
 
         let dead_band = Self::dead_band();
 
-        if Self::auto() && value > self.hooks.occupied_cooling_setpoint() - dead_band {
+        if Self::auto() && value > self.attrs().occupied_cooling_setpoint - dead_band {
             // The limit chain keeps
             // `MaxHeatSetpointLimit <= MaxCoolSetpointLimit - MinSetpointDeadBand`,
             // so this clamp can only bite for a device whose restored limits
             // `repair` has not run over yet.
             let cooling = self.clamp_cool_setpoint(value as i32 + dead_band as i32);
 
-            if cooling != self.hooks.occupied_cooling_setpoint() {
-                self.hooks.set_occupied_cooling_setpoint(cooling)?;
+            if cooling != self.attrs().occupied_cooling_setpoint {
+                self.update_attrs(|attrs| attrs.occupied_cooling_setpoint = cooling);
                 self.notify(notifier, AttributeId::OccupiedCoolingSetpoint);
             }
         }
@@ -1104,21 +1249,21 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         notifier: &impl AttrChangeNotifier,
         value: i16,
     ) -> Result<(), Error> {
-        let previous = self.hooks.occupied_cooling_setpoint();
+        let previous = self.attrs().occupied_cooling_setpoint;
 
         if value != previous {
-            self.hooks.set_occupied_cooling_setpoint(value)?;
+            self.update_attrs(|attrs| attrs.occupied_cooling_setpoint = value);
             self.notify(notifier, AttributeId::OccupiedCoolingSetpoint);
             self.attribute_external_change(notifier, value.saturating_sub(previous));
         }
 
         let dead_band = Self::dead_band();
 
-        if Self::auto() && value < self.hooks.occupied_heating_setpoint() + dead_band {
+        if Self::auto() && value < self.attrs().occupied_heating_setpoint + dead_band {
             let heating = self.clamp_heat_setpoint(value as i32 - dead_band as i32);
 
-            if heating != self.hooks.occupied_heating_setpoint() {
-                self.hooks.set_occupied_heating_setpoint(heating)?;
+            if heating != self.attrs().occupied_heating_setpoint {
+                self.update_attrs(|attrs| attrs.occupied_heating_setpoint = heating);
                 self.notify(notifier, AttributeId::OccupiedHeatingSetpoint);
             }
         }
@@ -1174,7 +1319,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         notifier: impl AttrChangeNotifier,
         value: i16,
     ) -> Result<(), Error> {
-        if value < H::ABS_MIN_HEAT_SETPOINT || value > self.hooks.max_heat_setpoint_limit() {
+        if value < H::ABS_MIN_HEAT_SETPOINT || value > self.attrs().max_heat_setpoint_limit {
             Err(ErrorCode::ConstraintError)?;
         }
 
@@ -1182,12 +1327,12 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             Err(ErrorCode::ConstraintError)?;
         }
 
-        self.hooks.set_min_heat_setpoint_limit(value)?;
+        self.update_attrs(|attrs| attrs.min_heat_setpoint_limit = value);
         self.notify(&notifier, AttributeId::MinHeatSetpointLimit);
 
         // Drag the setpoint up by the minimum amount, if it now sits below the
         // new floor.
-        if self.hooks.occupied_heating_setpoint() < value {
+        if self.attrs().occupied_heating_setpoint < value {
             self.store_heating_setpoint(&notifier, value)?;
         }
 
@@ -1203,7 +1348,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         notifier: impl AttrChangeNotifier,
         value: i16,
     ) -> Result<(), Error> {
-        if value > H::ABS_MAX_HEAT_SETPOINT || value < self.hooks.min_heat_setpoint_limit() {
+        if value > H::ABS_MAX_HEAT_SETPOINT || value < self.attrs().min_heat_setpoint_limit {
             Err(ErrorCode::ConstraintError)?;
         }
 
@@ -1211,10 +1356,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             Err(ErrorCode::ConstraintError)?;
         }
 
-        self.hooks.set_max_heat_setpoint_limit(value)?;
+        self.update_attrs(|attrs| attrs.max_heat_setpoint_limit = value);
         self.notify(&notifier, AttributeId::MaxHeatSetpointLimit);
 
-        if self.hooks.occupied_heating_setpoint() > value {
+        if self.attrs().occupied_heating_setpoint > value {
             self.store_heating_setpoint(&notifier, value)?;
         }
 
@@ -1230,7 +1375,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         notifier: impl AttrChangeNotifier,
         value: i16,
     ) -> Result<(), Error> {
-        if value < H::ABS_MIN_COOL_SETPOINT || value > self.hooks.max_cool_setpoint_limit() {
+        if value < H::ABS_MIN_COOL_SETPOINT || value > self.attrs().max_cool_setpoint_limit {
             Err(ErrorCode::ConstraintError)?;
         }
 
@@ -1238,10 +1383,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             Err(ErrorCode::ConstraintError)?;
         }
 
-        self.hooks.set_min_cool_setpoint_limit(value)?;
+        self.update_attrs(|attrs| attrs.min_cool_setpoint_limit = value);
         self.notify(&notifier, AttributeId::MinCoolSetpointLimit);
 
-        if self.hooks.occupied_cooling_setpoint() < value {
+        if self.attrs().occupied_cooling_setpoint < value {
             self.store_cooling_setpoint(&notifier, value)?;
         }
 
@@ -1256,7 +1401,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         notifier: impl AttrChangeNotifier,
         value: i16,
     ) -> Result<(), Error> {
-        if value > H::ABS_MAX_COOL_SETPOINT || value < self.hooks.min_cool_setpoint_limit() {
+        if value > H::ABS_MAX_COOL_SETPOINT || value < self.attrs().min_cool_setpoint_limit {
             Err(ErrorCode::ConstraintError)?;
         }
 
@@ -1264,10 +1409,10 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             Err(ErrorCode::ConstraintError)?;
         }
 
-        self.hooks.set_max_cool_setpoint_limit(value)?;
+        self.update_attrs(|attrs| attrs.max_cool_setpoint_limit = value);
         self.notify(&notifier, AttributeId::MaxCoolSetpointLimit);
 
-        if self.hooks.occupied_cooling_setpoint() > value {
+        if self.attrs().occupied_cooling_setpoint > value {
             self.store_cooling_setpoint(&notifier, value)?;
         }
 
@@ -1287,7 +1432,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
             Err(ErrorCode::ConstraintError)?;
         }
 
-        self.hooks.set_system_mode(value)?;
+        self.update_attrs(|attrs| attrs.system_mode = value);
 
         self.apply(&notifier);
         self.notify(&notifier, AttributeId::SystemMode);
@@ -1321,13 +1466,13 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
 
         if heat {
             let target =
-                self.clamp_heat_setpoint(self.hooks.occupied_heating_setpoint() as i32 + delta);
+                self.clamp_heat_setpoint(self.attrs().occupied_heating_setpoint as i32 + delta);
             self.store_heating_setpoint(&notifier, target)?;
         }
 
         if cool {
             let target =
-                self.clamp_cool_setpoint(self.hooks.occupied_cooling_setpoint() as i32 + delta);
+                self.clamp_cool_setpoint(self.attrs().occupied_cooling_setpoint as i32 + delta);
             self.store_cooling_setpoint(&notifier, target)?;
         }
 
@@ -1602,37 +1747,37 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         if Self::has_heat_limits() {
             // AbsMinHeatSetpointLimit <= MinHeatSetpointLimit <= MaxHeatSetpointLimit <= AbsMaxHeatSetpointLimit
             let min = self
-                .hooks
-                .min_heat_setpoint_limit()
+                .attrs()
+                .min_heat_setpoint_limit
                 .clamp(H::ABS_MIN_HEAT_SETPOINT, H::ABS_MAX_HEAT_SETPOINT);
-            if min != self.hooks.min_heat_setpoint_limit() {
-                self.hooks.set_min_heat_setpoint_limit(min)?;
+            if min != self.attrs().min_heat_setpoint_limit {
+                self.update_attrs(|attrs| attrs.min_heat_setpoint_limit = min);
             }
 
             let max = self
-                .hooks
-                .max_heat_setpoint_limit()
+                .attrs()
+                .max_heat_setpoint_limit
                 .clamp(min, H::ABS_MAX_HEAT_SETPOINT);
-            if max != self.hooks.max_heat_setpoint_limit() {
-                self.hooks.set_max_heat_setpoint_limit(max)?;
+            if max != self.attrs().max_heat_setpoint_limit {
+                self.update_attrs(|attrs| attrs.max_heat_setpoint_limit = max);
             }
         }
 
         if Self::has_cool_limits() {
             let min = self
-                .hooks
-                .min_cool_setpoint_limit()
+                .attrs()
+                .min_cool_setpoint_limit
                 .clamp(H::ABS_MIN_COOL_SETPOINT, H::ABS_MAX_COOL_SETPOINT);
-            if min != self.hooks.min_cool_setpoint_limit() {
-                self.hooks.set_min_cool_setpoint_limit(min)?;
+            if min != self.attrs().min_cool_setpoint_limit {
+                self.update_attrs(|attrs| attrs.min_cool_setpoint_limit = min);
             }
 
             let max = self
-                .hooks
-                .max_cool_setpoint_limit()
+                .attrs()
+                .max_cool_setpoint_limit
                 .clamp(min, H::ABS_MAX_COOL_SETPOINT);
-            if max != self.hooks.max_cool_setpoint_limit() {
-                self.hooks.set_max_cool_setpoint_limit(max)?;
+            if max != self.attrs().max_cool_setpoint_limit {
+                self.update_attrs(|attrs| attrs.max_cool_setpoint_limit = max);
             }
         }
 
@@ -1642,36 +1787,36 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         // deadband, so pulling the heating limits down is always possible.
         if Self::auto() && Self::has_heat_limits() {
             let min = self
-                .hooks
-                .min_heat_setpoint_limit()
-                .min(self.hooks.min_cool_setpoint_limit() - dead_band);
-            if min != self.hooks.min_heat_setpoint_limit() {
-                self.hooks.set_min_heat_setpoint_limit(min)?;
+                .attrs()
+                .min_heat_setpoint_limit
+                .min(self.attrs().min_cool_setpoint_limit - dead_band);
+            if min != self.attrs().min_heat_setpoint_limit {
+                self.update_attrs(|attrs| attrs.min_heat_setpoint_limit = min);
             }
 
             let max = self
-                .hooks
-                .max_heat_setpoint_limit()
-                .min(self.hooks.max_cool_setpoint_limit() - dead_band)
+                .attrs()
+                .max_heat_setpoint_limit
+                .min(self.attrs().max_cool_setpoint_limit - dead_band)
                 .max(min);
-            if max != self.hooks.max_heat_setpoint_limit() {
-                self.hooks.set_max_heat_setpoint_limit(max)?;
+            if max != self.attrs().max_heat_setpoint_limit {
+                self.update_attrs(|attrs| attrs.max_heat_setpoint_limit = max);
             }
         }
 
         // MinHeatSetpointLimit <= OccupiedHeatingSetpoint <= MaxHeatSetpointLimit,
         // and the same for the cooling pair.
         if Self::heats() {
-            let setpoint = self.clamp_heat_setpoint(self.hooks.occupied_heating_setpoint() as i32);
-            if setpoint != self.hooks.occupied_heating_setpoint() {
-                self.hooks.set_occupied_heating_setpoint(setpoint)?;
+            let setpoint = self.clamp_heat_setpoint(self.attrs().occupied_heating_setpoint as i32);
+            if setpoint != self.attrs().occupied_heating_setpoint {
+                self.update_attrs(|attrs| attrs.occupied_heating_setpoint = setpoint);
             }
         }
 
         if Self::cools() {
-            let setpoint = self.clamp_cool_setpoint(self.hooks.occupied_cooling_setpoint() as i32);
-            if setpoint != self.hooks.occupied_cooling_setpoint() {
-                self.hooks.set_occupied_cooling_setpoint(setpoint)?;
+            let setpoint = self.clamp_cool_setpoint(self.attrs().occupied_cooling_setpoint as i32);
+            if setpoint != self.attrs().occupied_cooling_setpoint {
+                self.update_attrs(|attrs| attrs.occupied_cooling_setpoint = setpoint);
             }
         }
 
@@ -1681,27 +1826,27 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
         // the cooling limits leave no room.
         if Self::auto() {
             let cooling = self.clamp_cool_setpoint(
-                self.hooks
-                    .occupied_cooling_setpoint()
-                    .max(self.hooks.occupied_heating_setpoint() + dead_band) as i32,
+                self.attrs()
+                    .occupied_cooling_setpoint
+                    .max(self.attrs().occupied_heating_setpoint + dead_band) as i32,
             );
-            if cooling != self.hooks.occupied_cooling_setpoint() {
-                self.hooks.set_occupied_cooling_setpoint(cooling)?;
+            if cooling != self.attrs().occupied_cooling_setpoint {
+                self.update_attrs(|attrs| attrs.occupied_cooling_setpoint = cooling);
             }
 
             let heating = self.clamp_heat_setpoint(
-                self.hooks
-                    .occupied_heating_setpoint()
+                self.attrs()
+                    .occupied_heating_setpoint
                     .min(cooling - dead_band) as i32,
             );
-            if heating != self.hooks.occupied_heating_setpoint() {
-                self.hooks.set_occupied_heating_setpoint(heating)?;
+            if heating != self.attrs().occupied_heating_setpoint {
+                self.update_attrs(|attrs| attrs.occupied_heating_setpoint = heating);
             }
         }
 
-        if !Self::is_supported_system_mode(self.hooks.system_mode()) {
+        if !Self::is_supported_system_mode(self.attrs().system_mode) {
             warn!("Thermostat: persisted SystemMode is not supported; falling back to Off");
-            self.hooks.set_system_mode(SystemModeEnum::Off)?;
+            self.update_attrs(|attrs| attrs.system_mode = SystemModeEnum::Off);
         }
 
         self.apply(&());
@@ -1710,7 +1855,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 }
 
-impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
+impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
@@ -1722,16 +1867,27 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         self.dataver.changed();
     }
 
-    fn lifecycle(&self, _ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        if matches!(op, LifecycleOp::Startup) {
-            self.validate();
-            self.repair()?;
-        }
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        match op {
+            LifecycleOp::Startup => {
+                self.validate();
+                self.load_persisted(ctx.kv())?;
+                self.repair()?;
 
-        Ok(())
+                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+
+                Ok(())
+            }
+            LifecycleOp::FactoryReset => self.factory_reset(&ctx),
+            LifecycleOp::FabricRemoval { .. } => Ok(()),
+        }
     }
 
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        let mut persist = pin!(self
+            .persist
+            .run(H::PERSIST_DELAY_MS, || self.save(ctx.kv())));
+
         let mut hooks_fut = pin!(self.hooks.run(|message| self.out_of_band_message(message)));
 
         // Before anything can change: the first sweep has to diff against the
@@ -1744,15 +1900,16 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
             // to deliver it.
             let deferred = self.deferred_local_temperature_deadline();
 
-            match select3(
+            match select4(
                 &mut hooks_fut,
                 self.wait_pending(),
                 wait_until(deferred),
+                &mut persist,
             )
             .await
             {
-                Either3::First(_) => panic!("ThermostatHooks::run returned; implementers MUST not return. Implementations should loop forever or await core::future::pending::<()>()."),
-                Either3::Second(pending) => {
+                Either4::First(_) => panic!("ThermostatHooks::run returned; implementers MUST not return. Implementations should loop forever or await core::future::pending::<()>()."),
+                Either4::Second(pending) => {
                     self.notify_pending(&ctx, pending);
 
                     if pending & PENDING_EVENT_SWEEP != 0 {
@@ -1765,10 +1922,11 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
                         self.emit_pending(&ctx, &events);
                     }
                 }
-                Either3::Third(()) => {
+                Either4::Third(()) => {
                     let events = self.take_events(Instant::now());
                     self.emit_pending(&ctx, &events);
                 }
+                Either4::Fourth(_) => unreachable!(),
             }
         }
     }
@@ -1778,102 +1936,69 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     /// The Calculated Local Temperature, or null when unavailable. Under
     /// `LTNE` it is always null: the equipment still controls off the
     /// calculated value, there is simply no feedback for it over Matter.
-    async fn local_temperature(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
+    fn local_temperature(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
         Ok(Nullable::new(self.reported_local_temperature()))
     }
 
-    fn abs_min_heat_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(H::ABS_MIN_HEAT_SETPOINT))
+    fn abs_min_heat_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(H::ABS_MIN_HEAT_SETPOINT)
     }
 
-    fn abs_max_heat_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(H::ABS_MAX_HEAT_SETPOINT))
+    fn abs_max_heat_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(H::ABS_MAX_HEAT_SETPOINT)
     }
 
-    fn abs_min_cool_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(H::ABS_MIN_COOL_SETPOINT))
+    fn abs_min_cool_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(H::ABS_MIN_COOL_SETPOINT)
     }
 
-    fn abs_max_cool_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(H::ABS_MAX_COOL_SETPOINT))
+    fn abs_max_cool_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(H::ABS_MAX_COOL_SETPOINT)
     }
 
-    fn occupied_heating_setpoint(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(self.hooks.occupied_heating_setpoint()))
+    fn occupied_heating_setpoint(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(self.attrs().occupied_heating_setpoint)
     }
 
-    fn occupied_cooling_setpoint(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(self.hooks.occupied_cooling_setpoint()))
+    fn occupied_cooling_setpoint(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(self.attrs().occupied_cooling_setpoint)
     }
 
-    fn min_heat_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(self.hooks.min_heat_setpoint_limit()))
+    fn min_heat_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(self.attrs().min_heat_setpoint_limit)
     }
 
-    fn max_heat_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(self.hooks.max_heat_setpoint_limit()))
+    fn max_heat_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(self.attrs().max_heat_setpoint_limit)
     }
 
-    fn min_cool_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(self.hooks.min_cool_setpoint_limit()))
+    fn min_cool_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(self.attrs().min_cool_setpoint_limit)
     }
 
-    fn max_cool_setpoint_limit(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i16, Error>> {
-        ready(Ok(self.hooks.max_cool_setpoint_limit()))
+    fn max_cool_setpoint_limit(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
+        Ok(self.attrs().max_cool_setpoint_limit)
     }
 
     /// The minimum difference between the heating and cooling setpoints, in
     /// 0.1°C.
-    fn min_setpoint_dead_band(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<i8, Error>> {
-        ready(Ok(H::MIN_SETPOINT_DEAD_BAND))
+    fn min_setpoint_dead_band(&self, _ctx: impl ReadContext) -> Result<i8, Error> {
+        Ok(H::MIN_SETPOINT_DEAD_BAND)
     }
 
-    async fn control_sequence_of_operation(
+    fn control_sequence_of_operation(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<ControlSequenceOfOperationEnum, Error> {
         Ok(H::CONTROL_SEQUENCE_OF_OPERATION)
     }
 
-    async fn system_mode(&self, _ctx: impl ReadContext) -> Result<SystemModeEnum, Error> {
-        Ok(self.hooks.system_mode())
+    fn system_mode(&self, _ctx: impl ReadContext) -> Result<SystemModeEnum, Error> {
+        Ok(self.attrs().system_mode)
     }
 
     /// See [`Self::running_mode`].
-    async fn thermostat_running_mode(
+    fn thermostat_running_mode(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<ThermostatRunningModeEnum, Error> {
@@ -1881,10 +2006,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     }
 
     /// The current relay state; unimplemented outputs report Off.
-    async fn thermostat_running_state(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<RelayStateBitmap, Error> {
+    fn thermostat_running_state(&self, _ctx: impl ReadContext) -> Result<RelayStateBitmap, Error> {
         Ok(self.running_state())
     }
 
@@ -1892,7 +2014,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     ///
     /// Only ever `Manual` or `External` here: `Schedule` needs `MSCH`, which
     /// [`Self::validate`] rejects.
-    async fn setpoint_change_source(
+    fn setpoint_change_source(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<SetpointChangeSourceEnum, Error> {
@@ -1901,7 +2023,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
 
     /// The delta between the current active setpoint and the previous one;
     /// null when the previous one was unknown.
-    async fn setpoint_change_amount(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
+    fn setpoint_change_amount(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
         Ok(Nullable::new(self.setpoint_change.get().amount))
     }
 
@@ -1910,7 +2032,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     /// Zero until a setpoint moves while the node - or
     /// [`ThermostatHooks::utc_now_secs`] - has a reliable clock to offer:
     /// `epoch-s` is not nullable, so there is no way to say "unknown".
-    async fn setpoint_change_source_timestamp(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+    fn setpoint_change_source_timestamp(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(self.setpoint_change.get().timestamp)
     }
 
@@ -1921,10 +2043,10 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         &self,
         ctx: impl WriteContext,
         value: i16,
-    ) -> impl Future<Output = Result<(), Error>> {
+    ) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
-        ready(self.write_occupied_heating_setpoint(&ctx, value))
+        self.write_occupied_heating_setpoint(&ctx, value)
     }
 
     /// See [`Self::write_occupied_cooling_setpoint`].
@@ -1932,71 +2054,51 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         &self,
         ctx: impl WriteContext,
         value: i16,
-    ) -> impl Future<Output = Result<(), Error>> {
+    ) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
-        ready(self.write_occupied_cooling_setpoint(&ctx, value))
+        self.write_occupied_cooling_setpoint(&ctx, value)
     }
 
     /// See [`Self::write_min_heat_setpoint_limit`].
-    fn set_min_heat_setpoint_limit(
-        &self,
-        ctx: impl WriteContext,
-        value: i16,
-    ) -> impl Future<Output = Result<(), Error>> {
+    fn set_min_heat_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
-        ready(self.write_min_heat_setpoint_limit(&ctx, value))
+        self.write_min_heat_setpoint_limit(&ctx, value)
     }
 
     /// See [`Self::write_max_heat_setpoint_limit`].
-    fn set_max_heat_setpoint_limit(
-        &self,
-        ctx: impl WriteContext,
-        value: i16,
-    ) -> impl Future<Output = Result<(), Error>> {
+    fn set_max_heat_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
-        ready(self.write_max_heat_setpoint_limit(&ctx, value))
+        self.write_max_heat_setpoint_limit(&ctx, value)
     }
 
     /// See [`Self::write_min_cool_setpoint_limit`].
-    fn set_min_cool_setpoint_limit(
-        &self,
-        ctx: impl WriteContext,
-        value: i16,
-    ) -> impl Future<Output = Result<(), Error>> {
+    fn set_min_cool_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
-        ready(self.write_min_cool_setpoint_limit(&ctx, value))
+        self.write_min_cool_setpoint_limit(&ctx, value)
     }
 
     /// See [`Self::write_max_cool_setpoint_limit`].
-    fn set_max_cool_setpoint_limit(
-        &self,
-        ctx: impl WriteContext,
-        value: i16,
-    ) -> impl Future<Output = Result<(), Error>> {
+    fn set_max_cool_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
-        ready(self.write_max_cool_setpoint_limit(&ctx, value))
+        self.write_max_cool_setpoint_limit(&ctx, value)
     }
 
     /// Writes are silently ignored, which is why the value is a hooks const
     /// with no setter - same shape as
     /// [`Self::set_control_sequence_of_operation`].
-    async fn set_min_setpoint_dead_band(
-        &self,
-        _ctx: impl WriteContext,
-        _value: i8,
-    ) -> Result<(), Error> {
+    fn set_min_setpoint_dead_band(&self, _ctx: impl WriteContext, _value: i8) -> Result<(), Error> {
         Ok(())
     }
 
     /// Writes are silently ignored, for backwards compatibility with older
     /// thermostats. "Silently" means `SUCCESS` with no state change - not
     /// `UNSUPPORTED_WRITE`, and no change notification either.
-    async fn set_control_sequence_of_operation(
+    fn set_control_sequence_of_operation(
         &self,
         _ctx: impl WriteContext,
         _value: ControlSequenceOfOperationEnum,
@@ -2005,18 +2107,14 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     }
 
     /// See [`Self::write_system_mode`].
-    async fn set_system_mode(
-        &self,
-        ctx: impl WriteContext,
-        value: SystemModeEnum,
-    ) -> Result<(), Error> {
+    fn set_system_mode(&self, ctx: impl WriteContext, value: SystemModeEnum) -> Result<(), Error> {
         self.write_system_mode(&ctx, value)
     }
 
     // Commands
 
     /// See [`Self::raise_lower_setpoint`].
-    async fn handle_setpoint_raise_lower(
+    fn handle_setpoint_raise_lower(
         &self,
         ctx: impl InvokeContext,
         request: SetpointRaiseLowerRequest<'_>,
@@ -2031,7 +2129,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     // rejects them before they reach us; these impls only exist because the
     // generated trait has no defaults for command handlers.
 
-    async fn handle_set_weekly_schedule(
+    fn handle_set_weekly_schedule(
         &self,
         _ctx: impl InvokeContext,
         _request: SetWeeklyScheduleRequest<'_>,
@@ -2039,7 +2137,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_get_weekly_schedule<P: TLVBuilderParent>(
+    fn handle_get_weekly_schedule<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: GetWeeklyScheduleRequest<'_>,
@@ -2048,11 +2146,11 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_clear_weekly_schedule(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_clear_weekly_schedule(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_set_active_schedule_request(
+    fn handle_set_active_schedule_request(
         &self,
         _ctx: impl InvokeContext,
         _request: SetActiveScheduleRequestRequest<'_>,
@@ -2060,7 +2158,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_set_active_preset_request(
+    fn handle_set_active_preset_request(
         &self,
         _ctx: impl InvokeContext,
         _request: SetActivePresetRequestRequest<'_>,
@@ -2068,7 +2166,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_add_thermostat_suggestion<P: TLVBuilderParent>(
+    fn handle_add_thermostat_suggestion<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: AddThermostatSuggestionRequest<'_>,
@@ -2077,7 +2175,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_remove_thermostat_suggestion(
+    fn handle_remove_thermostat_suggestion(
         &self,
         _ctx: impl InvokeContext,
         _request: RemoveThermostatSuggestionRequest<'_>,
@@ -2085,7 +2183,7 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
         Err(ErrorCode::CommandNotFound.into())
     }
 
-    async fn handle_atomic_request<P: TLVBuilderParent>(
+    fn handle_atomic_request<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: AtomicRequestRequest<'_>,
@@ -2095,13 +2193,14 @@ impl<H: ThermostatHooks> ClusterAsyncHandler for ThermostatHandler<H> {
     }
 }
 
-/// The device-specific half of a thermostat: the handler owns the spec rules,
-/// the hooks own the hardware and the persistence.
+/// The device-specific half of a thermostat: the handler owns the spec rules
+/// and every attribute (persisting the non-volatile ones under its KV key),
+/// the hooks own the hardware.
 ///
-/// Each `set_*` backs a non-volatile attribute and must persist across
-/// reboots. None should validate or clamp - the handler already has. Both
-/// halves default throughout, so a heating-only device implements only the
-/// heating side.
+/// The hooks report what only the device knows - the temperature reading and
+/// the relays - drive the equipment through [`Self::apply`], and supply the
+/// initial value of each attribute the handler persists. Everything defaults,
+/// so a heating-only device implements only the heating side.
 pub trait ThermostatHooks {
     /// The features, attributes and commands this instance serves. See
     /// [`ThermostatHandler::validate`] for what a valid configuration is.
@@ -2131,78 +2230,41 @@ pub trait ThermostatHooks {
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         ControlSequenceOfOperationEnum::HeatingOnly;
 
+    // The initial values of the non-volatile attributes the handler owns, used
+    // until it has persisted them. All in 0.01°C.
+
+    /// The initial `OccupiedHeatingSetpoint`. Only served under `HEAT`; the
+    /// default is the value least likely to disturb a cooling-only device's
+    /// deadband arithmetic.
+    const OCCUPIED_HEATING_SETPOINT: i16 = Self::ABS_MIN_HEAT_SETPOINT;
+
+    /// The initial `OccupiedCoolingSetpoint`. Only served under `COOL`.
+    const OCCUPIED_COOLING_SETPOINT: i16 = Self::ABS_MAX_COOL_SETPOINT;
+
+    /// The initial `MinHeatSetpointLimit`.
+    const MIN_HEAT_SETPOINT_LIMIT: i16 = Self::ABS_MIN_HEAT_SETPOINT;
+
+    /// The initial `MaxHeatSetpointLimit`.
+    const MAX_HEAT_SETPOINT_LIMIT: i16 = Self::ABS_MAX_HEAT_SETPOINT;
+
+    /// The initial `MinCoolSetpointLimit`.
+    const MIN_COOL_SETPOINT_LIMIT: i16 = Self::ABS_MIN_COOL_SETPOINT;
+
+    /// The initial `MaxCoolSetpointLimit`.
+    const MAX_COOL_SETPOINT_LIMIT: i16 = Self::ABS_MAX_COOL_SETPOINT;
+
+    /// The initial `SystemMode`.
+    const SYSTEM_MODE: SystemModeEnum = SystemModeEnum::Off;
+
+    /// How long an attribute has to stay unchanged before the handler persists
+    /// it, in milliseconds. Bounds the flash writes caused by a burst of
+    /// changes, at the cost of losing the last one on a power loss within this
+    /// window.
+    const PERSIST_DELAY_MS: u32 = 3000;
+
     /// The Calculated Local Temperature in 0.01°C, or `None` when there is no
     /// reading.
     fn local_temperature(&self) -> Option<i16>;
-
-    /// `OccupiedHeatingSetpoint`, in 0.01°C. Only called under `HEAT`; the
-    /// default is the value least likely to disturb a cooling-only device's
-    /// deadband arithmetic.
-    fn occupied_heating_setpoint(&self) -> i16 {
-        Self::ABS_MIN_HEAT_SETPOINT
-    }
-
-    /// `OccupiedHeatingSetpoint` setter.
-    fn set_occupied_heating_setpoint(&self, _value: i16) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// `OccupiedCoolingSetpoint`, in 0.01°C. Only called under `COOL`.
-    fn occupied_cooling_setpoint(&self) -> i16 {
-        Self::ABS_MAX_COOL_SETPOINT
-    }
-
-    /// `OccupiedCoolingSetpoint` setter.
-    fn set_occupied_cooling_setpoint(&self, _value: i16) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// `MinHeatSetpointLimit`, in 0.01°C. Only called when the setpoint-limit
-    /// attributes are served; the default suits a device that omits them.
-    fn min_heat_setpoint_limit(&self) -> i16 {
-        Self::ABS_MIN_HEAT_SETPOINT
-    }
-
-    /// `MinHeatSetpointLimit` setter.
-    fn set_min_heat_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// `MaxHeatSetpointLimit`, in 0.01°C.
-    fn max_heat_setpoint_limit(&self) -> i16 {
-        Self::ABS_MAX_HEAT_SETPOINT
-    }
-
-    /// `MaxHeatSetpointLimit` setter.
-    fn set_max_heat_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// `MinCoolSetpointLimit`, in 0.01°C.
-    fn min_cool_setpoint_limit(&self) -> i16 {
-        Self::ABS_MIN_COOL_SETPOINT
-    }
-
-    /// `MinCoolSetpointLimit` setter.
-    fn set_min_cool_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// `MaxCoolSetpointLimit`, in 0.01°C.
-    fn max_cool_setpoint_limit(&self) -> i16 {
-        Self::ABS_MAX_COOL_SETPOINT
-    }
-
-    /// `MaxCoolSetpointLimit` setter.
-    fn set_max_cool_setpoint_limit(&self, _value: i16) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// `SystemMode`.
-    fn system_mode(&self) -> SystemModeEnum;
-
-    /// `SystemMode` setter.
-    fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error>;
 
     /// Which relays the equipment currently has energised - the one place the
     /// device's own control algorithm becomes visible over Matter.
@@ -2261,6 +2323,14 @@ where
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         T::CONTROL_SEQUENCE_OF_OPERATION;
     const LOCAL_TEMPERATURE_EVENT_DELTA: i16 = T::LOCAL_TEMPERATURE_EVENT_DELTA;
+    const OCCUPIED_HEATING_SETPOINT: i16 = T::OCCUPIED_HEATING_SETPOINT;
+    const OCCUPIED_COOLING_SETPOINT: i16 = T::OCCUPIED_COOLING_SETPOINT;
+    const MIN_HEAT_SETPOINT_LIMIT: i16 = T::MIN_HEAT_SETPOINT_LIMIT;
+    const MAX_HEAT_SETPOINT_LIMIT: i16 = T::MAX_HEAT_SETPOINT_LIMIT;
+    const MIN_COOL_SETPOINT_LIMIT: i16 = T::MIN_COOL_SETPOINT_LIMIT;
+    const MAX_COOL_SETPOINT_LIMIT: i16 = T::MAX_COOL_SETPOINT_LIMIT;
+    const SYSTEM_MODE: SystemModeEnum = T::SYSTEM_MODE;
+    const PERSIST_DELAY_MS: u32 = T::PERSIST_DELAY_MS;
 
     fn utc_now_secs(&self) -> Option<u32> {
         (*self).utc_now_secs()
@@ -2268,62 +2338,6 @@ where
 
     fn local_temperature(&self) -> Option<i16> {
         (*self).local_temperature()
-    }
-
-    fn occupied_heating_setpoint(&self) -> i16 {
-        (*self).occupied_heating_setpoint()
-    }
-
-    fn set_occupied_heating_setpoint(&self, value: i16) -> Result<(), Error> {
-        (*self).set_occupied_heating_setpoint(value)
-    }
-
-    fn occupied_cooling_setpoint(&self) -> i16 {
-        (*self).occupied_cooling_setpoint()
-    }
-
-    fn set_occupied_cooling_setpoint(&self, value: i16) -> Result<(), Error> {
-        (*self).set_occupied_cooling_setpoint(value)
-    }
-
-    fn min_heat_setpoint_limit(&self) -> i16 {
-        (*self).min_heat_setpoint_limit()
-    }
-
-    fn set_min_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        (*self).set_min_heat_setpoint_limit(value)
-    }
-
-    fn max_heat_setpoint_limit(&self) -> i16 {
-        (*self).max_heat_setpoint_limit()
-    }
-
-    fn set_max_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        (*self).set_max_heat_setpoint_limit(value)
-    }
-
-    fn min_cool_setpoint_limit(&self) -> i16 {
-        (*self).min_cool_setpoint_limit()
-    }
-
-    fn set_min_cool_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        (*self).set_min_cool_setpoint_limit(value)
-    }
-
-    fn max_cool_setpoint_limit(&self) -> i16 {
-        (*self).max_cool_setpoint_limit()
-    }
-
-    fn set_max_cool_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-        (*self).set_max_cool_setpoint_limit(value)
-    }
-
-    fn system_mode(&self) -> SystemModeEnum {
-        (*self).system_mode()
-    }
-
-    fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error> {
-        (*self).set_system_mode(value)
     }
 
     fn running_state(&self) -> RelayStateBitmap {
@@ -2347,7 +2361,6 @@ pub mod test {
 
     use crate::dm::clusters::decl::thermostat as thermostat_cluster;
     use crate::dm::Cluster;
-    use crate::error::Error;
     use crate::with;
 
     use super::{OutOfBandMessage, RelayStateBitmap, SystemModeEnum, ThermostatHooks};
@@ -2379,9 +2392,8 @@ pub mod test {
     /// keeps its own.
     struct TestThermostatState {
         local_temperature: i16,
+        /// The control state the handler last pushed via `apply`.
         occupied_heating_setpoint: i16,
-        min_heat_setpoint_limit: i16,
-        max_heat_setpoint_limit: i16,
         system_mode: SystemModeEnum,
         heating: bool,
     }
@@ -2392,10 +2404,8 @@ pub mod test {
             Self {
                 state: Mutex::new(RefCell::new(TestThermostatState {
                     local_temperature: AMBIENT,
-                    occupied_heating_setpoint: 2000,
-                    min_heat_setpoint_limit: Self::ABS_MIN_HEAT_SETPOINT,
-                    max_heat_setpoint_limit: Self::ABS_MAX_HEAT_SETPOINT,
-                    system_mode: SystemModeEnum::Off,
+                    occupied_heating_setpoint: Self::OCCUPIED_HEATING_SETPOINT,
+                    system_mode: Self::SYSTEM_MODE,
                     heating: false,
                 })),
             }
@@ -2475,6 +2485,12 @@ pub mod test {
                     | thermostat_cluster::EventId::RunningStateChange
             ));
 
+        /// Idle at [`AMBIENT`], with a 20.00°C setpoint.
+        const OCCUPIED_HEATING_SETPOINT: i16 = 2000;
+
+        // Tests restart the device right after a change, so persist at once.
+        const PERSIST_DELAY_MS: u32 = 0;
+
         /// A fixed clock, so the timestamp a test reads back is predictable.
         fn utc_now_secs(&self) -> Option<u32> {
             Some(1000)
@@ -2482,49 +2498,6 @@ pub mod test {
 
         fn local_temperature(&self) -> Option<i16> {
             Some(self.state.lock(|state| state.borrow().local_temperature))
-        }
-
-        fn occupied_heating_setpoint(&self) -> i16 {
-            self.state
-                .lock(|state| state.borrow().occupied_heating_setpoint)
-        }
-
-        fn set_occupied_heating_setpoint(&self, value: i16) -> Result<(), Error> {
-            self.state
-                .lock(|state| state.borrow_mut().occupied_heating_setpoint = value);
-            Ok(())
-        }
-
-        fn min_heat_setpoint_limit(&self) -> i16 {
-            self.state
-                .lock(|state| state.borrow().min_heat_setpoint_limit)
-        }
-
-        fn set_min_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.state
-                .lock(|state| state.borrow_mut().min_heat_setpoint_limit = value);
-            Ok(())
-        }
-
-        fn max_heat_setpoint_limit(&self) -> i16 {
-            self.state
-                .lock(|state| state.borrow().max_heat_setpoint_limit)
-        }
-
-        fn set_max_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.state
-                .lock(|state| state.borrow_mut().max_heat_setpoint_limit = value);
-            Ok(())
-        }
-
-        fn system_mode(&self) -> SystemModeEnum {
-            self.state.lock(|state| state.borrow().system_mode)
-        }
-
-        fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error> {
-            self.state
-                .lock(|state| state.borrow_mut().system_mode = value);
-            Ok(())
         }
 
         /// A single-stage heater with no fan: only `Heat` is ever energised.
@@ -2536,13 +2509,22 @@ pub mod test {
             }
         }
 
-        /// Heating-only: the cooling setpoint is a hook default and unused.
+        /// Heating-only: the cooling setpoint is an unused initial value.
+        ///
+        /// Records the control state so the simulated room can act on it.
         fn apply(
             &self,
             system_mode: SystemModeEnum,
             heating_setpoint: i16,
             _cooling_setpoint: i16,
         ) {
+            self.state.lock(|state| {
+                let mut state = state.borrow_mut();
+
+                state.system_mode = system_mode;
+                state.occupied_heating_setpoint = heating_setpoint;
+            });
+
             info!(
                 "Emulation: system mode {:?}, heating setpoint {}.{:02}C",
                 system_mode,
@@ -2586,7 +2568,7 @@ pub mod test {
 mod tests {
     //! Unit tests for the spec rules [`ThermostatHandler`] enforces.
     //!
-    //! They drive the context-free helpers the `ClusterAsyncHandler` methods
+    //! They drive the context-free helpers the `ClusterHandler` methods
     //! delegate to, rather than the methods themselves: a `ReadContext` /
     //! `WriteContext` can only be built around a live `Matter` instance,
     //! whereas the helpers need nothing but an [`AttrChangeNotifier`] - and
@@ -2617,6 +2599,10 @@ mod tests {
 
     /// `()` is a no-op `AttrChangeNotifier`, which is all the helpers need.
     const NULL_CTX: &() = &();
+
+    /// The KV key the tested handlers persist under. Nothing in these tests
+    /// reaches a store: they drive the handler's own state directly.
+    const KV_KEY: u16 = crate::persist::VENDOR_KEYS_START;
 
     /// The served set of a device that implements everything this handler can,
     /// narrowed by the FeatureMap it is asked about.
@@ -2694,13 +2680,6 @@ mod tests {
     /// The attributes [`MockHooks`] stands in for, behind one lock.
     struct MockState {
         local_temperature: Option<i16>,
-        occupied_heating_setpoint: i16,
-        occupied_cooling_setpoint: i16,
-        min_heat_setpoint_limit: i16,
-        max_heat_setpoint_limit: i16,
-        min_cool_setpoint_limit: i16,
-        max_cool_setpoint_limit: i16,
-        system_mode: SystemModeEnum,
         running_state: RelayStateBitmap,
         /// How many times [`ThermostatHooks::apply`] has been called.
         applied: u32,
@@ -2711,13 +2690,6 @@ mod tests {
             Self {
                 state: Mutex::new(RefCell::new(MockState {
                     local_temperature: Some(1900),
-                    occupied_heating_setpoint: 2000,
-                    occupied_cooling_setpoint: 2600,
-                    min_heat_setpoint_limit: Self::ABS_MIN_HEAT_SETPOINT,
-                    max_heat_setpoint_limit: Self::ABS_MAX_HEAT_SETPOINT,
-                    min_cool_setpoint_limit: Self::ABS_MIN_COOL_SETPOINT,
-                    max_cool_setpoint_limit: Self::ABS_MAX_COOL_SETPOINT,
-                    system_mode: SystemModeEnum::Off,
                     running_state: RelayStateBitmap::empty(),
                     applied: 0,
                 })),
@@ -2754,71 +2726,12 @@ mod tests {
                 ControlSequenceOfOperationEnum::HeatingOnly
             };
 
+        // The setpoints the tests start from: 20.00°C and 26.00°C.
+        const OCCUPIED_HEATING_SETPOINT: i16 = 2000;
+        const OCCUPIED_COOLING_SETPOINT: i16 = 2600;
+
         fn local_temperature(&self) -> Option<i16> {
             self.get(|state| state.local_temperature)
-        }
-
-        fn occupied_heating_setpoint(&self) -> i16 {
-            self.get(|state| state.occupied_heating_setpoint)
-        }
-
-        fn set_occupied_heating_setpoint(&self, value: i16) -> Result<(), Error> {
-            self.set(|state| state.occupied_heating_setpoint = value);
-            Ok(())
-        }
-
-        fn occupied_cooling_setpoint(&self) -> i16 {
-            self.get(|state| state.occupied_cooling_setpoint)
-        }
-
-        fn set_occupied_cooling_setpoint(&self, value: i16) -> Result<(), Error> {
-            self.set(|state| state.occupied_cooling_setpoint = value);
-            Ok(())
-        }
-
-        fn min_heat_setpoint_limit(&self) -> i16 {
-            self.get(|state| state.min_heat_setpoint_limit)
-        }
-
-        fn set_min_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.set(|state| state.min_heat_setpoint_limit = value);
-            Ok(())
-        }
-
-        fn max_heat_setpoint_limit(&self) -> i16 {
-            self.get(|state| state.max_heat_setpoint_limit)
-        }
-
-        fn set_max_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.set(|state| state.max_heat_setpoint_limit = value);
-            Ok(())
-        }
-
-        fn min_cool_setpoint_limit(&self) -> i16 {
-            self.get(|state| state.min_cool_setpoint_limit)
-        }
-
-        fn set_min_cool_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.set(|state| state.min_cool_setpoint_limit = value);
-            Ok(())
-        }
-
-        fn max_cool_setpoint_limit(&self) -> i16 {
-            self.get(|state| state.max_cool_setpoint_limit)
-        }
-
-        fn set_max_cool_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.set(|state| state.max_cool_setpoint_limit = value);
-            Ok(())
-        }
-
-        fn system_mode(&self) -> SystemModeEnum {
-            self.get(|state| state.system_mode)
-        }
-
-        fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error> {
-            self.set(|state| state.system_mode = value);
-            Ok(())
         }
 
         fn running_state(&self) -> RelayStateBitmap {
@@ -2869,7 +2782,7 @@ mod tests {
     const DEAD_BAND: i16 = 200;
 
     fn mock_handler<const F: u32>() -> ThermostatHandler<MockHooks<F>> {
-        ThermostatHandler::new(Dataver::new(1), 1, MockHooks::<F>::new())
+        ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, MockHooks::<F>::new())
     }
 
     /// A seeded handler: what `run` hands the first sweep.
@@ -2891,7 +2804,7 @@ mod tests {
     }
 
     fn source_handler<const F: u32>() -> ThermostatHandler<SourceMockHooks<F>> {
-        ThermostatHandler::new(Dataver::new(1), 1, SourceMockHooks::<F>::new())
+        ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, SourceMockHooks::<F>::new())
     }
 
     impl<const F: u32> ThermostatHooks for SourceMockHooks<F> {
@@ -2908,6 +2821,11 @@ mod tests {
         const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
             <MockHooks<F> as ThermostatHooks>::CONTROL_SEQUENCE_OF_OPERATION;
 
+        const OCCUPIED_HEATING_SETPOINT: i16 =
+            <MockHooks<F> as ThermostatHooks>::OCCUPIED_HEATING_SETPOINT;
+        const OCCUPIED_COOLING_SETPOINT: i16 =
+            <MockHooks<F> as ThermostatHooks>::OCCUPIED_COOLING_SETPOINT;
+
         /// A clock that is always 1000 seconds past the Matter epoch, so the
         /// stamp is distinguishable from the "no clock" zero.
         fn utc_now_secs(&self) -> Option<u32> {
@@ -2916,62 +2834,6 @@ mod tests {
 
         fn local_temperature(&self) -> Option<i16> {
             self.0.local_temperature()
-        }
-
-        fn occupied_heating_setpoint(&self) -> i16 {
-            self.0.occupied_heating_setpoint()
-        }
-
-        fn set_occupied_heating_setpoint(&self, value: i16) -> Result<(), Error> {
-            self.0.set_occupied_heating_setpoint(value)
-        }
-
-        fn occupied_cooling_setpoint(&self) -> i16 {
-            self.0.occupied_cooling_setpoint()
-        }
-
-        fn set_occupied_cooling_setpoint(&self, value: i16) -> Result<(), Error> {
-            self.0.set_occupied_cooling_setpoint(value)
-        }
-
-        fn min_heat_setpoint_limit(&self) -> i16 {
-            self.0.min_heat_setpoint_limit()
-        }
-
-        fn set_min_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.0.set_min_heat_setpoint_limit(value)
-        }
-
-        fn max_heat_setpoint_limit(&self) -> i16 {
-            self.0.max_heat_setpoint_limit()
-        }
-
-        fn set_max_heat_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.0.set_max_heat_setpoint_limit(value)
-        }
-
-        fn min_cool_setpoint_limit(&self) -> i16 {
-            self.0.min_cool_setpoint_limit()
-        }
-
-        fn set_min_cool_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.0.set_min_cool_setpoint_limit(value)
-        }
-
-        fn max_cool_setpoint_limit(&self) -> i16 {
-            self.0.max_cool_setpoint_limit()
-        }
-
-        fn set_max_cool_setpoint_limit(&self, value: i16) -> Result<(), Error> {
-            self.0.set_max_cool_setpoint_limit(value)
-        }
-
-        fn system_mode(&self) -> SystemModeEnum {
-            self.0.system_mode()
-        }
-
-        fn set_system_mode(&self, value: SystemModeEnum) -> Result<(), Error> {
-            self.0.set_system_mode(value)
         }
 
         fn running_state(&self) -> RelayStateBitmap {
@@ -2992,7 +2854,7 @@ mod tests {
     #[test]
     fn test_logic_passes_handler_validate() {
         let logic = TestThermostatDeviceLogic::new();
-        let handler = ThermostatHandler::new(Dataver::new(1), 1, &logic);
+        let handler = ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, &logic);
 
         handler.validate();
         handler.repair().unwrap();
@@ -3045,7 +2907,7 @@ mod tests {
 
         for mode in [SystemModeEnum::Off, SystemModeEnum::Heat] {
             handler.write_system_mode(NULL_CTX, mode).unwrap();
-            assert_eq!(handler.hooks.system_mode(), mode);
+            assert_eq!(handler.attrs().system_mode, mode);
         }
     }
 
@@ -3135,7 +2997,7 @@ mod tests {
         handler
             .write_occupied_heating_setpoint(NULL_CTX, 1500)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 1500);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 1500);
     }
 
     /// The cooling mirror of the same rule.
@@ -3165,7 +3027,7 @@ mod tests {
         handler
             .write_occupied_cooling_setpoint(NULL_CTX, 2000)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2000);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2000);
     }
 
     /// A limit write that conflicts with the setpoint drags the setpoint
@@ -3178,7 +3040,7 @@ mod tests {
         handler
             .write_min_heat_setpoint_limit(NULL_CTX, 2200)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2200);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2200);
 
         // Ceiling below the setpoint pulls it down.
         handler
@@ -3187,7 +3049,7 @@ mod tests {
         handler
             .write_max_heat_setpoint_limit(NULL_CTX, 1800)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 1800);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 1800);
 
         // And the same on the cooling side.
         let cooling = mock_handler::<COOL>();
@@ -3195,7 +3057,7 @@ mod tests {
         cooling
             .write_min_cool_setpoint_limit(NULL_CTX, 2700)
             .unwrap();
-        assert_eq!(cooling.hooks.occupied_cooling_setpoint(), 2700);
+        assert_eq!(cooling.attrs().occupied_cooling_setpoint, 2700);
 
         cooling
             .write_min_cool_setpoint_limit(NULL_CTX, 1600)
@@ -3203,7 +3065,7 @@ mod tests {
         cooling
             .write_max_cool_setpoint_limit(NULL_CTX, 2400)
             .unwrap();
-        assert_eq!(cooling.hooks.occupied_cooling_setpoint(), 2400);
+        assert_eq!(cooling.attrs().occupied_cooling_setpoint, 2400);
     }
 
     /// User-configurable limits stay inside the device limits and do not
@@ -3301,28 +3163,28 @@ mod tests {
     fn auto_moves_the_opposite_setpoint_to_keep_the_deadband() {
         let handler = mock_handler::<AUTO>();
 
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2000);
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2600);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2000);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2600);
 
         // Still 200 below the cooling setpoint: nothing moves.
         handler
             .write_occupied_heating_setpoint(NULL_CTX, 2400)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2600);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2600);
 
         // Past it: the cooling setpoint is pushed up to heating + deadband.
         handler
             .write_occupied_heating_setpoint(NULL_CTX, 2500)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2500);
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2500 + DEAD_BAND);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2500);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2500 + DEAD_BAND);
 
         // The mirror image: the heating setpoint gives way.
         handler
             .write_occupied_cooling_setpoint(NULL_CTX, 2000)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2000);
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2000 - DEAD_BAND);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2000);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2000 - DEAD_BAND);
     }
 
     /// A limit write that drags a setpoint has to keep the deadband too - the
@@ -3340,8 +3202,8 @@ mod tests {
             .write_min_heat_setpoint_limit(NULL_CTX, 2600)
             .unwrap();
 
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2600);
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2800);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2600);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2800);
     }
 
     /// A server without the feature answers `INVALID_COMMAND` to the
@@ -3354,7 +3216,7 @@ mod tests {
             code(heating.raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Cool, 10)),
             Err(ErrorCode::InvalidCommand)
         );
-        assert_eq!(heating.hooks.occupied_heating_setpoint(), 2000);
+        assert_eq!(heating.attrs().occupied_heating_setpoint, 2000);
 
         let cooling = mock_handler::<COOL>();
 
@@ -3362,7 +3224,7 @@ mod tests {
             code(cooling.raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Heat, 10)),
             Err(ErrorCode::InvalidCommand)
         );
-        assert_eq!(cooling.hooks.occupied_cooling_setpoint(), 2600);
+        assert_eq!(cooling.attrs().occupied_cooling_setpoint, 2600);
     }
 
     /// `Amount` is in 0.1°C while the setpoint attribute is in 0.01°C, and
@@ -3377,10 +3239,10 @@ mod tests {
             let handler = mock_handler::<HEAT>();
 
             handler.raise_lower_setpoint(NULL_CTX, mode, 10).unwrap();
-            assert_eq!(handler.hooks.occupied_heating_setpoint(), 2100);
+            assert_eq!(handler.attrs().occupied_heating_setpoint, 2100);
 
             handler.raise_lower_setpoint(NULL_CTX, mode, -25).unwrap();
-            assert_eq!(handler.hooks.occupied_heating_setpoint(), 1850);
+            assert_eq!(handler.attrs().occupied_heating_setpoint, 1850);
         }
     }
 
@@ -3394,15 +3256,15 @@ mod tests {
             .raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Both, 10)
             .unwrap();
 
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2100);
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2700);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2100);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2700);
 
         handler
             .raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Both, -30)
             .unwrap();
 
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 1800);
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2400);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 1800);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2400);
     }
 
     /// Under `AUTO`, a result invalid solely because of the deadband pushes
@@ -3415,8 +3277,8 @@ mod tests {
             .raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Heat, 60)
             .unwrap();
 
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2600);
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2600 + DEAD_BAND);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2600);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2600 + DEAD_BAND);
 
         // And the other way: lowering the cooling setpoint drags the heating
         // one down with it.
@@ -3424,8 +3286,8 @@ mod tests {
             .raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Cool, -100)
             .unwrap();
 
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 1800);
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 1800 - DEAD_BAND);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 1800);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 1800 - DEAD_BAND);
     }
 
     /// A result outside the limits is clamped, not an error.
@@ -3443,12 +3305,12 @@ mod tests {
         handler
             .raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Heat, 127)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 2500);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 2500);
 
         handler
             .raise_lower_setpoint(NULL_CTX, SetpointRaiseLowerModeEnum::Heat, -128)
             .unwrap();
-        assert_eq!(handler.hooks.occupied_heating_setpoint(), 1500);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 1500);
     }
 
     /// `ControlSequenceOfOperation` and `MinSetpointDeadBand` are fixed and
@@ -3476,37 +3338,17 @@ mod tests {
         let handler = mock_handler::<HEAT>();
 
         // Values a narrowed firmware range or a bad restore could leave behind.
-        handler
-            .hooks
-            .set(|state| state.min_heat_setpoint_limit = 100);
-        handler
-            .hooks
-            .set(|state| state.max_heat_setpoint_limit = 9000);
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 8000);
-        handler
-            .hooks
-            .set(|state| state.system_mode = SystemModeEnum::Cool);
+        handler.update_attrs(|attrs| attrs.min_heat_setpoint_limit = 100);
+        handler.update_attrs(|attrs| attrs.max_heat_setpoint_limit = 9000);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 8000);
+        handler.update_attrs(|attrs| attrs.system_mode = SystemModeEnum::Cool);
 
         handler.repair().unwrap();
 
-        assert_eq!(
-            handler.hooks.get(|state| state.min_heat_setpoint_limit),
-            700
-        );
-        assert_eq!(
-            handler.hooks.get(|state| state.max_heat_setpoint_limit),
-            3000
-        );
-        assert_eq!(
-            handler.hooks.get(|state| state.occupied_heating_setpoint),
-            3000
-        );
-        assert_eq!(
-            handler.hooks.get(|state| state.system_mode),
-            SystemModeEnum::Off
-        );
+        assert_eq!(handler.attrs().min_heat_setpoint_limit, 700);
+        assert_eq!(handler.attrs().max_heat_setpoint_limit, 3000);
+        assert_eq!(handler.attrs().occupied_heating_setpoint, 3000);
+        assert_eq!(handler.attrs().system_mode, SystemModeEnum::Off);
     }
 
     /// And with `AUTO`, the deadband half of it: both the limits and the
@@ -3517,49 +3359,22 @@ mod tests {
 
         // A restore in which the heating half has crept up over the cooling
         // half, deadband and all.
-        handler
-            .hooks
-            .set(|state| state.min_heat_setpoint_limit = 1800);
-        handler
-            .hooks
-            .set(|state| state.max_heat_setpoint_limit = 3000);
-        handler
-            .hooks
-            .set(|state| state.min_cool_setpoint_limit = 1600);
-        handler
-            .hooks
-            .set(|state| state.max_cool_setpoint_limit = 3000);
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2600);
-        handler
-            .hooks
-            .set(|state| state.occupied_cooling_setpoint = 2600);
+        handler.update_attrs(|attrs| attrs.min_heat_setpoint_limit = 1800);
+        handler.update_attrs(|attrs| attrs.max_heat_setpoint_limit = 3000);
+        handler.update_attrs(|attrs| attrs.min_cool_setpoint_limit = 1600);
+        handler.update_attrs(|attrs| attrs.max_cool_setpoint_limit = 3000);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2600);
+        handler.update_attrs(|attrs| attrs.occupied_cooling_setpoint = 2600);
 
         handler.repair().unwrap();
 
-        let hooks = &handler.hooks;
+        let attrs = handler.attrs();
 
-        assert!(
-            hooks.get(|state| state.min_heat_setpoint_limit)
-                <= hooks.get(|state| state.min_cool_setpoint_limit) - DEAD_BAND
-        );
-        assert!(
-            hooks.get(|state| state.max_heat_setpoint_limit)
-                <= hooks.get(|state| state.max_cool_setpoint_limit) - DEAD_BAND
-        );
-        assert!(
-            hooks.get(|state| state.occupied_heating_setpoint)
-                <= hooks.get(|state| state.occupied_cooling_setpoint) - DEAD_BAND
-        );
-        assert!(
-            hooks.get(|state| state.occupied_heating_setpoint)
-                >= hooks.get(|state| state.min_heat_setpoint_limit)
-        );
-        assert!(
-            hooks.get(|state| state.occupied_cooling_setpoint)
-                <= hooks.get(|state| state.max_cool_setpoint_limit)
-        );
+        assert!(attrs.min_heat_setpoint_limit <= attrs.min_cool_setpoint_limit - DEAD_BAND);
+        assert!(attrs.max_heat_setpoint_limit <= attrs.max_cool_setpoint_limit - DEAD_BAND);
+        assert!(attrs.occupied_heating_setpoint <= attrs.occupied_cooling_setpoint - DEAD_BAND);
+        assert!(attrs.occupied_heating_setpoint >= attrs.min_heat_setpoint_limit);
+        assert!(attrs.occupied_cooling_setpoint <= attrs.max_cool_setpoint_limit);
     }
 
     /// Pin the wire-visible shape of the endpoint: the `AttributeList`,
@@ -3688,18 +3503,10 @@ mod tests {
                 None
             }
 
-            fn system_mode(&self) -> SystemModeEnum {
-                SystemModeEnum::Off
-            }
-
-            fn set_system_mode(&self, _value: SystemModeEnum) -> Result<(), Error> {
-                Ok(())
-            }
-
             fn apply(&self, _mode: SystemModeEnum, _heating: i16, _cooling: i16) {}
         }
 
-        ThermostatHandler::new(Dataver::new(1), 1, Mismatched).validate();
+        ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, Mismatched).validate();
     }
 
     /// The reason `pending` is a bitmask and not a `Signal<Option<_>>`: two
@@ -3712,7 +3519,7 @@ mod tests {
 
         // Both land before `run` gets a chance to drain the slot.
         handler.out_of_band_message(OutOfBandMessage::LocalTemperature);
-        handler.out_of_band_message(OutOfBandMessage::OccupiedHeatingSetpoint);
+        handler.out_of_band_message(OutOfBandMessage::OccupiedHeatingSetpoint(2100));
 
         // Ready immediately - the mask is non-empty, so this does not block.
         let pending = block_on(handler.wait_pending());
@@ -3751,19 +3558,24 @@ mod tests {
                 &[AttributeId::LocalTemperature as AttrId][..],
             ),
             (
-                OutOfBandMessage::OccupiedHeatingSetpoint,
+                OutOfBandMessage::OccupiedHeatingSetpoint(2100),
                 &[AttributeId::OccupiedHeatingSetpoint as AttrId][..],
             ),
             (
-                OutOfBandMessage::OccupiedCoolingSetpoint,
+                OutOfBandMessage::OccupiedCoolingSetpoint(2700),
                 &[AttributeId::OccupiedCoolingSetpoint as AttrId][..],
             ),
             (
-                OutOfBandMessage::SystemMode,
+                OutOfBandMessage::SystemMode(SystemModeEnum::Off),
                 &[AttributeId::SystemMode as AttrId][..],
             ),
             (
-                OutOfBandMessage::SetpointLimits,
+                OutOfBandMessage::SetpointLimits {
+                    min_heat: 1000,
+                    max_heat: 3000,
+                    min_cool: 1800,
+                    max_cool: 3200,
+                },
                 &[
                     AttributeId::MinHeatSetpointLimit as AttrId,
                     AttributeId::MaxHeatSetpointLimit as AttrId,
@@ -3779,16 +3591,10 @@ mod tests {
                 ][..],
             ),
             (
+                // Only the two the hooks own; the rest are the handler's.
                 OutOfBandMessage::Update,
                 &[
                     AttributeId::LocalTemperature as AttrId,
-                    AttributeId::OccupiedCoolingSetpoint as AttrId,
-                    AttributeId::OccupiedHeatingSetpoint as AttrId,
-                    AttributeId::MinHeatSetpointLimit as AttrId,
-                    AttributeId::MaxHeatSetpointLimit as AttrId,
-                    AttributeId::MinCoolSetpointLimit as AttrId,
-                    AttributeId::MaxCoolSetpointLimit as AttrId,
-                    AttributeId::SystemMode as AttrId,
                     AttributeId::ThermostatRunningMode as AttrId,
                     AttributeId::ThermostatRunningState as AttrId,
                 ][..],
@@ -3800,24 +3606,28 @@ mod tests {
     }
 
     /// A heating-only device serves neither the cooling attributes nor
-    /// `ThermostatRunningMode`, so no re-report is ever emitted for them - not
-    /// even by `Update`.
+    /// `ThermostatRunningMode`, so no re-report is ever emitted for them.
     #[test]
     fn unserved_attributes_are_never_reported() {
         let handler = mock_handler::<HEAT>();
         let notifier = RecordingNotifier::default();
 
         handler.out_of_band_message(OutOfBandMessage::Update);
+        handler.out_of_band_message(OutOfBandMessage::OccupiedCoolingSetpoint(2600));
+        handler.out_of_band_message(OutOfBandMessage::SetpointLimits {
+            min_heat: 1000,
+            max_heat: 3000,
+            min_cool: 1800,
+            max_cool: 3200,
+        });
         handler.notify_pending(&notifier, block_on(handler.wait_pending()));
 
         assert_eq!(
             notifier.attrs(),
             [
                 AttributeId::LocalTemperature as AttrId,
-                AttributeId::OccupiedHeatingSetpoint as AttrId,
                 AttributeId::MinHeatSetpointLimit as AttrId,
                 AttributeId::MaxHeatSetpointLimit as AttrId,
-                AttributeId::SystemMode as AttrId,
                 AttributeId::ThermostatRunningState as AttrId,
             ]
         );
@@ -4056,18 +3866,6 @@ mod tests {
                 fn local_temperature(&self) -> Option<i16> {
                     None
                 }
-                fn occupied_heating_setpoint(&self) -> i16 {
-                    2000
-                }
-                fn set_occupied_heating_setpoint(&self, _value: i16) -> Result<(), Error> {
-                    Ok(())
-                }
-                fn system_mode(&self) -> SystemModeEnum {
-                    SystemModeEnum::Off
-                }
-                fn set_system_mode(&self, _value: SystemModeEnum) -> Result<(), Error> {
-                    Ok(())
-                }
                 fn apply(&self, _mode: SystemModeEnum, _heating: i16, _cooling: i16) {}
             }
         };
@@ -4130,7 +3928,7 @@ mod tests {
                 .with_events(with!(thermostat_cluster::EventId::SetpointChange))
         );
 
-        ThermostatHandler::new(Dataver::new(1), 1, NoTevt).validate();
+        ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, NoTevt).validate();
     }
 
     #[test]
@@ -4142,7 +3940,7 @@ mod tests {
                 .with_events(with!(thermostat_cluster::EventId::SetpointChange))
         );
 
-        ThermostatHandler::new(Dataver::new(1), 1, PartialSet).validate();
+        ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, PartialSet).validate();
     }
 
     #[test]
@@ -4154,7 +3952,7 @@ mod tests {
                 .with_events(with!(thermostat_cluster::EventId::OccupancyChange))
         );
 
-        ThermostatHandler::new(Dataver::new(1), 1, Occupancy).validate();
+        ThermostatHandler::new(Dataver::new(1), 1, KV_KEY, Occupancy).validate();
     }
 
     /// Every mock configuration that enables `TEVT` must also pass
@@ -4174,9 +3972,7 @@ mod tests {
 
         assert!(handler.take_events(Instant::from_secs(0)).is_empty());
         // ... and it is seeded now, so a real change is picked up.
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2100);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2100);
         assert_eq!(handler.take_events(Instant::from_secs(0)).len(), 1);
     }
 
@@ -4194,9 +3990,7 @@ mod tests {
         let handler = seeded_handler::<HEAT_EVT>();
 
         // The device moves its own setpoint - a turn of the front-panel knob.
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2150);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2150);
 
         assert_eq!(
             handler.take_events(Instant::from_secs(0)).as_slice(),
@@ -4214,17 +4008,10 @@ mod tests {
     fn the_setpoint_change_system_mode_names_the_setpoint_not_the_mode() {
         let handler = seeded_handler::<AUTO_EVT>();
 
-        assert_eq!(
-            handler.hooks.get(|state| state.system_mode),
-            SystemModeEnum::Off
-        );
+        assert_eq!(handler.attrs().system_mode, SystemModeEnum::Off);
 
-        handler
-            .hooks
-            .set(|state| state.occupied_cooling_setpoint = 2700);
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2100);
+        handler.update_attrs(|attrs| attrs.occupied_cooling_setpoint = 2700);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2100);
 
         let events = handler.take_events(Instant::from_secs(0));
 
@@ -4250,9 +4037,7 @@ mod tests {
     fn a_system_mode_change_is_reported() {
         let handler = seeded_handler::<HEAT_EVT>();
 
-        handler
-            .hooks
-            .set(|state| state.system_mode = SystemModeEnum::Heat);
+        handler.update_attrs(|attrs| attrs.system_mode = SystemModeEnum::Heat);
 
         assert_eq!(
             handler.take_events(Instant::from_secs(0)).as_slice(),
@@ -4292,12 +4077,8 @@ mod tests {
     fn unserved_events_are_never_produced() {
         let handler = seeded_handler::<HEAT>();
 
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2200);
-        handler
-            .hooks
-            .set(|state| state.system_mode = SystemModeEnum::Heat);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2200);
+        handler.update_attrs(|attrs| attrs.system_mode = SystemModeEnum::Heat);
         handler
             .hooks
             .set(|state| state.local_temperature = Some(3000));
@@ -4311,12 +4092,8 @@ mod tests {
     fn coalesced_changes_report_the_pre_burst_previous_value() {
         let handler = seeded_handler::<HEAT_EVT>();
 
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2100);
-        handler
-            .hooks
-            .set(|state| state.occupied_heating_setpoint = 2200);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2100);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2200);
 
         assert_eq!(
             handler.take_events(Instant::from_secs(0)).as_slice(),
@@ -4498,9 +4275,7 @@ mod tests {
     fn a_heating_only_device_never_reports_a_cooling_setpoint_change() {
         let handler = seeded_handler::<HEAT_EVT>();
 
-        handler
-            .hooks
-            .set(|state| state.occupied_cooling_setpoint = 2900);
+        handler.update_attrs(|attrs| attrs.occupied_cooling_setpoint = 2900);
 
         assert!(handler.take_events(Instant::from_secs(0)).is_empty());
     }
@@ -4559,10 +4334,7 @@ mod tests {
         let handler = source_handler::<HEAT>();
         handler.seed_events();
 
-        handler
-            .hooks
-            .0
-            .set(|state| state.occupied_heating_setpoint = 2350);
+        handler.update_attrs(|attrs| attrs.occupied_heating_setpoint = 2350);
         handler.attribute_local_setpoint_change(NULL_CTX);
 
         assert_eq!(
@@ -4585,7 +4357,7 @@ mod tests {
             .write_occupied_heating_setpoint(NULL_CTX, 2500)
             .unwrap();
 
-        assert_eq!(handler.hooks.occupied_cooling_setpoint(), 2700);
+        assert_eq!(handler.attrs().occupied_cooling_setpoint, 2700);
         assert_eq!(
             handler.setpoint_change.get().source,
             SetpointChangeSourceEnum::External
@@ -4610,10 +4382,7 @@ mod tests {
         let handler = source_handler::<HEAT>();
         handler.seed_events();
 
-        handler
-            .hooks
-            .0
-            .set(|state| state.occupied_cooling_setpoint = 2900);
+        handler.update_attrs(|attrs| attrs.occupied_cooling_setpoint = 2900);
         handler.attribute_local_setpoint_change(NULL_CTX);
 
         assert_eq!(handler.setpoint_change.get().amount, None);
@@ -4686,7 +4455,7 @@ mod tests {
         assert!(notifier.attrs().is_empty());
 
         // An out-of-band message carries both halves.
-        handler.out_of_band_message(OutOfBandMessage::OccupiedHeatingSetpoint);
+        handler.out_of_band_message(OutOfBandMessage::OccupiedHeatingSetpoint(2100));
 
         let pending = block_on(handler.wait_pending());
         assert!(pending & PENDING_EVENT_SWEEP != 0);

@@ -839,10 +839,6 @@ impl ModeHooks for LaundryWasherModeLogic {
         WASH_CYCLES
     }
 
-    fn current_mode(&self) -> ModeId {
-        self.current.get()
-    }
-
     fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
         trace!("LaundryWasherModeLogic: wash cycle -> {mode}");
         self.current.set(mode);
@@ -1142,6 +1138,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 |e, c| e == 1 && c == LaundryWasherModeLogic::CLUSTER.id,
                 Async(laundry_washer_mode::HandlerAdaptor(ModeHandler::new(
                     Dataver::new_rand(&mut rand),
+                    rs_matter::persist::VENDOR_KEYS_START + 0x12,
                     LaundryWasherModeLogic::new(),
                 ))),
             )
