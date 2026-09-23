@@ -48,9 +48,11 @@ use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
+use rs_matter::dm::clusters::decl::scenes_management::FULL_CLUSTER as SCENES_FULL_CLUSTER;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
+use rs_matter::dm::clusters::scenes::{SceneClusters, ScenesHandler, ScenesState};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
 use rs_matter::dm::endpoints;
@@ -70,6 +72,9 @@ use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+/// How many scenes the scene table can hold, across all fabrics.
+const SCENES_CAPACITY: usize = 16;
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
@@ -98,13 +103,20 @@ fn main() -> Result<(), Error> {
 
     let mut rand = crypto.rand()?;
 
+    // The scene table, shared by the Scenes Management cluster and by the
+    // three scene-aware handlers below, which flip `SceneValid` through it
+    // whenever a command changes a captured attribute. It persists itself
+    // under `rs_matter::persist::SCENES_KEY`.
+    let scenes_state = ScenesState::<SCENES_CAPACITY>::new();
+
     // OnOff cluster setup
     let on_off_handler = on_off::OnOffHandler::new(
         Dataver::new_rand(&mut rand),
         1,
         rs_matter::persist::VENDOR_KEYS_START + 0x10,
         OnOffDeviceLogic::new(),
-    );
+    )
+    .with_scene_invalidator(&scenes_state);
 
     // LevelControl cluster setup
     let level_control_handler = level_control::LevelControlHandler::new(
@@ -112,7 +124,8 @@ fn main() -> Result<(), Error> {
         1,
         rs_matter::persist::VENDOR_KEYS_START + 0x11,
         LevelControlDeviceLogic::new(),
-    );
+    )
+    .with_scene_invalidator(&scenes_state);
 
     // ColorControl cluster setup
     let color_control_handler = color_control::ColorControlHandler::new(
@@ -120,7 +133,8 @@ fn main() -> Result<(), Error> {
         1,
         rs_matter::persist::VENDOR_KEYS_START + 0x12,
         ColorControlDeviceLogic::new(),
-    );
+    )
+    .with_scene_invalidator(&scenes_state);
 
     // Cluster wiring, validation and initialisation.
     // ColorControl is coupled to the same OnOff handler, so that the
@@ -128,6 +142,18 @@ fn main() -> Result<(), Error> {
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
     color_control_handler.init(Some(&on_off_handler));
+
+    // Scenes Management cluster setup - mandatory for the Extended Color
+    // Light device type. The registry lists the handlers whose attributes
+    // a scene captures and recalls.
+    let scenes_handler = ScenesHandler::new(
+        Dataver::new_rand(&mut rand),
+        &scenes_state,
+        (
+            &on_off_handler,
+            (&level_control_handler, (&color_control_handler, ())),
+        ),
+    );
 
     // Create the Data Model instance
     let im = InteractionModel::new(
@@ -139,6 +165,7 @@ fn main() -> Result<(), Error> {
             &on_off_handler,
             &level_control_handler,
             &color_control_handler,
+            scenes_handler,
         ),
         &kv,
         &state,
@@ -215,6 +242,7 @@ const NODE: Node<'static> = Node {
                 OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
                 ColorControlDeviceLogic::CLUSTER,
+                SCENES_FULL_CLUSTER,
             ),
         ),
     ],
@@ -222,12 +250,16 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the light endpoint handlers.
-fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
+fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks, R>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
-) -> impl DataModel + 'a {
+    scenes: ScenesHandler<'a, SCENES_CAPACITY, R>,
+) -> impl DataModel + 'a
+where
+    R: SceneClusters + 'a,
+{
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()
@@ -256,7 +288,8 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
             .chain(
                 |e, c| e == 1 && c == ColorControlDeviceLogic::CLUSTER.id,
                 Async(color_control::HandlerAdaptor(color_control)),
-            ),
+            )
+            .chain(|e, c| e == 1 && c == SCENES_FULL_CLUSTER.id, scenes.adapt()),
     )
 }
 
