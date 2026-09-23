@@ -39,6 +39,9 @@ name = "bridge"
 name = "dimmable_light"
 
 [[bin]]
+name = "color_light"
+
+[[bin]]
 name = "thermostat"
 
 [[bin]]
