@@ -369,15 +369,24 @@ impl ColorControlHooks for ColorControlDeviceLogic {
 
     fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()> {
         // This is where business logic is implemented to physically change
-        // the colour of the device. An RGB LED is driven with the linear-light
-        // triplet; the level (brightness) comes separately, from LevelControl.
-        // A colour temperature arrives here as its point on the Planckian
-        // locus, i.e. the LED approximates white the way RGB-only bulbs do.
-        let (r, g, b) = target.to_rgb(RgbGamma::Linear);
+        // the colour of the device. The level (brightness) comes separately,
+        // from LevelControl. A colour temperature arrives here as its point
+        // on the Planckian locus, i.e. the LED approximates white the way
+        // RGB-only bulbs do.
+        //
+        // The two triplets below are the same colour in two encodings, and
+        // they are far apart at the dim end - 2000K is linear (255, 66, 2)
+        // but sRGB (255, 139, 22) - so never read one as if it were the
+        // other. `linear` is proportional to light output and is what drives
+        // a PWM duty cycle, i.e. what a real device would use here. `srgb` is
+        // display-encoded, and is the one to compare against a colour picker
+        // or a screenshot of a controller's UI.
+        let linear = target.to_rgb(RgbGamma::Linear);
+        let srgb = target.to_rgb(RgbGamma::SRgb);
 
         info!(
-            "ColorControlDeviceLogic: setting color to {:?} (RGB {}, {}, {})",
-            target, r, g, b
+            "ColorControlDeviceLogic: setting color to {:?} (linear RGB {}, {}, {} / sRGB {}, {}, {})",
+            target, linear.0, linear.1, linear.2, srgb.0, srgb.1, srgb.2
         );
 
         Ok(())
