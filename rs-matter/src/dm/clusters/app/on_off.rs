@@ -1292,7 +1292,7 @@ where
         avp_array: AttributeValuePairStructArrayBuilder<P>,
     ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
         let v = self.on_off();
-        avp_array.push_u8(AttributeId::OnOff as _, v as u8)
+        avp_array.push_u8(AttributeId::OnOff as AttrId, v as u8)
     }
 
     async fn apply<C: HandlerContext>(
@@ -1303,7 +1303,7 @@ where
     ) -> Result<(), Error> {
         for avp in avp_list.iter() {
             let avp = avp?;
-            if avp.attribute_id()? != AttributeId::OnOff as _ {
+            if avp.attribute_id()? != AttributeId::OnOff as AttrId {
                 continue;
             }
             let Some(value) = avp.value_unsigned_8()? else {

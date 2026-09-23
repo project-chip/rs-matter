@@ -95,7 +95,6 @@
 //!     type ModeTag = RunTag;
 //!
 //!     fn supported_modes(&self) -> &[Mode<'_, RunTag>] { MODES }
-//!     fn current_mode(&self) -> ModeId { /* read persisted value */ }
 //!
 //!     fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
 //!         if self.dust_bin_missing() {
@@ -106,13 +105,13 @@
 //!         }
 //!
 //!         self.start_cleaning(mode);
-//!         self.store_mode(mode); // CurrentMode is non-volatile
 //!
 //!         Ok(())
 //!     }
 //! }
 //!
-//! let handler = ModeHandler::new(Dataver::new_rand(rand), Vacuum::new());
+//! // The handler owns `CurrentMode` and persists it under this KV key.
+//! let handler = ModeHandler::new(Dataver::new_rand(rand), VENDOR_KEYS_START, Vacuum::new());
 //!
 //! let device_handler = EmptyHandler.chain(
 //!     |e, c| e == 1 && c == rvc_run_mode::CLUSTER.id,
@@ -125,8 +124,13 @@ use crate::dm::{
     ArrayAttributeRead, AttrChangeNotifier, AttrId, Cluster, Dataver, HandlerContext,
     InvokeContext, LifecycleOp,
 };
+use core::cell::Cell;
+
+use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::error::{Error, ErrorCode};
+use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::TLVBuilderParent;
+use crate::utils::sync::blocking::Mutex;
 
 pub use crate::dm::clusters::decl::globals::{
     ModeOptionStruct, ModeOptionStructArrayBuilder, ModeOptionStructBuilder, ModeTagStruct,
@@ -433,23 +437,27 @@ pub trait ModeHooks {
     /// (see [`ModeHandler`] for what is checked).
     fn supported_modes(&self) -> &[Mode<'_, Self::ModeTag>];
 
-    /// The currently selected mode, published as `CurrentMode`.
+    /// The initial `CurrentMode`, used until the handler has persisted one.
     ///
-    /// `CurrentMode` is non-volatile, so this must survive a reboot.
-    fn current_mode(&self) -> ModeId;
+    /// A value that is not in [`Self::supported_modes`] is repaired to the
+    /// first entry on startup.
+    const CURRENT_MODE: ModeId = 0;
 
-    /// Switch the device to `mode` and remember the choice, or say why that
-    /// is not possible right now.
+    /// How long `CurrentMode` has to stay unchanged before the handler
+    /// persists it, in milliseconds.
+    const PERSIST_DELAY_MS: u32 = 3000;
+
+    /// Switch the device to `mode`, or say why that is not possible right
+    /// now.
     ///
     /// Only called for a `mode` that is present in [`Self::supported_modes`]
     /// and differs from [`Self::current_mode`] — the unsupported and
     /// already-in-that-mode cases are answered by the handler without
     /// reaching the device.
     ///
-    /// On `Ok(())` the handler reports `Success` and notifies subscribers, so
-    /// [`Self::current_mode`] must from then on return `mode`. `CurrentMode`
-    /// is non-volatile, so persist it here too. On [`ModeChangeError`] the
-    /// handler reports the carried status and text and nothing else changes.
+    /// On `Ok(())` the handler takes `mode` over as `CurrentMode`, persists
+    /// it and notifies subscribers. On [`ModeChangeError`] the handler
+    /// reports the carried status and text and nothing else changes.
     ///
     /// This is a *decision*, not the whole transition: answer whether the
     /// switch is allowed and start it. A device whose transition takes real
@@ -466,24 +474,6 @@ pub trait ModeHooks {
 
         Err(ModeChangeError::generic("Mode changes are not supported"))
     }
-
-    /// Lifecycle operation, forwarded by the cluster handler before it
-    /// reacts to the operation itself.
-    ///
-    /// Hooks that persist device state load it on [`LifecycleOp::Startup`],
-    /// since the handler reads that state right after, and erase it on
-    /// [`LifecycleOp::FactoryReset`]. The storage is wired into the hooks by
-    /// the application, e.g. the same [`crate::persist::KvBlobStoreAccess`]
-    /// passed to the `InteractionModel`, which also serves the setters that
-    /// save the state.
-    ///
-    /// If one hooks instance serves several handlers, it receives each
-    /// operation once per handler.
-    ///
-    /// The default implementation does nothing.
-    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
-        Ok(())
-    }
 }
 
 impl<T> ModeHooks for &T
@@ -494,20 +484,15 @@ where
 
     type ModeTag = T::ModeTag;
 
+    const CURRENT_MODE: ModeId = T::CURRENT_MODE;
+    const PERSIST_DELAY_MS: u32 = T::PERSIST_DELAY_MS;
+
     fn supported_modes(&self) -> &[Mode<'_, Self::ModeTag>] {
         (*self).supported_modes()
     }
 
-    fn current_mode(&self) -> ModeId {
-        (*self).current_mode()
-    }
-
     fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
         (*self).change_to_mode(mode)
-    }
-
-    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
-        (*self).lifecycle(op)
     }
 }
 
@@ -550,6 +535,11 @@ pub trait ChangeToModeResponseWriter<P> {
 pub struct ModeHandler<H> {
     dataver: Dataver,
     hooks: H,
+    /// The KV store key `CurrentMode` is persisted under.
+    kv_key: u16,
+    /// `CurrentMode`, owned and persisted by the handler.
+    current_mode: Mutex<Cell<ModeId>>,
+    persist: DeferredPersist,
 }
 
 impl<H> ModeHandler<H>
@@ -562,8 +552,18 @@ where
     /// The endpoint is not a constructor argument: everything this handler
     /// reports is reported against the operation it is serving, which already
     /// carries the path.
-    pub const fn new(dataver: Dataver, hooks: H) -> Self {
-        Self { dataver, hooks }
+    /// `kv_key` is the KV store key under which the handler persists
+    /// `CurrentMode`. It must be unique across everything stored in the KV
+    /// store, e.g. a key in the vendor range starting at
+    /// [`crate::persist::VENDOR_KEYS_START`].
+    pub const fn new(dataver: Dataver, kv_key: u16, hooks: H) -> Self {
+        Self {
+            dataver,
+            hooks,
+            kv_key,
+            current_mode: Mutex::new(Cell::new(H::CURRENT_MODE)),
+            persist: DeferredPersist::new(),
+        }
     }
 
     /// The application's hooks.
@@ -573,7 +573,39 @@ where
 
     /// The currently selected mode.
     pub fn current_mode(&self) -> ModeId {
-        self.hooks.current_mode()
+        self.current_mode.lock(|mode| mode.get())
+    }
+
+    /// Take over a new `CurrentMode`, to be persisted once it settles.
+    fn set_current_mode(&self, mode: ModeId) {
+        if self.current_mode.lock(|current| current.replace(mode)) != mode {
+            self.persist.mark_dirty();
+        }
+    }
+
+    /// Restore the persisted `CurrentMode`, if any.
+    fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        if let Some(mode) = Persist::new(kv).load_tlv::<ModeId>(self.kv_key)? {
+            self.current_mode.lock(|current| current.set(mode));
+        }
+
+        Ok(())
+    }
+
+    /// Save `CurrentMode` now.
+    fn save(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        self.persist.clear();
+
+        Persist::new(kv).store_tlv(self.kv_key, self.current_mode())
+    }
+
+    /// Persist `CurrentMode` once it has settled. Never returns.
+    pub async fn process_run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        self.persist
+            .run(H::PERSIST_DELAY_MS, || self.save(ctx.kv()))
+            .await;
+
+        Ok(())
     }
 
     /// Whether `mode` is present in the mode table.
@@ -616,11 +648,12 @@ where
             return Err(ModeChangeError::generic("Mode is not in SupportedModes"));
         }
 
-        if mode == self.hooks.current_mode() {
+        if mode == self.current_mode() {
             return Ok(());
         }
 
         self.hooks.change_to_mode(mode)?;
+        self.set_current_mode(mode);
 
         notifier.notify_attr_changed(endpoint_id, H::CLUSTER.id, ATTR_CURRENT_MODE);
 
@@ -705,12 +738,13 @@ where
             return response.write_response(CommonStatusCode::UnsupportedMode as u8, Some(""));
         }
 
-        if new_mode == self.hooks.current_mode() {
+        if new_mode == self.current_mode() {
             return response.write_response(CommonStatusCode::Success as u8, None);
         }
 
         match self.hooks.change_to_mode(new_mode) {
             Ok(()) => {
+                self.set_current_mode(new_mode);
                 ctx.notify_own_attr_changed(ATTR_CURRENT_MODE);
 
                 response.write_response(CommonStatusCode::Success as u8, None)
@@ -722,25 +756,31 @@ where
     /// Handle a lifecycle notification.
     pub fn process_lifecycle(
         &self,
-        _ctx: impl HandlerContext,
+        ctx: impl HandlerContext,
         op: LifecycleOp,
     ) -> Result<(), Error> {
-        // The hooks go first, so that on startup they load the persisted
-        // `CurrentMode` before it is checked below.
-        self.hooks.lifecycle(op)?;
+        match op {
+            LifecycleOp::Startup => {
+                self.validate();
+                self.load_persisted(ctx.kv())?;
+                self.repair_current_mode();
 
-        if matches!(op, LifecycleOp::Startup) {
-            self.validate();
-            self.repair_current_mode();
+                Ok(())
+            }
+            LifecycleOp::FactoryReset => {
+                self.persist.clear();
+                self.current_mode.lock(|mode| mode.set(H::CURRENT_MODE));
+
+                Persist::new(ctx.kv()).remove(self.kv_key)
+            }
+            LifecycleOp::FabricRemoval { .. } => Ok(()),
         }
-
-        Ok(())
     }
 
     /// Bring a persisted `CurrentMode` that is no longer in the mode table
     /// back to a valid value, by asking the device to move to the first entry.
     fn repair_current_mode(&self) {
-        if self.is_supported_mode(self.hooks.current_mode()) {
+        if self.is_supported_mode(self.current_mode()) {
             return;
         }
 
@@ -750,17 +790,18 @@ where
 
         warn!(
             "Mode: persisted CurrentMode {} is not in SupportedModes; switching to {}",
-            self.hooks.current_mode(),
+            self.current_mode(),
             fallback
         );
 
-        if let Err(e) = self.hooks.change_to_mode(fallback) {
-            error!(
+        match self.hooks.change_to_mode(fallback) {
+            Ok(()) => self.set_current_mode(fallback),
+            Err(e) => error!(
                 "Mode: could not switch to {}: status {}, {}",
                 fallback,
                 e.status(),
                 e.text()
-            );
+            ),
         }
     }
 
@@ -956,6 +997,13 @@ macro_rules! derived_mode_cluster {
                     self.process_lifecycle(ctx, op)
                 }
 
+                fn run(
+                    &self,
+                    ctx: impl HandlerContext,
+                ) -> impl core::future::Future<Output = Result<(), Error>> {
+                    self.process_run(ctx)
+                }
+
                 fn supported_modes<P: TLVBuilderParent>(
                     &self,
                     _ctx: impl ReadContext,
@@ -968,7 +1016,7 @@ macro_rules! derived_mode_cluster {
                 }
 
                 fn current_mode(&self, _ctx: impl ReadContext) -> Result<ModeId, Error> {
-                    Ok(self.hooks().current_mode())
+                    Ok(ModeHandler::current_mode(self))
                 }
 
                 fn handle_change_to_mode<P: TLVBuilderParent>(
@@ -1046,6 +1094,13 @@ macro_rules! derived_mode_cluster {
                     self.process_lifecycle(ctx, op)
                 }
 
+                fn run(
+                    &self,
+                    ctx: impl HandlerContext,
+                ) -> impl core::future::Future<Output = Result<(), Error>> {
+                    self.process_run(ctx)
+                }
+
                 fn supported_modes<P: TLVBuilderParent>(
                     &self,
                     _ctx: impl ReadContext,
@@ -1058,7 +1113,7 @@ macro_rules! derived_mode_cluster {
                 }
 
                 fn current_mode(&self, _ctx: impl ReadContext) -> Result<ModeId, Error> {
-                    Ok(self.hooks().current_mode())
+                    Ok(ModeHandler::current_mode(self))
                 }
             }
         }
@@ -1171,10 +1226,6 @@ mod tests {
             self.modes
         }
 
-        fn current_mode(&self) -> ModeId {
-            self.current.lock(|c| c.get())
-        }
-
         fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
             self.current.lock(|c| c.set(mode));
 
@@ -1182,8 +1233,15 @@ mod tests {
         }
     }
 
+    /// The KV key the tested handlers persist under. Nothing in these tests
+    /// reaches a store: they drive the handler's own state directly.
+    const KV_KEY: u16 = crate::persist::VENDOR_KEYS_START;
+
     fn handler<'a>(modes: &'a [Mode<'a, RunTag>], current: ModeId) -> ModeHandler<TestHooks<'a>> {
-        ModeHandler::new(Dataver::new(0), TestHooks::new(modes, current))
+        let handler = ModeHandler::new(Dataver::new(0), KV_KEY, TestHooks::new(modes, current));
+        handler.set_current_mode(current);
+
+        handler
     }
 
     const IDLE: ModeTag<RunTag> = ModeTag::Standard(RunTag::Idle);

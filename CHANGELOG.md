@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* `Matter::kv` now returns a named type - `MatterKvBlobStoreAccess` (#572)
 * Thermostat, Electrical Power Measurement, Electrical Energy Measurement and Power Topology cluster handlers, plus the Thermostat and Electrical Sensor device types (#568)
 * Log which event overflowed the event ring buffer, and how big it is (#568)
 * Make the `fabrics`, `sessions`, `rtc` and `basic_info_settings` fields in `MatterState` public and deprecate `Matter::with_rtc` (#570)

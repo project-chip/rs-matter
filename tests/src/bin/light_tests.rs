@@ -80,7 +80,6 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -155,8 +154,11 @@ fn main() -> Result<(), Error> {
     // ModeSelect cluster setup - an *extra* cluster on EP1 (Core spec 9.2.1
     // allows only one Application device type per Simple endpoint, so the
     // endpoint keeps Extended Color Light and does not declare Mode Select).
-    let mode_select_handler =
-        ModeSelectHandler::new(Dataver::new_rand(&mut rand), ModeSelectDeviceLogic::new());
+    let mode_select_handler = ModeSelectHandler::new(
+        Dataver::new_rand(&mut rand),
+        rs_matter::persist::VENDOR_KEYS_START + 0x13,
+        ModeSelectDeviceLogic::new(),
+    );
 
     // OnOff cluster setup, coupled to ModeSelect so that an OFF -> ON
     // transition applies `OnMode` (the ModeSelect `ON_OFF` feature) - the
@@ -785,24 +787,12 @@ const LIGHT_PATTERNS: &[Mode] = &[
 /// here would buy nothing testable.
 struct ModeSelectDeviceLogic {
     current: Cell<ModeId>,
-    start_up: Cell<Option<ModeId>>,
-    on_mode: Cell<Option<ModeId>>,
 }
 
 impl ModeSelectDeviceLogic {
     pub const fn new() -> Self {
         Self {
             current: Cell::new(0),
-            // Non-null on purpose. `StartUpMode` is nullable per the spec
-            // (quality `NX`), but `TC_MOD_1_2` asserts `isinstance(_, int)`
-            // for it with no `NullValue` branch - unlike `OnMode` two lines
-            // above in the same test, which does accept null. Ship a real
-            // start-up cycle so the attribute is meaningful either way.
-            start_up: Cell::new(Some(0)),
-            // `Test_TC_MOD_3_1` writes `OnMode` itself, then toggles OnOff and
-            // checks `CurrentMode` followed it. Start null so the test drives
-            // the whole sequence.
-            on_mode: Cell::new(None),
         }
     }
 }
@@ -818,6 +808,19 @@ impl ModeSelectHooks for ModeSelectDeviceLogic {
             mode_select::AttributeId::StartUpMode | mode_select::AttributeId::OnMode
         ));
 
+    // Non-null on purpose. `StartUpMode` is nullable per the spec (quality
+    // `NX`), but `TC_MOD_1_2` asserts `isinstance(_, int)` for it with no
+    // `NullValue` branch - unlike `OnMode` in the same test, which does accept
+    // null. Ship a real start-up cycle so the attribute is meaningful either way.
+    const START_UP_MODE: Option<ModeId> = Some(0);
+
+    // `Test_TC_MOD_3_1` writes `OnMode` itself, then toggles OnOff and checks
+    // `CurrentMode` followed it. Start null so the test drives the whole sequence.
+    const ON_MODE: Option<ModeId> = None;
+
+    // Tests restart the device right after a change, so persist at once.
+    const PERSIST_DELAY_MS: u32 = 0;
+
     fn description(&self) -> &str {
         "Light pattern"
     }
@@ -826,33 +829,9 @@ impl ModeSelectHooks for ModeSelectDeviceLogic {
         LIGHT_PATTERNS
     }
 
-    fn current_mode(&self) -> ModeId {
-        self.current.get()
-    }
-
     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
         trace!("ModeSelectDeviceLogic: light pattern -> {mode}");
         self.current.set(mode);
-
-        Ok(())
-    }
-
-    fn start_up_mode(&self) -> Nullable<ModeId> {
-        Nullable::new(self.start_up.get())
-    }
-
-    fn set_start_up_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        self.start_up.set(value.into_option());
-
-        Ok(())
-    }
-
-    fn on_mode(&self) -> Nullable<ModeId> {
-        Nullable::new(self.on_mode.get())
-    }
-
-    fn set_on_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        self.on_mode.set(value.into_option());
 
         Ok(())
     }

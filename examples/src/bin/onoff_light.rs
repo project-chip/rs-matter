@@ -99,29 +99,20 @@ const LIGHT_PATTERNS: &[Mode] = &[
 
 /// Device logic behind the `ModeSelect` instance on endpoint 1.
 ///
-/// A real device would persist `current`, `start_up` and `on_mode` - all three
-/// are non-volatile - and drive the LED from `change_to_mode`. This example
-/// keeps them in RAM and just logs.
+/// The handler owns and persists `CurrentMode`, `StartUpMode` and `OnMode`;
+/// this logic would drive the LED from `change_to_mode`, and just logs.
 struct LightPatternLogic {
     state: Mutex<RefCell<LightPatternState>>,
 }
 
 struct LightPatternState {
     current: ModeId,
-    start_up: Option<ModeId>,
-    on_mode: Option<ModeId>,
 }
 
 impl LightPatternLogic {
     const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(LightPatternState {
-                current: 0,
-                // Come up blinking after a power cycle...
-                start_up: Some(4),
-                // ...but snap to steady whenever the light is switched on.
-                on_mode: Some(0),
-            })),
+            state: Mutex::new(RefCell::new(LightPatternState { current: 0 })),
         }
     }
 }
@@ -135,6 +126,12 @@ impl ModeSelectHooks for LightPatternLogic {
             required;
             mode_select::AttributeId::StartUpMode | mode_select::AttributeId::OnMode
         ));
+
+    // Come up blinking after a power cycle...
+    const START_UP_MODE: Option<ModeId> = Some(4);
+
+    // ...but snap to steady whenever the light is switched on.
+    const ON_MODE: Option<ModeId> = Some(0);
 
     fn description(&self) -> &str {
         "Light pattern"
@@ -150,38 +147,12 @@ impl ModeSelectHooks for LightPatternLogic {
         LIGHT_PATTERNS
     }
 
-    fn current_mode(&self) -> ModeId {
-        self.state.lock(|s| s.borrow().current)
-    }
-
     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
         info!("Light pattern -> {mode}");
 
-        // A real device drives its LED here. `CurrentMode` is non-volatile, so
-        // this is also where it would be persisted.
+        // A real device drives its LED here; the handler owns and persists
+        // `CurrentMode`.
         self.state.lock(|s| s.borrow_mut().current = mode);
-
-        Ok(())
-    }
-
-    fn start_up_mode(&self) -> Nullable<ModeId> {
-        Nullable::new(self.state.lock(|s| s.borrow().start_up))
-    }
-
-    fn set_start_up_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        self.state
-            .lock(|s| s.borrow_mut().start_up = value.into_option());
-
-        Ok(())
-    }
-
-    fn on_mode(&self) -> Nullable<ModeId> {
-        Nullable::new(self.state.lock(|s| s.borrow().on_mode))
-    }
-
-    fn set_on_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        self.state
-            .lock(|s| s.borrow_mut().on_mode = value.into_option());
 
         Ok(())
     }
@@ -216,8 +187,11 @@ fn main() -> Result<(), Error> {
     let mut rand = crypto.rand()?;
 
     // Our mode-select cluster, choosing the light's pattern
-    let mode_select_handler =
-        ModeSelectHandler::new(Dataver::new_rand(&mut rand), LightPatternLogic::new());
+    let mode_select_handler = ModeSelectHandler::new(
+        Dataver::new_rand(&mut rand),
+        rs_matter::persist::VENDOR_KEYS_START + 0x11,
+        LightPatternLogic::new(),
+    );
 
     // Our on-off cluster, coupled to the mode-select one so that switching the
     // light on applies `OnMode` (the ModeSelect `ON_OFF` feature). This is the

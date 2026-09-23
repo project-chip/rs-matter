@@ -73,16 +73,15 @@
 //!
 //!     fn description(&self) -> &str { "Switch Wiring" }
 //!     fn supported_modes(&self) -> &[Mode<'_>] { MODES }
-//!     fn current_mode(&self) -> ModeId { /* read persisted value */ }
 //!
 //!     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
 //!         self.rewire(mode);
-//!         self.store_mode(mode); // CurrentMode is non-volatile
 //!         Ok(())
 //!     }
 //! }
 //!
-//! let handler = ModeSelectHandler::new(Dataver::new_rand(rand), SwitchWiring::new());
+//! // The handler owns the non-volatile attributes and persists them under this KV key.
+//! let handler = ModeSelectHandler::new(Dataver::new_rand(rand), VENDOR_KEYS_START, SwitchWiring::new());
 //!
 //! let device_handler = EmptyHandler.chain(
 //!     |e, c| e == 1 && c == CLUSTER.id,
@@ -95,8 +94,13 @@ use crate::dm::{
     ArrayAttributeRead, AttrChangeNotifier, AttrId, Cluster, ClusterId, Dataver, HandlerContext,
     InvokeContext, LifecycleOp, ReadContext, WriteContext,
 };
+use core::cell::Cell;
+
+use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{Nullable, TLVBuilderParent, Utf8StrBuilder};
+use crate::persist::{KvBlobStoreAccess, Persist};
+use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, ToTLV, Utf8StrBuilder};
+use crate::utils::sync::blocking::Mutex;
 use crate::with;
 
 pub use crate::dm::clusters::decl::mode_select::*;
@@ -212,77 +216,35 @@ pub trait ModeSelectHooks {
     /// (see [`ModeSelectHandler`] for what is checked).
     fn supported_modes(&self) -> &[Mode<'_>];
 
-    /// The currently selected mode, published as `CurrentMode`.
+    /// The initial `CurrentMode`, used until the handler has persisted one.
     ///
-    /// `CurrentMode` is non-volatile, so this must survive a reboot.
-    fn current_mode(&self) -> ModeId;
+    /// A value that is not in [`Self::supported_modes`] is repaired to the
+    /// first entry on startup.
+    const CURRENT_MODE: ModeId = 0;
 
-    /// The `StartUpMode` attribute, if the cluster metadata exposes it.
-    ///
-    /// Non-volatile.
-    fn start_up_mode(&self) -> Nullable<ModeId> {
-        Nullable::none()
-    }
+    /// The initial `StartUpMode` (`None` = null).
+    const START_UP_MODE: Option<ModeId> = None;
 
-    /// Store and persist `StartUpMode`.
-    ///
-    /// The handler has already checked that a non-null value names a
-    /// supported mode.
-    fn set_start_up_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        let _ = value;
+    /// The initial `OnMode` (`None` = null).
+    const ON_MODE: Option<ModeId> = None;
 
-        Err(ErrorCode::AttributeNotFound.into())
-    }
+    /// How long an attribute has to stay unchanged before the handler
+    /// persists it, in milliseconds.
+    const PERSIST_DELAY_MS: u32 = 3000;
 
-    /// The `OnMode` attribute, if the cluster metadata exposes it.
-    ///
-    /// Non-volatile.
-    fn on_mode(&self) -> Nullable<ModeId> {
-        Nullable::none()
-    }
-
-    /// Store and persist `OnMode`.
-    ///
-    /// The handler has already checked that a non-null value names a
-    /// supported mode.
-    fn set_on_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        let _ = value;
-
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// Switch the device to `mode` and remember the choice.
+    /// Switch the device to `mode`.
     ///
     /// Only called for a `mode` that is present in [`Self::supported_modes`]
-    /// and differs from [`Self::current_mode`].
+    /// and differs from the current one.
     ///
-    /// On `Ok(())` the handler notifies subscribers, so [`Self::current_mode`]
-    /// must from then on return `mode`. `CurrentMode` is non-volatile, so
-    /// persist it here too.
+    /// On `Ok(())` the handler takes `mode` over as `CurrentMode`, persists
+    /// it and notifies subscribers.
     ///
     /// Unlike its Mode Base counterpart this cannot report *why* it failed:
     /// ModeSelect's `ChangeToMode` has no response command, only a status.
     /// Returning an error surfaces that status to the client and leaves
     /// `CurrentMode` untouched.
     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error>;
-
-    /// Lifecycle operation, forwarded by the cluster handler before it
-    /// reacts to the operation itself.
-    ///
-    /// Hooks that persist device state load it on [`LifecycleOp::Startup`],
-    /// since the handler reads that state right after, and erase it on
-    /// [`LifecycleOp::FactoryReset`]. The storage is wired into the hooks by
-    /// the application, e.g. the same [`crate::persist::KvBlobStoreAccess`]
-    /// passed to the `InteractionModel`, which also serves the setters that
-    /// save the state.
-    ///
-    /// If one hooks instance serves several handlers, it receives each
-    /// operation once per handler.
-    ///
-    /// The default implementation does nothing.
-    fn lifecycle(&self, _op: LifecycleOp) -> Result<(), Error> {
-        Ok(())
-    }
 }
 
 impl<T> ModeSelectHooks for &T
@@ -290,6 +252,11 @@ where
     T: ModeSelectHooks,
 {
     const CLUSTER: Cluster<'static> = T::CLUSTER;
+
+    const CURRENT_MODE: ModeId = T::CURRENT_MODE;
+    const START_UP_MODE: Option<ModeId> = T::START_UP_MODE;
+    const ON_MODE: Option<ModeId> = T::ON_MODE;
+    const PERSIST_DELAY_MS: u32 = T::PERSIST_DELAY_MS;
 
     fn description(&self) -> &str {
         (*self).description()
@@ -303,32 +270,8 @@ where
         (*self).supported_modes()
     }
 
-    fn current_mode(&self) -> ModeId {
-        (*self).current_mode()
-    }
-
-    fn start_up_mode(&self) -> Nullable<ModeId> {
-        (*self).start_up_mode()
-    }
-
-    fn set_start_up_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        (*self).set_start_up_mode(value)
-    }
-
-    fn on_mode(&self) -> Nullable<ModeId> {
-        (*self).on_mode()
-    }
-
-    fn set_on_mode(&self, value: Nullable<ModeId>) -> Result<(), Error> {
-        (*self).set_on_mode(value)
-    }
-
     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
         (*self).change_to_mode(mode)
-    }
-
-    fn lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
-        (*self).lifecycle(op)
     }
 }
 
@@ -386,6 +329,30 @@ where
 pub struct ModeSelectHandler<H> {
     dataver: Dataver,
     hooks: H,
+    /// The KV store key the non-volatile attributes are persisted under.
+    kv_key: u16,
+    /// The attributes the handler owns and persists.
+    attrs: Mutex<Cell<PersistedAttrs>>,
+    persist: DeferredPersist,
+}
+
+/// The non-volatile attributes the handler owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromTLV, ToTLV)]
+struct PersistedAttrs {
+    current_mode: ModeId,
+    start_up_mode: Option<ModeId>,
+    on_mode: Option<ModeId>,
+}
+
+impl PersistedAttrs {
+    /// The initial values, as supplied by the hooks.
+    const fn new<H: ModeSelectHooks>() -> Self {
+        Self {
+            current_mode: H::CURRENT_MODE,
+            start_up_mode: H::START_UP_MODE,
+            on_mode: H::ON_MODE,
+        }
+    }
 }
 
 impl<H> ModeSelectHandler<H>
@@ -399,8 +366,18 @@ where
     /// serving, which already carries the path. The two entry points the
     /// application calls from outside an operation - [`Self::apply_mode`] -
     /// takes it as an argument instead.
-    pub const fn new(dataver: Dataver, hooks: H) -> Self {
-        Self { dataver, hooks }
+    /// `kv_key` is the KV store key under which the handler persists the
+    /// attributes it owns (`CurrentMode`, `StartUpMode` and `OnMode`). It must
+    /// be unique across everything stored in the KV store, e.g. a key in the
+    /// vendor range starting at [`crate::persist::VENDOR_KEYS_START`].
+    pub const fn new(dataver: Dataver, kv_key: u16, hooks: H) -> Self {
+        Self {
+            dataver,
+            hooks,
+            kv_key,
+            attrs: Mutex::new(Cell::new(PersistedAttrs::new::<H>())),
+            persist: DeferredPersist::new(),
+        }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait.
@@ -415,7 +392,48 @@ where
 
     /// The currently selected mode.
     pub fn current_mode(&self) -> ModeId {
-        self.hooks.current_mode()
+        self.attrs().current_mode
+    }
+
+    /// The non-volatile attributes the handler owns, as they are now.
+    fn attrs(&self) -> PersistedAttrs {
+        self.attrs.lock(|attrs| attrs.get())
+    }
+
+    /// Update the non-volatile attributes, to be persisted once they settle.
+    fn update_attrs<F>(&self, f: F)
+    where
+        F: FnOnce(&mut PersistedAttrs),
+    {
+        let changed = self.attrs.lock(|attrs| {
+            let mut updated = attrs.get();
+            f(&mut updated);
+
+            let changed = updated != attrs.get();
+            attrs.set(updated);
+
+            changed
+        });
+
+        if changed {
+            self.persist.mark_dirty();
+        }
+    }
+
+    /// Restore the persisted attributes, if any.
+    fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        if let Some(persisted) = Persist::new(kv).load_tlv::<PersistedAttrs>(self.kv_key)? {
+            self.attrs.lock(|attrs| attrs.set(persisted));
+        }
+
+        Ok(())
+    }
+
+    /// Save the persisted attributes now.
+    fn save(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
+        self.persist.clear();
+
+        Persist::new(kv).store_tlv(self.kv_key, self.attrs())
     }
 
     /// Whether `mode` is present in the mode table.
@@ -510,11 +528,12 @@ where
     /// Shared by `ChangeToMode`, `StartUpMode`, `OnMode` and
     /// [`Self::apply_mode`].
     fn switch_to(&self, mode: ModeId) -> Result<bool, Error> {
-        if mode == self.hooks.current_mode() {
+        if mode == self.current_mode() {
             return Ok(false);
         }
 
         self.hooks.change_to_mode(mode)?;
+        self.update_attrs(|attrs| attrs.current_mode = mode);
 
         Ok(true)
     }
@@ -537,7 +556,7 @@ where
     /// which `CurrentMode` should keep its pre-update value. rs-matter has no
     /// boot-reason plumbing yet, so that exemption is not applied here.
     fn apply_start_up_mode(&self) {
-        let Some(mode) = self.hooks.start_up_mode().into_option() else {
+        let Some(mode) = self.attrs().start_up_mode else {
             return;
         };
 
@@ -554,7 +573,7 @@ where
     /// Bring a persisted `CurrentMode` that is no longer in the mode table
     /// back to a valid value, by asking the device to move to the first entry.
     fn repair_current_mode(&self) {
-        if self.is_supported_mode(self.hooks.current_mode()) {
+        if self.is_supported_mode(self.current_mode()) {
             return;
         }
 
@@ -564,7 +583,7 @@ where
 
         warn!(
             "ModeSelect: persisted CurrentMode {} is not in SupportedModes; switching to {}",
-            self.hooks.current_mode(),
+            self.current_mode(),
             fallback
         );
 
@@ -634,7 +653,7 @@ where
     H: ModeSelectHooks,
 {
     fn apply_on_mode(&self) -> Option<(ClusterId, AttrId)> {
-        let mode = self.hooks.on_mode().into_option()?;
+        let mode = self.attrs().on_mode?;
 
         match self.switch_to(mode) {
             Ok(true) => Some((H::CLUSTER.id, AttributeId::CurrentMode as _)),
@@ -661,16 +680,31 @@ where
         self.dataver.changed();
     }
 
-    fn lifecycle(&self, _ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        // The hooks go first, so that on startup they load the persisted
-        // modes before they are checked and applied below.
-        self.hooks.lifecycle(op)?;
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        match op {
+            LifecycleOp::Startup => {
+                self.validate();
+                self.load_persisted(ctx.kv())?;
+                self.repair_current_mode();
+                self.apply_start_up_mode();
 
-        if matches!(op, LifecycleOp::Startup) {
-            self.validate();
-            self.repair_current_mode();
-            self.apply_start_up_mode();
+                Ok(())
+            }
+            LifecycleOp::FactoryReset => {
+                self.persist.clear();
+                self.attrs
+                    .lock(|attrs| attrs.set(PersistedAttrs::new::<H>()));
+
+                Persist::new(ctx.kv()).remove(self.kv_key)
+            }
+            LifecycleOp::FabricRemoval { .. } => Ok(()),
         }
+    }
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        self.persist
+            .run(H::PERSIST_DELAY_MS, || self.save(ctx.kv()))
+            .await;
 
         Ok(())
     }
@@ -696,11 +730,11 @@ where
     }
 
     fn current_mode(&self, _ctx: impl ReadContext) -> Result<ModeId, Error> {
-        Ok(self.hooks.current_mode())
+        Ok(ModeSelectHandler::current_mode(self))
     }
 
     fn start_up_mode(&self, _ctx: impl ReadContext) -> Result<Nullable<ModeId>, Error> {
-        Ok(self.hooks.start_up_mode())
+        Ok(self.attrs().start_up_mode.into())
     }
 
     fn set_start_up_mode(
@@ -709,19 +743,19 @@ where
         value: Nullable<ModeId>,
     ) -> Result<(), Error> {
         self.check_writable_mode(&value)?;
-        self.hooks.set_start_up_mode(value)?;
+        self.update_attrs(|attrs| attrs.start_up_mode = value.into_option());
         ctx.notify_changed();
 
         Ok(())
     }
 
     fn on_mode(&self, _ctx: impl ReadContext) -> Result<Nullable<ModeId>, Error> {
-        Ok(self.hooks.on_mode())
+        Ok(self.attrs().on_mode.into())
     }
 
     fn set_on_mode(&self, ctx: impl WriteContext, value: Nullable<ModeId>) -> Result<(), Error> {
         self.check_writable_mode(&value)?;
-        self.hooks.set_on_mode(value)?;
+        self.update_attrs(|attrs| attrs.on_mode = value.into_option());
         ctx.notify_changed();
 
         Ok(())
@@ -740,7 +774,7 @@ where
             return Err(ErrorCode::InvalidCommand.into());
         }
 
-        if new_mode == self.hooks.current_mode() {
+        if new_mode == self.current_mode() {
             return Ok(());
         }
 
@@ -809,10 +843,6 @@ mod tests {
             self.modes
         }
 
-        fn current_mode(&self) -> ModeId {
-            self.current.get()
-        }
-
         fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
             self.current.set(mode);
 
@@ -820,8 +850,16 @@ mod tests {
         }
     }
 
+    /// The KV key the tested handlers persist under. Nothing in these tests
+    /// reaches a store: they drive the handler's own state directly.
+    const KV_KEY: u16 = crate::persist::VENDOR_KEYS_START;
+
     fn handler<'a>(modes: &'a [Mode<'a>], current: ModeId) -> ModeSelectHandler<TestHooks<'a>> {
-        ModeSelectHandler::new(Dataver::new(0), TestHooks::new(modes, current))
+        let handler =
+            ModeSelectHandler::new(Dataver::new(0), KV_KEY, TestHooks::new(modes, current));
+        handler.update_attrs(|attrs| attrs.current_mode = current);
+
+        handler
     }
 
     /// A hooks type that exists only to carry a deliberately broken `CLUSTER`.
@@ -838,10 +876,6 @@ mod tests {
 
                 fn supported_modes(&self) -> &[Mode<'_>] {
                     GOOD
-                }
-
-                fn current_mode(&self) -> ModeId {
-                    0
                 }
 
                 fn change_to_mode(&self, _mode: ModeId) -> Result<(), Error> {
@@ -884,7 +918,7 @@ mod tests {
     fn a_missing_mandatory_attribute_is_rejected() {
         misconfigured!(NoAttrs, FULL_CLUSTER.with_attrs(with!()));
 
-        ModeSelectHandler::new(Dataver::new(0), NoAttrs).validate();
+        ModeSelectHandler::new(Dataver::new(0), KV_KEY, NoAttrs).validate();
     }
 
     #[test]
@@ -898,7 +932,7 @@ mod tests {
                 .with_attrs(with!(required))
         );
 
-        ModeSelectHandler::new(Dataver::new(0), FeatureNoAttr).validate();
+        ModeSelectHandler::new(Dataver::new(0), KV_KEY, FeatureNoAttr).validate();
     }
 
     #[test]
@@ -909,7 +943,7 @@ mod tests {
             FULL_CLUSTER.with_attrs(with!(required; AttributeId::OnMode))
         );
 
-        ModeSelectHandler::new(Dataver::new(0), AttrNoFeature).validate();
+        ModeSelectHandler::new(Dataver::new(0), KV_KEY, AttrNoFeature).validate();
     }
 
     #[test]
