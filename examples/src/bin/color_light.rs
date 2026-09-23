@@ -18,11 +18,9 @@
 //! An example Matter device that implements the On/Off, LevelControl and
 //! ColorControl clusters over Ethernet - i.e. an RGB light.
 //!
-//! The ColorControl cluster is configured for the colour spaces an RGB LED
-//! can actually reproduce: hue + saturation and CIE xy. Colour temperature
-//! is deliberately *not* enabled, which is the typical shape of an RGB-only
-//! LED controller (and the configuration `set_device_color` below turns into
-//! an RGB triplet for the "hardware").
+//! The ColorControl cluster offers hue + saturation, CIE xy and colour
+//! temperature; `set_device_color` turns whichever of those the cluster
+//! decides to drive into an RGB triplet for the "hardware".
 #![allow(clippy::uninlined_format_args)]
 
 use core::pin::pin;
@@ -277,12 +275,18 @@ impl ColorControlDeviceLogic {
 }
 
 impl ColorControlHooks for ColorControlDeviceLogic {
-    // Hue + saturation and CIE xy only - no colour temperature, as an
-    // RGB LED has no dedicated white channel to drive it with.
+    // An RGB LED has no dedicated white channel, so colour temperature looks
+    // like a feature to leave out - but it seems a colour light cannot be
+    // modelled without it: `Extended Color Light` makes `COLOR_TEMPERATURE`
+    // mandatory, and some ecosystems (Google Home, for one) appear to go by
+    // the device type rather than by `FeatureMap`, sending
+    // `MoveToColorTemperature` regardless. Enabling it is free anyway: the
+    // cluster converts the mireds into a colour `set_device_color` can drive.
     const CLUSTER: Cluster<'static> = color_control_cluster::FULL_CLUSTER
         .with_features(
             color_control_cluster::Feature::HUE_AND_SATURATION.bits()
-                | color_control_cluster::Feature::XY.bits(),
+                | color_control_cluster::Feature::XY.bits()
+                | color_control_cluster::Feature::COLOR_TEMPERATURE.bits(),
         )
         .with_attrs(with!(
             required;
@@ -291,6 +295,10 @@ impl ColorControlHooks for ColorControlDeviceLogic {
                 | color_control_cluster::AttributeId::CurrentX
                 | color_control_cluster::AttributeId::CurrentY
                 | color_control_cluster::AttributeId::RemainingTime
+                | color_control_cluster::AttributeId::ColorTemperatureMireds
+                | color_control_cluster::AttributeId::ColorTempPhysicalMinMireds
+                | color_control_cluster::AttributeId::ColorTempPhysicalMaxMireds
+                | color_control_cluster::AttributeId::StartUpColorTemperatureMireds
         ))
         .with_cmds(with!(
             color_control_cluster::CommandId::MoveToHue
@@ -303,16 +311,20 @@ impl ColorControlHooks for ColorControlDeviceLogic {
                 | color_control_cluster::CommandId::MoveToColor
                 | color_control_cluster::CommandId::MoveColor
                 | color_control_cluster::CommandId::StepColor
+                | color_control_cluster::CommandId::MoveToColorTemperature
+                | color_control_cluster::CommandId::MoveColorTemperature
+                | color_control_cluster::CommandId::StepColorTemperature
                 | color_control_cluster::CommandId::StopMoveStep
         ));
 
     // Mirrors the features enabled above.
     const COLOR_CAPABILITIES: ColorCapabilitiesBitmap = ColorCapabilitiesBitmap::from_bits_truncate(
-        ColorCapabilitiesBitmap::HUE_SATURATION.bits() | ColorCapabilitiesBitmap::XY.bits(),
+        ColorCapabilitiesBitmap::HUE_SATURATION.bits()
+            | ColorCapabilitiesBitmap::XY.bits()
+            | ColorCapabilitiesBitmap::COLOR_TEMPERATURE.bits(),
     );
 
-    // Unused - the colour-temperature feature is not enabled - but the hooks
-    // trait requires the bounds to be well-ordered.
+    // The colour-temperature range we accept, i.e. 6535K to 2000K.
     const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153;
     const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
 
@@ -326,6 +338,8 @@ impl ColorControlHooks for ColorControlDeviceLogic {
         // This is where business logic is implemented to physically change
         // the colour of the device. An RGB LED is driven with the linear-light
         // triplet; the level (brightness) comes separately, from LevelControl.
+        // A colour temperature arrives here as its point on the Planckian
+        // locus, i.e. the LED approximates white the way RGB-only bulbs do.
         let (r, g, b) = target.to_rgb(RgbGamma::Linear);
 
         info!(
