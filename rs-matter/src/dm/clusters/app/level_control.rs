@@ -1836,7 +1836,7 @@ where
     ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
         // `CurrentLevel` is nullable; null → skip the AVP entry.
         if let Some(level) = self.current_level() {
-            avp_array.push_u8(AttributeId::CurrentLevel as _, level)
+            avp_array.push_u8(AttributeId::CurrentLevel as AttrId, level)
         } else {
             Ok(avp_array)
         }
@@ -1850,7 +1850,7 @@ where
     ) -> Result<(), Error> {
         for avp in avp_list.iter() {
             let avp = avp?;
-            if avp.attribute_id()? != AttributeId::CurrentLevel as _ {
+            if avp.attribute_id()? != AttributeId::CurrentLevel as AttrId {
                 continue;
             }
             let Some(level) = avp.value_unsigned_8()? else {

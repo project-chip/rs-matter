@@ -329,6 +329,9 @@ where
     }
 }
 
+/// A type alias for the `SharedKvBlobStore` used by Matter.
+pub type MatterKvBlobStoreAccess<'a, S> = SharedKvBlobStore<'a, S, { KV_BUF_SIZE }>;
+
 /// Combines a (store-only) raw [`KvBlobStore`] with a scratch buffer to present a
 /// full [`KvBlobStoreAccess`].
 ///

@@ -52,7 +52,9 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, REBOOT_COUNT_KEY};
+use crate::persist::{
+    KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist, REBOOT_COUNT_KEY,
+};
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
@@ -346,17 +348,10 @@ impl<'a> Matter<'a> {
     /// Combine a user-provided raw [`KvBlobStore`] with the scratch buffer owned
     /// by this `Matter` object to obtain a full [`KvBlobStoreAccess`].
     ///
-    /// This is the single entry point for persistence: the application passes its
-    /// raw store (sync `load`/`store`/`remove`) and gets back an access object
-    /// that recombines it with `Matter`'s feature-sized scratch buffer (see
-    /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE)). The returned value is then
-    /// lent (by `&`) to [`Matter::startup`], [`Matter::factory_reset`]
-    /// and [`InteractionModel::new`](crate::im::InteractionModel::new).
-    ///
     /// # Arguments
     /// - `store` - the raw [`KvBlobStore`] implementation to wrap
-    pub fn kv<'s, S: KvBlobStore + 's>(&'s self, store: S) -> impl KvBlobStoreAccess + 's {
-        crate::persist::SharedKvBlobStore::new(store, &self.kv_buf)
+    pub fn kv<'s, S: KvBlobStore + 's>(&'s self, store: S) -> MatterKvBlobStoreAccess<'s, S> {
+        MatterKvBlobStoreAccess::new(store, &self.kv_buf)
     }
 
     /// Get a reference to the transport state of this Matter object.
