@@ -1717,45 +1717,6 @@ mod asynch {
     /// is that the user will compose multiple handlers into a single `AsyncHandler` instance, using `ChainedHandler`
     /// or other means.
     pub trait AsyncHandler {
-        /// Provide information whether the handler will internally await while reading
-        /// the current value of the provided attribute.
-        ///
-        /// Handlers which report `false` via this method provide an opportunity
-        /// for the Data Model processing to use less memory by not storing the incoming request
-        /// in an intermediate buffer.
-        ///
-        /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
-        /// await while reading any attribute.
-        fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
-            true
-        }
-
-        /// Provide information whether the handler will internally await while updating
-        /// the value of the provided attribute.
-        ///
-        /// Handlers which report `false` via this method provide an opportunity
-        /// for the Data Model processing to use less memory by not storing the incoming request
-        /// in an intermediate buffer.
-        ///
-        /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
-        /// await while writing any attribute.
-        fn write_awaits(&self, _ctx: impl WriteContext) -> bool {
-            true
-        }
-
-        /// Provide information whether the handler will internally await while invoking
-        /// the provided command.
-        ///
-        /// Handlers which report `false` via this method provide an opportunity
-        /// for the Data Model processing to use less memory by not storing the incoming request
-        /// in an intermediate buffer.
-        ///
-        /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
-        /// await while invoking any command.
-        fn invoke_awaits(&self, _ctx: impl InvokeContext) -> bool {
-            true
-        }
-
         /// Read from the requested attribute and encode the result using the provided reply type.
         fn read(
             &self,
@@ -1813,18 +1774,6 @@ mod asynch {
     where
         T: AsyncHandler,
     {
-        fn read_awaits(&self, ctx: impl ReadContext) -> bool {
-            (**self).read_awaits(ctx)
-        }
-
-        fn write_awaits(&self, ctx: impl WriteContext) -> bool {
-            (**self).write_awaits(ctx)
-        }
-
-        fn invoke_awaits(&self, ctx: impl InvokeContext) -> bool {
-            (**self).invoke_awaits(ctx)
-        }
-
         fn read(
             &self,
             ctx: impl ReadContext,
@@ -1862,18 +1811,6 @@ mod asynch {
     where
         T: AsyncHandler,
     {
-        fn read_awaits(&self, ctx: impl ReadContext) -> bool {
-            (**self).read_awaits(ctx)
-        }
-
-        fn write_awaits(&self, ctx: impl WriteContext) -> bool {
-            (**self).write_awaits(ctx)
-        }
-
-        fn invoke_awaits(&self, ctx: impl InvokeContext) -> bool {
-            (**self).invoke_awaits(ctx)
-        }
-
         fn read(
             &self,
             ctx: impl ReadContext,
@@ -1994,18 +1931,6 @@ mod asynch {
     where
         H: AsyncHandler,
     {
-        fn read_awaits(&self, ctx: impl ReadContext) -> bool {
-            self.1.read_awaits(ctx)
-        }
-
-        fn write_awaits(&self, ctx: impl WriteContext) -> bool {
-            self.1.write_awaits(ctx)
-        }
-
-        fn invoke_awaits(&self, ctx: impl InvokeContext) -> bool {
-            self.1.invoke_awaits(ctx)
-        }
-
         fn read(
             &self,
             ctx: impl ReadContext,
@@ -2043,18 +1968,6 @@ mod asynch {
     where
         T: NonBlockingHandler,
     {
-        fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
-            false
-        }
-
-        fn write_awaits(&self, _ctx: impl WriteContext) -> bool {
-            false
-        }
-
-        fn invoke_awaits(&self, _ctx: impl InvokeContext) -> bool {
-            false
-        }
-
         fn read(
             &self,
             ctx: impl ReadContext,
@@ -2089,18 +2002,6 @@ mod asynch {
     }
 
     impl AsyncHandler for EmptyHandler {
-        fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
-            false
-        }
-
-        fn write_awaits(&self, _ctx: impl WriteContext) -> bool {
-            false
-        }
-
-        fn invoke_awaits(&self, _ctx: impl InvokeContext) -> bool {
-            false
-        }
-
         fn read(
             &self,
             _ctx: impl ReadContext,
@@ -2135,30 +2036,6 @@ mod asynch {
         H: AsyncHandler,
         T: AsyncHandler,
     {
-        fn read_awaits(&self, ctx: impl ReadContext) -> bool {
-            if self.matcher.matches(&ctx) {
-                self.handler.read_awaits(ctx)
-            } else {
-                self.next.read_awaits(ctx)
-            }
-        }
-
-        fn write_awaits(&self, ctx: impl WriteContext) -> bool {
-            if self.matcher.matches(&ctx) {
-                self.handler.write_awaits(ctx)
-            } else {
-                self.next.write_awaits(ctx)
-            }
-        }
-
-        fn invoke_awaits(&self, ctx: impl InvokeContext) -> bool {
-            if self.matcher.matches(&ctx) {
-                self.handler.invoke_awaits(ctx)
-            } else {
-                self.next.invoke_awaits(ctx)
-            }
-        }
-
         fn read(
             &self,
             ctx: impl ReadContext,

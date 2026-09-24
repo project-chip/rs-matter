@@ -98,18 +98,6 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
 }
 
 impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncHandler for E2eTestHandler<'a, OH, LH> {
-    fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
-        false
-    }
-
-    fn write_awaits(&self, _ctx: impl WriteContext) -> bool {
-        false
-    }
-
-    fn invoke_awaits(&self, _ctx: impl InvokeContext) -> bool {
-        false
-    }
-
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
         self.0.read(ctx, reply).await
     }
