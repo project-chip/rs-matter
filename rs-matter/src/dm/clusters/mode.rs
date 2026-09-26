@@ -468,18 +468,13 @@ pub trait ModeHooks {
     /// time reports its progress through the endpoint's operational-state
     /// cluster, not by delaying this answer.
     ///
-    /// The default refuses every transition. That is the correct behaviour
-    /// for [`microwave_oven_mode`], the one derived cluster with no
-    /// `ChangeToMode` command — its mode is driven by the Microwave Oven
-    /// Control cluster instead — and every other derived cluster must
-    /// override it. Note that the default also refuses the startup call, so
-    /// override it as well when the device has to be told the mode it
-    /// powers up in.
-    fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
-        let _ = mode;
-
-        Err(ModeChangeError::generic("Mode changes are not supported"))
-    }
+    /// This is how the handler moves the device whatever the trigger — a
+    /// `ChangeToMode` command, [`ModeHandler::apply_mode`] or startup — so it
+    /// is required even for [`microwave_oven_mode`], the one derived cluster
+    /// with no `ChangeToMode` command: there the Microwave Oven Control
+    /// cluster on the same endpoint pushes the cook mode in through
+    /// `apply_mode`, and this is still where the device gets told.
+    fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError>;
 }
 
 impl<T> ModeHooks for &T
@@ -761,6 +756,9 @@ where
     }
 
     /// Handle a lifecycle notification.
+    ///
+    /// At startup the device is put in the mode `CurrentMode` represents,
+    /// through [`ModeHooks::change_to_mode`].
     pub fn process_lifecycle(
         &self,
         ctx: impl HandlerContext,
@@ -1183,10 +1181,12 @@ derived_mode_cluster!(
 derived_mode_cluster!(
     microwave_oven_mode,
     "Microwave Oven Mode (`0x005E`). Adds the Normal and Defrost mode tags.\n\n\
-     The one derived cluster with **no `ChangeToMode` command**: its \
-     `CurrentMode` is driven by the Microwave Oven Control cluster on the \
-     same endpoint, so this handler serves the two attributes read-only and \
-     [`ModeHooks::change_to_mode`] is never called.",
+     The one derived cluster with **no `ChangeToMode` command**: this \
+     handler serves the two attributes read-only, and `CurrentMode` is \
+     driven by the Microwave Oven Control cluster on the same endpoint, \
+     whose handler pushes the cook mode in through \
+     [`ModeHandler::apply_mode`]. [`ModeHooks::change_to_mode`] is reached \
+     from there and at startup, never from a client command.",
     read_only
 );
 
