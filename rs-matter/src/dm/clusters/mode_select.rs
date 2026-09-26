@@ -235,7 +235,11 @@ pub trait ModeSelectHooks {
     /// Switch the device to `mode`.
     ///
     /// Only called for a `mode` that is present in [`Self::supported_modes`]
-    /// and differs from the current one.
+    /// and differs from the current one - except once at startup, when the
+    /// handler puts the device in the mode `CurrentMode` represents: the
+    /// value restored from the store, or `StartUpMode` when set. That call is
+    /// made even if the mode is the initial [`Self::CURRENT_MODE`], as the
+    /// attribute says nothing about the state the hardware powered up in.
     ///
     /// On `Ok(())` the handler takes `mode` over as `CurrentMode`, persists
     /// it and notifies subscribers.
@@ -323,9 +327,10 @@ where
 /// - the cluster metadata actually exposes the mandatory attributes,
 /// - `OnMode` exposed if and only if the `ON_OFF` feature is set.
 ///
-/// It then applies `StartUpMode`, and repairs a persisted `CurrentMode` that
-/// is no longer in the table — which is what a firmware update that drops a
-/// mode leaves behind, not a bug — to the first entry.
+/// It then puts the device in the mode it powers up in: `StartUpMode` when
+/// set, otherwise the restored `CurrentMode` — repaired to the first entry
+/// when it is no longer in the table, which is what a firmware update that
+/// drops a mode leaves behind, not a bug.
 pub struct ModeSelectHandler<H> {
     dataver: Dataver,
     hooks: H,
@@ -525,8 +530,7 @@ where
     /// Switch to `mode` if it is not already current. Returns whether the
     /// device actually moved, so callers know whether to report.
     ///
-    /// Shared by `ChangeToMode`, `StartUpMode`, `OnMode` and
-    /// [`Self::apply_mode`].
+    /// Shared by `ChangeToMode`, `OnMode` and [`Self::apply_mode`].
     fn switch_to(&self, mode: ModeId) -> Result<bool, Error> {
         if mode == self.current_mode() {
             return Ok(false);
@@ -548,47 +552,56 @@ where
         }
     }
 
-    /// Apply `StartUpMode` at boot.
+    /// The mode the device powers up in.
     ///
-    /// When `StartUpMode` is not null, `CurrentMode` is set to it on power up.
+    /// `StartUpMode` when it is not null and names a supported mode;
+    /// otherwise the restored `CurrentMode`, repaired to the first table
+    /// entry when it is no longer in the table - what a firmware update that
+    /// drops a mode leaves behind, not a bug. `None` only for an empty table.
     ///
-    /// Note that the spec exempts reboots caused by an OTA update, after
-    /// which `CurrentMode` should keep its pre-update value. rs-matter has no
-    /// boot-reason plumbing yet, so that exemption is not applied here.
-    fn apply_start_up_mode(&self) {
-        let Some(mode) = self.attrs().start_up_mode else {
-            return;
-        };
+    /// Note that the spec exempts reboots caused by an OTA update from
+    /// `StartUpMode`, after which `CurrentMode` should keep its pre-update
+    /// value. rs-matter has no boot-reason plumbing yet, so that exemption is
+    /// not applied here.
+    fn startup_mode(&self) -> Option<ModeId> {
+        let attrs = self.attrs();
 
-        if !self.is_supported_mode(mode) {
+        if let Some(mode) = attrs.start_up_mode {
+            if self.is_supported_mode(mode) {
+                return Some(mode);
+            }
+
             error!("ModeSelect: StartUpMode {} is not in SupportedModes", mode);
-            return;
         }
 
-        if let Err(e) = self.switch_to(mode) {
-            error!("ModeSelect: could not apply StartUpMode {}: {}", mode, e);
-        }
-    }
-
-    /// Bring a persisted `CurrentMode` that is no longer in the mode table
-    /// back to a valid value, by asking the device to move to the first entry.
-    fn repair_current_mode(&self) {
-        if self.is_supported_mode(self.current_mode()) {
-            return;
+        if self.is_supported_mode(attrs.current_mode) {
+            return Some(attrs.current_mode);
         }
 
-        let Some(fallback) = self.hooks.supported_modes().first().map(|o| o.id) else {
-            return;
-        };
+        let fallback = self.hooks.supported_modes().first().map(|o| o.id)?;
 
         warn!(
             "ModeSelect: persisted CurrentMode {} is not in SupportedModes; switching to {}",
-            self.current_mode(),
-            fallback
+            attrs.current_mode, fallback
         );
 
-        if let Err(e) = self.switch_to(fallback) {
-            error!("ModeSelect: could not switch to {}: {}", fallback, e);
+        Some(fallback)
+    }
+
+    /// Put the device in the mode `CurrentMode` represents, at power up.
+    ///
+    /// Unlike [`Self::switch_to`], this tells the device even when the mode
+    /// equals the one the attribute already holds: that value was restored
+    /// from the store, and says nothing about the state the hardware powered
+    /// up in. On refusal `CurrentMode` keeps its restored value.
+    fn apply_startup_mode(&self) {
+        let Some(mode) = self.startup_mode() else {
+            return;
+        };
+
+        match self.hooks.change_to_mode(mode) {
+            Ok(()) => self.update_attrs(|attrs| attrs.current_mode = mode),
+            Err(e) => error!("ModeSelect: could not switch to {} at startup: {}", mode, e),
         }
     }
 
@@ -685,8 +698,7 @@ where
             LifecycleOp::Startup => {
                 self.validate();
                 self.load_persisted(ctx.kv())?;
-                self.repair_current_mode();
-                self.apply_start_up_mode();
+                self.apply_startup_mode();
 
                 Ok(())
             }
@@ -959,22 +971,50 @@ mod tests {
     }
 
     #[test]
+    fn startup_puts_the_device_in_the_restored_mode() {
+        // The handler restored mode 4 from the store, while the hardware
+        // powered up in mode 0: the device has to be told, even though the
+        // attribute already holds the right value.
+        let handler = handler(GOOD, 4);
+        handler.hooks().current.set(0);
+
+        handler.apply_startup_mode();
+
+        assert_eq!(handler.current_mode(), 4);
+        assert_eq!(handler.hooks().current.get(), 4);
+    }
+
+    #[test]
+    fn start_up_mode_overrides_the_restored_mode() {
+        let handler = handler(GOOD, 0);
+        handler.update_attrs(|attrs| attrs.start_up_mode = Some(4));
+
+        handler.apply_startup_mode();
+
+        assert_eq!(handler.current_mode(), 4);
+        assert_eq!(handler.hooks().current.get(), 4);
+    }
+
+    #[test]
+    fn an_unsupported_start_up_mode_is_ignored() {
+        let handler = handler(GOOD, 4);
+        handler.update_attrs(|attrs| attrs.start_up_mode = Some(9));
+
+        handler.apply_startup_mode();
+
+        assert_eq!(handler.current_mode(), 4);
+        assert_eq!(handler.hooks().current.get(), 4);
+    }
+
+    #[test]
     fn a_dropped_current_mode_falls_back_to_the_first_entry() {
         // What a firmware update that removes a mode leaves behind. Not a bug,
         // so it is repaired rather than fatal.
         let handler = handler(GOOD, 7);
 
-        handler.repair_current_mode();
+        handler.apply_startup_mode();
 
         assert_eq!(handler.current_mode(), 0);
-    }
-
-    #[test]
-    fn a_valid_current_mode_is_left_alone() {
-        let handler = handler(GOOD, 4);
-
-        handler.repair_current_mode();
-
-        assert_eq!(handler.current_mode(), 4);
+        assert_eq!(handler.hooks().current.get(), 0);
     }
 }

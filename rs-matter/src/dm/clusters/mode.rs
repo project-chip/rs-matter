@@ -451,9 +451,13 @@ pub trait ModeHooks {
     /// now.
     ///
     /// Only called for a `mode` that is present in [`Self::supported_modes`]
-    /// and differs from [`Self::current_mode`] — the unsupported and
+    /// and differs from the current one — the unsupported and
     /// already-in-that-mode cases are answered by the handler without
-    /// reaching the device.
+    /// reaching the device. The one exception is startup, when the handler
+    /// puts the device in the `CurrentMode` it restored from the store. That
+    /// call is made even if the mode is the initial [`Self::CURRENT_MODE`],
+    /// as the attribute says nothing about the state the hardware powered up
+    /// in; on refusal `CurrentMode` keeps its restored value.
     ///
     /// On `Ok(())` the handler takes `mode` over as `CurrentMode`, persists
     /// it and notifies subscribers. On [`ModeChangeError`] the handler
@@ -464,16 +468,13 @@ pub trait ModeHooks {
     /// time reports its progress through the endpoint's operational-state
     /// cluster, not by delaying this answer.
     ///
-    /// The default refuses every transition. That is the correct behaviour
-    /// for [`microwave_oven_mode`], the one derived cluster with no
-    /// `ChangeToMode` command — its mode is driven by the Microwave Oven
-    /// Control cluster instead — and every other derived cluster must
-    /// override it.
-    fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError> {
-        let _ = mode;
-
-        Err(ModeChangeError::generic("Mode changes are not supported"))
-    }
+    /// This is how the handler moves the device whatever the trigger — a
+    /// `ChangeToMode` command, [`ModeHandler::apply_mode`] or startup — so it
+    /// is required even for [`microwave_oven_mode`], the one derived cluster
+    /// with no `ChangeToMode` command: there the Microwave Oven Control
+    /// cluster on the same endpoint pushes the cook mode in through
+    /// `apply_mode`, and this is still where the device gets told.
+    fn change_to_mode(&self, mode: ModeId) -> Result<(), ModeChangeError>;
 }
 
 impl<T> ModeHooks for &T
@@ -529,9 +530,10 @@ pub trait ChangeToModeResponseWriter<P> {
 /// - tag sets distinct between entries,
 /// - the cluster metadata actually exposes `SupportedModes` and `CurrentMode`.
 ///
-/// A persisted `CurrentMode` that is not in the table is *not* a firmware
-/// bug — it is what a firmware update that drops a mode leaves behind — so
-/// the handler repairs it to the first entry rather than panicking.
+/// It then puts the device in the restored `CurrentMode`. A persisted
+/// `CurrentMode` that is not in the table is *not* a firmware bug — it is
+/// what a firmware update that drops a mode leaves behind — so the handler
+/// repairs it to the first entry rather than panicking.
 pub struct ModeHandler<H> {
     dataver: Dataver,
     hooks: H,
@@ -754,6 +756,9 @@ where
     }
 
     /// Handle a lifecycle notification.
+    ///
+    /// At startup the device is put in the mode `CurrentMode` represents,
+    /// through [`ModeHooks::change_to_mode`].
     pub fn process_lifecycle(
         &self,
         ctx: impl HandlerContext,
@@ -763,7 +768,7 @@ where
             LifecycleOp::Startup => {
                 self.validate();
                 self.load_persisted(ctx.kv())?;
-                self.repair_current_mode();
+                self.apply_startup_mode();
 
                 Ok(())
             }
@@ -777,28 +782,43 @@ where
         }
     }
 
-    /// Bring a persisted `CurrentMode` that is no longer in the mode table
-    /// back to a valid value, by asking the device to move to the first entry.
-    fn repair_current_mode(&self) {
-        if self.is_supported_mode(self.current_mode()) {
-            return;
+    /// The mode the device powers up in: the restored `CurrentMode`,
+    /// repaired to the first table entry when it is no longer in the table -
+    /// what a firmware update that drops a mode leaves behind, not a bug.
+    /// `None` only for an empty table, which `validate` has already refused.
+    fn startup_mode(&self) -> Option<ModeId> {
+        let current = self.current_mode();
+
+        if self.is_supported_mode(current) {
+            return Some(current);
         }
 
-        let Some(fallback) = self.hooks.supported_modes().first().map(|o| o.id) else {
-            return;
-        };
+        let fallback = self.hooks.supported_modes().first().map(|o| o.id)?;
 
         warn!(
             "Mode: persisted CurrentMode {} is not in SupportedModes; switching to {}",
-            self.current_mode(),
-            fallback
+            current, fallback
         );
 
-        match self.hooks.change_to_mode(fallback) {
-            Ok(()) => self.set_current_mode(fallback),
+        Some(fallback)
+    }
+
+    /// Put the device in the mode `CurrentMode` represents, at power up.
+    ///
+    /// Unlike [`Self::apply_mode`], this tells the device even when the mode
+    /// equals the one the attribute already holds: that value was restored
+    /// from the store, and says nothing about the state the hardware powered
+    /// up in. On refusal `CurrentMode` keeps its restored value.
+    fn apply_startup_mode(&self) {
+        let Some(mode) = self.startup_mode() else {
+            return;
+        };
+
+        match self.hooks.change_to_mode(mode) {
+            Ok(()) => self.set_current_mode(mode),
             Err(e) => error!(
-                "Mode: could not switch to {}: status {}, {}",
-                fallback,
+                "Mode: could not switch to {} at startup: status {}, {}",
+                mode,
                 e.status(),
                 e.text()
             ),
@@ -1161,10 +1181,12 @@ derived_mode_cluster!(
 derived_mode_cluster!(
     microwave_oven_mode,
     "Microwave Oven Mode (`0x005E`). Adds the Normal and Defrost mode tags.\n\n\
-     The one derived cluster with **no `ChangeToMode` command**: its \
-     `CurrentMode` is driven by the Microwave Oven Control cluster on the \
-     same endpoint, so this handler serves the two attributes read-only and \
-     [`ModeHooks::change_to_mode`] is never called.",
+     The one derived cluster with **no `ChangeToMode` command**: this \
+     handler serves the two attributes read-only, and `CurrentMode` is \
+     driven by the Microwave Oven Control cluster on the same endpoint, \
+     whose handler pushes the cook mode in through \
+     [`ModeHandler::apply_mode`]. [`ModeHooks::change_to_mode`] is reached \
+     from there and at startup, never from a client command.",
     read_only
 );
 
@@ -1375,23 +1397,29 @@ mod tests {
     }
 
     #[test]
+    fn startup_puts_the_device_in_the_restored_mode() {
+        // The handler restored mode 1 from the store, while the hardware
+        // powered up in mode 0: the device has to be told, even though the
+        // attribute already holds the right value.
+        let handler = handler(GOOD, 1);
+        handler.hooks().current.lock(|c| c.set(0));
+
+        handler.apply_startup_mode();
+
+        assert_eq!(handler.current_mode(), 1);
+        assert_eq!(handler.hooks().current.lock(|c| c.get()), 1);
+    }
+
+    #[test]
     fn a_dropped_current_mode_falls_back_to_the_first_entry() {
         // What a firmware update that removes a mode leaves behind: a
         // persisted CurrentMode with nothing to point at. Not a bug, so it is
         // repaired rather than fatal.
         let handler = handler(GOOD, 7);
 
-        handler.repair_current_mode();
+        handler.apply_startup_mode();
 
         assert_eq!(handler.current_mode(), 0);
-    }
-
-    #[test]
-    fn a_valid_current_mode_is_left_alone() {
-        let handler = handler(GOOD, 1);
-
-        handler.repair_current_mode();
-
-        assert_eq!(handler.current_mode(), 1);
+        assert_eq!(handler.hooks().current.lock(|c| c.get()), 0);
     }
 }
