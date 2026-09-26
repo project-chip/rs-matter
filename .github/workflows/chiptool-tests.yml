@@ -233,6 +233,13 @@ jobs:
           cargo xtask itest --skip-setup --suite light --coverage-out /tmp/itest-cov/light.info \
             2>&1 | tee /tmp/itest-light.log
 
+      - name: Run Thermostat integration tests
+        if: matrix.suite == 'rest'
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite thermostat --coverage-out /tmp/itest-cov/thermostat.info \
+            2>&1 | tee /tmp/itest-thermostat.log
+
       - name: Run Fan Control integration tests
         if: matrix.suite == 'rest'
         run: |
