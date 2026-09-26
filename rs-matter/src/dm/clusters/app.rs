@@ -21,6 +21,7 @@
 //! This currently includes:
 //! - `OnOff` and `LevelControl` — for demoing purposes.
 //! - `Thermostat` — a heating-only implementation of the HVAC cluster.
+//! - `FanControl` — the fan speed cluster, with all six of its features.
 //! - `PowerTopology`, `ElectricalPowerMeasurement` and
 //!   `ElectricalEnergyMeasurement` — the Electrical Sensor trio, reporting
 //!   what a device's equipment draws now and has drawn over time.
@@ -38,6 +39,7 @@ pub mod color_control;
 pub(crate) mod deferred_persist;
 pub mod elec_energy_meas;
 pub mod elec_pwr_meas;
+pub mod fan_control;
 pub mod level_control;
 pub mod measurement;
 pub mod on_off;

@@ -124,7 +124,7 @@ pub enum WebRtcError {
 impl From<WebRtcError> for Error {
     fn from(e: WebRtcError) -> Self {
         match e {
-            WebRtcError::InvalidInState => ErrorCode::InvalidAction.into(),
+            WebRtcError::InvalidInState => ErrorCode::InvalidInState.into(),
             WebRtcError::InvalidCommand => ErrorCode::InvalidCommand.into(),
             WebRtcError::DynamicConstraint => ErrorCode::DynamicConstraintError.into(),
             WebRtcError::ResourceExhausted => ErrorCode::ResourceExhausted.into(),

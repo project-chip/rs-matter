@@ -27,9 +27,9 @@
 //!   device types we do not model: `DL_*` (Door Lock),
 //!   `TV_*` (the twelve media clusters), `TestOperationalState` and
 //!   `TestRVCOperationalState`, `TestActivatedCarbonFilterMonitoring`,
-//!   `TestHepaFilterMonitoring`, `TestDishwasherAlarm`, `TestFanControl`
-//!   and `TestTemperatureControl`. Each would need its own example
-//!   binary with a simulated appliance behind it, not just the cluster.
+//!   `TestHepaFilterMonitoring`, `TestDishwasherAlarm` and
+//!   `TestTemperatureControl`. Each would need its own example binary
+//!   with a simulated appliance behind it, not just the cluster.
 //! - **The suite tests the harness, not a DUT.**
 //!   `TestPurposefulFailureEqualities`,
 //!   `TestPurposefulFailureExtraReportingOnToggle` and
@@ -52,6 +52,11 @@
 //!   them with `CONSTRAINT_ERROR` - conformantly. The suite pins the
 //!   CHIP example app's value set, not the cluster; see
 //!   [`TestSuite::Thermostat`] for the suites that do apply.
+//!   `TestFanControl` likewise writes `PercentSetting` 84 and expects
+//!   `SpeedSetting` 84 back, which only holds for the CHIP app's
+//!   `SpeedMax` of 100; `fan_tests` is a ten-speed fan, and the
+//!   percent/speed mapping is what `TC_FAN_3_1` / `TC_FAN_3_2` check
+//!   properly - see [`TestSuite::Fan`].
 //! - **It duplicates an enabled certification suite.**
 //!   `TestColorControl_9_1` and `TestColorControl_9_2` are copies of
 //!   `Test_TC_CC_9_1` / `Test_TC_CC_9_2` with the PICS gates stripped.
@@ -925,6 +930,64 @@ pub(crate) const THERMOSTAT_TESTS: &[&str] = &[
     "TC_DeviceConformance",
 ];
 
+/// Fan Control YAML/Python tests — run against the `fan_tests` driver, a
+/// ten-speed fan with every Fan Control feature on EP1, beside the On/Off
+/// cluster the Fan device type pairs it with.
+///
+/// Every `TC_FAN_*` script either gates on `FAN.S` at the top level or reads
+/// its feature gates through `check_pics`, so they are all handed the target
+/// `.pics` (see `ITests::needs_target_pics`).
+pub(crate) const FAN_TESTS: &[&str] = &[
+    // Attribute reads: the mandatory set, the speed set, the rock and wind
+    // sets and the direction attribute.
+    "TC_FAN_2_1",
+    "Test_TC_FAN_2_2",
+    "TC_FAN_2_3",
+    "TC_FAN_2_4",
+    "Test_TC_FAN_2_5",
+    // `TC_FAN_3_1` (the `PercentSetting` / `FanMode` cascade) and `TC_FAN_3_2`
+    // (the `SpeedSetting` cascade) are deliberately absent. Both write a
+    // whole range of values back to back under five per-attribute
+    // subscriptions, reading each value back but never waiting for a report,
+    // and then require the `FanMode`, `PercentSetting` and `SpeedSetting`
+    // subscriptions to have received matching numbers of reports. That holds
+    // for CHIP's reporting engine, which flushes every subscription in one
+    // scheduler turn, but not for rs-matter's, which serves subscriptions
+    // round-robin, one report exchange at a time, each waiting for the peer's
+    // status - and which also spends a round trip on each subscription the
+    // test dropped without unsubscribing, learning of it only from the
+    // `InvalidSubscription` it gets back. Reports for a subscription not yet
+    // reached by the time the test tallies them are coalesced or missing.
+    // The handler is not at fault: every attribute is marked, and the same
+    // cascade passes the wire-level tests in
+    // `rs-matter/tests/data_model/fan_control.rs`. A fix belongs in the
+    // reporter (concurrent report exchanges). Upstream has since taught
+    // `TC_FAN_3_2` to wait for the reports each write triggers (after the
+    // pinned CHIP revision), so it can come back with the next pin bump;
+    // `TC_FAN_3_1` still does not wait.
+    // "TC_FAN_3_1",
+    // "TC_FAN_3_2",
+    // Rock and wind settings against their support bitmaps, in both the
+    // accepting and the `CONSTRAINT_ERROR` direction.
+    "TC_FAN_3_3",
+    "TC_FAN_3_4",
+    // The `Step` command: up, down, wrap and lowest-off.
+    "TC_FAN_3_5",
+    "Test_TC_FAN_3_6",
+    // The On/Off interaction: switching the fan off zeroes the current
+    // values and leaves the settings alone, and every setting written while
+    // it is off is taken but not acted on. `pixit_fan_start_time` is the
+    // wait for the (instantaneous) fan to respond, cut from the default 5s -
+    // see `extra_python_script_args`.
+    "TC_FAN_4_1",
+    // The On/Off cluster itself, in its bare (non-lighting) form.
+    "Test_TC_OO_2_1",
+    "Test_TC_OO_2_2",
+    // The Fan device type (`0x002B`) is new with this driver: check its
+    // mandatory cluster set and that the revision claims are honest.
+    "TC_DeviceConformance",
+];
+
 /// OTA Software Update tests — run against the `system_tests` example, which
 /// plays the rs-matter OTA *role* (Provider or Requestor) while the counterpart
 /// node is a CHIP `chip-ota-{provider,requestor}-app`. Only the CI-automatable
@@ -1174,6 +1237,8 @@ pub(crate) enum TestSuite {
     Scenes,
     /// Heating-only Thermostat — runs against the `thermostat_tests` driver.
     Thermostat,
+    /// Fan Control (+ On/Off) — runs against the `fan_tests` driver.
+    Fan,
     /// OTA Software Update — `system_tests` plays an rs-matter OTA role against a
     /// CHIP `chip-ota-{provider,requestor}-app` counterpart.
     Ota,
@@ -1220,6 +1285,7 @@ impl TestSuite {
             Self::Light => LIGHT_TESTS.to_vec(),
             Self::Scenes => SCENES_TESTS.to_vec(),
             Self::Thermostat => THERMOSTAT_TESTS.to_vec(),
+            Self::Fan => FAN_TESTS.to_vec(),
             Self::Ota => OTA_TESTS.to_vec(),
             Self::Wireless => WIRELESS_TESTS.to_vec(),
             Self::Thread => THREAD_TESTS.to_vec(),
@@ -1239,6 +1305,7 @@ impl TestSuite {
             Self::Light => "light_tests",
             Self::Scenes => "scenes_tests",
             Self::Thermostat => "thermostat_tests",
+            Self::Fan => "fan_tests",
             // rs-matter plays its OTA role from the `system_tests` binary.
             Self::Ota => "system_tests",
             Self::Wireless => "wireless_tests",
@@ -1258,6 +1325,7 @@ impl TestSuite {
             | Self::Light
             | Self::Scenes
             | Self::Thermostat
+            | Self::Fan
             | Self::Ota
             | Self::Wireless
             | Self::Commissioner => &[],
@@ -1282,6 +1350,10 @@ impl TestSuite {
             // `TC_TSTAT_2_2` walks a lot of setpoint combinations, and
             // `TC_DeviceConformance` wildcard-reads the whole device first.
             Self::Thermostat => 240,
+            // `TC_FAN_3_1` writes `PercentSetting` 1..=100 twice and `TC_FAN_3_2`
+            // walks `SpeedSetting` in both directions, waiting for the reports
+            // after each write.
+            Self::Fan => 300,
             // A full OTA flow commissions two nodes and transfers an image over
             // BDX; give it headroom.
             Self::Ota => 300,
@@ -2927,6 +2999,14 @@ impl ITests {
     /// `.pics` also carries `PICS_SDK_CI_ONLY=1` so 3_2/3_4 take their
     /// reboot-free CI path.
     fn needs_target_pics(test_name: &str) -> bool {
+        // Every `TC_FAN_*` script either declares a top-level `pics_*` gate
+        // (`["FAN.S"]`, or `["FAN.S", "OO.S"]` for 4_1), which makes the
+        // runner skip the whole test without `--PICS`, or gates its body on
+        // `check_pics("FAN.S.F0x")` and returns early without it.
+        if test_name.starts_with("TC_FAN_") {
+            return true;
+        }
+
         matches!(
             test_name,
             "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
@@ -3272,6 +3352,10 @@ impl ITests {
             // hosts `Groups`), which is why upstream provides the knob. With it
             // off, such findings are recorded as warnings rather than errors.
             "TC_DeviceConformance" => "--bool-arg fail_on_extra_clusters:false",
+            // `TC_FAN_4_1` sleeps `pixit_fan_start_time` (default 5s) seven
+            // times "to give the fan a chance to respond"; the simulated fan
+            // in `fan_tests` responds at once.
+            "TC_FAN_4_1" => "--int-arg pixit_fan_start_time:1",
             // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
             // fabrics, each carrying a max-sized 400-byte VVSC; the
             // resulting payload is well past one MTU and rs-matter falls

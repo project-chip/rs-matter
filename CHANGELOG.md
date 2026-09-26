@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fan Control cluster handler (`FanControlHandler` / `FanControlHooks`) (#577)
+* Fix the Mode Select cluster handler to set the current mode into the hooks upon startup (#576)
+* Fix the Thread Diagnostics cluster handler to not return "invalid action" when the routes table is reported with chunked reads (#575)
 * Breaking: remove `AsyncHandler::read_awaits/write_awaits/invoke_awaits`, as they are no longer used (#574)
 * `Matter::kv` now returns a named type - `MatterKvBlobStoreAccess` (#572)
 * Breaking: rework the persistence story for level-control, on-off and color-control in that `rs-matter` persists everything (#568)

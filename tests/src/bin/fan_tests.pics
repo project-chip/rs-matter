@@ -1,0 +1,117 @@
+PICS_SDK_CI_ONLY=1
+# PICS values to be used when running the `fan_tests` executable.
+# A Fan (`0x002B`) on EP1: Descriptor + Identify + Groups + On/Off + Fan
+# Control, the latter with every feature the cluster has.
+
+# ---- Fan Control Cluster ----
+FAN.S=1
+
+# Features: MultiSpeed, Auto, Rocking, Wind, Step, AirflowDirection.
+FAN.S.F00=1
+FAN.S.F01=1
+FAN.S.F02=1
+FAN.S.F03=1
+FAN.S.F04=1
+FAN.S.F05=1
+
+# Attributes: the four mandatory ones plus everything the features add.
+FAN.S.A0000=1
+FAN.S.A0001=1
+FAN.S.A0002=1
+FAN.S.A0003=1
+FAN.S.A0004=1
+FAN.S.A0005=1
+FAN.S.A0006=1
+FAN.S.A0007=1
+FAN.S.A0008=1
+FAN.S.A0009=1
+FAN.S.A000a=1
+FAN.S.A000b=1
+
+# Commands: `Step` (0x00), which the STEP feature adds.
+FAN.S.C00.Rsp=1
+
+# We implement the server, not the client.
+FAN.C=0
+
+# ---- On/Off Cluster ----
+# The bare cluster: no LIGHTING (F00), no DEAD_FRONT_BEHAVIOR (F01), no
+# OFF_ONLY (F02) - so just `OnOff` and the three basic commands.
+OO.S=1
+OO.S.A0000=1
+OO.S.A4000=0
+OO.S.A4001=0
+OO.S.A4002=0
+OO.S.A4003=0
+OO.S.C00.Rsp=1
+OO.S.C01.Rsp=1
+OO.S.C02.Rsp=1
+OO.S.C40.Rsp=0
+OO.S.C41.Rsp=0
+OO.S.C42.Rsp=0
+OO.S.F00=0
+OO.S.F01=0
+OO.S.F02=0
+OO.M.ManuallyControlled=0
+
+OO.C=0
+OO.C.C00.Tx=0
+OO.C.C01.Tx=0
+OO.C.C02.Tx=0
+OO.C.C40.Tx=0
+OO.C.C41.Tx=0
+OO.C.C42.Tx=0
+OO.C.AM-READ=0
+OO.C.AM-WRITE=0
+OO.C.AO-READ=0
+OO.C.AO-WRITE=0
+
+# ---- Descriptor Cluster (EP1) ----
+# No `TagList` (F00) - the endpoint declares no semantic tags.
+DESC.S=1
+DESC.S.A0000=1
+DESC.S.A0001=1
+DESC.S.A0002=1
+DESC.S.A0003=1
+DESC.S.A0004=0
+DESC.S.F00=0
+
+DESC.C=0
+
+# ---- Identify Cluster (EP1) ----
+# Mandatory for the Fan device type.
+I.S=1
+I.S.A0000=1
+I.S.A0001=1
+I.S.C00.Rsp=1
+I.S.C01.Rsp=0
+I.S.C40.Rsp=1
+I.S.C00.Tx=0
+I.S.F00=0
+
+I.C=0
+
+# ---- Groups Cluster (EP1) ----
+# Mandatory for the Fan device type.
+G.S=1
+G.S.F00=1
+G.S.A0000=1
+G.S.C00.Rsp=1
+G.S.C01.Rsp=1
+G.S.C02.Rsp=1
+G.S.C03.Rsp=1
+G.S.C04.Rsp=1
+G.S.C05.Rsp=1
+G.S.C00.Tx=1
+G.S.C01.Tx=1
+G.S.C02.Tx=1
+G.S.C03.Tx=1
+
+G.C=0
+G.C.A0000=0
+G.C.C00.Tx=0
+G.C.C01.Tx=0
+G.C.C02.Tx=0
+G.C.C03.Tx=0
+G.C.C04.Tx=0
+G.C.C05.Tx=0

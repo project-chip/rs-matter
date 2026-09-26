@@ -247,7 +247,8 @@ pub trait ModeSelectHooks {
     /// Unlike its Mode Base counterpart this cannot report *why* it failed:
     /// ModeSelect's `ChangeToMode` has no response command, only a status.
     /// Returning an error surfaces that status to the client and leaves
-    /// `CurrentMode` untouched.
+    /// `CurrentMode` untouched; `ErrorCode::InvalidInState` is the one for a
+    /// mode the device cannot switch to right now.
     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error>;
 }
 

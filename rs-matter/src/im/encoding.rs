@@ -138,6 +138,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::NotFound => IMStatusCode::NotFound,
             ErrorCode::AlreadyExists => IMStatusCode::AlreadyExists,
             ErrorCode::InvalidTransportType => IMStatusCode::InvalidTransportType,
+            ErrorCode::InvalidInState => IMStatusCode::InvalidInState,
             ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
         }
@@ -176,6 +177,7 @@ impl IMStatusCode {
             Self::NeedsTimedInteraction => Some(ErrorCode::NeedsTimedInteraction),
             Self::FailSafeRequired => Some(ErrorCode::FailSafeRequired),
             Self::InvalidTransportType => Some(ErrorCode::InvalidTransportType),
+            Self::InvalidInState => Some(ErrorCode::InvalidInState),
             _ => Some(ErrorCode::Failure),
         }
     }

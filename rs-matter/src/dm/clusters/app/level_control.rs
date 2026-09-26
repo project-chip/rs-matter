@@ -954,10 +954,10 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     ) -> Result<(), Error> {
         let event_start_time = Instant::now();
 
-        // Check if current_level is null. If so, return error.
+        // A null `CurrentLevel` is nothing to move from.
         let mut current_level = match self.current_level() {
             Some(cl) => cl,
-            None => return Err(ErrorCode::Failure.into()),
+            None => return Err(ErrorCode::InvalidInState.into()),
         };
 
         let increasing = current_level < target_level;
@@ -1150,7 +1150,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
             let current_level = match self.current_level() {
                 Some(cl) => cl,
-                None => return Err(ErrorCode::InvalidState.into()),
+                None => return Err(ErrorCode::InvalidInState.into()),
             };
 
             let new_level = match move_mode {
@@ -1224,7 +1224,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
         let current_level = match self.current_level() {
             Some(val) => val,
-            None => return Err(ErrorCode::InvalidState.into()),
+            None => return Err(ErrorCode::InvalidInState.into()),
         };
 
         let new_level = match step_mode {
