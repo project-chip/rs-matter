@@ -21,6 +21,7 @@ mod attributes;
 mod aux_acl;
 mod commands;
 mod events;
+mod fan_control;
 #[cfg(feature = "groups")]
 mod groups;
 mod long_reads;

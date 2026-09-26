@@ -133,52 +133,70 @@ _Fig 2: Representative UML diagram for Pattern B1_
 3. Instantiate the `<Cluster>Handler` struct with the `DeviceLogic` struct and chain it to the endpoint handler.
 
 ```rust
-use rs_matter::dm::clusters::fan_mode::{self, FanModeHandler, FanModeHooks, StepDirectionEnum};
+use rs_matter::dm::clusters::app::fan_control::{
+    self, CurrentSpeed, FanControlHandler, FanControlHooks, FanModeSequenceEnum, FanSetting,
+    Feature,
+};
 
 // Create device logic functionality
-struct FanModeDeviceLogic {
-	// Mock controller
-	fan_controller: FanController
+struct FanDeviceLogic {
+    // Mock controller
+    fan_controller: FanController,
 }
 
-impl FanModeDeviceLogic {
-	pub fn new() -> Self {
-		Self {
-			fan_controller: FanController::new(),
-		}
-	}
+impl FanDeviceLogic {
+    pub fn new() -> Self {
+        Self {
+            fan_controller: FanController::new(),
+        }
+    }
 }
 
 // Implement the Hooks trait
-impl FanModeHooks for FanModeDeviceLogic {
-	// Set the cluster configuration
-    const CLUSTER:crate::dm::Cluster<'static> = FanMode::FULL_CLUSTER
-        .with_revision(4)
+impl FanControlHooks for FanDeviceLogic {
+    // Set the cluster configuration: the features, and the attributes and
+    // commands they add
+    const CLUSTER: rs_matter::dm::Cluster<'static> = fan_control::FULL_CLUSTER
+        .with_revision(6)
+        .with_features(Feature::MULTI_SPEED.bits() | Feature::AUTO.bits())
         .with_attrs(with!(
             required;
-            fan_mode::AttributeId::FanMode
-            | fan_mode::AttributeId::PercentSetting
-            // ...
+            fan_control::AttributeId::SpeedMax
+                | fan_control::AttributeId::SpeedSetting
+                | fan_control::AttributeId::SpeedCurrent
         ))
-        .with_cmds(with!(
-            fan_mode::CommandId::Step
-        ));
+        .with_cmds(with!());
 
-	// Implement delegated logic
-	fn step(&self, direction: StepDirectionEnum, wrap: bool, lowest_off: bool) {
-		self.fan_controller.step(direction, wrap, lowest_off)
-	}
+    const FAN_MODE_SEQUENCE: FanModeSequenceEnum = FanModeSequenceEnum::OffLowMedHighAuto;
+    const SPEED_MAX: u8 = 3;
 
-	// ...
+    // Implement delegated logic: the handler keeps FanMode, PercentSetting and
+    // SpeedSetting consistent and persists them; the device only has to drive
+    // the fan and say what it is doing
+    fn set_fan(&self, setting: FanSetting) -> Result<(), ()> {
+        self.fan_controller.set(setting);
+        Ok(())
+    }
+
+    fn current_speed(&self) -> CurrentSpeed {
+        CurrentSpeed::Speed(self.fan_controller.speed())
+    }
+
+    // ...
 }
 
 fn main() {
-	// Instantiate application cluster
-	let fan_mode_handler = FanModeHandler::new(FanModeDeviceLogic::new());
+    // Instantiate application cluster: the handler persists the settings under
+    // the given KV key
+    let fan_handler = FanControlHandler::new(
+        Dataver::new_rand(rand),
+        1,
+        VENDOR_KEYS_START,
+        FanDeviceLogic::new(),
+    );
 
-	// Build endpoint handler similar to pattern B.
+    // Build endpoint handler similar to pattern B.
 }
-
 ```
 ## Pattern C: Coupled clusters
 
@@ -406,7 +424,7 @@ Blank entries indicate that an assessment has not yet been made to identify if t
 | **4. HVAC**                                           |    |    |    |    |    |       |
 | PumpConfigurationAndControl                           | ✅ |    |    |    |    |       |
 | Thermostat                                            | ✅ | ⚫ | ✅ | ⚫ |    | `HEAT`, `COOL` and `AUTO`, plus the optional `SetpointChangeSource`/`Amount`/`Timestamp`; events are served only if the consumer opts into `TEVT`, which is provisional; occupancy, schedules, presets and suggestions are not implemented |
-| FanControl                                            | ✅ | ⚫ | ❌ | ⚫ |    |       |
+| FanControl                                            | ✅ | ⚫ | ✅ | ⚫ |    | all six features; `PercentSetting` is the source of truth, `FanMode` / `SpeedSetting` are derived per the spec's percent and speed rules; no Scenes integration |
 | ThermostatUserInterfaceConfiguration                  | ✅ |    |    |    |    |       |
 |                                                       |    |    |    |    |    |       |
 | **5. Closures**                                       |    |    |    |    |    |       |

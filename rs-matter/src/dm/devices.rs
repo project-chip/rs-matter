@@ -161,6 +161,24 @@ pub const DEV_TYPE_THERMOSTAT: DeviceType = DeviceType {
     drev: 6,
 };
 
+/// Fan (`0x002B`), Matter Device Library revision 4.
+///
+/// A standalone, ceiling or wall fan that circulates the air in a room.
+/// Mandates `Identify`, `Groups` and `FanControl` as servers, with `OnOff`
+/// optional: the Device Library keeps the two independent, so that switching
+/// the fan off through `OnOff` leaves `FanMode`, `PercentSetting` and
+/// `SpeedSetting` where the occupant put them and only zeroes
+/// `PercentCurrent` / `SpeedCurrent`. Revision history: rev 2 allowed the
+/// composition with a Thermostat for fan heaters, rev 3 added `OnOff`, rev 4
+/// moved the `FanModeSequence` requirement into the Fan Control cluster.
+///
+/// See [`crate::dm::clusters::app::fan_control`] for the cluster handler that
+/// backs it.
+pub const DEV_TYPE_FAN: DeviceType = DeviceType {
+    dtype: 0x002B,
+    drev: 4,
+};
+
 /// Electrical Sensor (`0x0510`), Matter Device Library revision 1.
 ///
 /// A **utility** device type: it does not stand on its own but attaches to an

@@ -233,6 +233,13 @@ jobs:
           cargo xtask itest --skip-setup --suite light --coverage-out /tmp/itest-cov/light.info \
             2>&1 | tee /tmp/itest-light.log
 
+      - name: Run Fan Control integration tests
+        if: matrix.suite == 'rest'
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite fan --coverage-out /tmp/itest-cov/fan.info \
+            2>&1 | tee /tmp/itest-fan.log
+
       - name: Run Scenes integration tests
         if: matrix.suite == 'rest'
         run: |

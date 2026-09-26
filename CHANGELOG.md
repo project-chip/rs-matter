@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fan Control cluster handler (`FanControlHandler` / `FanControlHooks`) with all six features, the Fan device type (`DEV_TYPE_FAN`), the `fan_tests` DUT and the `--suite fan` itest suite
+* New `ErrorCode::InvalidInState`, mapped to the `INVALID_IN_STATE` IM status; the camera clusters' `InvalidInState` errors and a Level Control command on a null `CurrentLevel` now report it rather than a generic failure
 * Breaking: remove `AsyncHandler::read_awaits/write_awaits/invoke_awaits`, as they are no longer used (#574)
 * `Matter::kv` now returns a named type - `MatterKvBlobStoreAccess` (#572)
 * Breaking: rework the persistence story for level-control, on-off and color-control in that `rs-matter` persists everything (#568)

@@ -120,7 +120,7 @@ impl From<PushAvError> for Error {
             PushAvError::NotFound => ErrorCode::NotFound.into(),
             PushAvError::ResourceExhausted => ErrorCode::ResourceExhausted.into(),
             PushAvError::DynamicConstraint => ErrorCode::ConstraintError.into(),
-            PushAvError::InvalidInState => ErrorCode::InvalidAction.into(),
+            PushAvError::InvalidInState => ErrorCode::InvalidInState.into(),
         }
     }
 }

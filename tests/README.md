@@ -11,6 +11,7 @@ controller) driven by the CHIP certification harness via `cargo xtask itest`.
 | `light_tests` | `--suite light` | On/Off, Level Control and Color Control |
 | `scenes_tests` | `--suite scenes` | Scenes Management |
 | `thermostat_tests` | `--suite thermostat` | A heating-only Thermostat (`HEAT` feature only), metering its heating element through an Electrical Sensor on the same endpoint |
+| `fan_tests` | `--suite fan` | A ten-speed Fan with every Fan Control feature, plus the On/Off cluster the device type pairs it with |
 | `camera_tests` | `--suite camera` | The Matter 1.5+ camera clusters |
 | `commissioner_tests` | `--suite commissioner` | `rs-matter` as the **commissioner**, driving CHIP's `chip-all-clusters-app` as the device |
 

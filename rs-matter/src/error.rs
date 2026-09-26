@@ -97,6 +97,11 @@ pub enum ErrorCode {
     InvalidAuthKey,
     InvalidSignature,
     InvalidState,
+    /// The request was well-formed but cannot be carried out in the state
+    /// the resource is in - a fan asked for a speed it cannot switch to right
+    /// now, say. Maps to `IMStatusCode::InvalidInState`, unlike the internal
+    /// `InvalidState`, which is reported as a generic failure.
+    InvalidInState,
     InvalidTime,
     InvalidArgument,
     RwLock,
