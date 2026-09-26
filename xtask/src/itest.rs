@@ -956,8 +956,8 @@ pub(crate) const FAN_TESTS: &[&str] = &[
     // round-robin, one report exchange at a time, each waiting for the peer's
     // status - and which also spends a round trip on each subscription the
     // test dropped without unsubscribing, learning of it only from the
-    // `InvalidSubscription` it gets back. The reports a subscription has not
-    // been reached for by the time the test counts are coalesced or missing.
+    // `InvalidSubscription` it gets back. Reports for a subscription not yet
+    // reached by the time the test tallies them are coalesced or missing.
     // The handler is not at fault: every attribute is marked, and the same
     // cascade passes the wire-level tests in
     // `rs-matter/tests/data_model/fan_control.rs`. A fix belongs in the
