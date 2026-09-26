@@ -591,7 +591,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                 if let Some(parent) = parent {
                     Ok(parent)
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
@@ -633,7 +633,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                 if let Some(parent) = parent {
                     Ok(parent)
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
@@ -757,7 +757,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                 if let Some(parent) = parent {
                     Ok(parent)
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
