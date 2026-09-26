@@ -859,7 +859,7 @@ fn handler_adaptor_attribute_match(
 
     let attr_read_debug_build_end = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
+        #krate::reexport::defmt::debug!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
         #krate::reexport::log::debug!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
     );
