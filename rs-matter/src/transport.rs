@@ -838,7 +838,19 @@ impl Transport {
                 TransportPreference::LargePayload => Address::Tcp(addr),
             };
 
-            match self.initiate_plaintext(matter, &crypto, peer).await {
+            // Pace the handshake itself by the peer's advertised timing: a
+            // sleepy device only collects Sigma1 when it next polls.
+            let sigma_params = SessionParameters {
+                sii: resolved.sii,
+                sai: resolved.sai,
+                sat: resolved.sat,
+                ..Default::default()
+            };
+
+            match self
+                .initiate_plaintext(matter, &crypto, peer, Some(&sigma_params))
+                .await
+            {
                 Ok(exchange) => {
                     match CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await
                     {
@@ -963,6 +975,7 @@ impl Transport {
         crypto: C,
         peer_addr: Address,
         passcode: u32,
+        peer_mrp: Option<mrp::PeerMrpParams>,
     ) -> Result<Exchange<'a>, Error> {
         // Reuse an existing PASE session to this peer, if present.
         let existing = matter.with_state(|state| {
@@ -974,15 +987,24 @@ impl Transport {
         }
 
         // Establish a new PASE session to this peer.
-        let exchange = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
+        let params = peer_mrp.map(|p| p.session_parameters());
+
+        let exchange = self
+            .initiate_plaintext(matter, &crypto, peer_addr, params.as_ref())
+            .await?;
         PaseInitiator::perform(exchange, &crypto, passcode).await?;
 
         let session_id = matter.with_state(|state| {
-            state
+            let session = state
                 .sessions
                 .get_pase_for_addr(&peer_addr)
-                .map(|s| s.id)
-                .ok_or_else(|| Error::from(ErrorCode::NoSession))
+                .ok_or_else(|| Error::from(ErrorCode::NoSession))?;
+
+            if let Some(params) = params.as_ref() {
+                session.set_peer_session_params(params);
+            }
+
+            Ok::<_, Error>(session.id)
         })?;
 
         self.initiate_for_session(matter, crypto, session_id)
@@ -1032,18 +1054,35 @@ impl Transport {
         matter: &'a Matter<'a>,
         crypto: C,
         peer_addr: Address,
+        peer_params: Option<&SessionParameters>,
     ) -> Result<Exchange<'a>, Error> {
-        match self.try_initiate_plaintext(matter, &crypto, peer_addr) {
-            Ok(exchange) => Ok(exchange),
+        let exchange = match self.try_initiate_plaintext(matter, &crypto, peer_addr) {
+            Ok(exchange) => exchange,
             Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
                 matter
                     .transport_runner(&crypto)
                     .evict_some_session()
                     .await?;
-                self.try_initiate_plaintext(matter, &crypto, peer_addr)
+                self.try_initiate_plaintext(matter, &crypto, peer_addr)?
             }
-            Err(e) => Err(e),
+            Err(e) => Err(e)?,
+        };
+
+        // Seed the peer's advertised MRP timing before the first handshake
+        // message is sent on the new session.
+        if let Some(params) = peer_params {
+            matter.with_state(|state| {
+                state
+                    .sessions
+                    .get(exchange.id().session_id())
+                    .ok_or(ErrorCode::NoSession)?
+                    .set_peer_session_params(params);
+
+                Ok::<_, Error>(())
+            })?;
         }
+
+        Ok(exchange)
     }
 
     /// Create a new plaintext session and initiate an exchange on it in one step.

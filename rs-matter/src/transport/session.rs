@@ -154,6 +154,14 @@ pub struct Session {
     peer_idle_interval_ms: u32,
     /// Peer's effective `MRP_SESSION_ACTIVE_THRESHOLD` (ms).
     peer_active_threshold_ms: u16,
+    /// Whether `peer_idle_interval_ms` came from the peer (its TXT record or
+    /// its handshake `session_parameters`) rather than our local fallback. Only
+    /// an advertised idle interval paces retransmissions to an idle peer; see
+    /// [`mrp::retry_base_interval_ms`].
+    peer_idle_advertised: bool,
+    /// When we last received a message from the peer on this session, which
+    /// decides whether it is active (Matter Core spec, 4.12.8).
+    peer_last_rx: Option<Instant>,
     /// If `true` then the session is considered "expired". Session expiration happens
     /// for the session on behalf of which a fabric is removed, and for a CASE session
     /// whose peer stopped acknowledging (see [`Session::pre_send`]).
@@ -196,6 +204,8 @@ impl Session {
             peer_active_interval_ms,
             peer_idle_interval_ms,
             peer_active_threshold_ms,
+            peer_idle_advertised: false,
+            peer_last_rx: None,
             expired: false,
         }
     }
@@ -231,6 +241,8 @@ impl Session {
             peer_active_interval_ms,
             peer_idle_interval_ms,
             peer_active_threshold_ms,
+            peer_idle_advertised: false,
+            peer_last_rx: None,
             expired: false,
         })
     }
@@ -305,6 +317,20 @@ impl Session {
         self.peer_active_threshold_ms
     }
 
+    /// The base interval of the retransmission ladder for the next new reliable
+    /// message to this peer: its active interval while it is active, its
+    /// advertised idle interval otherwise. See [`mrp::retry_base_interval_ms`].
+    pub fn get_peer_retry_base_interval_ms(&self) -> u32 {
+        mrp::retry_base_interval_ms(
+            self.peer_active_interval_ms,
+            self.peer_idle_advertised
+                .then_some(self.peer_idle_interval_ms),
+            self.peer_active_threshold_ms,
+            self.peer_last_rx
+                .map(|at| Instant::now().saturating_duration_since(at).as_millis()),
+        )
+    }
+
     /// Record the peer's `session_parameters` (any combination of `sai` /
     /// `sii` / `sat`) for use by MRP retransmission timing on later sends
     /// to this peer. Only the fields the peer actually advertised get
@@ -330,6 +356,7 @@ impl Session {
         if let Some(sii) = params.sii {
             if sii > 0 {
                 self.peer_idle_interval_ms = sii;
+                self.peer_idle_advertised = true;
             } else {
                 warn!("Peer advertised session_parameters.sii=0; ignoring");
             }
@@ -522,6 +549,15 @@ impl Session {
                     true,
                 );
 
+                // A peer believed idle has its messages paced by its idle
+                // interval for the whole ladder (see
+                // `get_peer_retry_base_interval_ms`), which can outlast the
+                // active-then-idle estimate above; never wait less than that.
+                let base = self.get_peer_retry_base_interval_ms();
+                let outbound = outbound.max(mrp::RetransEntry::retransmission_timeout_ms(
+                    base, base, 0, true,
+                ));
+
                 outbound + mrp::MRP_EXPECTED_PROCESSING_MS + inbound
             }
         }
@@ -548,6 +584,9 @@ impl Session {
     ///
     /// Return `true` if a new exchange was created, and `false` otherwise.
     pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr) -> Result<bool, Error> {
+        // Anything from the peer - a duplicate included - shows it is awake.
+        self.peer_last_rx = Some(Instant::now());
+
         if !self
             .rx_ctr_state
             .post_recv(rx_header.plain.ctr, self.is_encrypted(), false)

@@ -750,11 +750,13 @@ impl TxMessage<'_> {
             // time and overwritten once Sigma1 / Sigma2 / PBKDFParamRequest /
             // PBKDFParamResponse delivers a real peer value, so MRP
             // retransmission backoff to this peer reflects whichever is
-            // more accurate (Matter Core spec).
+            // more accurate (Matter Core spec). The ladder starts from the
+            // peer's idle interval when it is idle and advertised one, so a
+            // sleepy device gets the chance to poll for the message.
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,
-                Some(session.get_peer_active_interval_ms()),
+                Some(session.get_peer_retry_base_interval_ms()),
                 Some(session.get_peer_idle_interval_ms()),
             )?;
 
@@ -1178,7 +1180,25 @@ impl<'a> Exchange<'a> {
     ) -> Result<Self, Error> {
         matter
             .transport
-            .initiate_pase(matter, crypto, peer_addr, passcode)
+            .initiate_pase(matter, crypto, peer_addr, passcode, None)
+            .await
+    }
+
+    /// [`Self::initiate_pase`], with the peer's advertised MRP timing (from
+    /// its commissionable TXT record) seeded into the sessions before the
+    /// first handshake message goes out. A sleepy device then gets its own
+    /// idle interval to poll for each message instead of our local defaults.
+    #[inline(always)]
+    pub async fn initiate_pase_with_mrp<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: network::Address,
+        passcode: u32,
+        peer_mrp: Option<crate::transport::mrp::PeerMrpParams>,
+    ) -> Result<Self, Error> {
+        matter
+            .transport
+            .initiate_pase(matter, crypto, peer_addr, passcode, peer_mrp)
             .await
     }
 
@@ -1289,7 +1309,7 @@ impl<'a> Exchange<'a> {
     ) -> Result<Self, Error> {
         matter
             .transport
-            .initiate_plaintext(matter, crypto, peer_addr)
+            .initiate_plaintext(matter, crypto, peer_addr, None)
             .await
     }
 

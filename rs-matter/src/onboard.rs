@@ -168,6 +168,7 @@ pub struct Commissioner<'a, 'b, C: Crypto> {
     buf: &'a mut [u8],
     case_attempts: u8,
     transport: TransportPreference,
+    peer_mrp: Option<crate::transport::mrp::PeerMrpParams>,
 }
 
 impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
@@ -198,6 +199,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
             buf,
             case_attempts: Self::DEFAULT_CASE_ATTEMPTS,
             transport: TransportPreference::Mrp,
+            peer_mrp: None,
         }
     }
 
@@ -233,6 +235,18 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// such a device cannot be finalised over UDP.
     pub const fn with_transport(mut self, transport: TransportPreference) -> Self {
         self.transport = transport;
+        self
+    }
+
+    /// The device's advertised MRP timing (`SII`/`SAI`/`SAT` from its
+    /// commissionable TXT record), used to pace the PASE session phase 1 runs
+    /// over. Without it a sleepy device that polls its parent less often than
+    /// our default retransmission ladder lasts never sees the handshake.
+    pub const fn with_peer_mrp(
+        mut self,
+        peer_mrp: Option<crate::transport::mrp::PeerMrpParams>,
+    ) -> Self {
+        self.peer_mrp = peer_mrp;
         self
     }
 
@@ -433,8 +447,14 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         passcode: u32,
         expiry_seconds: u16,
     ) -> Result<(), Error> {
-        let exchange =
-            Exchange::initiate_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_pase_with_mrp(
+            self.matter,
+            &self.crypto,
+            peer_addr,
+            passcode,
+            self.peer_mrp,
+        )
+        .await?;
 
         let handle = exchange
             .general_commissioning()

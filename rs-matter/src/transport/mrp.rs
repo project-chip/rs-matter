@@ -104,6 +104,64 @@ pub fn default_peer_mrp_params(dev_det: &BasicInfoConfig<'_>) -> (u32, u32, u16)
     )
 }
 
+/// A peer's advertised MRP timing: the `SII` / `SAI` / `SAT` keys of its
+/// DNS-SD TXT record (commissionable or operational), in milliseconds.
+///
+/// A controller that learned these from discovery hands them to
+/// [`Exchange::initiate_pase_with_mrp`](crate::transport::exchange::Exchange::initiate_pase_with_mrp)
+/// (or [`Commissioner::with_peer_mrp`](crate::onboard::Commissioner::with_peer_mrp)),
+/// so the very first handshake message to a sleepy device is already paced by
+/// the device's own idle interval rather than by our local defaults.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PeerMrpParams {
+    /// Session Idle Interval (`SII`).
+    pub sii: Option<u32>,
+    /// Session Active Interval (`SAI`).
+    pub sai: Option<u32>,
+    /// Session Active Threshold (`SAT`).
+    pub sat: Option<u16>,
+}
+
+impl PeerMrpParams {
+    pub(crate) fn session_parameters(&self) -> crate::sc::SessionParameters {
+        crate::sc::SessionParameters {
+            sii: self.sii,
+            sai: self.sai,
+            sat: self.sat,
+            ..Default::default()
+        }
+    }
+}
+
+/// The base interval of the retransmission ladder for a new reliable message
+/// to a peer (Matter Core spec, 4.12.8 "Retransmissions"): the peer's
+/// `SESSION_ACTIVE_INTERVAL` while it is active - we heard from it within its
+/// `SESSION_ACTIVE_THRESHOLD` - and its `SESSION_IDLE_INTERVAL` otherwise.
+///
+/// `idle_interval_ms` is `Some` only when the peer actually advertised an idle
+/// interval. A peer that never did keeps being addressed at its active
+/// interval, exactly as before idle detection existed: our local fallback for
+/// its idle interval is a guess, and stretching every retry ladder to it would
+/// only slow down loss recovery against always-on devices.
+///
+/// `since_peer_rx_ms` is the time since the last message received from the
+/// peer on this session, `None` if nothing was received yet (the peer is then
+/// assumed idle, since we cannot know that it is awake).
+pub(crate) fn retry_base_interval_ms(
+    active_interval_ms: u32,
+    idle_interval_ms: Option<u32>,
+    active_threshold_ms: u16,
+    since_peer_rx_ms: Option<u64>,
+) -> u32 {
+    let peer_active = since_peer_rx_ms.is_some_and(|since| since < active_threshold_ms as u64);
+
+    match idle_interval_ms {
+        Some(idle) if idle > 0 && !peer_active => idle,
+        _ => active_interval_ms,
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RetransEntry {
@@ -353,6 +411,61 @@ impl ReliableMessage {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+
+    #[test]
+    fn retry_base_uses_idle_interval_for_an_idle_peer_that_advertised_one() {
+        // Nothing heard yet: the peer may be asleep.
+        assert_eq!(retry_base_interval_ms(2500, Some(17000), 5000, None), 17000);
+        // Last heard longer ago than its active threshold.
+        assert_eq!(
+            retry_base_interval_ms(2500, Some(17000), 5000, Some(5000)),
+            17000
+        );
+        assert_eq!(
+            retry_base_interval_ms(2500, Some(17000), 5000, Some(60_000)),
+            17000
+        );
+    }
+
+    #[test]
+    fn retry_base_uses_active_interval_while_the_peer_is_active() {
+        assert_eq!(
+            retry_base_interval_ms(2500, Some(17000), 5000, Some(0)),
+            2500
+        );
+        assert_eq!(
+            retry_base_interval_ms(2500, Some(17000), 5000, Some(4999)),
+            2500
+        );
+    }
+
+    #[test]
+    fn retry_base_keeps_the_active_interval_when_no_idle_interval_was_advertised() {
+        assert_eq!(retry_base_interval_ms(300, None, 4000, None), 300);
+        assert_eq!(retry_base_interval_ms(300, None, 4000, Some(60_000)), 300);
+        // A zero idle interval is never valid and must not collapse the ladder.
+        assert_eq!(retry_base_interval_ms(300, Some(0), 4000, None), 300);
+    }
+
+    #[test]
+    fn idle_base_outlasts_a_sleepy_poll_period() {
+        // A 17 s sleepy end device only collects queued frames when it polls.
+        // The ladder from the idle base must outlast that poll period before
+        // the first retransmission, whereas the old active-only 300 ms ladder
+        // gave up after roughly six seconds.
+        let sleepy = RetransEntry::new(
+            Some(retry_base_interval_ms(2500, Some(17000), 5000, None)),
+            1,
+        );
+        assert!(sleepy.delay_ms_counter(0, 0) >= 17_000);
+
+        let old = RetransEntry::retransmission_timeout_ms(300, 300, 0, true);
+        assert!(old < 17_000, "old ladder {old} ms");
+
+        let idle = RetransEntry::retransmission_timeout_ms(17000, 17000, 0, true);
+        assert!(idle > 17_000 * 5, "idle ladder {idle} ms");
+    }
+
     use super::*;
 
     /// A sender gets exactly `MRP_MAX_TRANSMISSIONS` attempts, and the one after
