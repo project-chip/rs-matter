@@ -1581,10 +1581,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             drop(tx);
 
             if wait {
-                let mut timeout = pin!(Timer::after(embassy_time::Duration::from_millis(100)));
-                let mut wait = pin!(self.transport().exchange_dropped.wait());
-
-                select(&mut timeout, &mut wait).await;
+                // Marking an exchange as dropped always notifies `exchange_dropped`
+                self.transport().exchange_dropped.wait().await;
             }
         }
     }
