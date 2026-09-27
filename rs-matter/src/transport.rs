@@ -1521,6 +1521,16 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
     async fn process_accept_timeout_rx(&self) -> Result<(), Error> {
         loop {
+            // Only a received packet can time out waiting to be accepted, so there is
+            // nothing to poll for while the RX buffer is empty
+            trace!("Waiting for an RX packet");
+
+            self.matter
+                .transport
+                .rx
+                .wait_until(|packet| !packet.buf.is_empty())
+                .await;
+
             trace!("Waiting for accept timeout");
 
             let mut accept_timeout = pin!(self

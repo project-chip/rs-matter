@@ -137,6 +137,28 @@ where
         result
     }
 
+    /// Wait for the mutex to be unlocked *and* for the provided condition on the data to become true,
+    /// without locking the mutex.
+    pub async fn wait_until<F>(&self, f: F)
+    where
+        F: Fn(&T) -> bool,
+    {
+        self.state
+            .wait(|locked| {
+                if *locked {
+                    return None;
+                }
+
+                // Safety: it is safe to access the unsafe cell data, because:
+                // - nobody holds the long term (async) lock on the mutex right now (`locked == false`)
+                // - we have gained the blocking short-term mutex lock
+                let data = unsafe { &*self.inner.get() };
+
+                f(data).then_some(())
+            })
+            .await;
+    }
+
     /// Attempt to immediately lock the mutex.
     pub fn try_lock(&self) -> Result<IfMutexGuard<'_, T, M>, TryLockError> {
         self.try_lock_if(|_| true)
