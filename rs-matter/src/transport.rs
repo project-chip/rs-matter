@@ -138,6 +138,13 @@ pub struct Transport {
     mdns_browse: Signal<MdnsBrowseState>,
     /// A notification that a session had been removed
     session_removed: MultiNotification,
+    /// A notification that a Matter message was received or sent over a session -
+    /// the "network activity" an Intermittently Connected Device stays active for.
+    /// Single waiter: the ICD Management cluster handler.
+    activity: Notification,
+    /// A notification that a commissioning window was opened or closed (or expired).
+    /// Single waiter: the ICD Management cluster handler.
+    comm_window_changed: Notification,
     /// A notification that the groups have been modified.
     /// Unused without the `groups` feature, but kept unconditionally so the
     /// in-place `Transport` initializer needs no feature-specific variant.
@@ -173,6 +180,8 @@ impl Transport {
             mdns_resolve: Signal::new(MdnsResolveState::Idle),
             mdns_browse: Signal::new(MdnsBrowseState::Idle),
             session_removed: MultiNotification::new(),
+            activity: Notification::new(),
+            comm_window_changed: Notification::new(),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
             counters: Mutex::new(RefCell::new(MessageCounters::new())),
@@ -192,6 +201,8 @@ impl Transport {
             mdns_resolve <- Signal::init(MdnsResolveState::Idle),
             mdns_browse <- Signal::init(MdnsBrowseState::Idle),
             session_removed <- MultiNotification::init(),
+            activity <- Notification::init(),
+            comm_window_changed <- Notification::init(),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
             counters <- Mutex::init(RefCell::init(MessageCounters::new())),
@@ -262,6 +273,39 @@ impl Transport {
     /// The message counters of this node.
     pub fn counters(&self) -> MessageCounters {
         self.counters.lock(|counters| counters.borrow().clone())
+    }
+
+    /// Notify that a Matter message was received or sent over a session.
+    pub(crate) fn notify_activity(&self) {
+        self.activity.notify();
+    }
+
+    /// Wait until a Matter message is received or sent over a session.
+    ///
+    /// This is the "network activity" that keeps an Intermittently Connected Device in
+    /// active mode (see the ICD Management cluster's `ActiveModeThreshold`). Unencrypted
+    /// packets that do not belong to a session (stray traffic on the Matter port) do not
+    /// count.
+    ///
+    /// A single-waiter notification, consumed by the ICD Management cluster handler.
+    pub fn wait_activity(&self) -> impl Future<Output = ()> + '_ {
+        self.activity.wait()
+    }
+
+    /// Notify that a commissioning window was opened, closed, or expired.
+    ///
+    /// Also notifies the mDNS layer, as the commissionable service (dis)appears with it.
+    pub(crate) fn notify_comm_window_changed(&self) {
+        self.mdns_changed.notify();
+        self.comm_window_changed.notify();
+    }
+
+    /// Wait until a commissioning window is opened, closed, or expires
+    /// (see [`crate::Matter::comm_window_state`]).
+    ///
+    /// A single-waiter notification, consumed by the ICD Management cluster handler.
+    pub fn wait_comm_window_changed(&self) -> impl Future<Output = ()> + '_ {
+        self.comm_window_changed.wait()
     }
 
     /// Notify that a session has been removed.
@@ -1596,6 +1640,11 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         S: NetworkSend,
     {
         let result = self.decode_packet(packet);
+
+        if result.is_ok() {
+            self.matter.transport().notify_activity();
+        }
+
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
                 if packet.header.plain.is_group_session() {
@@ -2156,6 +2205,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         let mut wb = WriteBuf::new_with(&mut packet.buf, packet.payload_start, payload_end);
         if let Some(session) = session {
             session.encode(&self.crypto, &packet.header, &mut wb)?;
+
+            self.matter.transport().notify_activity();
         } else {
             packet.header.encode(&self.crypto, None, 0, &mut wb)?;
         }

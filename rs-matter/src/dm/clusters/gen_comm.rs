@@ -188,7 +188,12 @@ impl<'a> GenCommHandler<'a> {
         F: FnOnce(&mut MatterState, &mut dyn FnMut()) -> Result<T, E>,
         E: From<Error>,
     {
-        let mut notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
+        let mut notify_mdns = || {
+            ctx.exchange()
+                .matter()
+                .transport()
+                .notify_comm_window_changed()
+        };
 
         ctx.exchange().with_state_ex(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -371,7 +376,12 @@ impl ClusterHandler for GenCommHandler<'_> {
         let mut removed_fabric = None;
 
         let status = if expiry_length_seconds == 0 {
-            let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
+            let notify_mdns = || {
+                ctx.exchange()
+                    .matter()
+                    .transport()
+                    .notify_comm_window_changed()
+            };
             let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
             CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {

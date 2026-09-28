@@ -101,6 +101,13 @@ pub trait ImStats {
     /// `fab_idx` is the fabric of the reading subject, for
     /// `CurrentSubscriptionsForFabric`; pass `None` when no fabric is in scope.
     fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad;
+
+    /// Whether a live subscription exists on `fab_idx` whose subscriber node
+    /// matches `node_id`.
+    ///
+    /// The ICD Management handler uses it to decide which registered Check-In
+    /// clients have lost touch and need a Check-In.
+    fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool;
 }
 
 impl<T> ImStats for &T
@@ -109,6 +116,10 @@ where
 {
     fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
         (**self).device_load(fab_idx)
+    }
+
+    fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool {
+        (**self).has_subscription_for(fab_idx, node_id)
     }
 }
 
@@ -685,7 +696,7 @@ where
     }
 
     fn check_timeouts(&self, exch_id: Option<ExchangeId>) -> Result<(), Error> {
-        let mut notify_mdns = || self.matter.transport().notify_mdns_changed();
+        let mut notify_mdns = || self.matter.transport().notify_comm_window_changed();
         let mut notify_change =
             |endpt_id, clust_id| self.notify_cluster_changed(endpt_id, clust_id);
 
@@ -1719,6 +1730,12 @@ where
 {
     fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
         self.load_stats(fab_idx)
+    }
+
+    fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool {
+        self.state
+            .subscriptions()
+            .has_subscription_for(fab_idx, node_id)
     }
 }
 
