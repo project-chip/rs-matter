@@ -265,10 +265,11 @@ where
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::mem::MaybeUninit;
+    use core::pin::pin;
 
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-    use futures_lite::future::{block_on, zip};
+    use futures_lite::future::{block_on, poll_once, zip};
 
     use crate::utils::init::InitMaybeUninit;
     use crate::utils::storage::Vec;
@@ -324,6 +325,35 @@ mod tests {
         let mut m = m;
         *m.get_mut() += 1;
         assert_eq!(m.into_inner(), 4);
+    }
+
+    #[test]
+    fn wait_until() {
+        let m = IfMutex::<_, NoopRawMutex>::new(0);
+
+        block_on(async {
+            // `wait_until` must wait until the condition holds, and wake up once a lock holder
+            // makes it hold
+            let mut wait = pin!(m.wait_until(|v| *v == 1));
+            assert!(poll_once(wait.as_mut()).await.is_none());
+
+            zip(wait, async {
+                *m.lock().await = 1;
+            })
+            .await;
+
+            // ...without locking the mutex
+            assert!(m.try_lock().is_ok());
+
+            // It must also wait while the mutex is locked, even though the condition holds,
+            // and wake up once it is unlocked
+            let g = m.lock().await;
+            let mut wait = pin!(m.wait_until(|v| *v == 1));
+            assert!(poll_once(wait.as_mut()).await.is_none());
+
+            zip(wait, async move { drop(g) }).await;
+            assert!(m.try_lock().is_ok());
+        });
     }
 
     #[test]
