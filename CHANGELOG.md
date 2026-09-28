@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 * Breaking: simplify the ICD support by running everything and just informing the user about the current ICD state (#579)
+* Fix: an unsecured session initiated by the device (e.g. for an ICD Check-In) no longer swallows a peer-initiated `CASESigma1` / `PBKDFParamRequest` from the same address, which made CASE fail right after a Check-In (#579)
 * Fix: the transport no longer wakes every 50/100 ms while idle; new `IfMutex::wait_until` (#578)
 * Fan Control cluster handler (`FanControlHandler` / `FanControlHooks`) (#577)
 * Fix the Mode Select cluster handler to set the current mode into the hooks upon startup (#576)

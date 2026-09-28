@@ -438,12 +438,17 @@ impl Session {
             || rx_plain.get_src_nodeid().is_none()
             || self.peer_nodeid == rx_plain.get_src_nodeid();
 
-        // For unsecured sessions, also match by destination node ID (the echoed
-        // ephemeral initiator node ID) to disambiguate multiple unsecured sessions
-        // for the same peer (spec).
+        // For an unsecured session *we* initiated (`local_nodeid` is our
+        // ephemeral initiator node ID), the peer echoes that ID as the
+        // destination node ID of every reply, which is what disambiguates
+        // several unsecured sessions to the same peer address (spec).
+        //
+        // A message without a destination node ID is therefore never a reply
+        // on such a session. It is the peer initiating (`PBKDFParamRequest`,
+        // `CASESigma1`) and must get a responder session of its own, or the
+        // peer's handshake would be answered under our initiator identity.
         let dest_nodeid_matches = self.is_encrypted()
             || self.local_nodeid == 0
-            || rx_plain.get_dst_unicast_nodeid().is_none()
             || rx_plain.get_dst_unicast_nodeid() == Some(self.local_nodeid);
 
         nodeid_matches
@@ -2985,6 +2990,46 @@ mod tests {
         assert!(sess.get_att_challenge().is_none());
         #[cfg(feature = "case-resumption")]
         assert!(sess.get_shared_secret().is_none());
+    }
+
+    /// An unsecured session we initiated (e.g. for an ICD Check-In) accepts only
+    /// replies that echo our ephemeral initiator node ID. A peer-initiated
+    /// message from the same address - a `CASESigma1` with a source but no
+    /// destination node ID - must not be matched to it, so that the peer gets a
+    /// responder session of its own instead of a Sigma2 sent under our
+    /// initiator identity (which it would never deliver to its CASE initiator).
+    #[test]
+    fn initiated_unsecured_session_ignores_peer_initiated_messages() {
+        let peer = udp(5540);
+
+        let mut sess = Session::new(1, 0, false, peer, None, 300, 5000, 4000);
+        sess.set_local_nodeid(0x1122_3344_5566_7788);
+
+        let mut rx_plain = PlainHdr::new();
+        rx_plain.sess_id = 0;
+
+        // Peer-initiated first message: source set, no destination.
+        rx_plain.set_src_nodeid(Some(0xaabb));
+        assert!(!sess.is_for_rx(&peer, &rx_plain));
+
+        // Neither ID set at all (also peer-initiated).
+        rx_plain.set_src_nodeid(None);
+        assert!(!sess.is_for_rx(&peer, &rx_plain));
+
+        // A reply echoing our ephemeral ID is ours.
+        rx_plain.set_src_nodeid(Some(0xaabb));
+        rx_plain.set_dst_unicast_nodeid(Some(0x1122_3344_5566_7788));
+        assert!(sess.is_for_rx(&peer, &rx_plain));
+
+        // A reply echoing somebody else's ID belongs to another session.
+        rx_plain.set_dst_unicast_nodeid(Some(0x9999));
+        assert!(!sess.is_for_rx(&peer, &rx_plain));
+
+        // A responder-side unsecured session (no local node ID) still matches
+        // the peer's messages without a destination node ID.
+        let sess = Session::new(2, 0, false, peer, Some(0xaabb), 300, 5000, 4000);
+        rx_plain.set_dst_unicast_nodeid(None);
+        assert!(sess.is_for_rx(&peer, &rx_plain));
     }
 
     /// A reserved slot is invisible to receive matching until it is completed;
