@@ -694,7 +694,12 @@ impl ClusterHandler for NocHandler {
 
         let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
-        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
+        let notify_mdns = || {
+            ctx.exchange()
+                .matter()
+                .transport()
+                .notify_comm_window_changed()
+        };
 
         let mut persist = FabricPersist::new(ctx.kv());
 

@@ -556,7 +556,7 @@ impl<'a> Matter<'a> {
         crypto: C,
         notify: &dyn AttrChangeNotifier,
     ) -> Result<(), Error> {
-        let notify_mdns = || self.transport().notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_comm_window_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| {
@@ -590,7 +590,7 @@ impl<'a> Matter<'a> {
     /// [`crate::im::InteractionModel::close_comm_window`] when a `InteractionModel`
     /// is available.
     pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
-        let notify_mdns = || self.transport().notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_comm_window_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))
@@ -733,7 +733,7 @@ impl<'a> Matter<'a> {
         K: KvBlobStoreAccess,
         F: FnOnce(&CommissioningHandover<'_>) -> Result<R, Error>,
     {
-        let notify_mdns = || self.transport().notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_comm_window_changed();
 
         self.with_state(|state| {
             let (fab_idx, remaining_secs) = state

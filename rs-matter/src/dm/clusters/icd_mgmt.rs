@@ -25,14 +25,26 @@
 //!   sender.
 //! - [`IcdMgmtHandler`] is the cluster handler (registration commands + the
 //!   Check-In-relevant attributes), layered on an [`Icd`].
-//! - [`Icd::send_check_in`] sends a Check-In to every registered client whose
-//!   subscription is lost; [`Icd::send_one_check_in`] targets a single client.
-//!   Both resolve the address over mDNS and send sessionlessly. The application
-//!   drives them when it decides clients should be nudged.
+//! - [`Icd::run`] sends a Check-In (resolved over mDNS, sent sessionlessly) to
+//!   every registered client whose subscription is lost, whenever a LIT wakes
+//!   up from idle mode.
+//! - [`Icd`] also runs the ICD *power mode* state machine ([`IcdPowerMode`]):
+//!   active mode after boot, after network activity, on a `StayActiveRequest`,
+//!   on a user trigger and while a commissioning window is open; idle mode
+//!   otherwise, for at most `IdleModeDuration`. The handler's `run` hook drives
+//!   it and sends the Check-Ins whenever a Long-Idle-Time ICD wakes up from idle
+//!   mode. Network drivers *follow* the state machine through
+//!   [`Icd::net_params`] / [`Icd::wait_net_changed`] - e.g. a Thread driver maps the
+//!   polling interval onto the Sleepy End Device poll period - and the
+//!   application consults [`Icd::power_mode`] / [`Icd::idle_until`] to decide
+//!   whether, and how deeply, the MCU may sleep.
 
 use core::num::NonZeroU8;
 
-use embassy_time::{Duration, Instant};
+use core::pin::pin;
+
+use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 
 use crate::acl::AccessReq;
 use crate::crypto::{CanonAeadKey, Crypto, Rng};
@@ -44,6 +56,7 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
 use crate::im::encoding::GenericPath;
+use crate::im::ImStats;
 use crate::persist::{
     KvBlobStore, KvBlobStoreAccess, Persist, ICD_CHECK_IN_COUNTER_KEY, ICD_REGISTERED_CLIENTS_KEY,
 };
@@ -75,6 +88,60 @@ pub const MAX_REGISTERED_CLIENTS: usize = CLIENTS_PER_FABRIC * MAX_FABRICS;
 /// request longer than this is clamped to it (though the *promised* remaining
 /// time may still be longer if the deadline was already further out).
 pub const STAY_ACTIVE_MAX_MS: u32 = 30_000;
+
+/// The slowest polling interval a Short-Idle-Time ICD may use, in milliseconds
+/// (`SIT_ICD_SLOW_POLL_MAX` in the spec).
+///
+/// A LIT-capable device without any registered Check-In client operates as SIT
+/// and is capped to this as well.
+pub const SIT_SLOW_POLL_MAX_MS: u32 = 15_000;
+
+/// The fast (active mode) polling interval used when `BasicInfoConfig::sai` is
+/// not set: the `SESSION_ACTIVE_INTERVAL` default.
+pub const DEFAULT_FAST_POLL_MS: u32 = 300;
+
+/// The slow (idle mode) polling interval used when `BasicInfoConfig::sii` is
+/// not set.
+pub const DEFAULT_SLOW_POLL_MS: u32 = SIT_SLOW_POLL_MAX_MS;
+
+/// How long one Check-In send (mDNS resolution included) may take before it is
+/// abandoned, so that a client that cannot be resolved does not keep the device
+/// awake.
+const CHECK_IN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The buffer for one Check-In message: nonce + counter + MIC plus the
+/// 2-byte `ActiveModeThreshold` application data, rounded up.
+const CHECK_IN_BUF_LEN: usize = 64;
+
+/// The ICD power mode.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum IcdPowerMode {
+    /// The device is responsive: it polls fast and must not sleep deeply.
+    Active,
+    /// The device is idle: it polls slowly and may sleep as deeply as its
+    /// state permits.
+    Idle,
+}
+
+/// The network-facing parameters of the ICD power state at a given moment.
+///
+/// Network drivers re-read this whenever [`Icd::wait_net_changed`] resolves.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct IcdNetParams {
+    /// The current power mode.
+    pub power_mode: IcdPowerMode,
+    /// The operating mode (`SIT` or `LIT`) the cluster reports.
+    pub operating_mode: OperatingModeEnum,
+    /// The polling interval to use right now, in milliseconds: the fast one
+    /// while active, the (SIT-capped) slow one while idle.
+    pub poll_interval_ms: u32,
+    /// The slowest polling interval the device will ever ask for, in
+    /// milliseconds. Drivers size their link keep-alives (e.g. the Thread
+    /// child timeout) from it.
+    pub max_poll_interval_ms: u32,
+}
 
 /// A single client registration (one entry of the `RegisteredClients` list).
 ///
@@ -145,37 +212,132 @@ struct IcdState {
     /// The instant until which a `StayActiveRequest` has asked this device to
     /// stay active, or `None` if no request is outstanding.
     stay_active_until: Option<Instant>,
+    /// The current power mode.
+    power_mode: IcdPowerMode,
+    /// While active: the instant the active window ends unless extended
+    /// (the `StayActiveRequest` deadline is tracked separately above).
+    active_until: Instant,
+    /// While idle: the instant idle mode ends by itself (`IdleModeDuration`).
+    idle_until: Instant,
+    /// Whether a commissioning window is open, which keeps the device active.
+    comm_window_open: bool,
+    /// The fast (active mode) polling interval, in milliseconds.
+    fast_poll_ms: u32,
+    /// The configured slow (idle mode) polling interval, in milliseconds
+    /// (before the SIT cap).
+    slow_poll_ms: u32,
 }
 
 impl IcdState {
+    const fn new(counter: CheckInCounter) -> Self {
+        Self {
+            clients: Vec::new(),
+            counter,
+            stay_active_until: None,
+            power_mode: IcdPowerMode::Active,
+            active_until: Instant::MIN,
+            idle_until: Instant::MIN,
+            comm_window_open: false,
+            fast_poll_ms: DEFAULT_FAST_POLL_MS,
+            slow_poll_ms: DEFAULT_SLOW_POLL_MS,
+        }
+    }
+
     fn init(counter: CheckInCounter) -> impl Init<Self> {
         init!(Self {
             clients <- Vec::init(),
             counter: counter,
             stay_active_until: None,
+            power_mode: IcdPowerMode::Active,
+            active_until: Instant::MIN,
+            idle_until: Instant::MIN,
+            comm_window_open: false,
+            fast_poll_ms: DEFAULT_FAST_POLL_MS,
+            slow_poll_ms: DEFAULT_SLOW_POLL_MS,
         })
+    }
+
+    fn operating_mode(&self) -> OperatingModeEnum {
+        if self.clients.is_empty() {
+            OperatingModeEnum::SIT
+        } else {
+            OperatingModeEnum::LIT
+        }
+    }
+
+    /// The slow polling interval in effect: the configured one, capped for
+    /// SIT operation.
+    fn effective_slow_poll_ms(&self) -> u32 {
+        match self.operating_mode() {
+            OperatingModeEnum::SIT => self.slow_poll_ms.min(SIT_SLOW_POLL_MAX_MS),
+            OperatingModeEnum::LIT => self.slow_poll_ms,
+        }
+    }
+
+    fn net_params(&self) -> IcdNetParams {
+        IcdNetParams {
+            power_mode: self.power_mode,
+            operating_mode: self.operating_mode(),
+            poll_interval_ms: match self.power_mode {
+                IcdPowerMode::Active => self.fast_poll_ms,
+                IcdPowerMode::Idle => self.effective_slow_poll_ms(),
+            },
+            max_poll_interval_ms: self.slow_poll_ms,
+        }
+    }
+
+    /// The deadline the active window stays open until, considering every
+    /// reason to be active: the own deadline (boot, activity, nudges) and the
+    /// `StayActiveRequest` one.
+    fn active_deadline(&self) -> Instant {
+        self.active_until
+            .max(self.stay_active_until.unwrap_or(Instant::MIN))
+    }
+
+    /// Extend the active window to at least `duration` from now, entering
+    /// active mode if idle. Returns whether anything changed.
+    fn extend_active(&mut self, duration: Duration) -> bool {
+        let deadline = Instant::now() + duration;
+
+        let mut changed = false;
+
+        if self.power_mode != IcdPowerMode::Active {
+            self.power_mode = IcdPowerMode::Active;
+            changed = true;
+        }
+
+        if deadline > self.active_until {
+            self.active_until = deadline;
+            changed = true;
+        }
+
+        changed
     }
 }
 
-/// The shared ICD state.
+/// The shared ICD state: the registrations, the Check-In counter, the
+/// `StayActiveRequest` deadline and the power mode state machine, all behind a
+/// single lock.
 ///
-/// The cluster handler ([`IcdMgmtHandler`]) and the Check-In sender both operate
-/// on one instance the application owns and lends to each: the handler mutates
-/// the registrations and reads the counter; the sender reads the registrations
-/// and advances the counter. All of it lives behind a single lock.
-///
-/// Two [`Notification`]s (outside the lock) let the application react: the
-/// registration set changing ([`wait_registrations_changed`](Self::wait_registrations_changed))
-/// and the stay-active deadline being extended ([`wait_active_extended`](Self::wait_active_extended)).
+/// The application owns one instance and lends it to its [`IcdMgmtHandler`]
+/// (which mutates the registrations and drives the state machine from its `run`
+/// hook), to its network driver (which follows [`net_params`](Self::net_params))
+/// and to its own sleep logic (which consults [`power_mode`](Self::power_mode)
+/// and [`idle_until`](Self::idle_until)).
 pub struct Icd {
     state: Mutex<RefCell<IcdState>>,
     /// The advertised mode timings; `active_mode_threshold_ms` is also the
     /// Check-In application data.
     mode: IcdModeConfig,
-    /// Signalled whenever the registration set changes.
-    registrations_changed: Notification,
-    /// Signalled whenever the stay-active deadline is extended.
-    active_extended: Notification,
+    /// Signalled whenever the power mode or the net params may have changed.
+    /// Single waiter: the network driver ([`wait_net_changed`](Self::wait_net_changed)).
+    net_changed: Notification,
+    /// Signalled whenever the power mode or the net params may have changed.
+    /// Single waiter: the application ([`wait_power_changed`](Self::wait_power_changed)).
+    power_changed: Notification,
+    /// Signalled by the events the power mode loop has to react to.
+    /// Single waiter: the loop itself.
+    nudged: Notification,
 }
 
 impl Icd {
@@ -192,14 +354,11 @@ impl Icd {
     /// Panics if `epoch` is zero.
     pub const fn new(epoch: u32, mode: IcdModeConfig) -> Self {
         Self {
-            state: Mutex::new(RefCell::new(IcdState {
-                clients: Vec::new(),
-                counter: CheckInCounter::new(0, epoch),
-                stay_active_until: None,
-            })),
+            state: Mutex::new(RefCell::new(IcdState::new(CheckInCounter::new(0, epoch)))),
             mode,
-            registrations_changed: Notification::new(),
-            active_extended: Notification::new(),
+            net_changed: Notification::new(),
+            power_changed: Notification::new(),
+            nudged: Notification::new(),
         }
     }
 
@@ -213,8 +372,9 @@ impl Icd {
         init!(Self {
             state <- Mutex::init(RefCell::init(IcdState::init(CheckInCounter::new(0, epoch)))),
             mode: mode,
-            registrations_changed <- Notification::init(),
-            active_extended <- Notification::init(),
+            net_changed <- Notification::init(),
+            power_changed <- Notification::init(),
+            nudged <- Notification::init(),
         })
     }
 
@@ -239,41 +399,23 @@ impl Icd {
         Ok(u32::from_le_bytes(bytes))
     }
 
-    /// The mode timings this ICD advertises.
-    pub fn mode(&self) -> IcdModeConfig {
-        self.mode
-    }
-
     // --- Registrations ---
 
     /// The total number of registrations across all fabrics.
-    pub fn registrations_len(&self) -> usize {
+    #[cfg(test)]
+    fn registrations_len(&self) -> usize {
         self.state.lock(|s| s.borrow().clients.len())
     }
 
     /// Whether there are no registrations.
-    pub fn registrations_is_empty(&self) -> bool {
+    #[cfg(test)]
+    fn registrations_is_empty(&self) -> bool {
         self.registrations_len() == 0
     }
 
-    /// The current operating mode: `LIT` while any client is registered,
-    /// otherwise `SIT`.
-    ///
-    /// This is the value of the `OperatingMode` attribute and of the `ICD`
-    /// operational DNS-SD TXT key. It changes only when the registration set
-    /// transitions empty↔non-empty, so
-    /// [`wait_registrations_changed`](Self::wait_registrations_changed) is the
-    /// signal to re-read it (e.g. to re-advertise mDNS).
-    pub fn operating_mode(&self) -> OperatingModeEnum {
-        if self.registrations_is_empty() {
-            OperatingModeEnum::SIT
-        } else {
-            OperatingModeEnum::LIT
-        }
-    }
-
     /// The number of registrations on `fab_idx`.
-    pub fn fabric_registrations_len(&self, fab_idx: NonZeroU8) -> usize {
+    #[cfg(test)]
+    fn fabric_registrations_len(&self, fab_idx: NonZeroU8) -> usize {
         self.state.lock(|s| {
             s.borrow()
                 .clients
@@ -283,12 +425,23 @@ impl Icd {
         })
     }
 
+    /// The current operating mode: `LIT` while any client is registered,
+    /// otherwise `SIT`.
+    ///
+    /// This is the value of the `OperatingMode` attribute and of the `ICD`
+    /// operational DNS-SD TXT key. It changes only when the registration set
+    /// transitions empty↔non-empty; [`wait_net_changed`](Self::wait_net_changed)
+    /// resolves when it does.
+    pub fn operating_mode(&self) -> OperatingModeEnum {
+        self.state.lock(|s| s.borrow().operating_mode())
+    }
+
     /// Register a client, or update the existing registration with the same
     /// `(fab_idx, check_in_node_id)`.
     ///
     /// Returns `Err(ResourceExhausted)` if a *new* entry would exceed the
     /// per-fabric limit ([`CLIENTS_PER_FABRIC`]).
-    pub fn register(&self, registration: MonitoringRegistration) -> Result<(), Error> {
+    fn register(&self, registration: MonitoringRegistration) -> Result<(), Error> {
         self.state.lock(|s| -> Result<(), Error> {
             let clients = &mut s.borrow_mut().clients;
 
@@ -314,7 +467,8 @@ impl Icd {
             Ok(())
         })?;
 
-        self.registrations_changed.notify();
+        self.notify_changed();
+        self.nudged.notify();
 
         Ok(())
     }
@@ -322,7 +476,7 @@ impl Icd {
     /// Remove the registration for `(fab_idx, check_in_node_id)`.
     ///
     /// Returns `Err(NotFound)` if there is no such registration.
-    pub fn unregister(&self, fab_idx: NonZeroU8, check_in_node_id: u64) -> Result<(), Error> {
+    fn unregister(&self, fab_idx: NonZeroU8, check_in_node_id: u64) -> Result<(), Error> {
         let removed = self.state.lock(|s| {
             let clients = &mut s.borrow_mut().clients;
             let before = clients.len();
@@ -334,7 +488,8 @@ impl Icd {
             Err(ErrorCode::NotFound)?;
         }
 
-        self.registrations_changed.notify();
+        self.notify_changed();
+        self.nudged.notify();
 
         Ok(())
     }
@@ -345,7 +500,7 @@ impl Icd {
     /// Non-administrator clients may only modify or remove an entry they own,
     /// proven by re-presenting the same key the entry was registered with. A
     /// missing or wrong key yields [`KeyVerdict::Mismatch`].
-    pub fn verify_key(
+    fn verify_key(
         &self,
         fab_idx: NonZeroU8,
         check_in_node_id: u64,
@@ -380,7 +535,8 @@ impl Icd {
         });
 
         if removed {
-            self.registrations_changed.notify();
+            self.notify_changed();
+            self.nudged.notify();
         }
 
         removed
@@ -390,13 +546,8 @@ impl Icd {
     ///
     /// The closure runs under the lock, so it must not re-enter the ICD state and
     /// must not `.await`.
-    pub fn with_registrations<R>(&self, f: impl FnOnce(&[MonitoringRegistration]) -> R) -> R {
+    fn with_registrations<R>(&self, f: impl FnOnce(&[MonitoringRegistration]) -> R) -> R {
         self.state.lock(|s| f(&s.borrow().clients))
-    }
-
-    /// Wait until the set of registrations changes.
-    pub async fn wait_registrations_changed(&self) {
-        self.registrations_changed.wait().await;
     }
 
     /// Persist the current registrations to `ctx.kv()`.
@@ -413,21 +564,9 @@ impl Icd {
 
     /// The instant until which a client has asked this device to stay active via
     /// `StayActiveRequest`, or `None` if no such request is outstanding.
-    ///
-    /// NOTE: this reflects *only* the `StayActiveRequest`-driven deadline. A real
-    /// ICD stays active for other reasons too — a baseline period after waking
-    /// (`ActiveModeDuration`) and a top-up after each message
-    /// (`ActiveModeThreshold`). Those depend on the device's own power state, so
-    /// they are the firmware's concern: combine this deadline with your own when
-    /// deciding whether it is safe to sleep.
-    pub fn active_until(&self) -> Option<Instant> {
+    #[cfg(test)]
+    fn active_until(&self) -> Option<Instant> {
         self.state.lock(|s| s.borrow().stay_active_until)
-    }
-
-    /// Wait until [`active_until`](Self::active_until) is extended by a new
-    /// `StayActiveRequest`, so a sleep loop can re-read the deadline.
-    pub async fn wait_active_extended(&self) {
-        self.active_extended.wait().await;
     }
 
     /// Extend the stay-active deadline by `duration_ms` from now, returning the
@@ -448,7 +587,8 @@ impl Icd {
             deadline
         });
 
-        self.active_extended.notify();
+        self.notify_changed();
+        self.nudged.notify();
 
         // Remaining time to the deadline (0 if it somehow already passed).
         deadline.saturating_duration_since(now).as_millis() as u32
@@ -457,7 +597,7 @@ impl Icd {
     // --- Check-In counter ---
 
     /// The counter value the next Check-In message will use (a peek).
-    pub fn next_counter(&self) -> u32 {
+    fn next_counter(&self) -> u32 {
         self.state.lock(|s| s.borrow().counter.next())
     }
 
@@ -466,7 +606,7 @@ impl Icd {
     ///
     /// Call once per Check-In *batch* (all messages in the batch used the same
     /// [`next_counter`](Self::next_counter) value).
-    pub fn advance_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn advance_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
         let to_persist = self.state.lock(|s| s.borrow_mut().counter.advance());
 
         if let Some(value) = to_persist {
@@ -567,10 +707,366 @@ impl Icd {
         // Dropping the last registration flips the operating mode to SIT, so
         // let the application re-advertise mDNS.
         if had_registrations {
-            self.registrations_changed.notify();
+            self.notify_changed();
+            self.nudged.notify();
         }
 
         Ok(())
+    }
+
+    // --- Power mode ---
+
+    /// The current power mode.
+    pub fn power_mode(&self) -> IcdPowerMode {
+        self.state.lock(|s| s.borrow().power_mode)
+    }
+
+    /// The current network-facing parameters (power mode, operating mode and
+    /// polling interval).
+    pub fn net_params(&self) -> IcdNetParams {
+        self.state.lock(|s| s.borrow().net_params())
+    }
+
+    /// While idle: the instant idle mode ends by itself (`IdleModeDuration`
+    /// after it began), i.e. how long the application may sleep before the
+    /// device has to be active again. `None` while active.
+    ///
+    /// A device that deep-sleeps and reboots on wake-up does not observe that
+    /// transition; it simply comes back active. The slow polling interval
+    /// still has to be honored while asleep - a Thread SED polls its parent
+    /// only while awake - so such an application should not sleep longer than
+    /// [`net_params`](Self::net_params)`.poll_interval_ms` either.
+    pub fn idle_until(&self) -> Option<Instant> {
+        self.state.lock(|s| {
+            let s = s.borrow();
+
+            matches!(s.power_mode, IcdPowerMode::Idle).then_some(s.idle_until)
+        })
+    }
+
+    /// Wait until the power mode or the net params may have changed, then
+    /// re-read them.
+    ///
+    /// For the *network driver* (the one following
+    /// [`net_params`](Self::net_params)): a single-waiter notification, so
+    /// exactly one task should wait on it. The application has its own,
+    /// [`wait_power_changed`](Self::wait_power_changed).
+    pub async fn wait_net_changed(&self) {
+        self.net_changed.wait().await
+    }
+
+    /// Wait until the power mode may have changed, then re-read it.
+    ///
+    /// For the *application* (the one deciding whether the MCU may sleep): a
+    /// single-waiter notification, so exactly one task should wait on it -
+    /// including through [`wait_idle`](Self::wait_idle) and
+    /// [`wait_active`](Self::wait_active).
+    pub async fn wait_power_changed(&self) {
+        self.power_changed.wait().await
+    }
+
+    /// Wait until the device is in idle mode (see [`wait_power_changed`](Self::wait_power_changed)).
+    pub async fn wait_idle(&self) {
+        while self.power_mode() != IcdPowerMode::Idle {
+            self.wait_power_changed().await;
+        }
+    }
+
+    /// Wait until the device is in active mode (see [`wait_power_changed`](Self::wait_power_changed)).
+    pub async fn wait_active(&self) {
+        while self.power_mode() != IcdPowerMode::Active {
+            self.wait_power_changed().await;
+        }
+    }
+
+    /// Announce a (possible) power mode / net params change to both waiters.
+    fn notify_changed(&self) {
+        self.net_changed.notify();
+        self.power_changed.notify();
+    }
+
+    /// Note network activity: keep the device active for at least
+    /// `ActiveModeThreshold`, entering active mode if it was idle.
+    ///
+    /// The `run` loop feeds the transport's own activity here; the application
+    /// may call it as well for traffic the transport does not see.
+    pub fn network_activity(&self) {
+        self.extend_active_for(Duration::from_millis(
+            self.mode.active_mode_threshold_ms as u64,
+        ));
+    }
+
+    /// Ask the device to be active for (at least) `ActiveModeDuration` from
+    /// now: on a user trigger (the `UserActiveModeTrigger` the cluster
+    /// advertises), or when the application is about to send data on its own
+    /// initiative.
+    pub fn request_active(&self) {
+        self.extend_active_for(Duration::from_millis(
+            self.mode.active_mode_duration_ms as u64,
+        ));
+    }
+
+    /// Ask the device to be active for (at least) `duration` from now.
+    pub fn request_active_for(&self, duration: Duration) {
+        self.extend_active_for(duration);
+    }
+
+    fn extend_active_for(&self, duration: Duration) {
+        let changed = self.state.lock(|s| s.borrow_mut().extend_active(duration));
+
+        if changed {
+            self.notify_changed();
+            self.nudged.notify();
+        }
+    }
+
+    /// Record whether a commissioning window is open: an open window means the
+    /// device has to be reachable, so it (re)enters active mode and stays
+    /// there until the window closes.
+    fn set_comm_window_open(&self, open: bool) {
+        let changed = self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            if s.comm_window_open == open {
+                return false;
+            }
+
+            s.comm_window_open = open;
+
+            if open {
+                s.extend_active(Duration::from_millis(0));
+            }
+
+            true
+        });
+
+        if changed {
+            self.notify_changed();
+            self.nudged.notify();
+        }
+    }
+
+    /// Set the fast (active) and slow (idle) polling intervals.
+    fn set_poll_intervals(&self, fast_poll_ms: u32, slow_poll_ms: u32) {
+        self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            s.fast_poll_ms = fast_poll_ms;
+            s.slow_poll_ms = slow_poll_ms;
+        });
+
+        self.notify_changed();
+    }
+
+    /// Run the power mode state machine. Driven by the handler's `run` hook.
+    ///
+    /// - takes the polling intervals from the advertised `SAI` / `SII` of the
+    ///   node's `BasicInfoConfig`;
+    /// - starts in active mode for `ActiveModeDuration`, as a freshly booted
+    ///   ICD does, and sends the Check-Ins of a LIT right away;
+    /// - feeds the transport's activity and the commissioning window state in;
+    /// - expires the active window into idle mode, wakes up from idle mode
+    ///   after `IdleModeDuration`, and sends the Check-Ins on every such wake-up.
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        let matter = ctx.matter();
+        let transport = matter.transport();
+
+        let dev_det = matter.dev_det();
+        self.set_poll_intervals(
+            dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS),
+            dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS),
+        );
+
+        self.set_comm_window_open(matter.comm_window_state().is_open());
+        self.request_active();
+
+        let mut activity = pin!(async {
+            loop {
+                transport.wait_activity().await;
+                self.network_activity();
+            }
+        });
+
+        let mut comm_window = pin!(async {
+            loop {
+                transport.wait_comm_window_changed().await;
+                self.set_comm_window_open(matter.comm_window_state().is_open());
+            }
+        });
+
+        let mut duty = pin!(self.run_power_mode(&ctx));
+
+        match select3(&mut activity, &mut comm_window, &mut duty).await {
+            Either3::Third(result) => result,
+            _ => unreachable!(),
+        }
+    }
+
+    /// The idle <-> active loop.
+    async fn run_power_mode(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
+        // A LIT that (re)starts is waking up from its sleep, as far as its
+        // clients are concerned.
+        self.send_check_ins(ctx).await?;
+
+        loop {
+            match self.power_mode() {
+                IcdPowerMode::Active => self.run_active().await,
+                IcdPowerMode::Idle => {
+                    if self.run_idle().await {
+                        self.send_check_ins(ctx).await?;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Stay in active mode until the active deadline passes without being
+    /// extended, then switch to idle mode.
+    async fn run_active(&self) {
+        loop {
+            let (deadline, comm_window_open) = self.state.lock(|s| {
+                let s = s.borrow();
+
+                (s.active_deadline(), s.comm_window_open)
+            });
+
+            if comm_window_open {
+                // Commissionable: stay active until the window closes, whatever
+                // the deadline says.
+                self.nudged.wait().await;
+                continue;
+            }
+
+            if let Either::Second(()) = select(Timer::at(deadline), self.nudged.wait()).await {
+                // Something extended the deadline (or closed the window): re-read.
+                continue;
+            }
+
+            // The deadline might have moved meanwhile, so re-check under the
+            // lock before switching.
+            let switched = self.state.lock(|s| {
+                let mut s = s.borrow_mut();
+
+                if s.comm_window_open || s.active_deadline() > Instant::now() {
+                    return false;
+                }
+
+                s.power_mode = IcdPowerMode::Idle;
+                s.idle_until =
+                    Instant::now() + Duration::from_secs(self.mode.idle_mode_duration_s as u64);
+
+                true
+            });
+
+            if switched {
+                info!("ICD: idle mode");
+                self.notify_changed();
+                return;
+            }
+        }
+    }
+
+    /// Stay in idle mode until `IdleModeDuration` elapses (returning `true`: a
+    /// wake-up on the device's own schedule) or until a nudge has switched the
+    /// device to active mode already (returning `false`).
+    async fn run_idle(&self) -> bool {
+        loop {
+            let (idle_until, power_mode) = self.state.lock(|s| {
+                let s = s.borrow();
+
+                (s.idle_until, s.power_mode)
+            });
+
+            if power_mode != IcdPowerMode::Idle {
+                return false;
+            }
+
+            if let Either::Second(()) = select(Timer::at(idle_until), self.nudged.wait()).await {
+                // A nudge - either it switched us to active mode (checked at
+                // the top of the loop), or the operating mode changed, which
+                // `changed` already announced.
+                continue;
+            }
+
+            let woke = self.state.lock(|s| {
+                let mut s = s.borrow_mut();
+
+                if s.power_mode != IcdPowerMode::Idle {
+                    return false;
+                }
+
+                s.power_mode = IcdPowerMode::Active;
+                s.active_until = Instant::now()
+                    + Duration::from_millis(self.mode.active_mode_duration_ms as u64);
+
+                true
+            });
+
+            if woke {
+                info!("ICD: active mode (idle period elapsed)");
+                self.notify_changed();
+                return true;
+            }
+        }
+    }
+
+    /// Send a Check-In to every registered client whose monitored subject has
+    /// no live subscription, then advance (and, on an epoch boundary, persist)
+    /// the Check-In counter.
+    ///
+    /// Best-effort per client, with a timeout per send so that an unresolvable
+    /// client cannot keep the device awake; only a counter persistence failure
+    /// is an error.
+    async fn send_check_ins(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
+        let stats = ctx.im_stats();
+
+        let mut targets: Vec<(NonZeroU8, u64), MAX_REGISTERED_CLIENTS> = Vec::new();
+
+        self.with_registrations(|registrations| {
+            for r in registrations {
+                // A CAT-valued monitored subject won't match here (we compare
+                // against subscriber node ids), so such a client is treated as
+                // unsubscribed and always nudged.
+                if stats.has_subscription_for(r.fab_idx, r.monitored_subject) {
+                    continue;
+                }
+
+                // Capacity matches the registration store, so this cannot fail.
+                let _ = targets.push((r.fab_idx, r.check_in_node_id));
+            }
+        });
+
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        let matter = ctx.matter();
+        let crypto = ctx.crypto();
+        let counter = self.next_counter();
+        let mut buf = [0; CHECK_IN_BUF_LEN];
+
+        for (fab_idx, node_id) in &targets {
+            info!("ICD: Check-In to fabric {} node {:#x}", fab_idx, node_id);
+
+            let send =
+                self.send_one_check_in(matter, &crypto, *fab_idx, *node_id, counter, &mut buf);
+
+            match with_timeout(CHECK_IN_TIMEOUT, send).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => warn!(
+                    "ICD: Check-In to fabric {} node {:#x} failed: {:?}",
+                    fab_idx, node_id, err
+                ),
+                Err(_) => warn!(
+                    "ICD: Check-In to fabric {} node {:#x} timed out",
+                    fab_idx, node_id
+                ),
+            }
+        }
+
+        // All messages of the batch shared `counter`; advance once.
+        ctx.kv()
+            .access(|store, kv_buf| self.advance_counter(store, kv_buf))
     }
 
     // --- Sending Check-In messages ---
@@ -581,10 +1077,10 @@ impl Icd {
     /// A per-client convenience over [`CheckIn::send_to`]; it looks up the
     /// client's key and sends with the ICD application data (the
     /// `ActiveModeThreshold`). It does *not* advance the counter — the caller
-    /// owns that so a batch can share one value (see [`send_check_in`](Self::send_check_in)).
+    /// owns that so a batch can share one value (see `send_check_ins`).
     ///
     /// Requires a running mDNS responder to service the address resolve.
-    pub async fn send_one_check_in<C: Crypto>(
+    async fn send_one_check_in<C: Crypto>(
         &self,
         matter: &Matter<'_>,
         crypto: C,
@@ -611,60 +1107,6 @@ impl Icd {
         CheckIn::new(key.reference())
             .send_to(matter, crypto, fab_idx, node_id, counter, &app_data, buf)
             .await
-    }
-
-    /// Send a Check-In message to every registered client whose monitored
-    /// subject has **no active subscription** — the clients that have lost touch
-    /// and need a nudge.
-    ///
-    /// All messages in the batch share one counter value; the counter is advanced
-    /// and persisted once at the end. Errors sending to individual clients are
-    /// swallowed (best-effort) so one unreachable client does not block the rest;
-    /// only a counter-persist failure is returned.
-    ///
-    /// Requires a running mDNS responder to service the address resolves.
-    pub async fn send_check_in<C: Crypto, const NS: usize>(
-        &self,
-        matter: &Matter<'_>,
-        crypto: C,
-        subscriptions: &crate::im::subscriptions::Subscriptions<NS>,
-        kv: impl KvBlobStore,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        // Snapshot the eligible clients under the lock — sending is `async`, so
-        // neither the ICD nor the subscriptions lock may be held across an
-        // `await`. The subscription-liveness check is a quick locked lookup.
-        let mut targets: Vec<(NonZeroU8, u64, CanonAeadKey), MAX_REGISTERED_CLIENTS> = Vec::new();
-
-        let counter = self.state.lock(|s| {
-            let state = s.borrow();
-            for c in &state.clients {
-                // A CAT-valued monitored subject won't match here (we compare
-                // against subscriber node ids), so such a client is treated as
-                // unsubscribed and always nudged.
-                if subscriptions.has_subscription_for(c.fab_idx, c.monitored_subject) {
-                    continue;
-                }
-                // Capacity matches the client list, so this cannot overflow.
-                let _ = targets.push((c.fab_idx, c.check_in_node_id, c.key.clone()));
-            }
-            state.counter.next()
-        });
-
-        if targets.is_empty() {
-            return Ok(());
-        }
-
-        let app_data = self.mode.active_mode_threshold_ms.to_le_bytes();
-
-        for (fab_idx, node_id, key) in &targets {
-            // Best-effort: keep sending to the rest even if one fails to resolve.
-            let _ = CheckIn::new(key.reference())
-                .send_to(matter, &crypto, *fab_idx, *node_id, counter, &app_data, buf)
-                .await;
-        }
-
-        self.advance_counter(kv, buf)
     }
 }
 
@@ -803,6 +1245,10 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
                 Ok(())
             }
         }
+    }
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        self.icd.run(ctx).await
     }
 
     fn idle_mode_duration(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
