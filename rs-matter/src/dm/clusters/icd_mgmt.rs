@@ -295,23 +295,47 @@ impl IcdState {
     }
 
     /// Extend the active window to at least `duration` from now, entering
-    /// active mode if idle. Returns whether anything changed.
-    fn extend_active(&mut self, duration: Duration) -> bool {
+    /// active mode if idle.
+    fn extend_active(&mut self, duration: Duration) -> ActiveExtension {
         let deadline = Instant::now() + duration;
 
-        let mut changed = false;
-
-        if self.power_mode != IcdPowerMode::Active {
+        let mode_changed = if self.power_mode != IcdPowerMode::Active {
             self.power_mode = IcdPowerMode::Active;
-            changed = true;
-        }
+            true
+        } else {
+            false
+        };
 
-        if deadline > self.active_until {
+        let deadline_moved = if deadline > self.active_until {
             self.active_until = deadline;
-            changed = true;
-        }
+            true
+        } else {
+            false
+        };
 
-        changed
+        ActiveExtension {
+            mode_changed,
+            deadline_moved,
+        }
+    }
+}
+
+/// What extending the active window ([`IcdState::extend_active`]) did.
+///
+/// The observers (the network driver, the application) are told about the
+/// first alone - the deadline is the state machine's own business - while the
+/// state machine has to re-read its state on either.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ActiveExtension {
+    /// The device was idle and is active now.
+    mode_changed: bool,
+    /// The active deadline moved out.
+    deadline_moved: bool,
+}
+
+impl ActiveExtension {
+    fn any(self) -> bool {
+        self.mode_changed || self.deadline_moved
     }
 }
 
@@ -442,8 +466,13 @@ impl Icd {
     /// Returns `Err(ResourceExhausted)` if a *new* entry would exceed the
     /// per-fabric limit ([`CLIENTS_PER_FABRIC`]).
     fn register(&self, registration: MonitoringRegistration) -> Result<(), Error> {
-        self.state.lock(|s| -> Result<(), Error> {
+        // The first registration flips the operating mode (SIT -> LIT), which
+        // the network driver follows; a further one, or an update, is nothing
+        // it needs to hear about.
+        let flipped = self.state.lock(|s| -> Result<bool, Error> {
             let clients = &mut s.borrow_mut().clients;
+
+            let was_empty = clients.is_empty();
 
             if let Some(existing) = clients.iter_mut().find(|c| {
                 c.fab_idx == registration.fab_idx
@@ -464,11 +493,13 @@ impl Icd {
                     .map_err(|_| ErrorCode::ResourceExhausted)?;
             }
 
-            Ok(())
+            Ok(was_empty)
         })?;
 
-        self.notify_changed();
-        self.nudged.notify();
+        if flipped {
+            self.notify_net_changed();
+            self.nudged.notify();
+        }
 
         Ok(())
     }
@@ -477,19 +508,25 @@ impl Icd {
     ///
     /// Returns `Err(NotFound)` if there is no such registration.
     fn unregister(&self, fab_idx: NonZeroU8, check_in_node_id: u64) -> Result<(), Error> {
-        let removed = self.state.lock(|s| {
+        let (removed, flipped) = self.state.lock(|s| {
             let clients = &mut s.borrow_mut().clients;
             let before = clients.len();
             clients.retain(|c| !(c.fab_idx == fab_idx && c.check_in_node_id == check_in_node_id));
-            clients.len() != before
+
+            let removed = clients.len() != before;
+
+            // Removing the last registration flips the operating mode (LIT -> SIT).
+            (removed, removed && clients.is_empty())
         });
 
         if !removed {
             Err(ErrorCode::NotFound)?;
         }
 
-        self.notify_changed();
-        self.nudged.notify();
+        if flipped {
+            self.notify_net_changed();
+            self.nudged.notify();
+        }
 
         Ok(())
     }
@@ -527,15 +564,19 @@ impl Icd {
     ///
     /// Call when a fabric is removed. Returns whether anything was removed.
     fn remove_fabric(&self, fab_idx: NonZeroU8) -> bool {
-        let removed = self.state.lock(|s| {
+        let (removed, flipped) = self.state.lock(|s| {
             let clients = &mut s.borrow_mut().clients;
             let before = clients.len();
             clients.retain(|c| c.fab_idx != fab_idx);
-            clients.len() != before
+
+            let removed = clients.len() != before;
+
+            // Removing the last registration flips the operating mode (LIT -> SIT).
+            (removed, removed && clients.is_empty())
         });
 
-        if removed {
-            self.notify_changed();
+        if flipped {
+            self.notify_net_changed();
             self.nudged.notify();
         }
 
@@ -580,14 +621,31 @@ impl Icd {
         let now = Instant::now();
         let requested = now.saturating_add(Duration::from_millis(duration_ms as u64));
 
-        let deadline = self.state.lock(|s| {
-            let stay = &mut s.borrow_mut().stay_active_until;
-            let deadline = stay.map_or(requested, |current| current.max(requested));
-            *stay = Some(deadline);
-            deadline
+        let (deadline, mode_changed) = self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            let deadline = s
+                .stay_active_until
+                .map_or(requested, |current| current.max(requested));
+            s.stay_active_until = Some(deadline);
+
+            // Asked to stay active, so be active - which the device normally is
+            // already, the request having arrived over the network.
+            let mode_changed = if s.power_mode != IcdPowerMode::Active {
+                s.power_mode = IcdPowerMode::Active;
+                true
+            } else {
+                false
+            };
+
+            (deadline, mode_changed)
         });
 
-        self.notify_changed();
+        if mode_changed {
+            self.notify_power_changed();
+        }
+
+        // The state machine has a new deadline to wait for either way.
         self.nudged.notify();
 
         // Remaining time to the deadline (0 if it somehow already passed).
@@ -704,10 +762,10 @@ impl Icd {
 
         self.reseed_counter(Self::random_counter_start(crypto)?);
 
-        // Dropping the last registration flips the operating mode to SIT, so
-        // let the application re-advertise mDNS.
+        // Dropping the last registration flips the operating mode to SIT, which
+        // the network driver follows.
         if had_registrations {
-            self.notify_changed();
+            self.notify_net_changed();
             self.nudged.notify();
         }
 
@@ -744,8 +802,8 @@ impl Icd {
         })
     }
 
-    /// Wait until the power mode or the net params may have changed, then
-    /// re-read them.
+    /// Wait until the net params changed - the power mode, the operating mode
+    /// or the polling intervals - then re-read them.
     ///
     /// For the *network driver* (the one following
     /// [`net_params`](Self::net_params)): a single-waiter notification, so
@@ -755,7 +813,7 @@ impl Icd {
         self.net_changed.wait().await
     }
 
-    /// Wait until the power mode may have changed, then re-read it.
+    /// Wait until the power mode changed, then re-read it.
     ///
     /// For the *application* (the one deciding whether the MCU may sleep): a
     /// single-waiter notification, so exactly one task should wait on it -
@@ -779,10 +837,17 @@ impl Icd {
         }
     }
 
-    /// Announce a (possible) power mode / net params change to both waiters.
-    fn notify_changed(&self) {
+    /// Announce a power mode change: to the application, and to the network
+    /// driver, whose net params changed with it.
+    fn notify_power_changed(&self) {
         self.net_changed.notify();
         self.power_changed.notify();
+    }
+
+    /// Announce a net params change that leaves the power mode alone (the
+    /// operating mode, the polling intervals): to the network driver only.
+    fn notify_net_changed(&self) {
+        self.net_changed.notify();
     }
 
     /// Note network activity: keep the device active for at least
@@ -812,10 +877,16 @@ impl Icd {
     }
 
     fn extend_active_for(&self, duration: Duration) {
-        let changed = self.state.lock(|s| s.borrow_mut().extend_active(duration));
+        let extension = self.state.lock(|s| s.borrow_mut().extend_active(duration));
 
-        if changed {
-            self.notify_changed();
+        // Every message received moves the deadline out, and neither the
+        // network driver nor the application has anything to do about that;
+        // the state machine re-arms its timer on the nudge.
+        if extension.mode_changed {
+            self.notify_power_changed();
+        }
+
+        if extension.any() {
             self.nudged.notify();
         }
     }
@@ -828,34 +899,42 @@ impl Icd {
             let mut s = s.borrow_mut();
 
             if s.comm_window_open == open {
-                return false;
+                return None;
             }
 
             s.comm_window_open = open;
 
-            if open {
-                s.extend_active(Duration::from_millis(0));
-            }
+            let mode_changed = open && s.extend_active(Duration::from_millis(0)).mode_changed;
 
-            true
+            Some(mode_changed)
         });
 
-        if changed {
-            self.notify_changed();
+        if let Some(mode_changed) = changed {
+            if mode_changed {
+                self.notify_power_changed();
+            }
+
+            // The state machine ignores or honors the deadline depending on the window.
             self.nudged.notify();
         }
     }
 
     /// Set the fast (active) and slow (idle) polling intervals.
     fn set_poll_intervals(&self, fast_poll_ms: u32, slow_poll_ms: u32) {
-        self.state.lock(|s| {
+        let changed = self.state.lock(|s| {
             let mut s = s.borrow_mut();
+
+            let changed = s.fast_poll_ms != fast_poll_ms || s.slow_poll_ms != slow_poll_ms;
 
             s.fast_poll_ms = fast_poll_ms;
             s.slow_poll_ms = slow_poll_ms;
+
+            changed
         });
 
-        self.notify_changed();
+        if changed {
+            self.notify_net_changed();
+        }
     }
 
     /// Run the power mode state machine. Driven by the handler's `run` hook.
@@ -960,7 +1039,7 @@ impl Icd {
 
             if switched {
                 info!("ICD: idle mode");
-                self.notify_changed();
+                self.notify_power_changed();
                 return;
             }
         }
@@ -1004,7 +1083,7 @@ impl Icd {
 
             if woke {
                 info!("ICD: active mode (idle period elapsed)");
-                self.notify_changed();
+                self.notify_power_changed();
                 return true;
             }
         }
@@ -1463,6 +1542,141 @@ mod tests {
                 .map(|c| c.check_in_node_id)
                 .collect()
         })
+    }
+
+    /// Whether `notification` has been signalled since it was last waited on
+    /// (consuming the signal).
+    fn notified(notification: &Notification) -> bool {
+        use core::future::Future;
+        use core::task::{Context, Poll, Waker};
+
+        let mut wait = core::pin::pin!(notification.wait());
+
+        matches!(
+            wait.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(())
+        )
+    }
+
+    /// Put the device in idle mode, the way `run_active` does once the active
+    /// deadline passes.
+    fn go_idle(icd: &Icd) {
+        icd.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            s.power_mode = IcdPowerMode::Idle;
+            s.idle_until = Instant::now() + Duration::from_secs(60);
+        });
+    }
+
+    #[test]
+    fn activity_signals_the_observers_only_when_it_wakes_the_device() {
+        let icd = icd();
+
+        // Active from the start: more activity moves the deadline out, which
+        // is the state machine's business alone.
+        icd.network_activity();
+        assert!(notified(&icd.nudged));
+        assert!(!notified(&icd.net_changed));
+        assert!(!notified(&icd.power_changed));
+
+        go_idle(&icd);
+
+        icd.network_activity();
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+        assert!(notified(&icd.nudged));
+        assert!(notified(&icd.net_changed));
+        assert!(notified(&icd.power_changed));
+    }
+
+    #[test]
+    fn stay_active_request_wakes_an_idle_device() {
+        let icd = icd();
+        go_idle(&icd);
+
+        icd.extend_active(1_000);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+        assert!(notified(&icd.nudged));
+        assert!(notified(&icd.net_changed));
+        assert!(notified(&icd.power_changed));
+
+        // Active already: a further request only moves the deadline out.
+        icd.extend_active(2_000);
+        assert!(notified(&icd.nudged));
+        assert!(!notified(&icd.net_changed));
+        assert!(!notified(&icd.power_changed));
+    }
+
+    #[test]
+    fn comm_window_signals_the_observers_only_when_it_wakes_the_device() {
+        let icd = icd();
+
+        // Active already: the window changes what the state machine does with
+        // the deadline, and nothing the observers see.
+        icd.set_comm_window_open(true);
+        assert!(notified(&icd.nudged));
+        assert!(!notified(&icd.net_changed));
+        assert!(!notified(&icd.power_changed));
+
+        // No change at all.
+        icd.set_comm_window_open(true);
+        assert!(!notified(&icd.nudged));
+
+        icd.set_comm_window_open(false);
+        assert!(notified(&icd.nudged));
+        assert!(!notified(&icd.power_changed));
+
+        go_idle(&icd);
+
+        icd.set_comm_window_open(true);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+        assert!(notified(&icd.nudged));
+        assert!(notified(&icd.net_changed));
+        assert!(notified(&icd.power_changed));
+    }
+
+    #[test]
+    fn registrations_signal_the_network_driver_only_on_a_sit_lit_flip() {
+        let icd = icd();
+
+        // SIT -> LIT
+        icd.register(reg(1, 100)).unwrap();
+        assert!(notified(&icd.net_changed));
+        assert!(!notified(&icd.power_changed));
+
+        // Still LIT: another client, and an update of the first one.
+        icd.register(reg(1, 101)).unwrap();
+        icd.register(reg(1, 100)).unwrap();
+        assert!(!notified(&icd.net_changed));
+
+        // Still LIT.
+        icd.unregister(fab(1), 101).unwrap();
+        assert!(!notified(&icd.net_changed));
+
+        // LIT -> SIT
+        icd.unregister(fab(1), 100).unwrap();
+        assert!(notified(&icd.net_changed));
+        assert!(!notified(&icd.power_changed));
+
+        // The same over a fabric removal.
+        icd.register(reg(2, 200)).unwrap();
+        assert!(notified(&icd.net_changed));
+        assert!(icd.remove_fabric(fab(2)));
+        assert!(notified(&icd.net_changed));
+        assert!(!icd.remove_fabric(fab(2)));
+        assert!(!notified(&icd.net_changed));
+    }
+
+    #[test]
+    fn poll_intervals_signal_the_network_driver_only_when_they_change() {
+        let icd = icd();
+
+        icd.set_poll_intervals(500, 20_000);
+        assert!(notified(&icd.net_changed));
+        assert!(!notified(&icd.power_changed));
+
+        icd.set_poll_intervals(500, 20_000);
+        assert!(!notified(&icd.net_changed));
     }
 
     #[test]
