@@ -1788,4 +1788,159 @@ mod tests {
         // boot does not resume the decommissioned device's sequence.
         assert_ne!(icd.next_counter(), before_reset);
     }
+
+    /// Put the ICD into idle mode directly, bypassing the async loop.
+    fn force_idle(icd: &Icd) {
+        icd.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            s.power_mode = IcdPowerMode::Idle;
+            s.idle_until = Instant::now() + Duration::from_secs(60);
+        });
+    }
+
+    fn active_until(icd: &Icd) -> Instant {
+        icd.state.lock(|s| s.borrow().active_until)
+    }
+
+    #[test]
+    fn sit_caps_the_slow_poll_interval_until_a_client_registers() {
+        let icd = icd();
+
+        // The defaults, before `run` has read the advertised intervals.
+        let params = icd.net_params();
+        assert_eq!(params.power_mode, IcdPowerMode::Active);
+        assert_eq!(params.operating_mode, OperatingModeEnum::SIT);
+        assert_eq!(params.poll_interval_ms, DEFAULT_FAST_POLL_MS);
+        assert_eq!(params.max_poll_interval_ms, DEFAULT_SLOW_POLL_MS);
+
+        // A LIT-capable configuration: a slow poll far beyond the SIT cap.
+        icd.set_poll_intervals(300, 900_000);
+        force_idle(&icd);
+
+        // No registered client -> operating as SIT -> capped while idle.
+        let params = icd.net_params();
+        assert_eq!(params.operating_mode, OperatingModeEnum::SIT);
+        assert_eq!(params.poll_interval_ms, SIT_SLOW_POLL_MAX_MS);
+        // ... but the driver still learns the slowest interval it may ever see.
+        assert_eq!(params.max_poll_interval_ms, 900_000);
+
+        // A registered client -> LIT -> the full interval.
+        icd.register(reg(1, 100)).unwrap();
+        let params = icd.net_params();
+        assert_eq!(params.operating_mode, OperatingModeEnum::LIT);
+        assert_eq!(params.poll_interval_ms, 900_000);
+
+        // Back to SIT once it is gone.
+        icd.unregister(fab(1), 100).unwrap();
+        assert_eq!(icd.net_params().poll_interval_ms, SIT_SLOW_POLL_MAX_MS);
+
+        // A slow interval within the cap is never raised to it.
+        icd.set_poll_intervals(300, 5_000);
+        assert_eq!(icd.net_params().poll_interval_ms, 5_000);
+    }
+
+    #[test]
+    fn net_params_follow_the_power_mode() {
+        let icd = icd();
+        icd.set_poll_intervals(200, 10_000);
+
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+        assert_eq!(icd.net_params().poll_interval_ms, 200);
+        assert!(icd.idle_until().is_none());
+
+        force_idle(&icd);
+
+        assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
+        assert_eq!(icd.net_params().poll_interval_ms, 10_000);
+        assert!(icd.idle_until().is_some());
+    }
+
+    #[test]
+    fn activity_and_requests_wake_the_device_and_extend_the_window() {
+        let icd = icd();
+        force_idle(&icd);
+
+        // Network activity: active for at least `ActiveModeThreshold`.
+        let before = Instant::now();
+        icd.network_activity();
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+        assert!(icd.idle_until().is_none());
+        let after_activity = active_until(&icd);
+        assert!(after_activity >= before + Duration::from_millis(500));
+
+        // A user trigger: `ActiveModeDuration` (300 ms here) is *shorter* than the threshold,
+        // so it must not pull the deadline back in.
+        icd.request_active();
+        assert_eq!(active_until(&icd), after_activity);
+
+        // An explicit, longer request moves it out.
+        icd.request_active_for(Duration::from_secs(5));
+        assert!(active_until(&icd) >= before + Duration::from_secs(5));
+
+        // A shorter one afterwards leaves it alone: the deadline only ever grows.
+        let extended = active_until(&icd);
+        icd.request_active_for(Duration::from_millis(1));
+        assert_eq!(active_until(&icd), extended);
+    }
+
+    #[test]
+    fn open_commissioning_window_wakes_the_device() {
+        let icd = icd();
+        force_idle(&icd);
+
+        icd.set_comm_window_open(true);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+
+        // Closing it does not switch modes by itself; the loop lets the window expire.
+        icd.set_comm_window_open(false);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+
+        // Idempotent: no state change, no spurious nudge.
+        icd.set_comm_window_open(false);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+    }
+
+    /// The two halves of the loop, driven in real time with short durations: the active
+    /// window expires into idle mode, and the idle period expires back into active mode.
+    #[test]
+    fn active_window_expires_into_idle_and_idle_period_wakes_up() {
+        let icd = Icd::new(
+            10,
+            IcdModeConfig {
+                idle_mode_duration_s: 1,
+                active_mode_duration_ms: 50,
+                active_mode_threshold_ms: 50,
+                ..mode()
+            },
+        );
+
+        // Boot: active for `ActiveModeDuration`. `start` is taken before the request, as the
+        // deadline is measured from the request.
+        let start = Instant::now();
+        icd.request_active();
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+
+        embassy_futures::block_on(icd.run_active());
+
+        assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
+        assert!(start.elapsed() >= Duration::from_millis(50));
+        let idle_until = icd.idle_until().expect("idle");
+        assert!(idle_until >= start + Duration::from_secs(1));
+
+        // Idle mode ends by itself after `IdleModeDuration`: a scheduled wake-up.
+        let woke = embassy_futures::block_on(icd.run_idle());
+
+        assert!(woke);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+        assert!(Instant::now() >= idle_until);
+
+        // A nudge during idle mode ends it early, and is *not* a scheduled wake-up.
+        force_idle(&icd);
+        icd.network_activity();
+        let woke = embassy_futures::block_on(icd.run_idle());
+
+        assert!(!woke);
+        assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+    }
 }
