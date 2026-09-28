@@ -221,14 +221,22 @@ impl<const N: usize> Subscriptions<N> {
     /// whether a registered client is nudged with a Check-In. Persisted
     /// subscriptions are re-hydrated into this same table at startup
     /// (`resume_subscriptions`), so a resumed subscription counts here too — no
-    /// separate "persisted subscription" lookup is needed.
+    /// separate "persisted subscription" lookup is needed - until it turns out
+    /// that its subscriber cannot be reached: a subscription whose last report
+    /// failed to be delivered, or a resumed one that failed to be re-primed on
+    /// an earlier wake-up, does not count. Its subscriber is exactly the client
+    /// a Check-In is for (it may well have torn the subscription down already,
+    /// and the reference implementation does tear it down on its side once the
+    /// retransmissions are exhausted), so it must not be silenced by what is
+    /// left of that subscription here, which keeps being retried on its own.
     pub fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool {
         self.state.lock(|internal| {
-            internal
-                .borrow()
-                .subscriptions
-                .iter()
-                .any(|s| s.ids.fab_idx == fab_idx && s.ids.peer_node_id == node_id)
+            internal.borrow().subscriptions.iter().any(|s| {
+                s.ids.fab_idx == fab_idx
+                    && s.ids.peer_node_id == node_id
+                    && s.fail_count == 0
+                    && !(s.is_unprimed_resume() && s.resume_attempts > 0)
+            })
         })
     }
 
@@ -377,6 +385,8 @@ impl<const N: usize> Subscriptions<N> {
             next_reported_at: now,
             next_retry_at: Instant::MIN,
             next_fail_count: 0,
+            next_resumed_at: Instant::MAX,
+            next_resume_attempts: 0,
             keep: false,
         })
     }
@@ -475,6 +485,8 @@ impl<const N: usize> Subscriptions<N> {
             Some((sub, buf, attr_change_ids_watermark))
         })?;
 
+        let (next_resumed_at, next_resume_attempts) = (sub.resumed_at, sub.resume_attempts);
+
         Some(ReportContext {
             subscriptions: self,
             subscriptions_buffers: buffers,
@@ -485,6 +497,8 @@ impl<const N: usize> Subscriptions<N> {
             next_reported_at: now,
             next_retry_at: Instant::MIN,
             next_fail_count: 0,
+            next_resumed_at,
+            next_resume_attempts,
             keep: false,
         })
     }
@@ -527,6 +541,8 @@ impl<const N: usize> Subscriptions<N> {
         sub.reported_at = report.next_reported_at;
         sub.retry_at = report.next_retry_at;
         sub.fail_count = report.next_fail_count;
+        sub.resumed_at = report.next_resumed_at;
+        sub.resume_attempts = report.next_resume_attempts;
 
         let keep = report.keep;
 
@@ -610,6 +626,7 @@ impl<const N: usize> Subscriptions<N> {
                     max_int_secs: sub.max_int_secs,
                     subscribe_req: Octets(rx.as_ref()),
                     id: sub.ids.id,
+                    resume_attempts: (sub.resume_attempts > 0).then_some(sub.resume_attempts),
                 };
 
                 // Serialize into the front of `buf`, leaving the tail as the store's
@@ -717,11 +734,17 @@ impl<const N: usize> Subscriptions<N> {
                     //
                     // Leaving `reported_at` at the `Instant::MAX` priming sentinel
                     // (rather than stamping it with `now`) is what marks it un-primed.
+                    //
+                    // The resume instant anchors its expiry until it is re-primed,
+                    // and the wake-ups already spent on it carry over from the
+                    // record (`set_resumed` goes last: `set_keep` zeroes them).
                     rctx.next_reported_at = Instant::MAX;
                     rctx.set_keep();
+                    rctx.set_resumed(now, record.resume_attempts.unwrap_or(0));
                     info!(
-                        "Resumed persisted subscription {:?}",
-                        rctx.subscription().ids()
+                        "Resumed persisted subscription {:?} (wake-ups spent resuming it: {})",
+                        rctx.subscription().ids(),
+                        record.resume_attempts.unwrap_or(0)
                     );
                 }
                 None => {
@@ -878,6 +901,8 @@ impl<const N: usize> SubscriptionsInner<N> {
             reported_at: Instant::MAX,
             retry_at: Instant::MIN,
             fail_count: 0,
+            resumed_at: Instant::MAX,
+            resume_attempts: 0,
             max_seen_attr_change_id,
             // Start at 0 so the priming report delivers every event that was
             // already in the event buffer at subscribe time. The reader will
@@ -1058,7 +1083,26 @@ struct PersistedSubscription<'a> {
     /// The subscription ID the subscriber knows this subscription by. Reports
     /// carry it, so it must survive a reboot unchanged.
     id: u32,
+    /// How many wake-ups the subscription has failed to be resumed on so far
+    /// (see [`MAX_RESUME_ATTEMPTS`]). Absent while zero, which also keeps the
+    /// records of older versions readable.
+    resume_attempts: Option<u8>,
 }
+
+/// How many wake-ups (boots) a subscription resumed from persistent storage is
+/// given to deliver its first report again before it is given up on.
+///
+/// The count is persisted with the record, so it spans reboots - the case that
+/// needs it: a device that deep-sleeps between wake-ups starts each of them with
+/// a fresh clock and a fresh back-off, against the same unreachable subscriber.
+/// Within one boot a resumed subscription expires `max_int` after the resume
+/// like any other (see [`Subscription::is_expired`]).
+///
+/// Three wake-ups sees a subscriber through a reboot of its own without keeping
+/// a subscriber that is gone (a phone, say) around for long. For comparison, the
+/// reference implementation drops the record on the first failure on an ICD with
+/// Check-In clients, and after ten Fibonacci-spaced retries elsewhere.
+pub const MAX_RESUME_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1082,6 +1126,16 @@ pub struct Subscription {
     /// Number of consecutive failed report attempts, driving the retry back-off.
     /// Reset to `0` on any successful report.
     fail_count: u8,
+    /// The instant this subscription was resumed from persistent storage, or
+    /// `Instant::MAX` if it was not (accepted live). Anchors [`Self::is_expired`]
+    /// until the resumed subscription is re-primed - a resumed one has no last
+    /// successful report to measure from.
+    resumed_at: Instant,
+    /// How many wake-ups (boots) a resumed subscription has failed to be re-primed
+    /// on, persisted with its record so that it counts across reboots. `0` for a
+    /// subscription accepted live, and again once a report gets through. Gives up
+    /// at [`MAX_RESUME_ATTEMPTS`].
+    resume_attempts: u8,
     /// The largest attribute change ID from the [`ChangedAttributes`] table this subscription
     /// has already reported on. Entries with a larger change ID represent pending changes the subscription still needs to emit.
     max_seen_attr_change_id: u64,
@@ -1095,9 +1149,27 @@ impl Subscription {
         &self.ids
     }
 
+    /// Whether this subscription was resumed from persistent storage and has not
+    /// delivered a report since.
+    fn is_unprimed_resume(&self) -> bool {
+        self.reported_at == Instant::MAX && self.resumed_at != Instant::MAX
+    }
+
     /// Return `true` if the subscription is expired and should be removed, or `false` if it is still active.
+    ///
+    /// Expiry is `max_int` after the last successful report - or, for a
+    /// subscription resumed after a reboot and not re-primed yet, `max_int`
+    /// after the resume: the subscriber measures its own liveness from the last
+    /// report it received, so one that could not be reached for that long since
+    /// we came back has torn the subscription down on its side already.
     pub fn is_expired(&self, now: Instant) -> bool {
-        self.reported_at
+        let since = if self.is_unprimed_resume() {
+            self.resumed_at
+        } else {
+            self.reported_at
+        };
+
+        since
             .checked_add(embassy_time::Duration::from_secs(self.max_int_secs as _))
             .map(|expiry| expiry <= now)
             .unwrap_or(false)
@@ -1672,6 +1744,14 @@ where
     /// The next consecutive-failure count to commit. `0` (the default) clears the
     /// back-off; a failed send sets it to one more than the subscription's.
     next_fail_count: u8,
+    /// The resume instant to commit: the subscription's own, or `now` when the
+    /// context commits a subscription resumed from persistent storage
+    /// ([`Self::set_resumed`]).
+    next_resumed_at: Instant,
+    /// The resume-attempt count to commit: the subscription's own, one more on the
+    /// first failed send of a wake-up ([`Self::set_keep_retry`]), `0` once a report
+    /// gets through ([`Self::set_keep`]).
+    next_resume_attempts: u8,
     /// Whether the subscription should be kept in the table after the report completes.
     /// Set by the report handler if the other peer acknowledges the data reported by the subscription.
     keep: bool,
@@ -1741,8 +1821,34 @@ where
 
     /// Mark the subscription to be kept in the table after the report completes,
     /// meaning the other peer acknowledged our report.
+    ///
+    /// A delivered report also ends the resume budget of a subscription resumed
+    /// from persistent storage: it is a live subscription again, and the next
+    /// reboot starts counting afresh.
     pub fn set_keep(&mut self) {
         self.keep = true;
+        self.next_resume_attempts = 0;
+    }
+
+    /// Whether the subscription will be kept in the table after the report completes.
+    pub fn is_kept(&self) -> bool {
+        self.keep
+    }
+
+    /// Mark the subscription as resumed from persistent storage at `now`, on its
+    /// `attempts`-th wake-up so far (see [`MAX_RESUME_ATTEMPTS`]).
+    ///
+    /// Called after [`Self::set_keep`], which would otherwise zero the attempts.
+    #[cfg(feature = "persistent-subscriptions")]
+    pub(crate) fn set_resumed(&mut self, now: Instant, attempts: u8) {
+        self.next_resumed_at = now;
+        self.next_resume_attempts = attempts;
+    }
+
+    /// Whether this report changed the resume-attempt count that the persisted
+    /// record carries, i.e. whether the record has to be rewritten.
+    pub fn resume_attempts_changed(&self) -> bool {
+        self.next_resume_attempts != self.subscription().resume_attempts
     }
 
     /// Keep the subscription in the table after a *failed* send to the peer, so it
@@ -1763,17 +1869,46 @@ where
     /// - **A back-off is scheduled.** `retry_at` is pushed to a growing (capped)
     ///   delay from now, so an unreachable peer is retried with exponential
     ///   back-off rather than in a tight loop that would flood the network.
+    ///
+    /// A subscription resumed from persistent storage that has not been re-primed
+    /// yet is on a further budget, of wake-ups: the first failure of each wake-up
+    /// spends one, and once [`MAX_RESUME_ATTEMPTS`] are spent the subscription is
+    /// **not** kept - its subscriber has been unreachable on every wake-up for that
+    /// long. That is what ends the retrying of a device that deep-sleeps and
+    /// reboots between wake-ups, as each of its wake-ups starts with a fresh
+    /// clock and a fresh back-off; and it is what lets an ICD send its Check-In to
+    /// that subscriber again (see [`Subscriptions::has_subscription_for`]).
     pub fn set_keep_retry(&mut self) {
         // Snapshot the values we need off the (borrowed) subscription first, so
         // the writes below don't conflict with the borrow.
         let sub = self.subscription();
-        let (last_attr, last_event, last_reported_at, max_int_secs, fail_count) = (
+        let (last_attr, last_event, last_reported_at, max_int_secs, fail_count, resume_attempts) = (
             sub.max_seen_attr_change_id,
             sub.max_seen_event_number,
             sub.reported_at,
             sub.max_int_secs,
             sub.fail_count.saturating_add(1),
+            // The first failure of this wake-up on a pending resume spends one
+            // of its wake-ups.
+            (sub.is_unprimed_resume() && sub.fail_count == 0)
+                .then(|| sub.resume_attempts.saturating_add(1)),
         );
+
+        if let Some(attempts) = resume_attempts {
+            self.next_resume_attempts = attempts;
+
+            if attempts >= MAX_RESUME_ATTEMPTS {
+                warn!(
+                    "Subscription {:?} could not be resumed on {} wake-ups; giving up on it",
+                    self.subscription().ids(),
+                    attempts
+                );
+
+                self.keep = false;
+
+                return;
+            }
+        }
 
         // The report context's "now" — the instant of *this* (failed) attempt —
         // was captured into `next_reported_at` at construction. Read it before we
@@ -2758,6 +2893,43 @@ mod tests {
         );
     }
 
+    /// A subscriber whose last report failed no longer counts as subscribed for
+    /// the ICD Check-In predicate - it is the client to nudge - and counts again
+    /// once a report gets through.
+    #[test]
+    fn failed_report_makes_the_subscriber_a_check_in_target() {
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+        assert!(subs.has_subscription_for(fab(1), 10));
+
+        subs.notify_attr_changed(1, 2, 3);
+
+        let t1 = now + Duration::from_secs(2);
+        {
+            let mut rctx = unwrap!(subs.report(t1, 0, &subs_bufs));
+            rctx.set_keep_retry();
+        }
+        assert!(
+            !subs.has_subscription_for(fab(1), 10),
+            "a subscriber that could not be reached is one to check in with"
+        );
+
+        // Past the back-off, the retry gets through.
+        let t2 = t1 + Duration::from_secs(10);
+        {
+            let mut rctx = unwrap!(subs.report(t2, 0, &subs_bufs));
+            rctx.set_keep();
+        }
+        assert!(subs.has_subscription_for(fab(1), 10));
+    }
+
     #[test]
     fn success_clears_the_backoff() {
         let subs: Subscriptions<1> = Subscriptions::new();
@@ -3648,6 +3820,164 @@ mod tests {
             assert!(subs2.has_subscription_for(fab(1), 0xAABB));
             assert!(subs2.has_subscription_for(fab(2), 0xCCDD));
             assert!(!subs2.has_subscription_for(fab(1), 0x9999));
+        }
+
+        /// One "boot" of a device holding a single persisted subscription whose
+        /// subscriber cannot be reached: reload the record, attempt the resume,
+        /// fail it, and persist what is left. Returns whether the subscription
+        /// survived the boot.
+        fn boot_and_fail_resume(kv: &mut MemKv, now: Instant) -> bool {
+            let subs: Subscriptions<4> = Subscriptions::new();
+            let pool = TestPool::<5>::new();
+            let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+            let mut buf = [0u8; 512];
+            subs.load_persist(&pool, &subs_bufs, &mut *kv, &mut buf, now, 0)
+                .unwrap();
+
+            // Un-primed, so due at once.
+            let mut rctx = subs.report(now, 0, &subs_bufs).expect("resume report due");
+            rctx.set_keep_retry();
+            let kept = rctx.is_kept();
+            drop(rctx);
+
+            subs.persist_all(&subs_bufs, &mut *kv, &mut buf).unwrap();
+
+            kept
+        }
+
+        /// A resumed subscription whose subscriber cannot be reached is retried on
+        /// a bounded number of wake-ups: the count is persisted with the record,
+        /// and once it is spent the subscription - and its record - are dropped.
+        #[test]
+        fn resume_is_given_up_after_max_attempts_across_boots() {
+            let mut kv = MemKv::default();
+            let now = Instant::now();
+
+            {
+                let subs: Subscriptions<4> = Subscriptions::new();
+                let pool = TestPool::<5>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+                add_sub_with_req(&subs, &subs_bufs, &pool, now, 1, 0xAABB, 1, 60, &[1]);
+
+                let mut buf = [0u8; 512];
+                subs.persist_all(&subs_bufs, &mut kv, &mut buf).unwrap();
+            }
+
+            // A record of a subscription that never failed carries no count (and
+            // is what an older version wrote).
+            let pristine = kv.blobs[&PERSISTENT_SUBSCRIPTIONS_START].clone();
+
+            for attempt in 1..MAX_RESUME_ATTEMPTS {
+                assert!(
+                    boot_and_fail_resume(&mut kv, now),
+                    "attempt {attempt} must keep the subscription"
+                );
+                assert!(
+                    kv.blobs.contains_key(&PERSISTENT_SUBSCRIPTIONS_START),
+                    "attempt {attempt} must keep the record"
+                );
+                assert_ne!(
+                    kv.blobs[&PERSISTENT_SUBSCRIPTIONS_START], pristine,
+                    "attempt {attempt} must be counted in the record"
+                );
+            }
+
+            // The last one gives up, and the record goes with the subscription.
+            assert!(!boot_and_fail_resume(&mut kv, now));
+            assert!(kv.blobs.is_empty());
+        }
+
+        /// Once a resumed subscription gets a report through, its resume budget
+        /// is restored: the next reboot starts counting afresh.
+        #[test]
+        fn resume_budget_is_restored_by_a_delivered_report() {
+            let mut kv = MemKv::default();
+            let now = Instant::now();
+
+            {
+                let subs: Subscriptions<4> = Subscriptions::new();
+                let pool = TestPool::<5>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+                add_sub_with_req(&subs, &subs_bufs, &pool, now, 1, 0xAABB, 1, 60, &[1]);
+
+                let mut buf = [0u8; 512];
+                subs.persist_all(&subs_bufs, &mut kv, &mut buf).unwrap();
+            }
+
+            // Spend all but the last wake-up.
+            for _ in 1..MAX_RESUME_ATTEMPTS {
+                assert!(boot_and_fail_resume(&mut kv, now));
+            }
+
+            // A boot on which the report gets through.
+            {
+                let subs: Subscriptions<4> = Subscriptions::new();
+                let pool = TestPool::<5>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+                let mut buf = [0u8; 512];
+                subs.load_persist(&pool, &subs_bufs, &mut kv, &mut buf, now, 0)
+                    .unwrap();
+
+                // While the resume is pending its wake-ups count is not live for the
+                // ICD predicate...
+                assert!(!subs.has_subscription_for(fab(1), 0xAABB));
+
+                let mut rctx = subs.report(now, 0, &subs_bufs).expect("resume report due");
+                rctx.set_keep();
+                drop(rctx);
+
+                // ...and it is again once re-primed.
+                assert!(subs.has_subscription_for(fab(1), 0xAABB));
+
+                subs.persist_all(&subs_bufs, &mut kv, &mut buf).unwrap();
+            }
+
+            // The budget is full again: as many failing wake-ups as before survive.
+            for _ in 1..MAX_RESUME_ATTEMPTS {
+                assert!(boot_and_fail_resume(&mut kv, now));
+            }
+            assert!(!boot_and_fail_resume(&mut kv, now));
+        }
+
+        /// A resumed subscription that is not re-primed expires `max_int` after the
+        /// resume, so that within one boot it is not retried past the point where
+        /// its subscriber has given up on it.
+        #[test]
+        fn resumed_subscription_expires_max_int_after_the_resume() {
+            let mut kv = MemKv::default();
+            let now = Instant::now();
+
+            {
+                let subs: Subscriptions<4> = Subscriptions::new();
+                let pool = TestPool::<5>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+                add_sub_with_req(&subs, &subs_bufs, &pool, now, 1, 0xAABB, 1, 60, &[1]);
+
+                let mut buf = [0u8; 512];
+                subs.persist_all(&subs_bufs, &mut kv, &mut buf).unwrap();
+            }
+
+            let subs: Subscriptions<4> = Subscriptions::new();
+            let pool = TestPool::<5>::new();
+            let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+            let resumed_at = now + Duration::from_secs(1000);
+            let mut buf = [0u8; 512];
+            subs.load_persist(&pool, &subs_bufs, &mut kv, &mut buf, resumed_at, 0)
+                .unwrap();
+
+            subs.state.lock(|s| {
+                let s = s.borrow();
+                let sub = &s.subscriptions[0];
+
+                assert!(!sub.is_expired(resumed_at + Duration::from_secs(59)));
+                assert!(sub.is_expired(resumed_at + Duration::from_secs(60)));
+            });
         }
 
         /// Removing a subscription and re-persisting drops exactly its record from

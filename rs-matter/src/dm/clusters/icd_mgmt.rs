@@ -945,7 +945,10 @@ impl Icd {
     ///   ICD does, and sends the Check-Ins of a LIT right away;
     /// - feeds the transport's activity and the commissioning window state in;
     /// - expires the active window into idle mode, wakes up from idle mode
-    ///   after `IdleModeDuration`, and sends the Check-Ins on every such wake-up.
+    ///   after `IdleModeDuration`, and sends the Check-Ins on every such wake-up;
+    /// - sends them as well as soon as a report to a subscriber fails while the
+    ///   device is active: that client may have lost its subscription, and is
+    ///   better nudged now than on the next wake-up.
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let matter = ctx.matter();
         let transport = matter.transport();
@@ -983,13 +986,28 @@ impl Icd {
 
     /// The idle <-> active loop.
     async fn run_power_mode(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
+        let stats = ctx.im_stats();
+
         // A LIT that (re)starts is waking up from its sleep, as far as its
         // clients are concerned.
         self.send_check_ins(ctx).await?;
 
         loop {
             match self.power_mode() {
-                IcdPowerMode::Active => self.run_active().await,
+                IcdPowerMode::Active => {
+                    // Stay active until the active deadline - unless a report to
+                    // a subscriber fails meanwhile. That client may well have lost
+                    // its subscription (it no longer counts as subscribed for the
+                    // Check-In, see `ImStats::has_subscription_for`), so nudge the
+                    // registered clients that lost touch right away, while awake,
+                    // and stay awake long enough for them to come back.
+                    if let Either::Second(()) =
+                        select(self.run_active(), stats.wait_report_failed()).await
+                    {
+                        self.request_active();
+                        self.send_check_ins(ctx).await?;
+                    }
+                }
                 IcdPowerMode::Idle => {
                     if self.run_idle().await {
                         self.send_check_ins(ctx).await?;

@@ -108,6 +108,17 @@ pub trait ImStats {
     /// The ICD Management handler uses it to decide which registered Check-In
     /// clients have lost touch and need a Check-In.
     fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool;
+
+    /// Wait until a report to a subscriber fails to be delivered.
+    ///
+    /// The subscriber then no longer counts as subscribed for
+    /// [`has_subscription_for`](Self::has_subscription_for), and the ICD
+    /// Management handler uses this to nudge the registered clients that lost
+    /// touch with a Check-In right away, while the device is still awake, rather
+    /// than at its next wake-up.
+    ///
+    /// A single-waiter notification: exactly one task should wait on it.
+    async fn wait_report_failed(&self);
 }
 
 impl<T> ImStats for &T
@@ -120,6 +131,10 @@ where
 
     fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool {
         (**self).has_subscription_for(fab_idx, node_id)
+    }
+
+    async fn wait_report_failed(&self) {
+        (**self).wait_report_failed().await
     }
 }
 
@@ -1351,8 +1366,11 @@ where
 
             // Track whether any subscription left the table during reporting (the
             // subscriber answered a report with a non-success status, i.e. a
-            // deliberate unsubscribe), so its persisted record can be purged.
+            // deliberate unsubscribe, or a resumed one was given up on), so its
+            // persisted record can be purged - and whether a resumed one spent a
+            // further wake-up failing, which its record has to remember.
             let mut dropped_any = false;
+            let mut resume_attempts_changed = false;
 
             loop {
                 let Some(mut rctx) = self.state.subscriptions.report(
@@ -1402,15 +1420,26 @@ where
                         // Keep the subscription to retry, but do NOT advance its
                         // watermarks: the changes/events this report was carrying
                         // never reached the subscriber and must be re-sent.
+                        //
+                        // Unless it is a resumed subscription that has now spent
+                        // its last wake-up: that one is given up on.
                         rctx.set_keep_retry();
+
+                        if !rctx.is_kept() {
+                            dropped_any = true;
+                        } else if rctx.resume_attempts_changed() {
+                            resume_attempts_changed = true;
+                        }
                     }
                 }
             }
 
             // A subscription that was torn down during reporting is now gone from
             // the table; re-persist so the on-disk set stays an exact mirror and
-            // the torn-down subscription is not resumed on the next reboot.
-            if dropped_any {
+            // the torn-down subscription is not resumed on the next reboot. A
+            // resumed subscription that spent a wake-up is re-persisted too, so
+            // the count survives the reboot it is there for.
+            if dropped_any || resume_attempts_changed {
                 self.persist_subscriptions();
             }
 
@@ -1736,6 +1765,10 @@ where
         self.state
             .subscriptions()
             .has_subscription_for(fab_idx, node_id)
+    }
+
+    async fn wait_report_failed(&self) {
+        self.state.subscriptions().wait_report_failed().await
     }
 }
 
