@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: the transport no longer wakes every 50/100 ms while idle; new `IfMutex::wait_until` (#578)
 * Fan Control cluster handler (`FanControlHandler` / `FanControlHooks`) (#577)
 * Fix the Mode Select cluster handler to set the current mode into the hooks upon startup (#576)
 * Fix the Thread Diagnostics cluster handler to not return "invalid action" when the routes table is reported with chunked reads (#575)
