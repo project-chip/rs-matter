@@ -220,12 +220,21 @@ impl<'k> CheckIn<'k> {
             };
 
             match result {
-                Ok(()) => sent = true,
+                Ok(()) => {
+                    info!(
+                        "Check-In to fab idx {}, node {}, addr {} succeeded",
+                        fab_idx, node_id, addr
+                    );
+                    sent = true
+                }
                 Err(err) => {
                     // A candidate the local stack cannot even send to (no route
                     // to a link-local address heard on another interface, say) is
                     // not fatal while another candidate may still work.
-                    warn!("Check-In to {} failed: {}", addr, err);
+                    warn!(
+                        "Check-In to fab idx {}, node {}, addr {} failed: {}",
+                        fab_idx, node_id, addr, err
+                    );
                     last_err = Some(err);
                 }
             }

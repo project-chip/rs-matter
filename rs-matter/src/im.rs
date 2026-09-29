@@ -108,6 +108,17 @@ pub trait ImStats {
     /// The ICD Management handler uses it to decide which registered Check-In
     /// clients have lost touch and need a Check-In.
     fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool;
+
+    /// Wait until a report to a subscriber fails to be delivered.
+    ///
+    /// The subscriber then no longer counts as subscribed for
+    /// [`has_subscription_for`](Self::has_subscription_for), and the ICD
+    /// Management handler uses this to nudge the registered clients that lost
+    /// touch with a Check-In right away, while the device is still awake, rather
+    /// than at its next wake-up.
+    ///
+    /// A single-waiter notification: exactly one task should wait on it.
+    async fn wait_report_failed(&self);
 }
 
 impl<T> ImStats for &T
@@ -120,6 +131,10 @@ where
 
     fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool {
         (**self).has_subscription_for(fab_idx, node_id)
+    }
+
+    async fn wait_report_failed(&self) {
+        (**self).wait_report_failed().await
     }
 }
 
@@ -1351,7 +1366,8 @@ where
 
             // Track whether any subscription left the table during reporting (the
             // subscriber answered a report with a non-success status, i.e. a
-            // deliberate unsubscribe), so its persisted record can be purged.
+            // deliberate unsubscribe, or a resumed one could not be reached), so
+            // its persisted record can be purged.
             let mut dropped_any = false;
 
             loop {
@@ -1402,7 +1418,14 @@ where
                         // Keep the subscription to retry, but do NOT advance its
                         // watermarks: the changes/events this report was carrying
                         // never reached the subscriber and must be re-sent.
+                        //
+                        // Unless this was the first report of a subscription resumed
+                        // from persistent storage: that one is given up on.
                         rctx.set_keep_retry();
+
+                        if !rctx.is_kept() {
+                            dropped_any = true;
+                        }
                     }
                 }
             }
@@ -1736,6 +1759,10 @@ where
         self.state
             .subscriptions()
             .has_subscription_for(fab_idx, node_id)
+    }
+
+    async fn wait_report_failed(&self) {
+        self.state.subscriptions().wait_report_failed().await
     }
 }
 
