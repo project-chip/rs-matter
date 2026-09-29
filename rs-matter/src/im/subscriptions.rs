@@ -892,7 +892,12 @@ impl<const N: usize> SubscriptionsInner<N> {
             max_seen_event_number: 0,
         };
 
-        info!("Added subscription {:?}", subscription.ids());
+        info!(
+            "Added subscription {:?}, min_int_secs: {}, max_int_secs: {}",
+            subscription.ids(),
+            min_int_secs,
+            max_int_secs
+        );
 
         Some((subscription, buffer))
     }

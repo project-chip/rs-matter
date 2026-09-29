@@ -58,7 +58,7 @@ use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groupcast::{self, ClusterHandler as _, GroupcastHandler};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::icd_mgmt::{ClusterHandler as _, Icd, IcdMgmtHandler, IcdModeConfig};
+use rs_matter::dm::clusters::icd_mgmt::{IcdModeConfig, LitIcd, LitIcdMgmtHandler};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::mode::{
     laundry_washer_mode, Mode, ModeChangeError, ModeHandler, ModeHooks, ModeId, ModeTag,
@@ -146,7 +146,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
-static ICD: StaticCell<Icd> = StaticCell::new();
+static ICD: StaticCell<LitIcd> = StaticCell::new();
 const SCENES_CAPACITY: usize = 16;
 // Scenes Management is mandatory for the On/Off Light device type, so both
 // light endpoints host it. The scene table is per-endpoint, hence one state
@@ -357,9 +357,11 @@ fn main() -> Result<(), Error> {
     // both survive a reboot. Only the persistence epoch is ours to pick: the
     // counter's starting value is the stored boundary, or a random one on a
     // first boot.
-    let icd: &'static Icd = ICD
-        .uninit()
-        .init_with(Icd::init(ICD_COUNTER_EPOCH, ICD_MODE));
+    let icd: &'static LitIcd = ICD.uninit().init_with(LitIcd::init(
+        ICD_COUNTER_EPOCH,
+        ICD_MODE,
+        ICD_SIT_SLOW_POLL_MS,
+    ));
 
     let gen_diag: &'static dyn GenDiag = if let Some(key) = parse_enable_key_override() {
         info!("TestEventTrigger enabled with configured 16-byte key");
@@ -914,9 +916,11 @@ const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
     &LogFileProvider,
 > as diag_logs::ClusterAsyncHandler>::CLUSTER;
 
-/// The ICD Management cluster metadata, exactly as served by
-/// [`IcdMgmtHandler`] (so `NODE`'s declaration matches the handler).
-const ICD_MGMT_CLUSTER: Cluster<'static> = IcdMgmtHandler::CLUSTER;
+/// The ICD Management cluster metadata, as served by [`LitIcdMgmtHandler`]
+/// (so `NODE`'s declaration matches the handler). The Dynamic SIT/LIT variant:
+/// the `TestIcdManagementCluster` YAML expects the reference LIT-ICD fixture's
+/// `FeatureMap` of `0x0F`.
+const ICD_MGMT_CLUSTER: Cluster<'static> = LitIcdMgmtHandler::CLUSTER_DSLS;
 
 /// Mode config the test ICD advertises. Spec-valid for a LIT-capable device
 /// (idle within `[1, 64800]` s, `idle*1000 >= active`, `threshold >= 5000`), and
@@ -929,10 +933,12 @@ const ICD_MODE: IcdModeConfig = IcdModeConfig {
     active_mode_threshold_ms: 5000,
     user_active_mode_trigger_hint: 0x111D,
     user_active_mode_trigger_instruction: "Press the button to wake the device",
-    // The test harness runs on a LAN, so the device might as well be quick to reach
-    // before it is registered; the value is otherwise arbitrary.
-    sit_slow_poll_ms: 5000,
 };
+
+/// The slow poll while the test ICD operates as a SIT. The test harness runs on
+/// a LAN, so the device might as well be quick to reach before it is
+/// registered; the value is otherwise arbitrary.
+const ICD_SIT_SLOW_POLL_MS: u32 = 5000;
 
 /// The Check-In counter epoch — how far ahead each persisted boundary jumps, so
 /// the counter survives reboots without a flash write per message.
@@ -1032,7 +1038,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_state: &'a OtaState,
     dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
-    icd: &'a Icd,
+    icd: &'a LitIcd,
     time_sync_handler: &'a TimeSyncHandler<'a>,
 ) -> impl DataModel + 'a {
     (
@@ -1212,7 +1218,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // ICD Management (Check-In Protocol) on the root endpoint.
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == ICD_MGMT_CLUSTER.id,
-                Async(IcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
+                Async(LitIcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
             )
             // PowerSource on the root endpoint; the fixture is mains-powered.
             .chain(
@@ -1275,7 +1281,7 @@ struct TestEventTriggerDiag {
     enable_key: [u8; 16],
     /// The shared ICD state, so the counter-invalidation triggers can jump the
     /// Check-In counter in place.
-    icd: &'static Icd,
+    icd: &'static LitIcd,
 }
 
 /// Fires when a counter-invalidation trigger moved the persist boundary, asking
@@ -1388,7 +1394,7 @@ where
 /// itself jumps the in-RAM counter synchronously (so the immediate `ICDCounter`
 /// read is correct); only the KV write is deferred here.
 async fn persist_icd_counter_on_trigger(
-    icd: &Icd,
+    icd: &LitIcd,
     kv: &impl KvBlobStoreAccess,
 ) -> Result<(), Error> {
     loop {

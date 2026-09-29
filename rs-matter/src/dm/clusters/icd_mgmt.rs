@@ -15,73 +15,55 @@
  *    limitations under the License.
  */
 
-//! The ICD Management cluster and Check-In sender.
+//! The ICD Management cluster, the ICD power mode state machine and the
+//! Check-In sender.
 //!
-//! An Intermittently Connected Device (ICD) hosts this cluster so clients can
-//! register to receive Check-In notifications when their subscription is lost.
+//! An Intermittently Connected Device (ICD) is either a Short Idle Time (SIT)
+//! device - reachable within its `SESSION_IDLE_INTERVAL` at all times, at most
+//! 15 s - or a Long Idle Time (LIT) capable one, which may stay unreachable for
+//! up to its `IdleModeDuration` once a client has registered for Check-In
+//! messages with it, and operates as a SIT until then. The two come in two
+//! layers, so that a SIT-only device carries none of the LIT machinery:
 //!
-//! - [`Icd`] is the shared state (registrations + Check-In counter +
-//!   stay-active deadline) the application owns and lends to the handler and the
-//!   sender.
-//! - [`IcdMgmtHandler`] is the cluster handler (registration commands + the
-//!   Check-In-relevant attributes), layered on an [`Icd`].
-//! - [`Icd::run`] sends a Check-In (resolved over mDNS, sent sessionlessly) to
-//!   every registered client whose subscription is lost, whenever a LIT wakes
-//!   up from idle mode.
-//! - [`Icd`] also runs the ICD *power mode* state machine ([`IcdPowerMode`]):
-//!   active mode after boot, after network activity, on a `StayActiveRequest`,
-//!   on a user trigger and while a commissioning window is open; idle mode
-//!   otherwise, for at most `IdleModeDuration`. The handler's `run` hook drives
-//!   it and sends the Check-Ins whenever a Long-Idle-Time ICD wakes up from idle
-//!   mode. Network drivers *follow* the state machine through
-//!   [`Icd::net_params`] / [`Icd::wait_net_changed`] - e.g. a Thread driver maps the
-//!   polling interval onto the Sleepy End Device poll period - and the
-//!   application consults [`Icd::power_mode`] / [`Icd::idle_until`] to decide
-//!   whether, and how deeply, the MCU may sleep.
+//! - [`Icd`] is the power mode state machine ([`IcdPowerMode`]) every ICD
+//!   runs: active mode after boot, after network activity, on a user trigger,
+//!   while work is in flight and while a commissioning window is open; idle
+//!   mode otherwise, for at most `IdleModeDuration`. Network drivers *follow*
+//!   it through [`Icd::net_params`] / [`Icd::wait_net_changed`] - e.g. a Thread
+//!   driver maps the polling interval onto the Sleepy End Device poll period -
+//!   and the application consults [`Icd::power_mode`] / [`Icd::idle_until`] to
+//!   decide whether, and how deeply, the MCU may sleep.
+//! - [`SitIcdMgmtHandler`] serves the cluster of a SIT-only device over an
+//!   [`Icd`]: its mode timings, and nothing else.
+//! - [`LitIcd`] adds what a LIT-capable device needs on top of an [`Icd`]: the
+//!   client registrations, the Check-In counter, the Check-In sender and the
+//!   SIT/LIT operating mode that follows the registrations.
+//! - [`LitIcdMgmtHandler`] serves the cluster of a LIT-capable device over a
+//!   [`LitIcd`]: the Check-In Protocol, Long Idle Time and User Active Mode
+//!   Trigger features.
 
-use core::num::NonZeroU8;
-
+use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_time::{with_timeout, Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Timer};
 
-use crate::acl::AccessReq;
-use crate::crypto::{CanonAeadKey, Crypto, Rng};
-use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{
-    Access, ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, LifecycleOp,
-    ReadContext,
-};
-use crate::error::{Error, ErrorCode};
-use crate::fabric::MAX_FABRICS;
-use crate::im::encoding::GenericPath;
+use crate::dm::HandlerContext;
+use crate::error::Error;
 use crate::im::ImStats;
-use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, Persist, ICD_CHECK_IN_COUNTER_KEY, ICD_REGISTERED_CLIENTS_KEY,
-};
-use crate::sc::checkin::{CheckIn, CheckInCounter};
-use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
-use crate::with;
 use crate::Matter;
 
 pub use crate::dm::clusters::decl::icd_management::*;
 
-/// The maximum number of clients that can register per fabric — the value
-/// reported by the cluster's `ClientsSupportedPerFabric` attribute.
-///
-/// The spec floor is 1; two (matching CHIP's default) covers a fabric whose
-/// ecosystem monitors the device from more than one client. Raise it if a
-/// fabric needs still more independent Check-In clients.
-pub const CLIENTS_PER_FABRIC: usize = 2;
+pub use lit::*;
+pub use sit::*;
 
-/// The total capacity of the registration store, across all fabrics.
-pub const MAX_REGISTERED_CLIENTS: usize = CLIENTS_PER_FABRIC * MAX_FABRICS;
+mod lit;
+mod sit;
 
 /// The maximum stay-active duration (milliseconds) a `StayActiveRequest` will be
 /// honored for — the "guaranteed" duration the device must be able to grant. A
@@ -92,8 +74,9 @@ pub const STAY_ACTIVE_MAX_MS: u32 = 30_000;
 /// The slowest polling interval a Short-Idle-Time ICD may use, in milliseconds
 /// (`SIT_ICD_SLOW_POLL_MAX` in the spec).
 ///
-/// A LIT-capable device without any registered Check-In client operates as SIT
-/// and polls at [`IcdModeConfig::sit_slow_poll_ms`], which may not exceed this.
+/// A SIT-only device is capped to it, and so is a LIT-capable one while it
+/// operates as a SIT: it then polls at the SIT slow poll it was created with
+/// (see [`LitIcd::new`]), which may not exceed this.
 pub const SIT_SLOW_POLL_MAX_MS: u32 = 15_000;
 
 /// The fast (active mode) polling interval used when `BasicInfoConfig::sai` is
@@ -103,15 +86,6 @@ pub const DEFAULT_FAST_POLL_MS: u32 = 300;
 /// The slow (idle mode) polling interval used when `BasicInfoConfig::sii` is
 /// not set.
 pub const DEFAULT_SLOW_POLL_MS: u32 = SIT_SLOW_POLL_MAX_MS;
-
-/// How long one Check-In send (mDNS resolution included) may take before it is
-/// abandoned, so that a client that cannot be resolved does not keep the device
-/// awake.
-const CHECK_IN_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The buffer for one Check-In message: nonce + counter + MIC plus the
-/// 2-byte `ActiveModeThreshold` application data, rounded up.
-const CHECK_IN_BUF_LEN: usize = 64;
 
 /// The ICD power mode.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -132,7 +106,8 @@ pub enum IcdPowerMode {
 pub struct IcdNetParams {
     /// The current power mode.
     pub power_mode: IcdPowerMode,
-    /// The operating mode (`SIT` or `LIT`) the cluster reports.
+    /// The operating mode: always `SIT` for a SIT-only device; for a
+    /// LIT-capable one, `LIT` while it operates as one.
     pub operating_mode: OperatingModeEnum,
     /// The polling interval to use right now, in milliseconds: the fast one
     /// while active, the (SIT-capped) slow one while idle.
@@ -145,9 +120,10 @@ pub struct IcdNetParams {
 
 /// What a Long-Idle-Time-capable ICD advertises about itself over DNS-SD.
 ///
-/// The ICD Management handler keeps [`Matter`](crate::Matter) supplied with it
+/// The [`LitIcdMgmtHandler`] keeps [`Matter`](crate::Matter) supplied with it
 /// (see [`Matter::icd_advertisement`](crate::Matter::icd_advertisement)); the
-/// mDNS layer derives the `ICD` and `SII` TXT keys from it.
+/// mDNS layer derives the `ICD` and `SII` TXT keys from it. A SIT-only device
+/// advertises none: it has no `ICD` key, and its `SII` is the configured one.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct IcdAdvertisement {
@@ -158,40 +134,6 @@ pub struct IcdAdvertisement {
     /// operating as a SIT this is what the device is reachable within, so it
     /// bounds the advertised `SESSION_IDLE_INTERVAL` (`SII` TXT key).
     pub slow_poll_ms: u32,
-}
-
-/// A single client registration (one entry of the `RegisteredClients` list).
-///
-/// Fabric-scoped: an entry belongs to the fabric it was registered on and is
-/// only ever matched, replaced or removed within that fabric.
-#[derive(Debug, Clone, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct MonitoringRegistration {
-    /// The fabric this registration belongs to.
-    pub fab_idx: NonZeroU8,
-    /// The node to which Check-In messages are sent.
-    pub check_in_node_id: u64,
-    /// The subject whose active subscription suppresses Check-Ins for this entry.
-    pub monitored_subject: u64,
-    /// The client's type (permanent or ephemeral).
-    pub client_type: ClientTypeEnum,
-    /// The shared symmetric key used to encrypt this client's Check-In messages.
-    ///
-    /// Write-only from the outside: it is provided at registration and used to
-    /// build Check-In messages, but never read back as an attribute.
-    pub key: CanonAeadKey,
-}
-
-/// The outcome of checking a presented verification key against a stored
-/// registration, used to gate non-administrator register/unregister requests.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum KeyVerdict {
-    /// No registration exists for the given `(fabric, node)`.
-    NotFound,
-    /// A registration exists and the presented key matches its stored key.
-    Match,
-    /// A registration exists but the presented key is absent or does not match.
-    Mismatch,
 }
 
 /// The timing parameters an ICD advertises through the cluster's mandatory
@@ -216,29 +158,12 @@ pub struct IcdModeConfig {
     /// The `UserActiveModeTriggerInstruction` string paired with the hint (empty
     /// when the hint needs no free-form instruction). Must be `<= 128` bytes.
     pub user_active_mode_trigger_instruction: &'static str,
-    /// The slow polling interval while operating as a SIT, in milliseconds,
-    /// whenever the configured one (`BasicInfoConfig::sii`) is longer.
-    ///
-    /// A LIT-capable device operates as a SIT until a client registers with
-    /// it, and in that phase somebody is typically waiting to reach it: the
-    /// commissioner about to register, or a controller that does not know
-    /// about LIT at all. Polling faster than the LIT idle interval here costs
-    /// little and makes the device correspondingly quicker to reach. In range
-    /// `1..=`[`SIT_SLOW_POLL_MAX_MS`], the most a SIT may go unreachable for.
-    ///
-    /// A device whose `sii` is within that range already (a SIT-only device)
-    /// polls at its `sii` and can leave this at the maximum.
-    pub sit_slow_poll_ms: u32,
 }
 
-/// The interior, mutable ICD state guarded by a single lock: the registrations,
-/// the Check-In counter, and the stay-active deadline. These are always touched
-/// together, so one lock keeps them consistent and cheap.
+/// The interior, mutable power mode state, guarded by a single lock.
 struct IcdState {
-    /// The registered Check-In clients (persisted).
-    clients: Vec<MonitoringRegistration, MAX_REGISTERED_CLIENTS>,
-    /// The Check-In counter.
-    counter: CheckInCounter,
+    /// The current operating mode. `SIT` unless a [`LitIcd`] says otherwise.
+    operating_mode: OperatingModeEnum,
     /// The instant until which a `StayActiveRequest` has asked this device to
     /// stay active, or `None` if no request is outstanding.
     stay_active_until: Option<Instant>,
@@ -256,16 +181,15 @@ struct IcdState {
     /// The configured slow (idle mode) polling interval, in milliseconds
     /// (before the SIT cap).
     slow_poll_ms: u32,
-    /// The SIT cap on the slow polling interval, in milliseconds
-    /// ([`IcdModeConfig::sit_slow_poll_ms`]).
+    /// The SIT cap on the slow polling interval, in milliseconds:
+    /// [`SIT_SLOW_POLL_MAX_MS`], or less for a [`LitIcd`] configured so.
     sit_slow_poll_ms: u32,
 }
 
 impl IcdState {
-    const fn new(counter: CheckInCounter, sit_slow_poll_ms: u32) -> Self {
+    const fn new(sit_slow_poll_ms: u32) -> Self {
         Self {
-            clients: Vec::new(),
-            counter,
+            operating_mode: OperatingModeEnum::SIT,
             stay_active_until: None,
             power_mode: IcdPowerMode::Active,
             active_until: Instant::MIN,
@@ -277,33 +201,10 @@ impl IcdState {
         }
     }
 
-    fn init(counter: CheckInCounter, sit_slow_poll_ms: u32) -> impl Init<Self> {
-        init!(Self {
-            clients <- Vec::init(),
-            counter: counter,
-            stay_active_until: None,
-            power_mode: IcdPowerMode::Active,
-            active_until: Instant::MIN,
-            idle_until: Instant::MIN,
-            comm_window_open: false,
-            fast_poll_ms: DEFAULT_FAST_POLL_MS,
-            slow_poll_ms: DEFAULT_SLOW_POLL_MS,
-            sit_slow_poll_ms: sit_slow_poll_ms,
-        })
-    }
-
-    fn operating_mode(&self) -> OperatingModeEnum {
-        if self.clients.is_empty() {
-            OperatingModeEnum::SIT
-        } else {
-            OperatingModeEnum::LIT
-        }
-    }
-
     /// The slow polling interval in effect: the configured one, capped to the
     /// SIT one while operating as a SIT.
     fn effective_slow_poll_ms(&self) -> u32 {
-        match self.operating_mode() {
+        match self.operating_mode {
             OperatingModeEnum::SIT => self.slow_poll_ms.min(self.sit_slow_poll_ms),
             OperatingModeEnum::LIT => self.slow_poll_ms,
         }
@@ -311,7 +212,7 @@ impl IcdState {
 
     fn advertisement(&self) -> IcdAdvertisement {
         IcdAdvertisement {
-            operating_mode: self.operating_mode(),
+            operating_mode: self.operating_mode,
             slow_poll_ms: self.effective_slow_poll_ms(),
         }
     }
@@ -319,7 +220,7 @@ impl IcdState {
     fn net_params(&self) -> IcdNetParams {
         IcdNetParams {
             power_mode: self.power_mode,
-            operating_mode: self.operating_mode(),
+            operating_mode: self.operating_mode,
             poll_interval_ms: match self.power_mode {
                 IcdPowerMode::Active => self.fast_poll_ms,
                 IcdPowerMode::Idle => self.effective_slow_poll_ms(),
@@ -381,15 +282,46 @@ impl ActiveExtension {
     }
 }
 
-/// The shared ICD state: the registrations, the Check-In counter, the
-/// `StayActiveRequest` deadline and the power mode state machine, all behind a
-/// single lock.
+/// What a Long-Idle-Time-capable ICD adds to the power mode state machine: the
+/// Check-Ins, sent whenever the device (re)starts, wakes up from idle mode on
+/// its own schedule, or fails to report to a subscriber.
 ///
-/// The application owns one instance and lends it to its [`IcdMgmtHandler`]
-/// (which mutates the registrations and drives the state machine from its `run`
-/// hook), to its network driver (which follows [`net_params`](Self::net_params))
-/// and to its own sleep logic (which consults [`power_mode`](Self::power_mode)
-/// and [`idle_until`](Self::idle_until)).
+/// Implemented by `()` for a SIT-only device, which sends none. [`Icd::run`] is
+/// generic over it, so a SIT-only build never references the Check-In code.
+trait CheckIns {
+    /// Whether this is a LIT-capable device: it sends Check-Ins, and advertises
+    /// its operating mode over DNS-SD.
+    const LIT: bool;
+
+    /// Send a Check-In to every registered client that has lost touch with
+    /// the device.
+    fn send_check_ins(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>>;
+}
+
+impl<T: CheckIns> CheckIns for &T {
+    const LIT: bool = T::LIT;
+
+    fn send_check_ins(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        T::send_check_ins(self, ctx)
+    }
+}
+
+impl CheckIns for () {
+    const LIT: bool = false;
+
+    fn send_check_ins(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        core::future::ready(Ok(()))
+    }
+}
+
+/// The ICD power mode state machine.
+///
+/// The application owns one instance - directly for a SIT-only device, or
+/// inside its [`LitIcd`] for a LIT-capable one - and lends it to its ICD
+/// Management handler (which drives the state machine from its `run` hook), to
+/// its network driver (which follows [`net_params`](Self::net_params)) and to
+/// its own sleep logic (which consults [`power_mode`](Self::power_mode) and
+/// [`idle_until`](Self::idle_until)).
 pub struct Icd {
     state: Mutex<RefCell<IcdState>>,
     /// The advertised mode timings; `active_mode_threshold_ms` is also the
@@ -407,26 +339,26 @@ pub struct Icd {
 }
 
 impl Icd {
-    /// Create the ICD state from the Check-In counter's persistence epoch and
-    /// the mode timings.
-    ///
-    /// `epoch` is how far ahead of the live counter the persisted boundary is
-    /// kept - i.e. how many Check-Ins may be sent between two flash writes, and
-    /// equally how far the counter jumps forward across a restart. It must be
-    /// non-zero.
+    /// Create the power mode state machine from the mode timings.
+    pub const fn new(mode: IcdModeConfig) -> Self {
+        Self::with_sit_slow_poll(mode, SIT_SLOW_POLL_MAX_MS)
+    }
+
+    /// An in-place initializer, mirroring [`Self::new`].
+    pub fn init(mode: IcdModeConfig) -> impl Init<Self> {
+        Self::init_with_sit_slow_poll(mode, SIT_SLOW_POLL_MAX_MS)
+    }
+
+    /// [`Self::new`], with the slow poll to cap to while operating as a SIT.
     ///
     /// # Panics
     ///
-    /// Panics if `epoch` is zero, or if `mode.sit_slow_poll_ms` is zero or
-    /// exceeds [`SIT_SLOW_POLL_MAX_MS`].
-    pub const fn new(epoch: u32, mode: IcdModeConfig) -> Self {
-        Self::validate(&mode);
+    /// Panics if `sit_slow_poll_ms` is zero or exceeds [`SIT_SLOW_POLL_MAX_MS`].
+    const fn with_sit_slow_poll(mode: IcdModeConfig, sit_slow_poll_ms: u32) -> Self {
+        Self::validate(sit_slow_poll_ms);
 
         Self {
-            state: Mutex::new(RefCell::new(IcdState::new(
-                CheckInCounter::new(0, epoch),
-                mode.sit_slow_poll_ms,
-            ))),
+            state: Mutex::new(RefCell::new(IcdState::new(sit_slow_poll_ms))),
             mode,
             net_changed: Notification::new(),
             power_changed: Notification::new(),
@@ -434,21 +366,16 @@ impl Icd {
         }
     }
 
-    /// An in-place initializer, mirroring [`Self::new`]. Prefer this over `new`
-    /// to avoid the registration array transiting the stack.
+    /// [`Self::init`], with the slow poll to cap to while operating as a SIT.
     ///
     /// # Panics
     ///
-    /// Panics if `epoch` is zero, or if `mode.sit_slow_poll_ms` is zero or
-    /// exceeds [`SIT_SLOW_POLL_MAX_MS`].
-    pub fn init(epoch: u32, mode: IcdModeConfig) -> impl Init<Self> {
-        Self::validate(&mode);
+    /// Panics if `sit_slow_poll_ms` is zero or exceeds [`SIT_SLOW_POLL_MAX_MS`].
+    fn init_with_sit_slow_poll(mode: IcdModeConfig, sit_slow_poll_ms: u32) -> impl Init<Self> {
+        Self::validate(sit_slow_poll_ms);
 
         init!(Self {
-            state <- Mutex::init(RefCell::init(IcdState::init(
-                CheckInCounter::new(0, epoch),
-                mode.sit_slow_poll_ms,
-            ))),
+            state: Mutex::new(RefCell::new(IcdState::new(sit_slow_poll_ms))),
             mode: mode,
             net_changed <- Notification::init(),
             power_changed <- Notification::init(),
@@ -457,222 +384,58 @@ impl Icd {
     }
 
     /// The configuration checks shared by the constructors.
-    const fn validate(mode: &IcdModeConfig) {
+    const fn validate(sit_slow_poll_ms: u32) {
         core::assert!(
-            mode.sit_slow_poll_ms > 0 && mode.sit_slow_poll_ms <= SIT_SLOW_POLL_MAX_MS,
+            sit_slow_poll_ms > 0 && sit_slow_poll_ms <= SIT_SLOW_POLL_MAX_MS,
             "`sit_slow_poll_ms` must be in `1..=SIT_SLOW_POLL_MAX_MS`"
         );
     }
 
-    /// Re-seed the Check-In counter from `start`, keeping the epoch this `Icd`
-    /// was constructed with, and return the boundary that must be persisted.
-    fn reseed_counter(&self, start: u32) -> u32 {
-        self.state.lock(|s| {
+    /// The mode timings this device was configured with.
+    pub const fn mode(&self) -> &IcdModeConfig {
+        &self.mode
+    }
+
+    // --- Operating mode ---
+
+    /// The current operating mode: always `SIT` for a SIT-only device; for a
+    /// LIT-capable one, `LIT` while it operates as one (see [`LitIcd`]).
+    ///
+    /// [`wait_net_changed`](Self::wait_net_changed) resolves when it changes.
+    pub fn operating_mode(&self) -> OperatingModeEnum {
+        self.state.lock(|s| s.borrow().operating_mode)
+    }
+
+    /// Set the operating mode. Only a [`LitIcd`] ever does.
+    fn set_operating_mode(&self, mode: OperatingModeEnum) {
+        let changed = self.state.lock(|s| {
             let mut s = s.borrow_mut();
 
-            let epoch = s.counter.epoch();
-            s.counter = CheckInCounter::new(start, epoch);
+            let changed = s.operating_mode != mode;
+            s.operating_mode = mode;
 
-            s.counter.persist_value()
-        })
+            changed
+        });
+
+        // The slow poll in effect changes with it, which the network driver
+        // follows.
+        if changed {
+            self.notify_net_changed();
+            self.nudged.notify();
+        }
     }
 
-    /// Draw a fresh random Check-In counter start.
-    fn random_counter_start<C: Crypto>(crypto: C) -> Result<u32, Error> {
-        let mut bytes = [0; 4];
-        crypto.rand()?.fill_bytes(&mut bytes);
-
-        Ok(u32::from_le_bytes(bytes))
-    }
-
-    // --- Registrations ---
-
-    /// The total number of registrations across all fabrics.
-    #[cfg(test)]
-    fn registrations_len(&self) -> usize {
-        self.state.lock(|s| s.borrow().clients.len())
-    }
-
-    /// Whether there are no registrations.
-    #[cfg(test)]
-    fn registrations_is_empty(&self) -> bool {
-        self.registrations_len() == 0
-    }
-
-    /// The number of registrations on `fab_idx`.
-    #[cfg(test)]
-    fn fabric_registrations_len(&self, fab_idx: NonZeroU8) -> usize {
-        self.state.lock(|s| {
-            s.borrow()
-                .clients
-                .iter()
-                .filter(|c| c.fab_idx == fab_idx)
-                .count()
-        })
-    }
-
-    /// The current operating mode: `LIT` while any client is registered,
-    /// otherwise `SIT`.
-    ///
-    /// This is the value of the `OperatingMode` attribute and of the `ICD`
-    /// operational DNS-SD TXT key. It changes only when the registration set
-    /// transitions empty↔non-empty; [`wait_net_changed`](Self::wait_net_changed)
-    /// resolves when it does.
-    pub fn operating_mode(&self) -> OperatingModeEnum {
-        self.state.lock(|s| s.borrow().operating_mode())
-    }
-
-    /// What the device advertises about itself over DNS-SD right now: the
-    /// operating mode and the slow polling interval in effect in it.
+    /// What a LIT-capable device advertises about itself over DNS-SD right
+    /// now: the operating mode and the slow polling interval in effect in it.
     pub fn advertisement(&self) -> IcdAdvertisement {
         self.state.lock(|s| s.borrow().advertisement())
     }
 
     /// Hand the current [`advertisement`](Self::advertisement) to `matter`,
-    /// which re-publishes its mDNS records if it changed.
-    fn publish_advertisement(&self, matter: &crate::Matter) {
+    /// which re-publishes its mDNS records if it changed. Only a LIT-capable
+    /// device advertises.
+    fn publish_advertisement(&self, matter: &Matter) {
         matter.set_icd_advertisement(Some(self.advertisement()));
-    }
-
-    /// Register a client, or update the existing registration with the same
-    /// `(fab_idx, check_in_node_id)`.
-    ///
-    /// Returns `Err(ResourceExhausted)` if a *new* entry would exceed the
-    /// per-fabric limit ([`CLIENTS_PER_FABRIC`]).
-    fn register(&self, registration: MonitoringRegistration) -> Result<(), Error> {
-        // The first registration flips the operating mode (SIT -> LIT), which
-        // the network driver follows; a further one, or an update, is nothing
-        // it needs to hear about.
-        let flipped = self.state.lock(|s| -> Result<bool, Error> {
-            let clients = &mut s.borrow_mut().clients;
-
-            let was_empty = clients.is_empty();
-
-            if let Some(existing) = clients.iter_mut().find(|c| {
-                c.fab_idx == registration.fab_idx
-                    && c.check_in_node_id == registration.check_in_node_id
-            }) {
-                *existing = registration;
-            } else {
-                if clients
-                    .iter()
-                    .filter(|c| c.fab_idx == registration.fab_idx)
-                    .count()
-                    >= CLIENTS_PER_FABRIC
-                {
-                    Err(ErrorCode::ResourceExhausted)?;
-                }
-                clients
-                    .push(registration)
-                    .map_err(|_| ErrorCode::ResourceExhausted)?;
-            }
-
-            Ok(was_empty)
-        })?;
-
-        if flipped {
-            self.notify_net_changed();
-            self.nudged.notify();
-        }
-
-        Ok(())
-    }
-
-    /// Remove the registration for `(fab_idx, check_in_node_id)`.
-    ///
-    /// Returns `Err(NotFound)` if there is no such registration.
-    fn unregister(&self, fab_idx: NonZeroU8, check_in_node_id: u64) -> Result<(), Error> {
-        let (removed, flipped) = self.state.lock(|s| {
-            let clients = &mut s.borrow_mut().clients;
-            let before = clients.len();
-            clients.retain(|c| !(c.fab_idx == fab_idx && c.check_in_node_id == check_in_node_id));
-
-            let removed = clients.len() != before;
-
-            // Removing the last registration flips the operating mode (LIT -> SIT).
-            (removed, removed && clients.is_empty())
-        });
-
-        if !removed {
-            Err(ErrorCode::NotFound)?;
-        }
-
-        if flipped {
-            self.notify_net_changed();
-            self.nudged.notify();
-        }
-
-        Ok(())
-    }
-
-    /// Check a presented verification `key` against the stored registration for
-    /// `(fab_idx, check_in_node_id)`.
-    ///
-    /// Non-administrator clients may only modify or remove an entry they own,
-    /// proven by re-presenting the same key the entry was registered with. A
-    /// missing or wrong key yields [`KeyVerdict::Mismatch`].
-    fn verify_key(
-        &self,
-        fab_idx: NonZeroU8,
-        check_in_node_id: u64,
-        key: Option<&[u8]>,
-    ) -> KeyVerdict {
-        self.state.lock(|s| {
-            let state = s.borrow();
-            let Some(entry) = state
-                .clients
-                .iter()
-                .find(|c| c.fab_idx == fab_idx && c.check_in_node_id == check_in_node_id)
-            else {
-                return KeyVerdict::NotFound;
-            };
-
-            match key {
-                Some(key) if key == entry.key.access() => KeyVerdict::Match,
-                _ => KeyVerdict::Mismatch,
-            }
-        })
-    }
-
-    /// Drop every registration belonging to `fab_idx`.
-    ///
-    /// Call when a fabric is removed. Returns whether anything was removed.
-    fn remove_fabric(&self, fab_idx: NonZeroU8) -> bool {
-        let (removed, flipped) = self.state.lock(|s| {
-            let clients = &mut s.borrow_mut().clients;
-            let before = clients.len();
-            clients.retain(|c| c.fab_idx != fab_idx);
-
-            let removed = clients.len() != before;
-
-            // Removing the last registration flips the operating mode (LIT -> SIT).
-            (removed, removed && clients.is_empty())
-        });
-
-        if flipped {
-            self.notify_net_changed();
-            self.nudged.notify();
-        }
-
-        removed
-    }
-
-    /// Run `f` with the registrations while the lock is held.
-    ///
-    /// The closure runs under the lock, so it must not re-enter the ICD state and
-    /// must not `.await`.
-    fn with_registrations<R>(&self, f: impl FnOnce(&[MonitoringRegistration]) -> R) -> R {
-        self.state.lock(|s| f(&s.borrow().clients))
-    }
-
-    /// Persist the current registrations to `ctx.kv()`.
-    fn store_registrations<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
-        let mut persist = Persist::new(ctx.kv());
-
-        self.state
-            .lock(|s| persist.store_tlv(ICD_REGISTERED_CLIENTS_KEY, &s.borrow().clients))?;
-
-        persist.run()
     }
 
     // --- Stay-active deadline ---
@@ -680,7 +443,7 @@ impl Icd {
     /// The instant until which a client has asked this device to stay active via
     /// `StayActiveRequest`, or `None` if no such request is outstanding.
     #[cfg(test)]
-    fn active_until(&self) -> Option<Instant> {
+    fn stay_active_until(&self) -> Option<Instant> {
         self.state.lock(|s| s.borrow().stay_active_until)
     }
 
@@ -691,7 +454,7 @@ impl Icd {
     /// So the returned value can exceed `duration_ms` if an earlier request
     /// already extended further — it is the *actual* remaining time, which is
     /// what the `StayActiveResponse` promises.
-    fn extend_active(&self, duration_ms: u32) -> u32 {
+    fn stay_active(&self, duration_ms: u32) -> u32 {
         let now = Instant::now();
         let requested = now.saturating_add(Duration::from_millis(duration_ms as u64));
 
@@ -724,126 +487,6 @@ impl Icd {
 
         // Remaining time to the deadline (0 if it somehow already passed).
         deadline.saturating_duration_since(now).as_millis() as u32
-    }
-
-    // --- Check-In counter ---
-
-    /// The counter value the next Check-In message will use (a peek).
-    fn next_counter(&self) -> u32 {
-        self.state.lock(|s| s.borrow().counter.next())
-    }
-
-    /// Advance the Check-In counter after sending, persisting to `kv` when a new
-    /// epoch boundary is crossed.
-    ///
-    /// Call once per Check-In *batch* (all messages in the batch used the same
-    /// [`next_counter`](Self::next_counter) value).
-    fn advance_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
-        let to_persist = self.state.lock(|s| s.borrow_mut().counter.advance());
-
-        if let Some(value) = to_persist {
-            kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)?;
-        }
-
-        Ok(())
-    }
-
-    /// Jump the Check-In counter forward by `delta` (wrapping). Used to
-    /// invalidate outstanding counter values in one step; the new value is
-    /// visible immediately via [`next_counter`](Self::next_counter).
-    ///
-    /// Returns `true` if the jump moved the persist boundary, in which case
-    /// [`persist_counter`](Self::persist_counter) must run before the device
-    /// restarts (defer it if the caller has no storage access here).
-    #[must_use = "a moved boundary must be persisted via persist_counter"]
-    pub fn invalidate_counter(&self, delta: u32) -> bool {
-        self.state
-            .lock(|s| s.borrow_mut().counter.advance_by(delta))
-            .is_some()
-    }
-
-    /// Persist the current Check-In counter boundary to `kv`.
-    pub fn persist_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
-        let value = self.state.lock(|s| s.borrow().counter.persist_value());
-        kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)
-    }
-
-    /// Re-hydrate the ICD state from `kv` - the registrations and the Check-In
-    /// counter boundary.
-    ///
-    /// Driven by [`LifecycleOp::Startup`], before the data model starts
-    /// serving operations and before any Check-In is sent.
-    ///
-    /// The counter's epoch comes from the counter the application supplied at
-    /// construction, so the persisted blob only has to carry the boundary. The
-    /// new boundary is written straight back: [`CheckInCounter::new`] resumes
-    /// *at* the stored value, so the values this run may use (`start + 1 ..=
-    /// start + epoch`) are only guaranteed unique once `start + epoch` is
-    /// durable. A crash before the next boundary crossing would otherwise
-    /// reload `start` and hand out the same values a second time.
-    fn load_persist<S: KvBlobStore, C: Crypto>(
-        &self,
-        crypto: C,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        let clients = match kv.load(ICD_REGISTERED_CLIENTS_KEY, buf)? {
-            Some(data) => Vec::from_tlv(&TLVElement::new(data))?,
-            None => Vec::new(),
-        };
-
-        self.state.lock(|s| s.borrow_mut().clients = clients);
-
-        let start = match kv.load(ICD_CHECK_IN_COUNTER_KEY, buf)? {
-            Some(data) => u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::Invalid)?),
-            // First boot (or a cleared store): start somewhere random rather
-            // than at a fixed value every device shares.
-            None => Self::random_counter_start(crypto)?,
-        };
-
-        let boundary = self.reseed_counter(start);
-
-        kv.store(ICD_CHECK_IN_COUNTER_KEY, &boundary.to_le_bytes(), buf)
-    }
-
-    /// Reset the ICD state to factory defaults and remove both persisted blobs
-    /// (the registrations and the Check-In counter boundary) from `kv`.
-    ///
-    /// Driven by [`LifecycleOp::FactoryReset`].
-    ///
-    /// The counter is re-seeded from a fresh random value, the same way a first
-    /// boot seeds it - the device is starting a new life, and every key the old
-    /// counter was used with is gone along with the registrations. The new
-    /// value is left unpersisted: whichever comes first, the next boundary
-    /// crossing or the next startup, writes one.
-    fn reset_persist<S: KvBlobStore, C: Crypto>(
-        &self,
-        crypto: C,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        let had_registrations = self.state.lock(|s| {
-            let clients = &mut s.borrow_mut().clients;
-
-            let had = !clients.is_empty();
-            clients.clear();
-
-            had
-        });
-
-        kv.remove(ICD_REGISTERED_CLIENTS_KEY, buf)?;
-        kv.remove(ICD_CHECK_IN_COUNTER_KEY, buf)?;
-
-        self.reseed_counter(Self::random_counter_start(crypto)?);
-
-        // Dropping the last registration flips the operating mode to SIT, which
-        // the network driver follows.
-        if had_registrations {
-            self.notify_net_changed();
-            self.nudged.notify();
-        }
-
-        Ok(())
     }
 
     // --- Power mode ---
@@ -1011,7 +654,8 @@ impl Icd {
         }
     }
 
-    /// Run the power mode state machine. Driven by the handler's `run` hook.
+    /// Run the power mode state machine. Driven by the ICD Management
+    /// handler's `run` hook.
     ///
     /// - takes the polling intervals from the advertised `SAI` / `SII` of the
     ///   node's `BasicInfoConfig`;
@@ -1025,7 +669,7 @@ impl Icd {
     /// - sends them as well as soon as a report to a subscriber fails while the
     ///   device is active: that client may have lost its subscription, and is
     ///   better nudged now than on the next wake-up.
-    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+    async fn run<X: CheckIns>(&self, ctx: impl HandlerContext, check_ins: X) -> Result<(), Error> {
         let matter = ctx.matter();
         let transport = matter.transport();
 
@@ -1034,8 +678,18 @@ impl Icd {
             dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS),
             dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS),
         );
-        // The slow poll in effect may have changed with them.
-        self.publish_advertisement(matter);
+
+        if X::LIT {
+            // The slow poll in effect may have changed with them.
+            self.publish_advertisement(matter);
+        } else if dev_det.sii.is_some_and(|sii| sii > SIT_SLOW_POLL_MAX_MS) {
+            // A SIT polls at most every `SIT_SLOW_POLL_MAX_MS`, and does so
+            // here too; but it advertises what it is configured with.
+            warn!(
+                "ICD: a SIT device advertises an SII above {} ms",
+                SIT_SLOW_POLL_MAX_MS
+            );
+        }
 
         self.set_comm_window_open(matter.comm_window_state().is_open());
         self.request_active();
@@ -1054,7 +708,7 @@ impl Icd {
             }
         });
 
-        let mut duty = pin!(self.run_power_mode(&ctx));
+        let mut duty = pin!(self.run_power_mode(&ctx, check_ins));
 
         match select3(&mut activity, &mut comm_window, &mut duty).await {
             Either3::Third(result) => result,
@@ -1063,7 +717,11 @@ impl Icd {
     }
 
     /// The idle <-> active loop.
-    async fn run_power_mode(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+    async fn run_power_mode<X: CheckIns>(
+        &self,
+        ctx: impl HandlerContext,
+        check_ins: X,
+    ) -> Result<(), Error> {
         let matter = ctx.matter();
         let stats = ctx.im_stats();
 
@@ -1075,11 +733,11 @@ impl Icd {
 
         // A LIT that (re)starts is waking up from its sleep, as far as its
         // clients are concerned.
-        self.send_check_ins(&ctx).await?;
+        check_ins.send_check_ins(&ctx).await?;
 
         loop {
             match self.power_mode() {
-                IcdPowerMode::Active => {
+                IcdPowerMode::Active if X::LIT => {
                     // Stay active until the active deadline - unless a report to
                     // a subscriber fails meanwhile. That client may well have lost
                     // its subscription (it no longer counts as subscribed for the
@@ -1090,12 +748,13 @@ impl Icd {
                         select(self.run_active(&busy), stats.wait_report_failed()).await
                     {
                         self.request_active();
-                        self.send_check_ins(&ctx).await?;
+                        check_ins.send_check_ins(&ctx).await?;
                     }
                 }
+                IcdPowerMode::Active => self.run_active(&busy).await,
                 IcdPowerMode::Idle => {
                     if self.run_idle().await {
-                        self.send_check_ins(&ctx).await?;
+                        check_ins.send_check_ins(&ctx).await?;
                     }
                 }
             }
@@ -1187,7 +846,7 @@ impl Icd {
             if let Either::Second(()) = select(Timer::at(idle_until), self.nudged.wait()).await {
                 // A nudge - either it switched us to active mode (checked at
                 // the top of the loop), or the operating mode changed, which
-                // `changed` already announced.
+                // `set_operating_mode` already announced.
                 continue;
             }
 
@@ -1212,466 +871,30 @@ impl Icd {
             }
         }
     }
-
-    /// Send a Check-In to every registered client whose monitored subject has
-    /// no live subscription, then advance (and, on an epoch boundary, persist)
-    /// the Check-In counter.
-    ///
-    /// Best-effort per client, with a timeout per send so that an unresolvable
-    /// client cannot keep the device awake; only a counter persistence failure
-    /// is an error.
-    async fn send_check_ins(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        let stats = ctx.im_stats();
-
-        let mut targets: Vec<(NonZeroU8, u64), MAX_REGISTERED_CLIENTS> = Vec::new();
-
-        self.with_registrations(|registrations| {
-            for r in registrations {
-                // A CAT-valued monitored subject won't match here (we compare
-                // against subscriber node ids), so such a client is treated as
-                // unsubscribed and always nudged.
-                if stats.has_subscription_for(r.fab_idx, r.monitored_subject) {
-                    continue;
-                }
-
-                // Capacity matches the registration store, so this cannot fail.
-                let _ = targets.push((r.fab_idx, r.check_in_node_id));
-            }
-        });
-
-        if targets.is_empty() {
-            return Ok(());
-        }
-
-        let matter = ctx.matter();
-        let crypto = ctx.crypto();
-        let counter = self.next_counter();
-        let mut buf = [0; CHECK_IN_BUF_LEN];
-
-        for (fab_idx, node_id) in &targets {
-            info!("ICD: Check-In to fabric {} node {:#x}", fab_idx, node_id);
-
-            let send =
-                self.send_one_check_in(matter, &crypto, *fab_idx, *node_id, counter, &mut buf);
-
-            match with_timeout(CHECK_IN_TIMEOUT, send).await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => warn!(
-                    "ICD: Check-In to fabric {} node {:#x} failed: {:?}",
-                    fab_idx, node_id, err
-                ),
-                Err(_) => warn!(
-                    "ICD: Check-In to fabric {} node {:#x} timed out",
-                    fab_idx, node_id
-                ),
-            }
-        }
-
-        // All messages of the batch shared `counter`; advance once.
-        ctx.kv()
-            .access(|store, kv_buf| self.advance_counter(store, kv_buf))
-    }
-
-    // --- Sending Check-In messages ---
-
-    /// Send a Check-In message to the registered client `(fab_idx, node_id)`,
-    /// using the given counter value.
-    ///
-    /// A per-client convenience over [`CheckIn::send_to`]; it looks up the
-    /// client's key and sends with the ICD application data (the
-    /// `ActiveModeThreshold`). It does *not* advance the counter — the caller
-    /// owns that so a batch can share one value (see `send_check_ins`).
-    ///
-    /// Requires a running mDNS responder to service the address resolve.
-    async fn send_one_check_in<C: Crypto>(
-        &self,
-        matter: &Matter<'_>,
-        crypto: C,
-        fab_idx: NonZeroU8,
-        node_id: u64,
-        counter: u32,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        // Copy the key out under the lock, then send outside it (sending is
-        // `async`; the lock is not held across the `await`).
-        let key = self
-            .state
-            .lock(|s| {
-                s.borrow()
-                    .clients
-                    .iter()
-                    .find(|c| c.fab_idx == fab_idx && c.check_in_node_id == node_id)
-                    .map(|c| c.key.clone())
-            })
-            .ok_or(ErrorCode::NotFound)?;
-
-        let app_data = self.mode.active_mode_threshold_ms.to_le_bytes();
-
-        CheckIn::new(key.reference())
-            .send_to(matter, crypto, fab_idx, node_id, counter, &app_data, buf)
-            .await
-    }
-}
-
-/// The server-side handler for the ICD Management cluster.
-///
-/// Backed by the shared [`Icd`] state: the registration commands mutate its
-/// store, and the ICD Counter reported to clients comes from its counter. Only
-/// the Check-In Protocol subset is implemented — the mode-duration / threshold
-/// attributes plus the `RegisteredClients` / `ICDCounter` /
-/// `ClientsSupportedPerFabric` attributes and the `RegisterClient` /
-/// `UnregisterClient` / `StayActiveRequest` commands.
-pub struct IcdMgmtHandler<'a> {
-    dataver: Dataver,
-    icd: &'a Icd,
-}
-
-impl<'a> IcdMgmtHandler<'a> {
-    /// Create a handler backed by the shared [`Icd`] state.
-    pub const fn new(dataver: Dataver, icd: &'a Icd) -> Self {
-        Self { dataver, icd }
-    }
-
-    /// Adapt this handler to the generic `rs-matter` `Handler` trait.
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
-    }
-
-    /// The accessing fabric of the current command.
-    fn cmd_fabric(ctx: &impl InvokeContext) -> Result<NonZeroU8, Error> {
-        ctx.accessor()?.fab_idx()
-    }
-
-    /// Whether the caller holds Administer privilege on this command's path.
-    ///
-    /// Administrators may register/unregister any client; everyone else must
-    /// prove ownership of an existing entry with its verification key.
-    fn caller_is_admin(ctx: &impl InvokeContext) -> Result<bool, Error> {
-        let accessor = ctx.accessor()?;
-        let cmd = ctx.cmd();
-        let path = GenericPath::new(
-            Some(cmd.endpoint_id),
-            Some(cmd.cluster_id),
-            Some(cmd.cmd_id),
-        );
-
-        let mut req = AccessReq::new(&accessor, path, Access::WRITE, &[]);
-        req.set_target_perms(Access::WRITE | Access::NEED_ADMIN);
-
-        Ok(req.allow())
-    }
-
-    /// Publish the current operating mode (and the slow poll it implies) to
-    /// the mDNS layer. This handler serves the LITS feature, so the device is
-    /// always ICD-capable — the mode flips between SIT and LIT as the
-    /// registration set empties and fills.
-    fn sync_icd_mode(&self, ctx: &impl HandlerContext) {
-        self.icd.publish_advertisement(ctx.matter());
-    }
-}
-
-impl ClusterHandler for IcdMgmtHandler<'_> {
-    // We claim the full ICD feature set: Check-In Protocol, Long-Idle-Time,
-    // User-Active-Mode-Trigger and Dynamic-SIT-LIT. CIP makes the registration
-    // attributes/commands and MaximumCheckInBackoff mandatory; LITS makes
-    // OperatingMode and StayActiveRequest mandatory; UAT makes
-    // UserActiveModeTriggerHint mandatory; DSLS (which is exactly our
-    // registration-driven SIT/LIT switching) adds only its feature bit.
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_features(
-            Feature::CHECK_IN_PROTOCOL_SUPPORT
-                .union(Feature::LONG_IDLE_TIME_SUPPORT)
-                .union(Feature::USER_ACTIVE_MODE_TRIGGER)
-                .union(Feature::DYNAMIC_SIT_LIT_SUPPORT)
-                .bits(),
-        )
-        .with_attrs(with!(required;
-            AttributeId::RegisteredClients
-                | AttributeId::ICDCounter
-                | AttributeId::ClientsSupportedPerFabric
-                | AttributeId::MaximumCheckInBackOff
-                | AttributeId::OperatingMode
-                | AttributeId::UserActiveModeTriggerHint
-                | AttributeId::UserActiveModeTriggerInstruction));
-
-    fn dataver(&self) -> u32 {
-        self.dataver.get()
-    }
-
-    fn dataver_changed(&self) {
-        self.dataver.changed();
-    }
-
-    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        match op {
-            LifecycleOp::Startup => {
-                ctx.kv()
-                    .access(|store, buf| self.icd.load_persist(ctx.crypto(), store, buf))?;
-
-                // Seed the advertised operating mode from the reloaded
-                // registration set, so a client registered before the reboot
-                // keeps the device advertising as LIT.
-                self.sync_icd_mode(&ctx);
-
-                Ok(())
-            }
-            LifecycleOp::FactoryReset => {
-                ctx.kv()
-                    .access(|store, buf| self.icd.reset_persist(ctx.crypto(), store, buf))?;
-
-                // Every registration is gone, so the device drops back to SIT.
-                self.sync_icd_mode(&ctx);
-
-                Ok(())
-            }
-            LifecycleOp::FabricRemoval { fab_idx } => {
-                let mode_before = self.icd.operating_mode();
-
-                if self.icd.remove_fabric(fab_idx) {
-                    self.icd.store_registrations(&ctx)?;
-
-                    // Dropping the last LIT registration flips the operating
-                    // mode to SIT - a global (not fabric-scoped) observable,
-                    // so subscribers and the mDNS layer must learn about it.
-                    // ICD Management is a root-node cluster, hence the fixed
-                    // endpoint.
-                    if self.icd.operating_mode() != mode_before {
-                        ctx.notify_attr_changed(
-                            ROOT_ENDPOINT_ID,
-                            Self::CLUSTER.id,
-                            AttributeId::OperatingMode as _,
-                        );
-                    }
-
-                    self.sync_icd_mode(&ctx);
-                }
-
-                Ok(())
-            }
-        }
-    }
-
-    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        self.icd.run(ctx).await
-    }
-
-    fn idle_mode_duration(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.icd.mode.idle_mode_duration_s)
-    }
-
-    fn active_mode_duration(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.icd.mode.active_mode_duration_ms)
-    }
-
-    fn active_mode_threshold(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.icd.mode.active_mode_threshold_ms)
-    }
-
-    fn clients_supported_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(CLIENTS_PER_FABRIC as u16)
-    }
-
-    // The lower bound of the allowed range: this device does not back its
-    // Check-Ins off, so its maximum equals its idle-mode duration.
-    fn maximum_check_in_back_off(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.icd.mode.idle_mode_duration_s)
-    }
-
-    fn operating_mode(&self, _ctx: impl ReadContext) -> Result<OperatingModeEnum, Error> {
-        Ok(self.icd.operating_mode())
-    }
-
-    fn user_active_mode_trigger_hint(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<UserActiveModeTriggerBitmap, Error> {
-        Ok(UserActiveModeTriggerBitmap::from_bits_truncate(
-            self.icd.mode.user_active_mode_trigger_hint,
-        ))
-    }
-
-    fn user_active_mode_trigger_instruction<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl ReadContext,
-        builder: crate::tlv::Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(self.icd.mode.user_active_mode_trigger_instruction)
-    }
-
-    fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.icd.next_counter())
-    }
-
-    fn registered_clients<P: TLVBuilderParent>(
-        &self,
-        ctx: impl ReadContext,
-        builder: ArrayAttributeRead<
-            MonitoringRegistrationStructArrayBuilder<P>,
-            MonitoringRegistrationStructBuilder<P>,
-        >,
-    ) -> Result<P, Error> {
-        let attr = ctx.attr();
-        let fab_filter = attr
-            .fab_filter
-            .then(|| NonZeroU8::new(attr.fab_idx).ok_or(ErrorCode::UnsupportedAccess))
-            .transpose()?;
-
-        self.icd.with_registrations(|clients| {
-            let mut iter = clients
-                .iter()
-                .filter(|c| fab_filter.is_none_or(|f| c.fab_idx == f));
-
-            match builder {
-                ArrayAttributeRead::ReadAll(mut array) => {
-                    for c in iter {
-                        array = array
-                            .push()?
-                            .check_in_node_id(Some(c.check_in_node_id))?
-                            .monitored_subject(Some(c.monitored_subject))?
-                            .client_type(Some(c.client_type))?
-                            .fabric_index(Some(c.fab_idx.get()))?
-                            .end()?;
-                    }
-                    array.end()
-                }
-                ArrayAttributeRead::ReadOne(index, item) => {
-                    let Some(c) = iter.nth(index as usize) else {
-                        return Err(ErrorCode::ConstraintError.into());
-                    };
-                    item.check_in_node_id(Some(c.check_in_node_id))?
-                        .monitored_subject(Some(c.monitored_subject))?
-                        .client_type(Some(c.client_type))?
-                        .fabric_index(Some(c.fab_idx.get()))?
-                        .end()
-                }
-                ArrayAttributeRead::ReadNone(array) => array.end(),
-            }
-        })
-    }
-
-    fn handle_register_client<P: TLVBuilderParent>(
-        &self,
-        ctx: impl InvokeContext,
-        request: RegisterClientRequest<'_>,
-        response: RegisterClientResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        let fab_idx = Self::cmd_fabric(&ctx)?;
-        let node_id = request.check_in_node_id()?;
-
-        // A non-administrator replacing an existing entry must present its
-        // verification key. A new entry (NotFound) needs no key.
-        if !Self::caller_is_admin(&ctx)? {
-            let presented = request.verification_key()?.map(|k| k.0);
-            if self.icd.verify_key(fab_idx, node_id, presented) == KeyVerdict::Mismatch {
-                Err(ErrorCode::Failure)?;
-            }
-        }
-
-        let key = request.key()?;
-
-        self.icd.register(MonitoringRegistration {
-            fab_idx,
-            check_in_node_id: node_id,
-            monitored_subject: request.monitored_subject()?,
-            // An out-of-range client type or wrong-length key is a constraint
-            // violation, not a generic failure.
-            client_type: request
-                .client_type()
-                .map_err(|_| ErrorCode::ConstraintError)?,
-            key: key.0.try_into().map_err(|_| ErrorCode::ConstraintError)?,
-        })?;
-
-        self.icd.store_registrations(&ctx)?;
-        ctx.notify_own_cluster_changed();
-        self.sync_icd_mode(&ctx);
-
-        // The client stores this as its starting Check-In counter reference.
-        response.icd_counter(self.icd.next_counter())?.end()
-    }
-
-    fn handle_unregister_client(
-        &self,
-        ctx: impl InvokeContext,
-        request: UnregisterClientRequest<'_>,
-    ) -> Result<(), Error> {
-        let fab_idx = Self::cmd_fabric(&ctx)?;
-        let node_id = request.check_in_node_id()?;
-
-        // A non-administrator must prove ownership with the verification key
-        // before the entry is removed; a missing entry is `NotFound` regardless.
-        if !Self::caller_is_admin(&ctx)? {
-            let presented = request.verification_key()?.map(|k| k.0);
-            match self.icd.verify_key(fab_idx, node_id, presented) {
-                KeyVerdict::NotFound => Err(ErrorCode::NotFound)?,
-                KeyVerdict::Mismatch => Err(ErrorCode::Failure)?,
-                KeyVerdict::Match => {}
-            }
-        }
-
-        self.icd.unregister(fab_idx, node_id)?;
-
-        self.icd.store_registrations(&ctx)?;
-        ctx.notify_own_cluster_changed();
-        self.sync_icd_mode(&ctx);
-
-        Ok(())
-    }
-
-    fn handle_stay_active_request<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl InvokeContext,
-        request: StayActiveRequestRequest<'_>,
-        response: StayActiveResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Honor at most the maximum guaranteed stay-active duration, then extend
-        // the deadline and report the actual resulting remaining time (which may
-        // be longer if a prior request already extended further).
-        let requested = request.stay_active_duration()?.min(STAY_ACTIVE_MAX_MS);
-        let promised = self.icd.extend_active(requested);
-
-        response.promised_active_duration(promised)?.end()
-    }
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::crypto::test_only_crypto;
-
     use super::*;
 
-    fn fab(i: u8) -> NonZeroU8 {
-        NonZeroU8::new(i).unwrap()
-    }
-
-    fn reg(fab: u8, node: u64) -> MonitoringRegistration {
-        MonitoringRegistration {
-            fab_idx: NonZeroU8::new(fab).unwrap(),
-            check_in_node_id: node,
-            monitored_subject: node,
-            client_type: ClientTypeEnum::Permanent,
-            key: CanonAeadKey::new(),
+    pub(super) fn mode() -> IcdModeConfig {
+        IcdModeConfig {
+            idle_mode_duration_s: 60,
+            active_mode_duration_ms: 300,
+            active_mode_threshold_ms: 500,
+            user_active_mode_trigger_hint: 0,
+            user_active_mode_trigger_instruction: "",
         }
     }
 
     fn icd() -> Icd {
-        Icd::new(10, mode())
-    }
-
-    /// Collect the node ids of the registrations matching `fab_filter`.
-    fn nodes(icd: &Icd, fab_filter: Option<NonZeroU8>) -> alloc::vec::Vec<u64> {
-        icd.with_registrations(|clients| {
-            clients
-                .iter()
-                .filter(|c| fab_filter.is_none_or(|f| c.fab_idx == f))
-                .map(|c| c.check_in_node_id)
-                .collect()
-        })
+        Icd::new(mode())
     }
 
     /// Whether `notification` has been signalled since it was last waited on
     /// (consuming the signal).
-    fn notified(notification: &Notification) -> bool {
+    pub(super) fn notified(notification: &Notification) -> bool {
         use core::future::Future;
         use core::task::{Context, Poll, Waker};
 
@@ -1683,15 +906,19 @@ mod tests {
         )
     }
 
-    /// Put the device in idle mode, the way `run_active` does once the active
-    /// deadline passes.
-    fn go_idle(icd: &Icd) {
+    /// Put the device in idle mode directly, the way `run_active` does once
+    /// the active deadline passes.
+    pub(super) fn force_idle(icd: &Icd) {
         icd.state.lock(|s| {
             let mut s = s.borrow_mut();
 
             s.power_mode = IcdPowerMode::Idle;
             s.idle_until = Instant::now() + Duration::from_secs(60);
         });
+    }
+
+    fn active_until(icd: &Icd) -> Instant {
+        icd.state.lock(|s| s.borrow().active_until)
     }
 
     #[test]
@@ -1705,7 +932,7 @@ mod tests {
         assert!(!notified(&icd.net_changed));
         assert!(!notified(&icd.power_changed));
 
-        go_idle(&icd);
+        force_idle(&icd);
 
         icd.network_activity();
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
@@ -1717,16 +944,16 @@ mod tests {
     #[test]
     fn stay_active_request_wakes_an_idle_device() {
         let icd = icd();
-        go_idle(&icd);
+        force_idle(&icd);
 
-        icd.extend_active(1_000);
+        icd.stay_active(1_000);
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
         assert!(notified(&icd.nudged));
         assert!(notified(&icd.net_changed));
         assert!(notified(&icd.power_changed));
 
         // Active already: a further request only moves the deadline out.
-        icd.extend_active(2_000);
+        icd.stay_active(2_000);
         assert!(notified(&icd.nudged));
         assert!(!notified(&icd.net_changed));
         assert!(!notified(&icd.power_changed));
@@ -1751,7 +978,7 @@ mod tests {
         assert!(notified(&icd.nudged));
         assert!(!notified(&icd.power_changed));
 
-        go_idle(&icd);
+        force_idle(&icd);
 
         icd.set_comm_window_open(true);
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
@@ -1761,34 +988,18 @@ mod tests {
     }
 
     #[test]
-    fn registrations_signal_the_network_driver_only_on_a_sit_lit_flip() {
+    fn operating_mode_signals_the_network_driver_only_when_it_changes() {
         let icd = icd();
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
 
-        // SIT -> LIT
-        icd.register(reg(1, 100)).unwrap();
+        icd.set_operating_mode(OperatingModeEnum::SIT);
+        assert!(!notified(&icd.net_changed));
+
+        icd.set_operating_mode(OperatingModeEnum::LIT);
         assert!(notified(&icd.net_changed));
         assert!(!notified(&icd.power_changed));
 
-        // Still LIT: another client, and an update of the first one.
-        icd.register(reg(1, 101)).unwrap();
-        icd.register(reg(1, 100)).unwrap();
-        assert!(!notified(&icd.net_changed));
-
-        // Still LIT.
-        icd.unregister(fab(1), 101).unwrap();
-        assert!(!notified(&icd.net_changed));
-
-        // LIT -> SIT
-        icd.unregister(fab(1), 100).unwrap();
-        assert!(notified(&icd.net_changed));
-        assert!(!notified(&icd.power_changed));
-
-        // The same over a fabric removal.
-        icd.register(reg(2, 200)).unwrap();
-        assert!(notified(&icd.net_changed));
-        assert!(icd.remove_fabric(fab(2)));
-        assert!(notified(&icd.net_changed));
-        assert!(!icd.remove_fabric(fab(2)));
+        icd.set_operating_mode(OperatingModeEnum::LIT);
         assert!(!notified(&icd.net_changed));
     }
 
@@ -1805,346 +1016,49 @@ mod tests {
     }
 
     #[test]
-    fn register_adds_and_updates() {
-        let icd = icd();
-
-        icd.register(reg(1, 100)).unwrap();
-        assert_eq!(icd.registrations_len(), 1);
-        assert_eq!(icd.fabric_registrations_len(fab(1)), 1);
-
-        // Same (fabric, node) -> update in place, not a second entry.
-        let mut updated = reg(1, 100);
-        updated.monitored_subject = 999;
-        icd.register(updated).unwrap();
-        assert_eq!(icd.registrations_len(), 1);
-        let subject = icd.with_registrations(|c| c[0].monitored_subject);
-        assert_eq!(subject, 999);
-    }
-
-    #[test]
-    fn per_fabric_limit_is_enforced_independently() {
-        let icd = icd();
-
-        // Fill fabric 1 up to the per-fabric limit.
-        for i in 0..CLIENTS_PER_FABRIC {
-            icd.register(reg(1, 100 + i as u64)).unwrap();
-        }
-        assert_eq!(icd.fabric_registrations_len(fab(1)), CLIENTS_PER_FABRIC);
-
-        // One more distinct client on fabric 1 exceeds the limit...
-        assert!(icd
-            .register(reg(1, 100 + CLIENTS_PER_FABRIC as u64))
-            .is_err());
-        assert_eq!(icd.fabric_registrations_len(fab(1)), CLIENTS_PER_FABRIC);
-
-        // ...updating an existing fabric-1 client still works...
-        icd.register(reg(1, 100)).unwrap();
-        assert_eq!(icd.fabric_registrations_len(fab(1)), CLIENTS_PER_FABRIC);
-
-        // ...and fabric 2 has its own independent budget.
-        icd.register(reg(2, 200)).unwrap();
-        assert_eq!(icd.fabric_registrations_len(fab(2)), 1);
-    }
-
-    #[test]
-    fn unregister_and_remove_fabric() {
-        let icd = icd();
-        icd.register(reg(1, 100)).unwrap();
-        icd.register(reg(2, 200)).unwrap();
-
-        assert!(icd.unregister(fab(1), 999).is_err()); // no such node
-        icd.unregister(fab(1), 100).unwrap();
-        assert_eq!(icd.registrations_len(), 1);
-
-        // Removing a fabric drops only its entries.
-        assert!(icd.remove_fabric(fab(2)));
-        assert!(icd.registrations_is_empty());
-        assert!(!icd.remove_fabric(fab(2))); // nothing left
-    }
-
-    #[test]
-    fn operating_mode_follows_the_registration_set() {
-        let icd = icd();
-        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
-
-        icd.register(reg(1, 100)).unwrap();
-        assert_eq!(icd.operating_mode(), OperatingModeEnum::LIT);
-
-        icd.register(reg(1, 101)).unwrap();
-        icd.unregister(fab(1), 100).unwrap();
-        assert_eq!(icd.operating_mode(), OperatingModeEnum::LIT);
-
-        icd.unregister(fab(1), 101).unwrap();
-        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
-    }
-
-    #[test]
-    fn verify_key_matches_only_the_stored_key() {
-        let icd = icd();
-
-        let mut r = reg(1, 100);
-        let stored = [7u8; 16];
-        r.key.try_load_from_slice(&stored).unwrap();
-        icd.register(r).unwrap();
-
-        // Unknown node.
-        assert_eq!(
-            icd.verify_key(fab(1), 999, Some(&stored)),
-            KeyVerdict::NotFound
-        );
-        // Right node, wrong fabric.
-        assert_eq!(
-            icd.verify_key(fab(2), 100, Some(&stored)),
-            KeyVerdict::NotFound
-        );
-        // Correct key.
-        assert_eq!(
-            icd.verify_key(fab(1), 100, Some(&stored)),
-            KeyVerdict::Match
-        );
-        // Wrong key and absent key both mismatch.
-        assert_eq!(
-            icd.verify_key(fab(1), 100, Some(&[0u8; 16])),
-            KeyVerdict::Mismatch
-        );
-        assert_eq!(icd.verify_key(fab(1), 100, None), KeyVerdict::Mismatch);
-    }
-
-    #[test]
-    fn with_registrations_honors_the_fabric_filter() {
-        let icd = icd();
-        icd.register(reg(1, 100)).unwrap();
-        icd.register(reg(2, 200)).unwrap();
-
-        let mut all = nodes(&icd, None);
-        all.sort_unstable();
-        assert_eq!(all, [100, 200]);
-
-        assert_eq!(nodes(&icd, Some(fab(1))), [100]);
-    }
-
-    /// A key-aware in-memory store. The ICD state spans two keys
-    /// (registrations and the Check-In counter), so a single-slot stub would
-    /// hand one key's blob back for the other.
-    #[derive(Default)]
-    struct MemKv {
-        entries: alloc::vec::Vec<(u16, alloc::vec::Vec<u8>)>,
-    }
-
-    impl MemKv {
-        fn get(&self, key: u16) -> Option<&[u8]> {
-            self.entries
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, v)| v.as_slice())
-        }
-    }
-
-    impl KvBlobStore for &mut MemKv {
-        fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-            let Some(v) = self.get(key) else {
-                return Ok(None);
-            };
-
-            buf[..v.len()].copy_from_slice(v);
-
-            Ok(Some(&buf[..v.len()]))
-        }
-
-        fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
-            self.entries.retain(|(k, _)| *k != key);
-            self.entries.push((key, data.to_vec()));
-
-            Ok(())
-        }
-
-        fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
-            self.entries.retain(|(k, _)| *k != key);
-
-            Ok(())
-        }
-    }
-
-    fn mode() -> IcdModeConfig {
-        IcdModeConfig {
-            idle_mode_duration_s: 60,
-            active_mode_duration_ms: 300,
-            active_mode_threshold_ms: 500,
-            user_active_mode_trigger_hint: 0,
-            user_active_mode_trigger_instruction: "",
-            sit_slow_poll_ms: SIT_SLOW_POLL_MAX_MS,
-        }
-    }
-
-    #[test]
     fn stay_active_combines_with_max_and_reports_remaining() {
-        let icd = Icd::new(10, mode());
+        let icd = icd();
 
         // No request yet: no stay-active deadline.
-        assert!(icd.active_until().is_none());
+        assert!(icd.stay_active_until().is_none());
 
         // A request sets the deadline and promises ~its duration.
-        let promised = icd.extend_active(STAY_ACTIVE_MAX_MS);
+        let promised = icd.stay_active(STAY_ACTIVE_MAX_MS);
         assert!(promised <= STAY_ACTIVE_MAX_MS);
         assert!(promised > STAY_ACTIVE_MAX_MS - 1_000, "promised {promised}");
-        let deadline = icd.active_until().expect("deadline now set");
+        let deadline = icd.stay_active_until().expect("deadline now set");
 
         // A shorter request does NOT shrink the deadline (max-combine): it still
         // promises ~the earlier, longer remaining time, not its own 1s.
-        let promised2 = icd.extend_active(1_000);
+        let promised2 = icd.stay_active(1_000);
         assert!(
             promised2 > 1_000,
             "shorter request must not shrink: {promised2}"
         );
-        assert_eq!(icd.active_until(), Some(deadline), "deadline unchanged");
+        assert_eq!(
+            icd.stay_active_until(),
+            Some(deadline),
+            "deadline unchanged"
+        );
 
         // A longer request DOES push the deadline out.
-        icd.extend_active(2 * STAY_ACTIVE_MAX_MS);
-        assert!(icd.active_until().unwrap() > deadline);
+        icd.stay_active(2 * STAY_ACTIVE_MAX_MS);
+        assert!(icd.stay_active_until().unwrap() > deadline);
     }
 
     #[test]
     fn stay_active_request_clamps_to_the_guaranteed_max() {
-        // The clamp lives in the command handler, not `extend_active` — verify it
+        // The clamp lives in the command handler, not `stay_active` — verify it
         // via the same `.min(STAY_ACTIVE_MAX_MS)` the handler applies.
-        let icd = Icd::new(10, mode());
+        let icd = icd();
 
         let requested = STAY_ACTIVE_MAX_MS + 5_000;
-        let promised = icd.extend_active(requested.min(STAY_ACTIVE_MAX_MS));
+        let promised = icd.stay_active(requested.min(STAY_ACTIVE_MAX_MS));
         assert!(promised <= STAY_ACTIVE_MAX_MS, "must clamp: {promised}");
     }
 
     #[test]
-    fn counter_persists_at_boundary_and_resumes_across_restart() {
-        const EPOCH: u32 = 10;
-        let mut kv = MemKv::default();
-        let mut buf = [0u8; 16];
-
-        // Session 1: counter starts at 100, boundary at 110.
-        let icd = Icd::new(EPOCH, mode());
-        // Session 1 seeds at 100 the way `load_persist` would from a stored
-        // boundary, so the expectations below stay readable.
-        icd.reseed_counter(100);
-
-        // Peeks are stable; advancing before the boundary writes nothing.
-        assert_eq!(icd.next_counter(), 101);
-        for _ in 0..9 {
-            icd.advance_counter(&mut kv, &mut buf).unwrap();
-        }
-        assert_eq!(
-            kv.get(ICD_CHECK_IN_COUNTER_KEY),
-            None,
-            "no persist before the boundary"
-        );
-
-        // Crossing the boundary persists the next one (120).
-        let last_used = icd.next_counter();
-        icd.advance_counter(&mut kv, &mut buf).unwrap();
-        assert_eq!(last_used, 110);
-        assert!(
-            kv.get(ICD_CHECK_IN_COUNTER_KEY).is_some(),
-            "boundary crossing must persist"
-        );
-
-        // Session 2 (a restart): a fresh Icd whose counter resumes from the
-        // persisted boundary. Every value it hands out is past session 1's.
-        // The epoch comes from the counter this `Icd` was built with, not from
-        // the blob.
-        let icd2 = Icd::new(EPOCH, mode());
-        icd2.load_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
-        assert!(icd2.next_counter() > last_used);
-
-        // Re-hydrating must itself persist the boundary it resumes from, or a
-        // crash before the next crossing would hand out these values twice.
-        let boundary = u32::from_le_bytes(
-            kv.get(ICD_CHECK_IN_COUNTER_KEY)
-                .unwrap()
-                .try_into()
-                .unwrap(),
-        );
-        assert!(boundary >= icd2.next_counter() + EPOCH - 1);
-
-        // Session 3 (a second restart, no traffic in session 2): still strictly
-        // past every value session 2 could have used.
-        let icd3 = Icd::new(EPOCH, mode());
-        icd3.load_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
-        assert!(icd3.next_counter() > icd2.next_counter() + EPOCH - 1);
-    }
-
-    #[test]
-    fn first_boot_seeds_the_counter_and_persists_a_boundary() {
-        const EPOCH: u32 = 10;
-        let mut kv = MemKv::default();
-        let mut buf = [0u8; 256];
-
-        // Nothing stored: the counter is seeded from a random start, and the
-        // boundary it resumes from must be durable before any Check-In goes out.
-        let icd = Icd::new(EPOCH, mode());
-        icd.load_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
-
-        let boundary = u32::from_le_bytes(
-            kv.get(ICD_CHECK_IN_COUNTER_KEY)
-                .expect("a first boot must persist a boundary")
-                .try_into()
-                .unwrap(),
-        );
-
-        // `next()` peeks at start + 1 and the boundary sits at start + EPOCH.
-        assert_eq!(boundary, icd.next_counter().wrapping_add(EPOCH - 1));
-    }
-
-    #[test]
-    fn factory_reset_clears_registrations_and_both_keys() {
-        let mut kv = MemKv::default();
-        let mut buf = [0u8; 256];
-
-        let icd = Icd::new(10, mode());
-
-        icd.register(reg(1, 0x1234)).unwrap();
-        assert_eq!(icd.operating_mode(), OperatingModeEnum::LIT);
-
-        // Seed both persisted blobs the way a running node would.
-        (&mut kv)
-            .store(ICD_REGISTERED_CLIENTS_KEY, b"whatever", &mut buf)
-            .unwrap();
-        (&mut kv)
-            .store(ICD_CHECK_IN_COUNTER_KEY, &110u32.to_le_bytes(), &mut buf)
-            .unwrap();
-
-        let before_reset = icd.next_counter();
-
-        icd.reset_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
-
-        assert!(icd.registrations_is_empty());
-        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
-        assert_eq!(kv.get(ICD_REGISTERED_CLIENTS_KEY), None);
-        assert_eq!(kv.get(ICD_CHECK_IN_COUNTER_KEY), None);
-
-        // The counter is re-seeded rather than left where it was, so the next
-        // boot does not resume the decommissioned device's sequence.
-        assert_ne!(icd.next_counter(), before_reset);
-    }
-
-    /// Put the ICD into idle mode directly, bypassing the async loop.
-    fn force_idle(icd: &Icd) {
-        icd.state.lock(|s| {
-            let mut s = s.borrow_mut();
-
-            s.power_mode = IcdPowerMode::Idle;
-            s.idle_until = Instant::now() + Duration::from_secs(60);
-        });
-    }
-
-    fn active_until(icd: &Icd) -> Instant {
-        icd.state.lock(|s| s.borrow().active_until)
-    }
-
-    #[test]
-    fn sit_caps_the_slow_poll_interval_until_a_client_registers() {
+    fn sit_caps_the_slow_poll_interval() {
         let icd = icd();
 
         // The defaults, before `run` has read the advertised intervals.
@@ -2158,21 +1072,21 @@ mod tests {
         icd.set_poll_intervals(300, 900_000);
         force_idle(&icd);
 
-        // No registered client -> operating as SIT -> capped while idle.
+        // Operating as SIT -> capped while idle.
         let params = icd.net_params();
         assert_eq!(params.operating_mode, OperatingModeEnum::SIT);
         assert_eq!(params.poll_interval_ms, SIT_SLOW_POLL_MAX_MS);
         // ... but the driver still learns the slowest interval it may ever see.
         assert_eq!(params.max_poll_interval_ms, 900_000);
 
-        // A registered client -> LIT -> the full interval.
-        icd.register(reg(1, 100)).unwrap();
+        // Operating as LIT -> the full interval.
+        icd.set_operating_mode(OperatingModeEnum::LIT);
         let params = icd.net_params();
         assert_eq!(params.operating_mode, OperatingModeEnum::LIT);
         assert_eq!(params.poll_interval_ms, 900_000);
 
-        // Back to SIT once it is gone.
-        icd.unregister(fab(1), 100).unwrap();
+        // Back to SIT.
+        icd.set_operating_mode(OperatingModeEnum::SIT);
         assert_eq!(icd.net_params().poll_interval_ms, SIT_SLOW_POLL_MAX_MS);
 
         // A slow interval within the cap is never raised to it.
@@ -2180,17 +1094,11 @@ mod tests {
         assert_eq!(icd.net_params().poll_interval_ms, 5_000);
     }
 
-    /// A device may poll faster than the SIT maximum while it waits for a
-    /// registration; the advertisement follows the poll in effect.
+    /// A device may poll faster than the SIT maximum while operating as a SIT;
+    /// the advertisement follows the poll in effect.
     #[test]
     fn a_configured_sit_poll_below_the_maximum_is_used_while_sit() {
-        let icd = Icd::new(
-            10,
-            IcdModeConfig {
-                sit_slow_poll_ms: 5_000,
-                ..mode()
-            },
-        );
+        let icd = Icd::with_sit_slow_poll(mode(), 5_000);
 
         icd.set_poll_intervals(300, 900_000);
         force_idle(&icd);
@@ -2204,7 +1112,7 @@ mod tests {
             }
         );
 
-        icd.register(reg(1, 100)).unwrap();
+        icd.set_operating_mode(OperatingModeEnum::LIT);
         assert_eq!(icd.net_params().poll_interval_ms, 900_000);
         assert_eq!(
             icd.advertisement(),
@@ -2215,7 +1123,7 @@ mod tests {
         );
 
         // A SIT-only configuration polls at its own, shorter, interval.
-        icd.unregister(fab(1), 100).unwrap();
+        icd.set_operating_mode(OperatingModeEnum::SIT);
         icd.set_poll_intervals(300, 2_000);
         assert_eq!(icd.net_params().poll_interval_ms, 2_000);
         assert_eq!(icd.advertisement().slow_poll_ms, 2_000);
@@ -2224,13 +1132,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn a_sit_poll_above_the_maximum_is_rejected() {
-        Icd::new(
-            10,
-            IcdModeConfig {
-                sit_slow_poll_ms: SIT_SLOW_POLL_MAX_MS + 1,
-                ..mode()
-            },
-        );
+        Icd::with_sit_slow_poll(mode(), SIT_SLOW_POLL_MAX_MS + 1);
     }
 
     #[test]
@@ -2298,15 +1200,12 @@ mod tests {
     /// window expires into idle mode, and the idle period expires back into active mode.
     #[test]
     fn active_window_expires_into_idle_and_idle_period_wakes_up() {
-        let icd = Icd::new(
-            10,
-            IcdModeConfig {
-                idle_mode_duration_s: 1,
-                active_mode_duration_ms: 50,
-                active_mode_threshold_ms: 50,
-                ..mode()
-            },
-        );
+        let icd = Icd::new(IcdModeConfig {
+            idle_mode_duration_s: 1,
+            active_mode_duration_ms: 50,
+            active_mode_threshold_ms: 50,
+            ..mode()
+        });
 
         // Boot: active for `ActiveModeDuration`. `start` is taken before the request, as the
         // deadline is measured from the request.
@@ -2343,15 +1242,12 @@ mod tests {
     fn work_in_flight_keeps_the_device_active_past_the_deadline() {
         use core::cell::Cell;
 
-        let icd = Icd::new(
-            10,
-            IcdModeConfig {
-                idle_mode_duration_s: 1,
-                active_mode_duration_ms: 50,
-                active_mode_threshold_ms: 50,
-                ..mode()
-            },
-        );
+        let icd = Icd::new(IcdModeConfig {
+            idle_mode_duration_s: 1,
+            active_mode_duration_ms: 50,
+            active_mode_threshold_ms: 50,
+            ..mode()
+        });
 
         let busy = Cell::new(true);
 
