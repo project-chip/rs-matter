@@ -345,6 +345,20 @@ impl<'a> Matter<'a> {
         }
     }
 
+    /// Return true if the ICD device is considered "busy" right now, i.e. it cannot
+    /// switch to idle mode even if there is no traffic. The device is considered busy if:
+    /// - the commissioning fail-safe is armed
+    /// - and/or there are any open exchanges on any session (an interaction in flight)
+    pub fn is_icd_busy(&self) -> bool {
+        self.with_state(|state| {
+            state.failsafe.is_armed()
+                || state
+                    .sessions
+                    .iter()
+                    .any(|session| session.exchanges.iter().any(Option::is_some))
+        })
+    }
+
     /// Combine a user-provided raw [`KvBlobStore`] with the scratch buffer owned
     /// by this `Matter` object to obtain a full [`KvBlobStoreAccess`].
     ///

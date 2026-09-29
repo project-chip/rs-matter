@@ -944,8 +944,10 @@ impl Icd {
     /// - starts in active mode for `ActiveModeDuration`, as a freshly booted
     ///   ICD does, and sends the Check-Ins of a LIT right away;
     /// - feeds the transport's activity and the commissioning window state in;
-    /// - expires the active window into idle mode, wakes up from idle mode
-    ///   after `IdleModeDuration`, and sends the Check-Ins on every such wake-up;
+    /// - expires the active window into idle mode - but not while an exchange
+    ///   is open or the fail-safe is armed: work in flight keeps the device
+    ///   active past its deadline - wakes up from idle mode after
+    ///   `IdleModeDuration`, and sends the Check-Ins on every such wake-up;
     /// - sends them as well as soon as a report to a subscriber fails while the
     ///   device is active: that client may have lost its subscription, and is
     ///   better nudged now than on the next wake-up.
@@ -985,12 +987,19 @@ impl Icd {
     }
 
     /// The idle <-> active loop.
-    async fn run_power_mode(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
+    async fn run_power_mode(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        let matter = ctx.matter();
         let stats = ctx.im_stats();
+
+        // Work in flight that keeps the device active past its deadline, as the
+        // spec has it ("while there are Exchanges active, a node typically will
+        // remain in Active mode"): an open exchange, or the fail-safe armed by a
+        // commissioning or a network update in progress.
+        let busy = || matter.is_icd_busy();
 
         // A LIT that (re)starts is waking up from its sleep, as far as its
         // clients are concerned.
-        self.send_check_ins(ctx).await?;
+        self.send_check_ins(&ctx).await?;
 
         loop {
             match self.power_mode() {
@@ -1002,15 +1011,15 @@ impl Icd {
                     // registered clients that lost touch right away, while awake,
                     // and stay awake long enough for them to come back.
                     if let Either::Second(()) =
-                        select(self.run_active(), stats.wait_report_failed()).await
+                        select(self.run_active(&busy), stats.wait_report_failed()).await
                     {
                         self.request_active();
-                        self.send_check_ins(ctx).await?;
+                        self.send_check_ins(&ctx).await?;
                     }
                 }
                 IcdPowerMode::Idle => {
                     if self.run_idle().await {
-                        self.send_check_ins(ctx).await?;
+                        self.send_check_ins(&ctx).await?;
                     }
                 }
             }
@@ -1018,8 +1027,12 @@ impl Icd {
     }
 
     /// Stay in active mode until the active deadline passes without being
-    /// extended, then switch to idle mode.
-    async fn run_active(&self) {
+    /// extended, then switch to idle mode - once `busy` no longer holds.
+    ///
+    /// `busy` is whatever work in flight has to keep the device active past its
+    /// deadline (an open exchange, an armed fail-safe). Nothing signals the end
+    /// of such work, so it is looked at again every `ActiveModeThreshold`.
+    async fn run_active(&self, mut busy: impl FnMut() -> bool) {
         loop {
             let (deadline, comm_window_open) = self.state.lock(|s| {
                 let s = s.borrow();
@@ -1036,6 +1049,13 @@ impl Icd {
 
             if let Either::Second(()) = select(Timer::at(deadline), self.nudged.wait()).await {
                 // Something extended the deadline (or closed the window): re-read.
+                continue;
+            }
+
+            if busy() {
+                // The deadline passed with work still in flight, which idle mode
+                // would cut short: look again in a while (or at the next nudge).
+                select(Timer::after(self.busy_recheck()), self.nudged.wait()).await;
                 continue;
             }
 
@@ -1061,6 +1081,16 @@ impl Icd {
                 return;
             }
         }
+    }
+
+    /// How long to wait before looking again at work in flight that keeps the
+    /// device active past its deadline: `ActiveModeThreshold`, the granularity
+    /// the device keeps its active window at anyway - floored, as a threshold of
+    /// `0` is allowed and must not turn the wait into a busy loop.
+    fn busy_recheck(&self) -> Duration {
+        const MIN_MS: u64 = 100;
+
+        Duration::from_millis((self.mode.active_mode_threshold_ms as u64).max(MIN_MS))
     }
 
     /// Stay in idle mode until `IdleModeDuration` elapses (returning `true`: a
@@ -1114,7 +1144,7 @@ impl Icd {
     /// Best-effort per client, with a timeout per send so that an unresolvable
     /// client cannot keep the device awake; only a counter persistence failure
     /// is an error.
-    async fn send_check_ins(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
+    async fn send_check_ins(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let stats = ctx.im_stats();
 
         let mut targets: Vec<(NonZeroU8, u64), MAX_REGISTERED_CLIENTS> = Vec::new();
@@ -2153,7 +2183,7 @@ mod tests {
         icd.request_active();
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
 
-        embassy_futures::block_on(icd.run_active());
+        embassy_futures::block_on(icd.run_active(|| false));
 
         assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
         assert!(start.elapsed() >= Duration::from_millis(50));
@@ -2174,5 +2204,39 @@ mod tests {
 
         assert!(!woke);
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
+    }
+
+    /// Work in flight (an open exchange, an armed fail-safe) keeps the device
+    /// active past its deadline; it goes idle once the work is done.
+    #[test]
+    fn work_in_flight_keeps_the_device_active_past_the_deadline() {
+        use core::cell::Cell;
+
+        let icd = Icd::new(
+            10,
+            IcdModeConfig {
+                idle_mode_duration_s: 1,
+                active_mode_duration_ms: 50,
+                active_mode_threshold_ms: 50,
+                ..mode()
+            },
+        );
+
+        let busy = Cell::new(true);
+
+        let start = Instant::now();
+        icd.request_active();
+
+        embassy_futures::block_on(embassy_futures::join::join(
+            icd.run_active(|| busy.get()),
+            async {
+                Timer::after(Duration::from_millis(250)).await;
+                busy.set(false);
+            },
+        ));
+
+        // Idle only after the work ended, well past the 50 ms deadline.
+        assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
+        assert!(start.elapsed() >= Duration::from_millis(250));
     }
 }
