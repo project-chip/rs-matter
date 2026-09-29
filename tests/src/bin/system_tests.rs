@@ -929,6 +929,9 @@ const ICD_MODE: IcdModeConfig = IcdModeConfig {
     active_mode_threshold_ms: 5000,
     user_active_mode_trigger_hint: 0x111D,
     user_active_mode_trigger_instruction: "Press the button to wake the device",
+    // The test harness runs on a LAN, so the device might as well be quick to reach
+    // before it is registered; the value is otherwise arbitrary.
+    sit_slow_poll_ms: 5000,
 };
 
 /// The Check-In counter epoch — how far ahead each persisted boundary jumps, so

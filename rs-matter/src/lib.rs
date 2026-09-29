@@ -39,7 +39,7 @@ use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
 };
 use crate::dm::clusters::dev_att::DeviceAttestation;
-use crate::dm::clusters::icd_mgmt::OperatingModeEnum;
+use crate::dm::clusters::icd_mgmt::IcdAdvertisement;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::clusters::time_sync::Rtc;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -325,18 +325,19 @@ impl<'a> Matter<'a> {
         self.with_state(|state| state.reboot_count)
     }
 
-    /// The ICD operating mode to advertise in the operational `ICD` DNS-SD TXT
-    /// key, or `None` when the device is not a Long-Idle-Time ICD.
-    pub fn icd_mode(&self) -> Option<OperatingModeEnum> {
-        self.with_state(|state| state.icd_mode)
+    /// What the device advertises over DNS-SD as a Long-Idle-Time-capable ICD
+    /// (the `ICD` TXT key, and the `SII` one while operating as a SIT), or
+    /// `None` when it is not one.
+    pub fn icd_advertisement(&self) -> Option<IcdAdvertisement> {
+        self.with_state(|state| state.icd_adv)
     }
 
-    /// Set the ICD operating mode advertised in mDNS and, if it changed, signal
-    /// the mDNS layer to re-publish.
-    pub fn set_icd_mode(&self, mode: Option<OperatingModeEnum>) {
+    /// Set the ICD advertisement and, if it changed, signal the mDNS layer to
+    /// re-publish.
+    pub fn set_icd_advertisement(&self, adv: Option<IcdAdvertisement>) {
         let changed = self.with_state(|state| {
-            let changed = state.icd_mode != mode;
-            state.icd_mode = mode;
+            let changed = state.icd_adv != adv;
+            state.icd_adv = adv;
             changed
         });
 
@@ -1103,9 +1104,9 @@ pub struct MatterState {
     pub basic_info_settings: BasicInfoSettings,
     /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
     pub rtc: Rtc,
-    /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT key.
+    /// What the device advertises over DNS-SD as a Long-Idle-Time-capable ICD.
     /// The ICD Management handler keeps this in sync with its registration set.
-    icd_mode: Option<OperatingModeEnum>,
+    icd_adv: Option<IcdAdvertisement>,
     /// The node's reboot counter, bumped and persisted by `Matter::startup`.
     reboot_count: u16,
 }
@@ -1123,7 +1124,7 @@ impl MatterState {
             failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
             rtc: Rtc::new(),
-            icd_mode: None,
+            icd_adv: None,
             reboot_count: 0,
         }
     }
@@ -1141,7 +1142,7 @@ impl MatterState {
             failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),
             rtc <- Rtc::init(),
-            icd_mode: None,
+            icd_adv: None,
             reboot_count: 0,
         })
     }
@@ -1156,7 +1157,7 @@ impl MatterState {
             failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),
             rtc <- Rtc::init(),
-            icd_mode: None,
+            icd_adv: None,
             reboot_count: 0,
         })
     }

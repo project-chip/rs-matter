@@ -93,7 +93,7 @@ pub const STAY_ACTIVE_MAX_MS: u32 = 30_000;
 /// (`SIT_ICD_SLOW_POLL_MAX` in the spec).
 ///
 /// A LIT-capable device without any registered Check-In client operates as SIT
-/// and is capped to this as well.
+/// and polls at [`IcdModeConfig::sit_slow_poll_ms`], which may not exceed this.
 pub const SIT_SLOW_POLL_MAX_MS: u32 = 15_000;
 
 /// The fast (active mode) polling interval used when `BasicInfoConfig::sai` is
@@ -141,6 +141,23 @@ pub struct IcdNetParams {
     /// milliseconds. Drivers size their link keep-alives (e.g. the Thread
     /// child timeout) from it.
     pub max_poll_interval_ms: u32,
+}
+
+/// What a Long-Idle-Time-capable ICD advertises about itself over DNS-SD.
+///
+/// The ICD Management handler keeps [`Matter`](crate::Matter) supplied with it
+/// (see [`Matter::icd_advertisement`](crate::Matter::icd_advertisement)); the
+/// mDNS layer derives the `ICD` and `SII` TXT keys from it.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct IcdAdvertisement {
+    /// The current operating mode: the `ICD` TXT key (`0` for `SIT`, `1` for
+    /// `LIT`).
+    pub operating_mode: OperatingModeEnum,
+    /// The slow polling interval in effect in that mode, in milliseconds. While
+    /// operating as a SIT this is what the device is reachable within, so it
+    /// bounds the advertised `SESSION_IDLE_INTERVAL` (`SII` TXT key).
+    pub slow_poll_ms: u32,
 }
 
 /// A single client registration (one entry of the `RegisteredClients` list).
@@ -199,6 +216,19 @@ pub struct IcdModeConfig {
     /// The `UserActiveModeTriggerInstruction` string paired with the hint (empty
     /// when the hint needs no free-form instruction). Must be `<= 128` bytes.
     pub user_active_mode_trigger_instruction: &'static str,
+    /// The slow polling interval while operating as a SIT, in milliseconds,
+    /// whenever the configured one (`BasicInfoConfig::sii`) is longer.
+    ///
+    /// A LIT-capable device operates as a SIT until a client registers with
+    /// it, and in that phase somebody is typically waiting to reach it: the
+    /// commissioner about to register, or a controller that does not know
+    /// about LIT at all. Polling faster than the LIT idle interval here costs
+    /// little and makes the device correspondingly quicker to reach. In range
+    /// `1..=`[`SIT_SLOW_POLL_MAX_MS`], the most a SIT may go unreachable for.
+    ///
+    /// A device whose `sii` is within that range already (a SIT-only device)
+    /// polls at its `sii` and can leave this at the maximum.
+    pub sit_slow_poll_ms: u32,
 }
 
 /// The interior, mutable ICD state guarded by a single lock: the registrations,
@@ -226,10 +256,13 @@ struct IcdState {
     /// The configured slow (idle mode) polling interval, in milliseconds
     /// (before the SIT cap).
     slow_poll_ms: u32,
+    /// The SIT cap on the slow polling interval, in milliseconds
+    /// ([`IcdModeConfig::sit_slow_poll_ms`]).
+    sit_slow_poll_ms: u32,
 }
 
 impl IcdState {
-    const fn new(counter: CheckInCounter) -> Self {
+    const fn new(counter: CheckInCounter, sit_slow_poll_ms: u32) -> Self {
         Self {
             clients: Vec::new(),
             counter,
@@ -240,10 +273,11 @@ impl IcdState {
             comm_window_open: false,
             fast_poll_ms: DEFAULT_FAST_POLL_MS,
             slow_poll_ms: DEFAULT_SLOW_POLL_MS,
+            sit_slow_poll_ms,
         }
     }
 
-    fn init(counter: CheckInCounter) -> impl Init<Self> {
+    fn init(counter: CheckInCounter, sit_slow_poll_ms: u32) -> impl Init<Self> {
         init!(Self {
             clients <- Vec::init(),
             counter: counter,
@@ -254,6 +288,7 @@ impl IcdState {
             comm_window_open: false,
             fast_poll_ms: DEFAULT_FAST_POLL_MS,
             slow_poll_ms: DEFAULT_SLOW_POLL_MS,
+            sit_slow_poll_ms: sit_slow_poll_ms,
         })
     }
 
@@ -265,12 +300,19 @@ impl IcdState {
         }
     }
 
-    /// The slow polling interval in effect: the configured one, capped for
-    /// SIT operation.
+    /// The slow polling interval in effect: the configured one, capped to the
+    /// SIT one while operating as a SIT.
     fn effective_slow_poll_ms(&self) -> u32 {
         match self.operating_mode() {
-            OperatingModeEnum::SIT => self.slow_poll_ms.min(SIT_SLOW_POLL_MAX_MS),
+            OperatingModeEnum::SIT => self.slow_poll_ms.min(self.sit_slow_poll_ms),
             OperatingModeEnum::LIT => self.slow_poll_ms,
+        }
+    }
+
+    fn advertisement(&self) -> IcdAdvertisement {
+        IcdAdvertisement {
+            operating_mode: self.operating_mode(),
+            slow_poll_ms: self.effective_slow_poll_ms(),
         }
     }
 
@@ -375,10 +417,16 @@ impl Icd {
     ///
     /// # Panics
     ///
-    /// Panics if `epoch` is zero.
+    /// Panics if `epoch` is zero, or if `mode.sit_slow_poll_ms` is zero or
+    /// exceeds [`SIT_SLOW_POLL_MAX_MS`].
     pub const fn new(epoch: u32, mode: IcdModeConfig) -> Self {
+        Self::validate(&mode);
+
         Self {
-            state: Mutex::new(RefCell::new(IcdState::new(CheckInCounter::new(0, epoch)))),
+            state: Mutex::new(RefCell::new(IcdState::new(
+                CheckInCounter::new(0, epoch),
+                mode.sit_slow_poll_ms,
+            ))),
             mode,
             net_changed: Notification::new(),
             power_changed: Notification::new(),
@@ -391,15 +439,29 @@ impl Icd {
     ///
     /// # Panics
     ///
-    /// Panics if `epoch` is zero.
+    /// Panics if `epoch` is zero, or if `mode.sit_slow_poll_ms` is zero or
+    /// exceeds [`SIT_SLOW_POLL_MAX_MS`].
     pub fn init(epoch: u32, mode: IcdModeConfig) -> impl Init<Self> {
+        Self::validate(&mode);
+
         init!(Self {
-            state <- Mutex::init(RefCell::init(IcdState::init(CheckInCounter::new(0, epoch)))),
+            state <- Mutex::init(RefCell::init(IcdState::init(
+                CheckInCounter::new(0, epoch),
+                mode.sit_slow_poll_ms,
+            ))),
             mode: mode,
             net_changed <- Notification::init(),
             power_changed <- Notification::init(),
             nudged <- Notification::init(),
         })
+    }
+
+    /// The configuration checks shared by the constructors.
+    const fn validate(mode: &IcdModeConfig) {
+        core::assert!(
+            mode.sit_slow_poll_ms > 0 && mode.sit_slow_poll_ms <= SIT_SLOW_POLL_MAX_MS,
+            "`sit_slow_poll_ms` must be in `1..=SIT_SLOW_POLL_MAX_MS`"
+        );
     }
 
     /// Re-seed the Check-In counter from `start`, keeping the epoch this `Icd`
@@ -458,6 +520,18 @@ impl Icd {
     /// resolves when it does.
     pub fn operating_mode(&self) -> OperatingModeEnum {
         self.state.lock(|s| s.borrow().operating_mode())
+    }
+
+    /// What the device advertises about itself over DNS-SD right now: the
+    /// operating mode and the slow polling interval in effect in it.
+    pub fn advertisement(&self) -> IcdAdvertisement {
+        self.state.lock(|s| s.borrow().advertisement())
+    }
+
+    /// Hand the current [`advertisement`](Self::advertisement) to `matter`,
+    /// which re-publishes its mDNS records if it changed.
+    fn publish_advertisement(&self, matter: &crate::Matter) {
+        matter.set_icd_advertisement(Some(self.advertisement()));
     }
 
     /// Register a client, or update the existing registration with the same
@@ -960,6 +1034,8 @@ impl Icd {
             dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS),
             dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS),
         );
+        // The slow poll in effect may have changed with them.
+        self.publish_advertisement(matter);
 
         self.set_comm_window_open(matter.comm_window_state().is_open());
         self.request_active();
@@ -1285,11 +1361,12 @@ impl<'a> IcdMgmtHandler<'a> {
         Ok(req.allow())
     }
 
-    /// Publish the current operating mode to the mDNS layer. This handler serves
-    /// the LITS feature, so the device is always ICD-capable — the mode flips
-    /// between SIT and LIT as the registration set empties and fills.
+    /// Publish the current operating mode (and the slow poll it implies) to
+    /// the mDNS layer. This handler serves the LITS feature, so the device is
+    /// always ICD-capable — the mode flips between SIT and LIT as the
+    /// registration set empties and fills.
     fn sync_icd_mode(&self, ctx: &impl HandlerContext) {
-        ctx.matter().set_icd_mode(Some(self.icd.operating_mode()));
+        self.icd.publish_advertisement(ctx.matter());
     }
 }
 
@@ -1895,6 +1972,7 @@ mod tests {
             active_mode_threshold_ms: 500,
             user_active_mode_trigger_hint: 0,
             user_active_mode_trigger_instruction: "",
+            sit_slow_poll_ms: SIT_SLOW_POLL_MAX_MS,
         }
     }
 
@@ -2100,6 +2178,59 @@ mod tests {
         // A slow interval within the cap is never raised to it.
         icd.set_poll_intervals(300, 5_000);
         assert_eq!(icd.net_params().poll_interval_ms, 5_000);
+    }
+
+    /// A device may poll faster than the SIT maximum while it waits for a
+    /// registration; the advertisement follows the poll in effect.
+    #[test]
+    fn a_configured_sit_poll_below_the_maximum_is_used_while_sit() {
+        let icd = Icd::new(
+            10,
+            IcdModeConfig {
+                sit_slow_poll_ms: 5_000,
+                ..mode()
+            },
+        );
+
+        icd.set_poll_intervals(300, 900_000);
+        force_idle(&icd);
+
+        assert_eq!(icd.net_params().poll_interval_ms, 5_000);
+        assert_eq!(
+            icd.advertisement(),
+            IcdAdvertisement {
+                operating_mode: OperatingModeEnum::SIT,
+                slow_poll_ms: 5_000,
+            }
+        );
+
+        icd.register(reg(1, 100)).unwrap();
+        assert_eq!(icd.net_params().poll_interval_ms, 900_000);
+        assert_eq!(
+            icd.advertisement(),
+            IcdAdvertisement {
+                operating_mode: OperatingModeEnum::LIT,
+                slow_poll_ms: 900_000,
+            }
+        );
+
+        // A SIT-only configuration polls at its own, shorter, interval.
+        icd.unregister(fab(1), 100).unwrap();
+        icd.set_poll_intervals(300, 2_000);
+        assert_eq!(icd.net_params().poll_interval_ms, 2_000);
+        assert_eq!(icd.advertisement().slow_poll_ms, 2_000);
+    }
+
+    #[test]
+    #[should_panic]
+    fn a_sit_poll_above_the_maximum_is_rejected() {
+        Icd::new(
+            10,
+            IcdModeConfig {
+                sit_slow_poll_ms: SIT_SLOW_POLL_MAX_MS + 1,
+                ..mode()
+            },
+        );
     }
 
     #[test]

@@ -23,7 +23,7 @@ use cfg_if::cfg_if;
 use domain::base::name::{Label, ToLabelIter};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
-use crate::dm::clusters::icd_mgmt::OperatingModeEnum;
+use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
 use crate::utils::storage::{write_split, Vec, WriteBuf};
@@ -77,7 +77,33 @@ impl MatterLocalService {
         ),
         Error,
     > {
-        self.service_internal(matter.dev_det(), matter.port(), matter.icd_mode(), buf)
+        self.service_internal(
+            matter.dev_det(),
+            matter.port(),
+            matter.icd_advertisement(),
+            buf,
+        )
+    }
+
+    /// The `SESSION_IDLE_INTERVAL` to advertise in the `SII` TXT key: the
+    /// configured one, capped to the slow poll in effect while the device
+    /// operates as a SIT.
+    ///
+    /// A Long-Idle-Time-capable device configures the idle interval of its LIT
+    /// operation (its idle mode duration, typically), but operates as a SIT -
+    /// polling within 15 s - until a client registers with its ICD Management
+    /// cluster. What it advertises paces its peers' retransmissions towards
+    /// it, so it has to follow the mode (Matter Core spec, a LIT ICD operating
+    /// as a SIT "SHALL advertise its SESSION_IDLE_INTERVAL using the SII
+    /// discovery TXT key"); the mode change re-publishes the record.
+    fn advertised_sii(dev_det: &BasicInfoConfig<'_>, icd: Option<IcdAdvertisement>) -> Option<u32> {
+        dev_det.sii.map(|sii| match icd {
+            Some(IcdAdvertisement {
+                operating_mode: OperatingModeEnum::SIT,
+                slow_poll_ms,
+            }) => sii.min(slow_poll_ms),
+            _ => sii,
+        })
     }
 
     /// The implementation behind [`Self::service`], taking the advertised inputs
@@ -87,7 +113,7 @@ impl MatterLocalService {
         &self,
         dev_det: &BasicInfoConfig<'_>,
         matter_port: u16,
-        icd_mode: Option<OperatingModeEnum>,
+        icd: Option<IcdAdvertisement>,
         buf: &'a mut [u8],
     ) -> Result<
         (
@@ -120,7 +146,7 @@ impl MatterLocalService {
                 } else {
                     ("", wb)
                 };
-                let (txt_sii, wb) = if let Some(sii) = dev_det.sii {
+                let (txt_sii, wb) = if let Some(sii) = Self::advertised_sii(dev_det, icd) {
                     write_split!(wb, "{}", sii)?
                 } else {
                     ("", wb)
@@ -129,7 +155,7 @@ impl MatterLocalService {
                 // The `ICD` key is advertised only by Long-Idle-Time-capable
                 // devices: "0" while operating as SIT, "1" as LIT. A non-ICD
                 // device omits it (empty value, dropped by the filter below).
-                let txt_icd = match icd_mode {
+                let txt_icd = match icd.map(|icd| icd.operating_mode) {
                     Some(OperatingModeEnum::LIT) => "1",
                     Some(OperatingModeEnum::SIT) => "0",
                     None => "",
@@ -200,7 +226,7 @@ impl MatterLocalService {
                 } else {
                     ("", wb)
                 };
-                let (txt_sii, mut wb) = if let Some(sii) = dev_det.sii {
+                let (txt_sii, mut wb) = if let Some(sii) = Self::advertised_sii(dev_det, icd) {
                     write_split!(wb, "{}", sii)?
                 } else {
                     ("", wb)
@@ -222,7 +248,7 @@ impl MatterLocalService {
                 // As on the operational service, a Long-Idle-Time-capable device
                 // advertises its current mode here too ("0"=SIT, "1"=LIT); a
                 // non-ICD device omits the key.
-                let txt_icd = match icd_mode {
+                let txt_icd = match icd.map(|icd| icd.operating_mode) {
                     Some(OperatingModeEnum::LIT) => "1",
                     Some(OperatingModeEnum::SIT) => "0",
                     None => "",
@@ -1027,6 +1053,50 @@ fn parse_hex_u64(s: &str) -> Option<u64> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    /// The `SII` a LIT-capable device advertises follows its operating mode:
+    /// its configured (LIT) idle interval as a LIT, the slow poll in effect
+    /// while it operates as a SIT; a non-ICD device advertises what it
+    /// configured.
+    #[test]
+    fn sii_is_capped_while_operating_as_sit() {
+        use crate::dm::devices::test::TEST_DEV_DET;
+
+        let dev_det = BasicInfoConfig {
+            sai: Some(300),
+            sii: Some(300_000),
+            ..TEST_DEV_DET
+        };
+
+        let mut buf = [0u8; 512];
+
+        let mut sii = |icd| {
+            let (service, _) = MatterLocalService::Commissioned {
+                compressed_fabric_id: 1,
+                node_id: 2,
+            }
+            .service_internal(&dev_det, 5540, icd, &mut buf)
+            .unwrap();
+
+            service
+                .txt_kvs
+                .clone()
+                .find(|(k, _)| *k == "SII")
+                .map(|(_, v)| v.parse::<u32>().unwrap())
+        };
+
+        let adv = |operating_mode, slow_poll_ms| {
+            Some(IcdAdvertisement {
+                operating_mode,
+                slow_poll_ms,
+            })
+        };
+
+        assert_eq!(sii(adv(OperatingModeEnum::SIT, 15_000)), Some(15_000));
+        assert_eq!(sii(adv(OperatingModeEnum::SIT, 5_000)), Some(5_000));
+        assert_eq!(sii(adv(OperatingModeEnum::LIT, 300_000)), Some(300_000));
+        assert_eq!(sii(None), Some(300_000));
+    }
 
     #[test]
     fn can_compute_short_discriminator() {

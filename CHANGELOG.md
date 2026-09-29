@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Breaking: ICD LIT devices: new, separate slow poll parameter (SII) for when the device operates in SIT mode, different form iuts (potentially much longer) LIT SII (#580)
 * Fix: unresumed persistent sessions that fail to report to their subscribers were retried indefinitely (#580)
 * Breaking: simplify the ICD support by running everything and just informing the user about the current ICD state (#579)
 * Fix: an unsecured session initiated by the device (e.g. for an ICD Check-In) no longer swallows a peer-initiated `CASESigma1` / `PBKDFParamRequest` from the same address, which made CASE fail right after a Check-In (#579)
