@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: unresumed persistent sessions that fail to report to their subscribers were retried indefinitely (#580)
 * Breaking: simplify the ICD support by running everything and just informing the user about the current ICD state (#579)
 * Fix: an unsecured session initiated by the device (e.g. for an ICD Check-In) no longer swallows a peer-initiated `CASESigma1` / `PBKDFParamRequest` from the same address, which made CASE fail right after a Check-In (#579)
 * Fix: the transport no longer wakes every 50/100 ms while idle; new `IfMutex::wait_until` (#578)

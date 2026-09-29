@@ -1366,11 +1366,9 @@ where
 
             // Track whether any subscription left the table during reporting (the
             // subscriber answered a report with a non-success status, i.e. a
-            // deliberate unsubscribe, or a resumed one was given up on), so its
-            // persisted record can be purged - and whether a resumed one spent a
-            // further wake-up failing, which its record has to remember.
+            // deliberate unsubscribe, or a resumed one could not be reached), so
+            // its persisted record can be purged.
             let mut dropped_any = false;
-            let mut resume_attempts_changed = false;
 
             loop {
                 let Some(mut rctx) = self.state.subscriptions.report(
@@ -1421,14 +1419,12 @@ where
                         // watermarks: the changes/events this report was carrying
                         // never reached the subscriber and must be re-sent.
                         //
-                        // Unless it is a resumed subscription that has now spent
-                        // its last wake-up: that one is given up on.
+                        // Unless this was the first report of a subscription resumed
+                        // from persistent storage: that one is given up on.
                         rctx.set_keep_retry();
 
                         if !rctx.is_kept() {
                             dropped_any = true;
-                        } else if rctx.resume_attempts_changed() {
-                            resume_attempts_changed = true;
                         }
                     }
                 }
@@ -1436,10 +1432,8 @@ where
 
             // A subscription that was torn down during reporting is now gone from
             // the table; re-persist so the on-disk set stays an exact mirror and
-            // the torn-down subscription is not resumed on the next reboot. A
-            // resumed subscription that spent a wake-up is re-persisted too, so
-            // the count survives the reboot it is there for.
-            if dropped_any || resume_attempts_changed {
+            // the torn-down subscription is not resumed on the next reboot.
+            if dropped_any {
                 self.persist_subscriptions();
             }
 
