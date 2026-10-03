@@ -24,8 +24,12 @@
 //! Subscribe support covers the *establishment* phase only — the
 //! `SubscribeRequest`, the priming `ReportData` chunks and the
 //! terminal `SubscribeResponse`. Server-initiated post-establishment
-//! reports arrive on new exchanges over the same session and require
-//! a separate listening abstraction layered on top of the transport.
+//! reports arrive on new exchanges over the same session and are
+//! routed by the [`InteractionModel`](crate::im::InteractionModel) to
+//! the [`ReportDataHandler`](crate::dm::ReportDataHandler) supplied via
+//! [`InteractionModel::new_with_reports`](crate::im::InteractionModel::new_with_reports)
+//! — see [`SubscriptionCtx`](crate::dm::SubscriptionCtx) for the
+//! identity a report is matched by.
 
 use either::Either;
 
@@ -1070,7 +1074,9 @@ impl<'a> InvokeRespChunk<'a> {
 // coming) or `SubscribeEstablished` carrying the subscription id /
 // max interval. The exchange is dropped at that point; ongoing
 // (post-establishment) report messages arrive on server-initiated
-// exchanges and require a separate listening abstraction.
+// exchanges and are routed by the `InteractionModel` to the
+// `ReportDataHandler` supplied via
+// `InteractionModel::new_with_reports` (see `SubscriptionCtx`).
 // =====================================================================
 
 /// Cornerstone `subscribe` transaction. See module docs for the
