@@ -220,14 +220,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         // currently rides on (so Sigma2 retransmits use them) and to
         // the reserved CASE session that takes over after Sigma3.
         if let Some(params) = req.session_parameters.as_ref() {
-            exchange.with_state(|state| {
-                exchange
-                    .id()
-                    .session(&mut state.sessions)
-                    .set_peer_session_params(params);
-                Ok(())
-            })?;
-            session.set_peer_session_params(params)?;
+            session.apply_peer_session_params(exchange.id(), params)?;
         }
 
         trace!(
@@ -243,6 +236,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         let signature = signature.init_with(CanonPkcSignature::init());
         let mut signature_generated = false;
         let mut tt_updated = false;
+        let sii = exchange.matter().advertised_sii();
         exchange
             .send_with(|exchange, tw| {
                 exchange.with_state(|state| {
@@ -285,10 +279,11 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     })?;
 
                     // Responder session parameters (tag 5)
+                    let dev_det = exchange.matter().dev_det();
                     let session_params = crate::sc::SessionParameters {
-                        max_paths_per_invoke: Some(
-                            exchange.matter().dev_det().max_paths_per_invoke,
-                        ),
+                        sii,
+                        sai: Some(exchange.matter().advertised_sai()),
+                        max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
                         ..Default::default()
                     };
                     session_params.to_tlv(&TLVTag::Context(5), &mut *tw)?;
@@ -646,19 +641,15 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         // over after SigmaFinished. Mirrors the equivalent block in
         // `handle_casesigma1`.
         if let Some(ref params) = peer_params {
-            exchange.with_state(|state| {
-                exchange
-                    .id()
-                    .session(&mut state.sessions)
-                    .set_peer_session_params(params);
-                Ok::<_, Error>(())
-            })?;
-            session.set_peer_session_params(params)?;
+            session.apply_peer_session_params(exchange.id(), params)?;
         }
 
         // ---- Send Sigma2_Resume. --------------------------------------
+        let dev_det = exchange.matter().dev_det();
         let responder_session_params = SessionParameters {
-            max_paths_per_invoke: Some(exchange.matter().dev_det().max_paths_per_invoke),
+            sii: exchange.matter().advertised_sii(),
+            sai: Some(exchange.matter().advertised_sai()),
+            max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
             ..Default::default()
         };
         let new_rid_bytes: [u8; CASE_RESUMPTION_ID_LEN] = *new_rid.reference().access();

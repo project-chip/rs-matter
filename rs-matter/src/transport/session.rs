@@ -117,6 +117,21 @@ impl SessionMode {
     }
 }
 
+/// A peer's MRP parameters as advertised out of band - the `SAI` / `SII` /
+/// `SAT` keys of its mDNS TXT record - for seeding a session to it, see
+/// [`Exchange::set_peer_mrp_params`](crate::transport::exchange::Exchange::set_peer_mrp_params).
+/// `None` leaves the corresponding parameter as it is.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PeerMrpParams {
+    /// Session Idle Interval in ms
+    pub sii: Option<u32>,
+    /// Session Active Interval in ms
+    pub sai: Option<u32>,
+    /// Session Active Threshold in ms
+    pub sat: Option<u16>,
+}
+
 pub struct Session {
     // Internal ID which is guaranteeed to be unique accross all sessions and not change when sessions are added/removed
     pub(crate) id: u32,
@@ -1033,6 +1048,58 @@ impl<'a> ReservedSession<'a> {
             session.set_peer_session_params(params);
             Ok(())
         })
+    }
+
+    /// Start from the peer MRP parameters of the session the `exchange_id`
+    /// exchange runs on - the unsecured session carrying the handshake that
+    /// completes this one - so a hint already applied there (see
+    /// [`Exchange::set_peer_mrp_params`](crate::transport::exchange::Exchange::set_peer_mrp_params))
+    /// carries over to the secure session that takes the peer over. Whatever
+    /// the peer advertises in the handshake itself is applied on top.
+    pub(crate) fn inherit_peer_session_params(
+        &mut self,
+        exchange_id: ExchangeId,
+    ) -> Result<(), Error> {
+        self.matter.with_state(|state| {
+            let handshake = state
+                .sessions
+                .get(exchange_id.session_id())
+                .ok_or(ErrorCode::NoSession)?;
+            let params = SessionParameters {
+                sii: Some(handshake.get_peer_idle_interval_ms()),
+                sai: Some(handshake.get_peer_active_interval_ms()),
+                sat: Some(handshake.get_peer_active_threshold_ms()),
+                ..Default::default()
+            };
+
+            let session = state.sessions.get(self.id).ok_or(ErrorCode::NoSession)?;
+            session.set_peer_session_params(&params);
+
+            Ok(())
+        })
+    }
+
+    /// Apply the `session_parameters` the peer advertised in a handshake
+    /// message to both sessions the handshake involves: the unsecured session
+    /// the `exchange_id` exchange runs on, so the rest of the handshake is
+    /// retransmitted at the peer's pace, and this reserved session, which
+    /// takes the peer over once the handshake completes.
+    pub(crate) fn apply_peer_session_params(
+        &mut self,
+        exchange_id: ExchangeId,
+        params: &SessionParameters,
+    ) -> Result<(), Error> {
+        self.matter.with_state(|state| {
+            let handshake = state
+                .sessions
+                .get(exchange_id.session_id())
+                .ok_or(ErrorCode::NoSession)?;
+            handshake.set_peer_session_params(params);
+
+            Ok::<_, Error>(())
+        })?;
+
+        self.set_peer_session_params(params)
     }
 
     /// Consumes `self`, so the session is un-reserved by `Drop` before this

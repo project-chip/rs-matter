@@ -41,8 +41,6 @@ use crate::im::PROTO_ID_INTERACTION_MODEL;
 #[cfg(not(feature = "case-responder-only"))]
 use crate::sc::case::CaseInitiator;
 use crate::sc::pase::PaseInitiator;
-#[cfg(not(feature = "case-responder-only"))]
-use crate::sc::SessionParameters;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
@@ -67,6 +65,8 @@ use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState,
 use network::{Address, IpAddr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
+#[cfg(not(feature = "case-responder-only"))]
+use session::PeerMrpParams;
 use session::{Session, Sessions};
 
 use self::mrp::mrp_log;
@@ -884,6 +884,12 @@ impl Transport {
 
             match self.initiate_plaintext(matter, &crypto, peer).await {
                 Ok(exchange) => {
+                    exchange.set_peer_mrp_params(&PeerMrpParams {
+                        sii: resolved.sii,
+                        sai: resolved.sai,
+                        sat: resolved.sat,
+                    })?;
+
                     match CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await
                     {
                         Ok(()) => {
@@ -915,23 +921,11 @@ impl Transport {
             return Err(err);
         }
 
-        // Seed the new CASE session's peer MRP/session params from the resolve
-        // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
-        // its id for the exchange.
-        let params = SessionParameters {
-            sii: resolved.sii,
-            sai: resolved.sai,
-            sat: resolved.sat,
-            ..Default::default()
-        };
-
         let session_id = matter.with_state(|state| {
             let session = state
                 .sessions
                 .get_for_node(fabric_idx, peer_node_id)
                 .ok_or(ErrorCode::NoSession)?;
-
-            session.set_peer_session_params(&params);
 
             Ok::<_, Error>(session.id)
         })?;
