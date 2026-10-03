@@ -256,20 +256,23 @@ pub async fn run_central(
         gatt_mtu
     );
 
-    // Subscribe to C2 indications before we start the handshake, so we don't miss the peer's
-    // Handshake Response.
-    c2.start_notify().await?;
-
-    let mut value_changed = c2.receive_value_changed().await;
-
-    // We are the initiator: drive the BTP handshake from our side.
-    //
-    // NOTE: we deliberately do NOT `btp.reset()` here. The caller is expected to
-    // have reset the session and set the initiator role *before* it started
-    // driving Matter traffic through this `Btp` - resetting here would race with,
-    // and wipe, any Matter SDU the caller has already queued (e.g. the PASE
-    // PBKDFParamRequest a commissioner sends as soon as the transport is up).
+    // The peripheral prepares its capabilities response after the C1 write,
+    // then sends it when we subscribe to C2. Subscribe-first loses that trigger
+    // on devices using the Matter SDK's BLEEndPoint implementation.
     btp.set_initiator(true);
+    let mut buf = [0; 512];
+    let len = btp.process_outgoing(gatt_mtu, &mut buf)?;
+    if len == 0 {
+        return Err(ErrorCode::InvalidState.into());
+    }
+    write_c1(&c1, &buf[..len], 1).await?;
+
+    // Install the local signal receiver before the subscription can provoke
+    // an immediate response. Do not reset BTP here: callers may have queued SDUs.
+    let mut value_changed = c2.receive_value_changed().await;
+    info!("C1 handshake acknowledged; subscribing to C2 indications");
+    c2.start_notify().await?;
+    info!("C2 indication subscription completed; waiting for BTP response");
 
     let result = select3(
         wait_central_complete(btp, &device_path, connection),
@@ -431,11 +434,48 @@ async fn process_c2_indications(
             value
         );
 
-        btp.process_incoming(gatt_mtu, peer_addr, &value)?;
+        info!(
+            "C2 indication received from {}: {}B",
+            peer_addr,
+            value.len()
+        );
+        match btp.process_incoming(gatt_mtu, peer_addr, &value) {
+            Ok(()) => debug!("C2 indication accepted by BTP: {}B", value.len()),
+            Err(error) => {
+                warn!(
+                    "C2 indication rejected by BTP: {}B, error code {:?}",
+                    value.len(),
+                    error.code()
+                );
+                return Err(error);
+            }
+        }
     }
 
     // The property stream ended - treat as a disconnect.
     Ok(())
+}
+
+// Report an in-flight write even when the caller's PASE deadline cancels the
+// central future. Never record the frame bytes or the raw D-Bus error body.
+struct C1WriteDiagnostic {
+    frame: usize,
+    len: usize,
+    started: Instant,
+    completed: bool,
+}
+
+impl Drop for C1WriteDiagnostic {
+    fn drop(&mut self) {
+        if !self.completed {
+            warn!(
+                "C1 write cancelled while awaiting GATT response: frame {}, {}B, elapsed {}ms",
+                self.frame,
+                self.len,
+                self.started.elapsed().as_millis()
+            );
+        }
+    }
 }
 
 /// Drive BTP output and write it to characteristic `C1` (as a GATT Write Request).
@@ -445,34 +485,60 @@ async fn process_c1_writes(
     c1: &GattCharacteristicProxy<'_>,
     buf: &mut [u8],
 ) -> Result<(), Error> {
-    // BTP writes to `C1` are GATT "Write Requests" (i.e. *acknowledged*
-    // `ATT_WRITE_REQ`), as mandated by the Matter Core spec (§4.19.4:
-    // "Clients SHALL exclusively use GATT Write Characteristic Value sub-procedure
-    // to send data to servers" - which is the acknowledged write). BlueZ's write
-    // type for that is `"request"`.
-    //
-    // This is not just a conformance detail: the per-write GATT acknowledgement is
-    // the client-to-server half of BTP flow control. With an unacknowledged
-    // "Write Command", back-to-back segments of a multi-segment SDU (e.g. the
-    // AddNOC request) get packed into one BLE connection event and are dropped by
-    // the server's ATT layer (observed as `GATTS_SendRsp ... Sending response
-    // failed` on ESP-IDF, then a BTP sequence gap and a disconnect). Awaiting the
-    // Write Response before sending the next segment prevents that.
+    let mut frame = 1; // The capabilities request was already written.
+    loop {
+        let len = btp.process_outgoing(gatt_mtu, buf)?;
+        if len > 0 {
+            frame += 1;
+            write_c1(c1, &buf[..len], frame).await?;
+        } else {
+            btp.wait_outgoing().await;
+        }
+    }
+}
+
+/// Await the ATT Write Response for every C1 frame, including the handshake.
+async fn write_c1(
+    c1: &GattCharacteristicProxy<'_>,
+    value: &[u8],
+    frame: usize,
+) -> Result<(), Error> {
+    // Acknowledged Write Requests pace segments and are required by Matter.
     let mut options = HashMap::new();
     let write_type = Value::from("request");
     options.insert("type", &write_type);
 
-    loop {
-        let len = btp.process_outgoing(gatt_mtu, buf)?;
-
-        if len > 0 {
-            trace!("Writing to C1: {:?}", &buf[..len]);
-
-            // `write_value` (an `ATT_WRITE_REQ`) completes only when the server
-            // returns its Write Response, so segments are paced one at a time.
-            c1.write_value(&buf[..len], options.clone()).await?;
-        } else {
-            btp.wait_outgoing().await;
+    trace!("Writing to C1: {:?}", value);
+    let len = value.len();
+    let mut diagnostic = C1WriteDiagnostic {
+        frame,
+        len,
+        started: Instant::now(),
+        completed: false,
+    };
+    info!("C1 write requested: frame {}, {}B", frame, len);
+    let result = c1.write_value(value, options).await;
+    diagnostic.completed = true;
+    match result {
+        Ok(()) => {
+            info!(
+                "C1 write completed: frame {}, {}B, elapsed {}ms",
+                frame,
+                len,
+                diagnostic.started.elapsed().as_millis()
+            );
+            Ok(())
+        }
+        Err(error) => {
+            let error: Error = error.into();
+            warn!(
+                "C1 write failed: frame {}, {}B, elapsed {}ms, error code {:?}",
+                frame,
+                len,
+                diagnostic.started.elapsed().as_millis(),
+                error.code()
+            );
+            Err(error)
         }
     }
 }
