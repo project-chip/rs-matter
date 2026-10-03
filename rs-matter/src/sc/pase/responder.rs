@@ -210,14 +210,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 // retransmits honour the peer's SAI) and on the reserved
                 // PASE session that takes over after PASEPake3.
                 if let Some(params) = req.session_parameters.as_ref() {
-                    exchange.with_state(|state| {
-                        exchange
-                            .id()
-                            .session(&mut state.sessions)
-                            .set_peer_session_params(params);
-                        Ok(())
-                    })?;
-                    session.set_peer_session_params(params)?;
+                    session.apply_peer_session_params(exchange.id(), params)?;
                 }
 
                 let mut rand = self.crypto.rand()?;
@@ -229,7 +222,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
 
                 // Generate response
-                let max_paths = exchange.matter().dev_det().max_paths_per_invoke;
+                let dev_det = exchange.matter().dev_det();
                 let resp = PBKDFParamResp {
                     initiator_random: OctetStr::new(initiator_random.access()),
                     responder_random: OctetStr::new(our_random.access()),
@@ -239,7 +232,9 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                         salt: OctetStr::new(&salt[..salt_len]),
                     }),
                     session_parameters: Some(crate::sc::SessionParameters {
-                        max_paths_per_invoke: Some(max_paths),
+                        sii: exchange.matter().advertised_sii(),
+                        sai: Some(exchange.matter().advertised_sai()),
+                        max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
                         ..Default::default()
                     }),
                 };

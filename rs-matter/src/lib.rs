@@ -39,7 +39,7 @@ use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
 };
 use crate::dm::clusters::dev_att::DeviceAttestation;
-use crate::dm::clusters::icd_mgmt::IcdAdvertisement;
+use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::clusters::time_sync::Rtc;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -330,6 +330,53 @@ impl<'a> Matter<'a> {
     /// `None` when it is not one.
     pub fn icd_advertisement(&self) -> Option<IcdAdvertisement> {
         self.with_state(|state| state.icd_adv)
+    }
+
+    /// The `SESSION_IDLE_INTERVAL` the node advertises - in the `SII` TXT key
+    /// and in the session parameters of the handshakes it answers: the
+    /// configured one, capped to the slow poll in effect while the device
+    /// operates as a SIT.
+    ///
+    /// A Long-Idle-Time-capable device configures the idle interval of its LIT
+    /// operation (its idle mode duration, typically), but operates as a SIT -
+    /// polling within 15 s - until a client registers with its ICD Management
+    /// cluster. What it advertises paces its peers' retransmissions towards
+    /// it, so it has to follow the mode (Matter Core spec, a LIT ICD operating
+    /// as a SIT "SHALL advertise its SESSION_IDLE_INTERVAL using the SII
+    /// discovery TXT key"); the mode change re-publishes the record.
+    pub fn advertised_sii(&self) -> Option<u32> {
+        Self::advertised_sii_for(self.dev_det, self.icd_advertisement())
+    }
+
+    /// [`Self::advertised_sii`] for the given inputs.
+    pub(crate) fn advertised_sii_for(
+        dev_det: &BasicInfoConfig<'_>,
+        icd: Option<IcdAdvertisement>,
+    ) -> Option<u32> {
+        dev_det.sii.map(|sii| match icd {
+            Some(IcdAdvertisement {
+                operating_mode: OperatingModeEnum::SIT,
+                slow_poll_ms,
+            }) => sii.min(slow_poll_ms),
+            _ => sii,
+        })
+    }
+
+    /// The `MRP_SESSION_ACTIVE_INTERVAL` this node advertises in the session
+    /// parameters of a handshake: the configured one, or the spec's default
+    /// when none is. Unlike the mDNS `SAI` record this is never absent,
+    /// because the session parameters always carry a later field (the max
+    /// paths per invoke) and the spec requires the active interval whenever
+    /// any field after it is present.
+    pub(crate) fn advertised_sai(&self) -> u32 {
+        Self::advertised_sai_for(self.dev_det)
+    }
+
+    /// [`Self::advertised_sai`] for the given input.
+    pub(crate) fn advertised_sai_for(dev_det: &BasicInfoConfig<'_>) -> u32 {
+        dev_det
+            .sai
+            .unwrap_or(crate::transport::mrp::MRP_BASE_RETRY_INTERVAL_MS)
     }
 
     /// Set the ICD advertisement and, if it changed, signal the mDNS layer to
@@ -1167,6 +1214,28 @@ impl MatterState {
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod test {
     use crate::Matter;
+
+    /// The active interval the responder's session parameters carry is never
+    /// absent - the spec requires it whenever a later field is present, and we
+    /// always send the max paths per invoke: the configured one, or the spec's
+    /// default when none is configured.
+    #[test]
+    fn advertised_sai_is_never_absent() {
+        use crate::dm::clusters::basic_info::BasicInfoConfig;
+        use crate::transport::mrp::MRP_BASE_RETRY_INTERVAL_MS;
+
+        assert_eq!(
+            Matter::advertised_sai_for(&BasicInfoConfig::new()),
+            MRP_BASE_RETRY_INTERVAL_MS
+        );
+        assert_eq!(
+            Matter::advertised_sai_for(&BasicInfoConfig {
+                sai: Some(700),
+                ..BasicInfoConfig::new()
+            }),
+            700
+        );
+    }
 
     pub fn test_matter() -> Matter<'static> {
         Matter::new(

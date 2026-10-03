@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: as CASE / PASE initiator, apply the responder's MRP session parameters (Sigma2, Sigma2_Resume, PBKDFParamResponse) to the new session instead of keeping our own defaults; the responder now advertises its SAI / SII in them (the SII as over mDNS, via the new `Matter::advertised_sii`); new `Exchange::set_peer_mrp_params` / `PeerMrpParams` to seed a handshake with the peer's mDNS TXT hint
 * Fix: `LitIcdMgmtHandler::CLUSTER` no longer claims the Dynamic SIT/LIT feature, which the device did not implement; `LitIcdMgmtHandler::CLUSTER_DSLS` claims it, backed by the new `LitIcd::set_sit_required` (#580)
 * Breaking: the ICD Management cluster is now split into two variants: SIT-only and LIT  (#580)
 * Breaking: ICD LIT cluster handler: new, separate slow poll parameter (SII) for when the device operates in SIT mode, different form its (potentially much longer) LIT SII (#580)

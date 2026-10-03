@@ -85,27 +85,6 @@ impl MatterLocalService {
         )
     }
 
-    /// The `SESSION_IDLE_INTERVAL` to advertise in the `SII` TXT key: the
-    /// configured one, capped to the slow poll in effect while the device
-    /// operates as a SIT.
-    ///
-    /// A Long-Idle-Time-capable device configures the idle interval of its LIT
-    /// operation (its idle mode duration, typically), but operates as a SIT -
-    /// polling within 15 s - until a client registers with its ICD Management
-    /// cluster. What it advertises paces its peers' retransmissions towards
-    /// it, so it has to follow the mode (Matter Core spec, a LIT ICD operating
-    /// as a SIT "SHALL advertise its SESSION_IDLE_INTERVAL using the SII
-    /// discovery TXT key"); the mode change re-publishes the record.
-    fn advertised_sii(dev_det: &BasicInfoConfig<'_>, icd: Option<IcdAdvertisement>) -> Option<u32> {
-        dev_det.sii.map(|sii| match icd {
-            Some(IcdAdvertisement {
-                operating_mode: OperatingModeEnum::SIT,
-                slow_poll_ms,
-            }) => sii.min(slow_poll_ms),
-            _ => sii,
-        })
-    }
-
     /// The implementation behind [`Self::service`], taking the advertised inputs
     /// explicitly.
     #[allow(clippy::type_complexity)]
@@ -146,7 +125,7 @@ impl MatterLocalService {
                 } else {
                     ("", wb)
                 };
-                let (txt_sii, wb) = if let Some(sii) = Self::advertised_sii(dev_det, icd) {
+                let (txt_sii, wb) = if let Some(sii) = Matter::advertised_sii_for(dev_det, icd) {
                     write_split!(wb, "{}", sii)?
                 } else {
                     ("", wb)
@@ -226,7 +205,8 @@ impl MatterLocalService {
                 } else {
                     ("", wb)
                 };
-                let (txt_sii, mut wb) = if let Some(sii) = Self::advertised_sii(dev_det, icd) {
+                let (txt_sii, mut wb) = if let Some(sii) = Matter::advertised_sii_for(dev_det, icd)
+                {
                     write_split!(wb, "{}", sii)?
                 } else {
                     ("", wb)

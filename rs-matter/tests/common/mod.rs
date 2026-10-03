@@ -27,8 +27,12 @@ use std::collections::HashMap;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
+use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
+use rs_matter::dm::devices::test::TEST_DEV_DET;
 use rs_matter::error::Error;
 use rs_matter::persist::KvBlobStore;
+use rs_matter::transport::session::SessionMode;
+use rs_matter::Matter;
 
 /// A simple in-memory multi-key [`KvBlobStore`] for tests.
 ///
@@ -66,6 +70,40 @@ impl KvBlobStore for MemKvBlobStore {
         self.blobs.borrow_mut().remove(&key);
         Ok(())
     }
+}
+
+/// `TEST_DEV_DET` with distinctive MRP intervals, for a device whose
+/// advertised SAI / SII should be told apart from the controller's defaults.
+#[allow(unused)]
+pub const TEST_DEV_DET_MRP: BasicInfoConfig<'static> = BasicInfoConfig {
+    sai: Some(700),
+    sii: Some(9000),
+    ..TEST_DEV_DET
+};
+
+/// The peer MRP parameters - `(active interval, idle interval, active
+/// threshold)`, in ms - of every secure (CASE / PASE) session `matter` holds.
+#[allow(unused)]
+pub fn secure_sessions_peer_mrp_params(matter: &Matter<'_>) -> Vec<(u32, u32, u16)> {
+    matter.with_state(|state| {
+        state
+            .sessions
+            .iter()
+            .filter(|sess| {
+                matches!(
+                    sess.get_session_mode(),
+                    SessionMode::Case { .. } | SessionMode::Pase { .. }
+                )
+            })
+            .map(|sess| {
+                (
+                    sess.get_peer_active_interval_ms(),
+                    sess.get_peer_idle_interval_ms(),
+                    sess.get_peer_active_threshold_ms(),
+                )
+            })
+            .collect()
+    })
 }
 
 /// Drives a device future and a controller future concurrently.
