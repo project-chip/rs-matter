@@ -110,6 +110,14 @@ impl Btp {
         });
     }
 
+    /// Whether a BTP handshake has established a session with this peer.
+    pub fn is_session_established(&self, addr: BtAddr) -> bool {
+        self.inner.lock(|inner| {
+            let inner = inner.borrow();
+            inner.session.is_established() && inner.session.address() == addr
+        })
+    }
+
     /// Set the relaxed MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
     /// when there is a mismatch between the GATT MTU and the peer-reported MTU.
     pub fn set_relaxed_mtu_nego(&self, relaxed_mtu_nego: bool) {
