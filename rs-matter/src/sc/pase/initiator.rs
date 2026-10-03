@@ -96,22 +96,24 @@ impl<C: Crypto> PaseInitiator<C> {
         crypto: C,
         password: u32,
     ) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
+        let mut session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
+        session.inherit_peer_session_params(exchange.id())?;
 
         let mut initiator = Self::new(crypto);
 
         // Step 1: Send PBKDFParamRequest, receive PBKDFParamResponse
-        let (salt, salt_len, iterations) =
-            match initiator.exchange_pbkdf_params(&mut exchange).await {
-                Ok(result) => result,
-                Err(e) => {
-                    // Send status report to notify responder of failure
-                    let _ =
-                        complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[])
-                            .await;
-                    return Err(e);
-                }
-            };
+        let (salt, salt_len, iterations) = match initiator
+            .exchange_pbkdf_params(&mut exchange, &mut session)
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                // Send status report to notify responder of failure
+                let _ =
+                    complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[]).await;
+                return Err(e);
+            }
+        };
 
         // Step 2: Send Pake1, receive Pake2
         if let Err(e) = initiator
@@ -137,6 +139,7 @@ impl<C: Crypto> PaseInitiator<C> {
     async fn exchange_pbkdf_params(
         &mut self,
         exchange: &mut Exchange<'_>,
+        session: &mut ReservedSession<'_>,
     ) -> Result<([u8; SPAKE2P_VERIFIER_SALT_LEN], usize, u32), Error> {
         // Generate random and session ID
         let mut rand = self.crypto.rand()?;
@@ -210,6 +213,14 @@ impl<C: Crypto> PaseInitiator<C> {
 
         // Extract peer session ID
         self.peer_sessid = resp.responder_ssid;
+
+        // Apply the responder's `session_parameters` to both the unsecured
+        // session that carries the handshake (so Pake1 / Pake3 retransmits
+        // use them) and to the reserved PASE session that takes over after
+        // Pake3.
+        if let Some(params) = resp.session_parameters.as_ref() {
+            session.apply_peer_session_params(exchange.id(), params)?;
+        }
 
         // Extract PBKDF parameters
         let params = resp.params.ok_or_else(|| {

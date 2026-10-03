@@ -61,7 +61,10 @@ use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
 
-use crate::common::{create_localhost_socket_pair, init_env_logger, run_device_controller};
+use crate::common::{
+    create_localhost_socket_pair, init_env_logger, run_device_controller,
+    secure_sessions_peer_mrp_params, TEST_DEV_DET_MRP,
+};
 
 #[allow(dead_code)]
 mod common;
@@ -150,7 +153,7 @@ fn test_case_resumption_round_trip() {
 
         // ---- 2. Set up two Matter instances ----
 
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let device_matter = Matter::new(&TEST_DEV_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
         let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         // ---- 3. Install the same fabric in both fabric tables ----
@@ -305,6 +308,15 @@ fn test_case_resumption_round_trip() {
                     ctrl_after2, dev_after2,
                     "controller and device disagree on cache contents after handshake #2"
                 );
+
+                // Both the full and the resumed session pace the device by
+                // what it advertised (Sigma2 / Sigma2_Resume), not by our own
+                // defaults.
+                let params = secure_sessions_peer_mrp_params(&controller_matter);
+                assert_eq!(params.len(), 2);
+                for (sai, sii, _) in params {
+                    assert_eq!((sai, sii), (700, 9000));
+                }
 
                 info!("CASE resumption verified end-to-end");
                 Ok::<_, Error>(())
