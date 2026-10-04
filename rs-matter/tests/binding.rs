@@ -925,7 +925,7 @@ async fn press_switch<C: Crypto>(
 
         // CASE to the bound peer at its known address (no mDNS in this test).
         let case_exchange = Exchange::initiate_plaintext(a_matter, a_crypto, peer_addr).await?;
-        CaseInitiator::perform(case_exchange, a_crypto, binding.fab_idx, node).await?;
+        CaseInitiator::perform(case_exchange, a_crypto, binding.fab_idx, node, None).await?;
 
         // The CASE session is now in A's session table; `initiate` reuses it.
         let exchange = Exchange::initiate(a_matter, a_crypto, binding.fab_idx, node).await?;

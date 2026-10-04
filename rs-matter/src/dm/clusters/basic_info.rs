@@ -223,7 +223,8 @@ pub struct BasicInfoConfig<'a> {
     /// Not a real attribute, just used to configure the session timeouts
     pub sai: Option<u32>,
     /// Session Idle Interval in ms
-    /// If not specified, defaults to 5000
+    /// If not specified, it is not advertised, and peers assume the spec
+    /// default of 500
     ///
     /// Per the Matter Core Spec, the value is a 32-bit unsigned integer and
     /// SHALL NOT exceed 3,600,000 (1 hour in milliseconds).

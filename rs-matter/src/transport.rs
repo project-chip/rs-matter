@@ -31,7 +31,6 @@ use embassy_time::{Duration, Timer};
 use rand_core::Rng;
 
 use crate::crypto::Crypto;
-use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 #[cfg(feature = "groups")]
@@ -41,8 +40,6 @@ use crate::im::PROTO_ID_INTERACTION_MODEL;
 #[cfg(not(feature = "case-responder-only"))]
 use crate::sc::case::CaseInitiator;
 use crate::sc::pase::PaseInitiator;
-#[cfg(not(feature = "case-responder-only"))]
-use crate::sc::SessionParameters;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
@@ -67,6 +64,8 @@ use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState,
 use network::{Address, IpAddr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
+#[cfg(not(feature = "case-responder-only"))]
+use session::PeerMrpParams;
 use session::{Session, Sessions};
 
 use self::mrp::mrp_log;
@@ -161,16 +160,12 @@ pub struct Transport {
     resumption_dirty: Notification,
     /// Counters for the messages crossing this node.
     counters: Mutex<RefCell<MessageCounters>>,
-    /// Device SAI (Secure Association Identifier)
-    device_sai: Option<u32>,
-    /// Device SII (Secure Identity Identifier)
-    device_sii: Option<u32>,
 }
 
 impl Transport {
     /// Create a new `Transport` with empty RX and TX buffers, and the given device SAI/SII.
     #[inline(always)]
-    pub(crate) const fn new(dev_det: &BasicInfoConfig<'_>) -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             rx: IfMutex::new(Packet::new()),
             tx: IfMutex::new(Packet::new()),
@@ -185,13 +180,11 @@ impl Transport {
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
             counters: Mutex::new(RefCell::new(MessageCounters::new())),
-            device_sai: dev_det.sai,
-            device_sii: dev_det.sii,
         }
     }
 
     /// Initialize the transport state by initializing the RX and TX buffers, and setting up the exchange dropped notification.
-    pub(crate) fn init<'m>(dev_det: &'m BasicInfoConfig<'m>) -> impl Init<Self> + 'm {
+    pub(crate) fn init() -> impl Init<Self> {
         init!(Self {
             rx <- IfMutex::init(Packet::init()),
             tx <- IfMutex::init(Packet::init()),
@@ -206,8 +199,6 @@ impl Transport {
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
             counters <- Mutex::init(RefCell::init(MessageCounters::new())),
-            device_sai: dev_det.sai,
-            device_sii: dev_det.sii,
         })
     }
 
@@ -874,6 +865,12 @@ impl Transport {
             return Err(ErrorCode::NoNetworkInterface.into());
         }
 
+        let peer_mrp = PeerMrpParams {
+            sii: resolved.sii,
+            sai: resolved.sai,
+            sat: resolved.sat,
+        };
+
         let mut last_err = Some(Error::from(ErrorCode::NotFound));
 
         for addr in resolved.addrs.iter().copied() {
@@ -884,7 +881,14 @@ impl Transport {
 
             match self.initiate_plaintext(matter, &crypto, peer).await {
                 Ok(exchange) => {
-                    match CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await
+                    match CaseInitiator::perform(
+                        exchange,
+                        &crypto,
+                        fabric_idx,
+                        peer_node_id,
+                        Some(&peer_mrp),
+                    )
+                    .await
                     {
                         Ok(()) => {
                             last_err = None;
@@ -915,23 +919,11 @@ impl Transport {
             return Err(err);
         }
 
-        // Seed the new CASE session's peer MRP/session params from the resolve
-        // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
-        // its id for the exchange.
-        let params = SessionParameters {
-            sii: resolved.sii,
-            sai: resolved.sai,
-            sat: resolved.sat,
-            ..Default::default()
-        };
-
         let session_id = matter.with_state(|state| {
             let session = state
                 .sessions
                 .get_for_node(fabric_idx, peer_node_id)
                 .ok_or(ErrorCode::NoSession)?;
-
-            session.set_peer_session_params(&params);
 
             Ok::<_, Error>(session.id)
         })?;
@@ -1019,7 +1011,7 @@ impl Transport {
 
         // Establish a new PASE session to this peer.
         let exchange = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
-        PaseInitiator::perform(exchange, &crypto, passcode).await?;
+        PaseInitiator::perform(exchange, &crypto, passcode, None).await?;
 
         let session_id = matter.with_state(|state| {
             state
@@ -1124,10 +1116,9 @@ impl Transport {
         matter.with_state(|state| {
             let mut rand = crypto.rand()?;
 
-            let session =
-                state
-                    .sessions
-                    .add(rand.next_u32(), false, peer_addr, None, matter.dev_det())?;
+            let session = state
+                .sessions
+                .add(rand.next_u32(), false, peer_addr, None)?;
 
             // Generate ephemeral initiator node ID per spec:
             // "Randomly selected for each session by the initiator from the Operational Node ID range"
@@ -2091,7 +2082,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         false,
                         packet.peer,
                         packet.header.plain.get_src_nodeid(),
-                        self.matter.dev_det(),
                     )?;
 
                     // Session created successfully: decode, indicate packet payload slice and process further
@@ -2129,7 +2119,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         &self.crypto,
                         &state.fabrics,
                         packet,
-                        self.matter.dev_det(),
                     );
 
                     let (session, payload_range) = match result {
@@ -2258,12 +2247,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         if let Some(session) = &mut session {
             packet.header.plain = Default::default();
 
-            let (peer, retransmission) = session.pre_send(
-                exchange_index,
-                &mut packet.header,
-                self.transport().device_sai,
-                self.transport().device_sii,
-            )?;
+            let (peer, retransmission) = session.pre_send(exchange_index, &mut packet.header)?;
 
             packet.peer = peer;
             packet.tx_info.retransmission = retransmission;

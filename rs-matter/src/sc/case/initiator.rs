@@ -32,10 +32,12 @@ use crate::crypto::{
     AEAD_CANON_KEY_LEN, AEAD_TAG_LEN,
 };
 use crate::error::{Error, ErrorCode};
-use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
-use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite};
+use crate::sc::{
+    complete_with_status, GeneralCode, OpCode, SCStatusCodes, SessionParameters, StatusReport,
+};
+use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use crate::transport::session::{NocCatIds, PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::ReadBuf;
 
@@ -65,6 +67,8 @@ struct Sigma2Resp<'a> {
     responder_eph_pub_key: OctetStr<'a>,
     /// The encrypted TBE2 payload
     encrypted2: OctetStr<'a>,
+    /// Session parameters (optional)
+    session_parameters: Option<SessionParameters>,
 }
 
 /// Decrypted TBE data from Sigma2
@@ -90,10 +94,8 @@ struct Sigma2ResumeMsg<'a> {
     sigma2_resume_mic: OctetStr<'a>,
     /// The responder's session ID.
     responder_sessid: u16,
-    /// Optional responder MRP session parameters. Currently ignored
-    /// by rs-matter's initiator side (parity with the non-resumption
-    /// Sigma2 path).
-    _session_parameters: Option<crate::sc::SessionParameters>,
+    /// Session parameters (optional)
+    session_parameters: Option<SessionParameters>,
 }
 
 /// CASE Initiator for establishing secure sessions with Matter devices using operational
@@ -138,14 +140,22 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
     /// - `crypto` - The crypto implementation
     /// - `fab_idx` - The fabric index to use for the handshake
     /// - `peer_node_id` - The node ID of the target device
+    /// - `peer_mrp` - The device's MRP parameters as advertised out of band (in
+    ///   its operational mDNS TXT record), if known. They pace the handshake
+    ///   and seed the session, until the device advertises its own in Sigma2
+    ///   (or Sigma2_Resume).
     pub async fn perform(
         mut exchange: Exchange<'_>,
         crypto: &'a C,
         fab_idx: NonZeroU8,
         peer_node_id: u64,
+        peer_mrp: Option<&PeerMrpParams>,
     ) -> Result<(), Error> {
         // Step 1: Reserve a session slot
         let mut session = ReservedSession::reserve(exchange.matter(), crypto).await?;
+        if let Some(peer_mrp) = peer_mrp {
+            session.apply_peer_session_params(exchange.id(), &peer_mrp.into())?;
+        }
 
         let mut initiator = Self::new(peer_node_id);
 
@@ -230,6 +240,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         }
 
         // Step 3: Build and send Sigma1
+        let local_params = SessionParameters::local(exchange.matter());
         let mut tt_updated = false;
         exchange
             .send_with(|_, tw| {
@@ -238,6 +249,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 tw.u16(&TLVTag::Context(2), local_sessid)?;
                 tw.str(&TLVTag::Context(3), dest_id.access())?;
                 tw.str(&TLVTag::Context(4), initiator.casep.our_pub_key().access())?;
+                local_params.to_tlv(&TLVTag::Context(5), &mut *tw)?;
 
                 // Sigma1 with Resumption: attach the cached `resumptionID`
                 // (tag 6) and the freshly-computed `Resume1MIC` (tag 7).
@@ -315,11 +327,12 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // spec-mandated in full CASE) is only consumed to seed the resumption
         // cache, so it is unused when `case-resumption` is off.
         #[cfg_attr(not(feature = "case-resumption"), allow(unused_variables))]
-        let (peer_catids, peer_resumption_id) = {
+        let (peer_catids, peer_resumption_id, peer_params) = {
             let rx = exchange.rx()?;
             let raw_sigma2_payload = rx.payload();
 
             let sigma2 = Sigma2Resp::from_tlv(&get_root_node_struct(raw_sigma2_payload)?)?;
+            let peer_params = sigma2.session_parameters.clone();
 
             let result = exchange.with_state(|state| {
                 // Copy encrypted2 to a mutable stack buffer for in-place decryption
@@ -433,8 +446,15 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[]).await?;
             }
 
-            result
+            result.map(|(peer_catids, resumption_id)| (peer_catids, resumption_id, peer_params))
         }?;
+
+        // Apply the responder's `session_parameters` to both the unsecured
+        // session that carries the handshake (so Sigma3 retransmits use them)
+        // and to the reserved CASE session that takes over after Sigma3.
+        if let Some(params) = peer_params.as_ref() {
+            session.apply_peer_session_params(exchange.id(), params)?;
+        }
 
         // Step 6: Compute Sigma3 signature (needs fabric borrow, must drop before await)
         let mut signature = MaybeUninit::<CanonPkcSignature>::uninit();
@@ -619,7 +639,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // message borrows from the RX buffer, so we copy the small
         // pieces out into stack storage and let the borrow drop before
         // we send the SigmaFinished status report.
-        let (new_rid, resume2_mic, peer_sessid) = {
+        let (new_rid, resume2_mic, peer_sessid, peer_params) = {
             let payload = exchange.rx()?.payload();
             let msg = Sigma2ResumeMsg::from_tlv(&get_root_node_struct(payload)?)?;
 
@@ -647,7 +667,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             let mut mic = [0u8; AEAD_TAG_LEN];
             mic.copy_from_slice(msg.sigma2_resume_mic.0);
 
-            (new_rid, mic, msg.responder_sessid)
+            (new_rid, mic, msg.responder_sessid, msg.session_parameters)
         };
 
         // ---- Derive S2RK and verify Resume2MIC. -----------------------
@@ -665,6 +685,14 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             error!("Sigma2_Resume: Resume2MIC verify failed");
             complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
             return Err(ErrorCode::Invalid.into());
+        }
+
+        // ---- Apply the responder's session parameters. ----------------
+        //
+        // Same two targets as the full Sigma2 path: the unsecured session
+        // (SigmaFinished is still sent on it) and the reserved session.
+        if let Some(params) = peer_params.as_ref() {
+            session.apply_peer_session_params(exchange.id(), params)?;
         }
 
         // ---- Derive resumption session keys. --------------------------

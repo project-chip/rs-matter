@@ -481,8 +481,7 @@ impl ExchangeState {
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        session_active_interval_ms: Option<u32>,
-        session_idle_interval_ms: Option<u32>,
+        retry_interval_ms: u32,
     ) -> Result<(), Error> {
         if matches!(self.role, Role::Initiator(_)) {
             tx_proto.set_initiator();
@@ -492,12 +491,7 @@ impl ExchangeState {
 
         tx_proto.exch_id = self.exch_id;
 
-        self.mrp.pre_send(
-            tx_plain,
-            tx_proto,
-            session_active_interval_ms,
-            session_idle_interval_ms,
-        )
+        self.mrp.pre_send(tx_plain, tx_proto, retry_interval_ms)
     }
 
     pub fn retrans_delay_ms(&mut self, jitter_rand: u8) -> Option<u64> {
@@ -745,17 +739,9 @@ impl TxMessage<'_> {
                 .get(self.exchange_id.session_id())
                 .ok_or(ErrorCode::NoSession)?;
 
-            // The session's `peer_active_interval_ms` / `peer_idle_interval_ms`
-            // are seeded from our own `BasicInfoConfig` at session-creation
-            // time and overwritten once Sigma1 / Sigma2 / PBKDFParamRequest /
-            // PBKDFParamResponse delivers a real peer value, so MRP
-            // retransmission backoff to this peer reflects whichever is
-            // more accurate (Matter Core spec).
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,
-                Some(session.get_peer_active_interval_ms()),
-                Some(session.get_peer_idle_interval_ms()),
             )?;
 
             self.packet.peer = peer;
@@ -1099,8 +1085,9 @@ impl<'a> Exchange<'a> {
     /// (the common case - session and peer address reused, no mDNS). Otherwise
     /// the peer's operational address is resolved over mDNS and a fresh CASE
     /// session is established (driving [`crate::sc::case::CaseInitiator`]) before
-    /// the exchange is opened on it; the peer's MRP/session parameters advertised
-    /// in the mDNS TXT records seed the session.
+    /// the exchange is opened on it; the peer's MRP parameters advertised in the
+    /// mDNS TXT records seed the handshake, and the ones it advertises in the
+    /// handshake itself take precedence.
     ///
     /// Establishing requires a running mDNS responder (e.g.
     /// `BuiltinMdns::run`) to service the resolve; without one the
@@ -1218,7 +1205,6 @@ impl<'a> Exchange<'a> {
                 &state.fabrics,
                 fab_idx,
                 group_id,
-                matter.dev_det(),
             )?;
             let session_id = session.id;
 
@@ -1701,11 +1687,10 @@ mod tests {
     }
 
     fn fill_sessions(matter: &Matter<'_>, reserved: bool) {
-        let dev_det = matter.dev_det();
         matter.with_state(|state| loop {
             if state
                 .sessions
-                .add(0, reserved, network::Address::new(), None, dev_det)
+                .add(0, reserved, network::Address::new(), None)
                 .is_err()
             {
                 break;

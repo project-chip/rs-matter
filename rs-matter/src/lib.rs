@@ -146,24 +146,21 @@ pub struct BasicCommData {
 }
 
 /// The primary Matter Object
+// `repr(C)` pins the field order. The transport's fields are accessed one by
+// one all over the hot paths, so it comes first: on targets like Thumb only the
+// first 4 KiB of the object are reachable with a short immediate offset. Left
+// to the compiler, the order shifts with small changes to any of the field
+// types, and with it the code size.
+#[repr(C)]
 pub struct Matter<'a> {
-    /// The internal state of the Matter Object, protected by a mutex for concurrent access from different threads and async tasks.
-    state: Mutex<RefCell<MatterState>>,
     /// The transport state of the Matter Object
     transport: Transport,
-    /// The basic information configuration for this Matter device
-    dev_det: &'a BasicInfoConfig<'a>,
-    /// The basic commissioning data for this Matter device
-    dev_comm: BasicCommData,
     /// The device attestation data fetcher for this Matter device
     dev_att: &'a dyn DeviceAttestation,
-    /// The port number on which the Matter stack will listen for incoming connections
-    port: u16,
-    /// The Groupcast testing-mode bridge - shared between the transport RX
-    /// path, the Interaction Model's invoke processing and the Groupcast
-    /// cluster handler. See `dm::clusters::groupcast::TestingBridge`.
-    #[cfg(feature = "groups")]
-    groupcast_testing: crate::dm::clusters::groupcast::TestingBridge,
+    /// The internal state of the Matter Object, protected by a mutex for concurrent access from different threads and async tasks.
+    state: Mutex<RefCell<MatterState>>,
+    /// The basic information configuration for this Matter device
+    dev_det: &'a BasicInfoConfig<'a>,
     /// The scratch buffer used by the key-value persistence machinery for
     /// (de)serializing BLOBs. Behind a blocking mutex so [`Matter::kv`] can
     /// recombine it with the user's raw [`KvBlobStore`](crate::persist::KvBlobStore)
@@ -171,6 +168,15 @@ pub struct Matter<'a> {
     /// size is set by the `kv-blob-store-*` Cargo features (see
     /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE)).
     kv_buf: Mutex<RefCell<[u8; crate::persist::KV_BUF_SIZE]>>,
+    /// The basic commissioning data for this Matter device
+    dev_comm: BasicCommData,
+    /// The port number on which the Matter stack will listen for incoming connections
+    port: u16,
+    /// The Groupcast testing-mode bridge - shared between the transport RX
+    /// path, the Interaction Model's invoke processing and the Groupcast
+    /// cluster handler. See `dm::clusters::groupcast::TestingBridge`.
+    #[cfg(feature = "groups")]
+    groupcast_testing: crate::dm::clusters::groupcast::TestingBridge,
 }
 
 impl<'a> Matter<'a> {
@@ -193,7 +199,7 @@ impl<'a> Matter<'a> {
     ) -> Self {
         Self {
             state: Mutex::new(RefCell::new(MatterState::new())),
-            transport: Transport::new(dev_det),
+            transport: Transport::new(),
             dev_det,
             dev_comm,
             dev_att,
@@ -227,7 +233,7 @@ impl<'a> Matter<'a> {
             init!(
                 Self {
                     state <- Mutex::init(RefCell::init(MatterState::init())),
-                    transport <- Transport::init(dev_det),
+                    transport <- Transport::init(),
                     dev_det,
                     dev_comm,
                     dev_att,
@@ -243,7 +249,7 @@ impl<'a> Matter<'a> {
             init!(
                 Self {
                     state <- Mutex::init(RefCell::init(MatterState::init())),
-                    transport <- Transport::init(dev_det),
+                    transport <- Transport::init(),
                     dev_det,
                     dev_comm,
                     dev_att,
@@ -325,9 +331,9 @@ impl<'a> Matter<'a> {
         self.with_state(|state| state.reboot_count)
     }
 
-    /// What the device advertises over DNS-SD as a Long-Idle-Time-capable ICD
-    /// (the `ICD` TXT key, and the `SII` one while operating as a SIT), or
-    /// `None` when it is not one.
+    /// What the device advertises as an ICD - its `SAT`, and for a
+    /// Long-Idle-Time-capable one the `ICD` TXT key and the `SII` cap while
+    /// operating as a SIT - or `None` when it is not one.
     pub fn icd_advertisement(&self) -> Option<IcdAdvertisement> {
         self.with_state(|state| state.icd_adv)
     }
@@ -1104,8 +1110,8 @@ pub struct MatterState {
     pub basic_info_settings: BasicInfoSettings,
     /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
     pub rtc: Rtc,
-    /// What the device advertises over DNS-SD as a Long-Idle-Time-capable ICD.
-    /// The ICD Management handler keeps this in sync with its registration set.
+    /// What the device advertises as an ICD. The ICD Management handler keeps
+    /// this in sync with its operating mode.
     icd_adv: Option<IcdAdvertisement>,
     /// The node's reboot counter, bumped and persisted by `Matter::startup`.
     reboot_count: u16,

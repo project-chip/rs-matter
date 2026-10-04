@@ -690,7 +690,7 @@ impl<'a> LitIcdMgmtHandler<'a> {
     /// Publish the current operating mode (and the slow poll it implies) to
     /// the mDNS layer.
     fn sync_icd_mode(&self, ctx: &impl HandlerContext) {
-        self.lit.icd.publish_advertisement(ctx.matter());
+        self.lit.icd.publish_advertisement(ctx.matter(), true);
     }
 
     /// The `RegisterClient` command, minus the logging of its outcome.

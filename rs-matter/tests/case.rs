@@ -31,7 +31,7 @@ use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Rng, SecretKey,
     SigningSecretKey, AEAD_CANON_KEY_LEN,
 };
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter::error::Error;
 use rs_matter::onboard::cac::RcacGenerator;
 use rs_matter::onboard::noc::NocGenerator;
@@ -41,12 +41,16 @@ use rs_matter::sc::{OpCode, SecureChannel, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NetworkSend, NoNetwork};
 use rs_matter::transport::packet::PacketHdr;
+use rs_matter::transport::session::PeerMrpParams;
 
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::ParseBuf;
 use rs_matter::Matter;
 
-use crate::common::{create_localhost_socket_pair, init_env_logger, run_device_controller};
+use crate::common::{
+    create_localhost_socket_pair, init_env_logger, run_device_controller,
+    secure_sessions_peer_mrp_params, TEST_CTL_DET_MRP, TEST_DEV_DET_MRP,
+};
 
 #[allow(dead_code)]
 mod common;
@@ -54,6 +58,8 @@ mod common;
 const TEST_FABRIC_ID: u64 = 1;
 const CONTROLLER_NODE_ID: u64 = 100;
 const DEVICE_NODE_ID: u64 = 200;
+/// The SAT hinted on the handshake exchange; the device never advertises one.
+const HINT_SAT: u16 = 4321;
 
 struct DropFirstSigma2<'a> {
     socket: &'a async_io::Async<std::net::UdpSocket>,
@@ -119,6 +125,11 @@ fn is_sigma2(data: &[u8]) -> bool {
 /// device side — there is no commissioner here, just two peers that
 /// must agree on the same fabric. Real commissioning is exercised by
 /// `tests/commissioning.rs`.
+///
+/// Also checks the MRP parameters the controller ends up with for the
+/// device: the SAI / SII the device advertises in Sigma2 win over the
+/// out-of-band hint seeded on the handshake exchange, while the SAT it does
+/// not advertise is inherited from that hint.
 #[test]
 fn test_case_handshake() {
     run_case_handshake_test(false);
@@ -181,8 +192,8 @@ fn run_case_handshake_test(drop_first_sigma2: bool) {
 
         // ---- 2. Set up two Matter instances ----
 
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
-        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let device_matter = Matter::new(&TEST_DEV_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let controller_matter = Matter::new(&TEST_CTL_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         // ---- 3. Install the same fabric in both fabric tables ----
         //
@@ -321,6 +332,19 @@ fn run_case_handshake_test(drop_first_sigma2: bool) {
         }
 
         result.unwrap();
+
+        assert_eq!(
+            secure_sessions_peer_mrp_params(&controller_matter),
+            vec![(700, 9000, HINT_SAT)]
+        );
+
+        // ... and the device paces the controller by what it advertised in
+        // Sigma1.
+        let params = secure_sessions_peer_mrp_params(&device_matter);
+        assert_eq!(params.len(), 1);
+        for (sai, sii, _) in params {
+            assert_eq!((sai, sii), (650, 8000));
+        }
     });
 }
 
@@ -336,6 +360,14 @@ async fn run_case_handshake<C: Crypto>(
     let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
     info!("Exchange initiated: {}", exchange.id());
 
+    // An out-of-band hint, as a controller would take it from the device's
+    // mDNS TXT record; Sigma2 overrides the SAI / SII.
+    let peer_mrp = PeerMrpParams {
+        sii: Some(1234),
+        sai: Some(321),
+        sat: Some(HINT_SAT),
+    };
+
     info!("Starting CASE handshake...");
 
     let mut case_fut = pin!(CaseInitiator::perform(
@@ -343,6 +375,7 @@ async fn run_case_handshake<C: Crypto>(
         crypto,
         fab_idx,
         peer_node_id,
+        Some(&peer_mrp),
     ));
     let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 

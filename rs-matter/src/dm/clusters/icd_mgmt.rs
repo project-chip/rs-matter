@@ -118,22 +118,26 @@ pub struct IcdNetParams {
     pub max_poll_interval_ms: u32,
 }
 
-/// What a Long-Idle-Time-capable ICD advertises about itself over DNS-SD.
+/// What an ICD advertises about itself, over DNS-SD and in the session
+/// parameters of its CASE / PASE handshakes.
 ///
-/// The [`LitIcdMgmtHandler`] keeps [`Matter`](crate::Matter) supplied with it
-/// (see [`Matter::icd_advertisement`](crate::Matter::icd_advertisement)); the
-/// mDNS layer derives the `ICD` and `SII` TXT keys from it. A SIT-only device
-/// advertises none: it has no `ICD` key, and its `SII` is the configured one.
+/// The ICD Management handler keeps [`Matter`](crate::Matter) supplied with it
+/// (see [`Matter::icd_advertisement`](crate::Matter::icd_advertisement)); a node
+/// that is not an ICD advertises none.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct IcdAdvertisement {
-    /// The current operating mode: the `ICD` TXT key (`0` for `SIT`, `1` for
-    /// `LIT`).
-    pub operating_mode: OperatingModeEnum,
-    /// The slow polling interval in effect in that mode, in milliseconds. While
-    /// operating as a SIT this is what the device is reachable within, so it
-    /// bounds the advertised `SESSION_IDLE_INTERVAL` (`SII` TXT key).
+    /// The `ActiveModeThreshold`, in milliseconds: the advertised
+    /// `SESSION_ACTIVE_THRESHOLD` (`SAT` TXT key).
+    pub active_threshold_ms: u16,
+    /// The slow polling interval in effect, in milliseconds: what the device is
+    /// reachable within while idle, so the least `SESSION_IDLE_INTERVAL`
+    /// (`SII` TXT key) it may advertise.
     pub slow_poll_ms: u32,
+    /// The current operating mode of a Long-Idle-Time-capable ICD: the `ICD`
+    /// TXT key (`0` for `SIT`, `1` for `LIT`). `None` for a SIT-only ICD, which
+    /// has no `ICD` key.
+    pub operating_mode: Option<OperatingModeEnum>,
 }
 
 /// The timing parameters an ICD advertises through the cluster's mandatory
@@ -207,13 +211,6 @@ impl IcdState {
         match self.operating_mode {
             OperatingModeEnum::SIT => self.slow_poll_ms.min(self.sit_slow_poll_ms),
             OperatingModeEnum::LIT => self.slow_poll_ms,
-        }
-    }
-
-    fn advertisement(&self) -> IcdAdvertisement {
-        IcdAdvertisement {
-            operating_mode: self.operating_mode,
-            slow_poll_ms: self.effective_slow_poll_ms(),
         }
     }
 
@@ -425,17 +422,25 @@ impl Icd {
         }
     }
 
-    /// What a LIT-capable device advertises about itself over DNS-SD right
-    /// now: the operating mode and the slow polling interval in effect in it.
-    pub fn advertisement(&self) -> IcdAdvertisement {
-        self.state.lock(|s| s.borrow().advertisement())
+    /// What the device advertises about itself as an ICD right now; the
+    /// operating mode only if it is LIT-capable (`lit`).
+    pub(crate) fn advertisement(&self, lit: bool) -> IcdAdvertisement {
+        let (operating_mode, slow_poll_ms) = self.state.lock(|s| {
+            let s = s.borrow();
+            (s.operating_mode, s.effective_slow_poll_ms())
+        });
+
+        IcdAdvertisement {
+            active_threshold_ms: self.mode.active_mode_threshold_ms,
+            slow_poll_ms,
+            operating_mode: lit.then_some(operating_mode),
+        }
     }
 
     /// Hand the current [`advertisement`](Self::advertisement) to `matter`,
-    /// which re-publishes its mDNS records if it changed. Only a LIT-capable
-    /// device advertises.
-    fn publish_advertisement(&self, matter: &Matter) {
-        matter.set_icd_advertisement(Some(self.advertisement()));
+    /// which re-publishes its mDNS records if it changed.
+    fn publish_advertisement(&self, matter: &Matter, lit: bool) {
+        matter.set_icd_advertisement(Some(self.advertisement(lit)));
     }
 
     // --- Stay-active deadline ---
@@ -658,7 +663,8 @@ impl Icd {
     /// handler's `run` hook.
     ///
     /// - takes the polling intervals from the advertised `SAI` / `SII` of the
-    ///   node's `BasicInfoConfig`;
+    ///   node's `BasicInfoConfig`, and has the node advertise its
+    ///   `ActiveModeThreshold` as its `SAT`;
     /// - starts in active mode for `ActiveModeDuration`, as a freshly booted
     ///   ICD does, and sends the Check-Ins of a LIT right away;
     /// - feeds the transport's activity and the commissioning window state in;
@@ -679,10 +685,10 @@ impl Icd {
             dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS),
         );
 
-        if X::LIT {
-            // The slow poll in effect may have changed with them.
-            self.publish_advertisement(matter);
-        } else if dev_det.sii.is_some_and(|sii| sii > SIT_SLOW_POLL_MAX_MS) {
+        // The slow poll in effect may have changed with them.
+        self.publish_advertisement(matter, X::LIT);
+
+        if !X::LIT && dev_det.sii.is_some_and(|sii| sii > SIT_SLOW_POLL_MAX_MS) {
             // A SIT polls at most every `SIT_SLOW_POLL_MAX_MS`, and does so
             // here too; but it advertises what it is configured with.
             warn!(
@@ -1105,20 +1111,22 @@ mod tests {
 
         assert_eq!(icd.net_params().poll_interval_ms, 5_000);
         assert_eq!(
-            icd.advertisement(),
+            icd.advertisement(true),
             IcdAdvertisement {
-                operating_mode: OperatingModeEnum::SIT,
+                active_threshold_ms: mode().active_mode_threshold_ms,
                 slow_poll_ms: 5_000,
+                operating_mode: Some(OperatingModeEnum::SIT),
             }
         );
 
         icd.set_operating_mode(OperatingModeEnum::LIT);
         assert_eq!(icd.net_params().poll_interval_ms, 900_000);
         assert_eq!(
-            icd.advertisement(),
+            icd.advertisement(true),
             IcdAdvertisement {
-                operating_mode: OperatingModeEnum::LIT,
+                active_threshold_ms: mode().active_mode_threshold_ms,
                 slow_poll_ms: 900_000,
+                operating_mode: Some(OperatingModeEnum::LIT),
             }
         );
 
@@ -1126,7 +1134,10 @@ mod tests {
         icd.set_operating_mode(OperatingModeEnum::SIT);
         icd.set_poll_intervals(300, 2_000);
         assert_eq!(icd.net_params().poll_interval_ms, 2_000);
-        assert_eq!(icd.advertisement().slow_poll_ms, 2_000);
+        assert_eq!(icd.advertisement(true).slow_poll_ms, 2_000);
+
+        // A SIT-only device has no operating mode to advertise.
+        assert_eq!(icd.advertisement(false).operating_mode, None);
     }
 
     #[test]
