@@ -2201,15 +2201,12 @@ mod tests {
     #[cfg(feature = "groups")]
     #[test]
     fn expire_removes_pase_sessions_but_keeps_the_triggering_one() {
-        use crate::dm::devices::test::TEST_DEV_DET;
         use crate::transport::network::Address;
 
         let mut sessions = Sessions::new();
         let mut ids = std::vec::Vec::new();
         for mode in [pase(0), pase(0), case(1)] {
-            let session = sessions
-                .add(0, false, Address::new(), None, &TEST_DEV_DET)
-                .unwrap();
+            let session = sessions.add(0, false, Address::new(), None).unwrap();
             session.set_session_mode(mode);
             ids.push(session.id);
         }

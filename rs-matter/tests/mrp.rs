@@ -74,7 +74,7 @@ use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::packet::PacketHdr;
-use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use rs_matter::transport::session::{NocCatIds, PeerMrpParams, ReservedSession, SessionMode};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::ParseBuf;
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;
@@ -335,6 +335,14 @@ fn install_session(matter: &Matter<'_>, local_nodeid: u64, remote_nodeid: u64) {
             None,
             None,
         )
+        .unwrap();
+
+    session
+        .set_peer_mrp_params(&PeerMrpParams {
+            sai: Some(FAST_SAI_MS),
+            sii: Some(FAST_SAI_MS),
+            sat: None,
+        })
         .unwrap();
 
     session.complete();

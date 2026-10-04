@@ -236,7 +236,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         let signature = signature.init_with(CanonPkcSignature::init());
         let mut signature_generated = false;
         let mut tt_updated = false;
-        let sii = exchange.matter().advertised_sii();
+        let session_params = SessionParameters::local(exchange.matter());
         exchange
             .send_with(|exchange, tw| {
                 exchange.with_state(|state| {
@@ -279,13 +279,6 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     })?;
 
                     // Responder session parameters (tag 5)
-                    let dev_det = exchange.matter().dev_det();
-                    let session_params = crate::sc::SessionParameters {
-                        sii,
-                        sai: Some(exchange.matter().advertised_sai()),
-                        max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
-                        ..Default::default()
-                    };
                     session_params.to_tlv(&TLVTag::Context(5), &mut *tw)?;
 
                     tw.end_container()?;
@@ -645,13 +638,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         }
 
         // ---- Send Sigma2_Resume. --------------------------------------
-        let dev_det = exchange.matter().dev_det();
-        let responder_session_params = SessionParameters {
-            sii: exchange.matter().advertised_sii(),
-            sai: Some(exchange.matter().advertised_sai()),
-            max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
-            ..Default::default()
-        };
+        let responder_session_params = SessionParameters::local(exchange.matter());
         let new_rid_bytes: [u8; CASE_RESUMPTION_ID_LEN] = *new_rid.reference().access();
 
         exchange

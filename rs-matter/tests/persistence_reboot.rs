@@ -466,7 +466,7 @@ async fn run_fabric_survives_reboot() {
             with_timeout(
                 30,
                 "admin CASE",
-                CaseInitiator::perform(exchange, &crypto, admin_fab_idx, DEVICE_NODE_ID),
+                CaseInitiator::perform(exchange, &crypto, admin_fab_idx, DEVICE_NODE_ID, None),
             )
             .await?;
 
@@ -492,7 +492,7 @@ async fn run_fabric_survives_reboot() {
             with_timeout(
                 30,
                 "unauthorized CASE",
-                CaseInitiator::perform(exchange, &crypto, unauth_fab_idx, DEVICE_NODE_ID),
+                CaseInitiator::perform(exchange, &crypto, unauth_fab_idx, DEVICE_NODE_ID, None),
             )
             .await?;
 
@@ -626,6 +626,7 @@ async fn run_removed_fabric_gone_after_reboot() {
                 &crypto,
                 admin_fab_idx,
                 DEVICE_NODE_ID,
+                None,
             ));
             let mut timeout = pin!(Timer::after(Duration::from_secs(15)));
             match select(&mut perform, &mut timeout).await {

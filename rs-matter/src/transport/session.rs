@@ -17,7 +17,7 @@
 
 use core::fmt;
 use core::num::NonZeroU8;
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant};
 
 use cfg_if::cfg_if;
 
@@ -27,7 +27,6 @@ use crate::crypto::{
     canon, CanonAeadKey, CanonAeadKeyRef, CanonPkcSharedSecret, CanonPkcSharedSecretRef, Crypto,
     CryptoSensitive, Kdf,
 };
-use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 #[cfg(feature = "groups")]
@@ -118,8 +117,9 @@ impl SessionMode {
 }
 
 /// A peer's MRP parameters as advertised out of band - the `SAI` / `SII` /
-/// `SAT` keys of its mDNS TXT record - for seeding a session to it, see
-/// [`Exchange::set_peer_mrp_params`](crate::transport::exchange::Exchange::set_peer_mrp_params).
+/// `SAT` keys of its mDNS TXT record - for seeding a CASE / PASE handshake
+/// with it, see [`CaseInitiator::perform`](crate::sc::case::CaseInitiator::perform)
+/// and [`PaseInitiator::perform`](crate::sc::pase::PaseInitiator::perform).
 /// `None` leaves the corresponding parameter as it is.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -130,6 +130,17 @@ pub struct PeerMrpParams {
     pub sai: Option<u32>,
     /// Session Active Threshold in ms
     pub sat: Option<u16>,
+}
+
+impl From<&PeerMrpParams> for SessionParameters {
+    fn from(params: &PeerMrpParams) -> Self {
+        Self {
+            sii: params.sii,
+            sai: params.sai,
+            sat: params.sat,
+            ..Default::default()
+        }
+    }
 }
 
 pub struct Session {
@@ -161,14 +172,23 @@ pub struct Session {
     pub(crate) exchanges: Vec<Option<ExchangeState>, MAX_EXCHANGES>,
     last_use: Instant,
     /// Peer's effective `MRP_SESSION_ACTIVE_INTERVAL` (ms) — drives our
-    /// MRP retransmission base interval when transmitting to this peer.
+    /// MRP retransmission base interval while the peer is active.
     peer_active_interval_ms: u32,
-    /// Peer's effective `MRP_SESSION_IDLE_INTERVAL` (ms) — see
-    /// `peer_active_interval_ms`. Currently informational on the responder
-    /// side until idle-vs-active classification lands in the MRP code.
+    /// Peer's effective `MRP_SESSION_IDLE_INTERVAL` (ms) — drives our MRP
+    /// retransmission base interval while the peer is idle (see
+    /// `peer_active_until`).
     peer_idle_interval_ms: u32,
     /// Peer's effective `MRP_SESSION_ACTIVE_THRESHOLD` (ms).
     peer_active_threshold_ms: u16,
+    /// Until when the peer counts as active (the spec's `PeerActiveMode`):
+    /// `peer_active_threshold_ms` after we last received a message from it
+    /// (the spec's `ActiveTimestamp`).
+    ///
+    /// A new session starts with the peer idle (`Instant::MIN`), as nothing
+    /// tells us yet that it is awake; a session established by a handshake
+    /// (see [`ReservedSession::update`]) and one created by an incoming message
+    /// have just heard from it.
+    peer_active_until: Instant,
     /// If `true` then the session is considered "expired". Session expiration happens
     /// for the session on behalf of which a fabric is removed, and for a CASE session
     /// whose peer stopped acknowledging (see [`Session::pre_send`]).
@@ -211,6 +231,7 @@ impl Session {
             peer_active_interval_ms,
             peer_idle_interval_ms,
             peer_active_threshold_ms,
+            peer_active_until: Instant::MIN,
             expired: false,
         }
     }
@@ -246,6 +267,7 @@ impl Session {
             peer_active_interval_ms,
             peer_idle_interval_ms,
             peer_active_threshold_ms,
+            peer_active_until: Instant::MIN,
             expired: false,
         })
     }
@@ -320,6 +342,30 @@ impl Session {
         self.peer_active_threshold_ms
     }
 
+    /// Whether the peer is in active mode as far as we can tell (the spec's
+    /// `PeerActiveMode`): we received a message from it less than its
+    /// `SESSION_ACTIVE_THRESHOLD` ago.
+    pub fn is_peer_active(&self) -> bool {
+        Instant::now() < self.peer_active_until
+    }
+
+    /// Record that we received a message from the peer at `at`.
+    fn mark_peer_active(&mut self, at: Instant) {
+        self.peer_active_until =
+            at.saturating_add(Duration::from_millis(self.peer_active_threshold_ms as u64));
+    }
+
+    /// The base MRP retry interval for a message sent to the peer now: its
+    /// `SESSION_ACTIVE_INTERVAL` while it is active, its
+    /// `SESSION_IDLE_INTERVAL` otherwise.
+    pub fn peer_retry_interval_ms(&self) -> u32 {
+        if self.is_peer_active() {
+            self.peer_active_interval_ms
+        } else {
+            self.peer_idle_interval_ms
+        }
+    }
+
     /// Record the peer's `session_parameters` (any combination of `sai` /
     /// `sii` / `sat`) for use by MRP retransmission timing on later sends
     /// to this peer. Only the fields the peer actually advertised get
@@ -327,26 +373,29 @@ impl Session {
     /// repeated handshakes don't clobber a stronger earlier hint with a
     /// later-but-emptier one.
     ///
-    /// `Some(0)` is dropped (with a warning) — this method runs on
-    /// Sigma1 / PBKDFParamRequest TLV from an unauthenticated peer, and
-    /// an "interval" of zero would either collapse the MRP backoff to
-    /// a tight retransmit loop or, in the SAT case, mark the session
-    /// active for zero milliseconds. Neither is a legitimate value, so
-    /// rejecting them protects against a trivial pre-auth DoS.
+    /// `Some(0)` and intervals above one hour (the spec's maximum) are dropped
+    /// (with a warning) — this method runs on handshake TLV from a peer that
+    /// is not authenticated yet, and an "interval" of zero would either
+    /// collapse the MRP backoff to a tight retransmit loop or, in the SAT
+    /// case, mark the session active for zero milliseconds, while an
+    /// out-of-range one would stretch our retransmissions and response
+    /// timeouts towards the peer to hours. None of these is a legitimate
+    /// value, so rejecting them protects against a trivial pre-auth DoS.
+    #[inline(never)]
     pub(crate) fn set_peer_session_params(&mut self, params: &SessionParameters) {
         if let Some(sai) = params.sai {
-            if sai > 0 {
+            if (1..=mrp::MRP_MAX_SESSION_INTERVAL_MS).contains(&sai) {
                 self.peer_active_interval_ms = sai;
             } else {
-                warn!("Peer advertised session_parameters.sai=0; ignoring");
+                warn!("Peer advertised an out-of-range session_parameters.sai; ignoring");
             }
         }
 
         if let Some(sii) = params.sii {
-            if sii > 0 {
+            if (1..=mrp::MRP_MAX_SESSION_INTERVAL_MS).contains(&sii) {
                 self.peer_idle_interval_ms = sii;
             } else {
-                warn!("Peer advertised session_parameters.sii=0; ignoring");
+                warn!("Peer advertised an out-of-range session_parameters.sii; ignoring");
             }
         }
 
@@ -575,6 +624,10 @@ impl Session {
             Err(ErrorCode::Duplicate)?;
         }
 
+        // The session lookup (or creation) for the packet has just stamped
+        // `last_use` with the time of its reception.
+        self.mark_peer_active(self.last_use);
+
         let exch_index = self.get_exch_for_rx(&rx_header.proto);
         if let Some(exch_index) = exch_index {
             let exch = unwrap!(self.exchanges[exch_index].as_mut());
@@ -633,8 +686,6 @@ impl Session {
         &mut self,
         exch_index: Option<usize>,
         tx_header: &mut PacketHdr,
-        session_active_interval_ms: Option<u32>,
-        session_idle_interval_ms: Option<u32>,
     ) -> Result<(Address, bool), Error> {
         let ctr = if let Some(exchange_index) = exch_index {
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
@@ -734,14 +785,11 @@ impl Session {
         }
 
         if let Some(exchange_index) = exch_index {
+            let retry_interval_ms = self.peer_retry_interval_ms();
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
 
-            let result = exchange.pre_send(
-                &tx_header.plain,
-                &mut tx_header.proto,
-                session_active_interval_ms,
-                session_idle_interval_ms,
-            );
+            let result =
+                exchange.pre_send(&tx_header.plain, &mut tx_header.proto, retry_interval_ms);
 
             if matches!(
                 result.as_ref().map_err(Error::code),
@@ -925,13 +973,12 @@ pub struct ReservedSession<'a> {
 
 impl<'a> ReservedSession<'a> {
     pub fn reserve_now<C: Crypto>(matter: &'a Matter<'a>, crypto: C) -> Result<Self, Error> {
-        let dev_det = matter.dev_det();
         matter.with_state(|state| {
             let mut rand = crypto.weak_rand()?;
 
             let id = state
                 .sessions
-                .add(rand.next_u32(), true, Address::new(), None, dev_det)?
+                .add(rand.next_u32(), true, Address::new(), None)?
                 .id;
 
             Ok(Self {
@@ -1013,6 +1060,8 @@ impl<'a> ReservedSession<'a> {
         session.local_sess_id = local_sessid;
         session.peer_addr = peer_addr;
         session.mode = mode;
+        // The handshake that establishes the session has just heard from the peer
+        session.mark_peer_active(Instant::now());
 
         if let Some(dec_key) = dec_key {
             session.dec_key.load(dec_key);
@@ -1050,38 +1099,16 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    /// Start from the peer MRP parameters of the session the `exchange_id`
-    /// exchange runs on - the unsecured session carrying the handshake that
-    /// completes this one - so a hint already applied there (see
-    /// [`Exchange::set_peer_mrp_params`](crate::transport::exchange::Exchange::set_peer_mrp_params))
-    /// carries over to the secure session that takes the peer over. Whatever
-    /// the peer advertises in the handshake itself is applied on top.
-    pub(crate) fn inherit_peer_session_params(
-        &mut self,
-        exchange_id: ExchangeId,
-    ) -> Result<(), Error> {
-        self.matter.with_state(|state| {
-            let handshake = state
-                .sessions
-                .get(exchange_id.session_id())
-                .ok_or(ErrorCode::NoSession)?;
-            let params = SessionParameters {
-                sii: Some(handshake.get_peer_idle_interval_ms()),
-                sai: Some(handshake.get_peer_active_interval_ms()),
-                sat: Some(handshake.get_peer_active_threshold_ms()),
-                ..Default::default()
-            };
-
-            let session = state.sessions.get(self.id).ok_or(ErrorCode::NoSession)?;
-            session.set_peer_session_params(&params);
-
-            Ok(())
-        })
+    /// Set the peer's MRP parameters on a session established by other means
+    /// than a CASE / PASE handshake, which would otherwise carry them.
+    pub fn set_peer_mrp_params(&mut self, params: &PeerMrpParams) -> Result<(), Error> {
+        self.set_peer_session_params(&params.into())
     }
 
-    /// Apply the `session_parameters` the peer advertised in a handshake
-    /// message to both sessions the handshake involves: the unsecured session
-    /// the `exchange_id` exchange runs on, so the rest of the handshake is
+    /// Apply the peer's session parameters - an out-of-band hint before the
+    /// handshake starts, or what the peer advertised in a handshake message -
+    /// to both sessions the handshake involves: the unsecured session the
+    /// `exchange_id` exchange runs on, so the rest of the handshake is
     /// retransmitted at the peer's pace, and this reserved session, which
     /// takes the peer over once the handshake completes.
     pub(crate) fn apply_peer_session_params(
@@ -1096,10 +1123,11 @@ impl<'a> ReservedSession<'a> {
                 .ok_or(ErrorCode::NoSession)?;
             handshake.set_peer_session_params(params);
 
-            Ok::<_, Error>(())
-        })?;
+            let session = state.sessions.get(self.id).ok_or(ErrorCode::NoSession)?;
+            session.set_peer_session_params(params);
 
-        self.set_peer_session_params(params)
+            Ok(())
+        })
     }
 
     /// Consumes `self`, so the session is un-reserved by `Drop` before this
@@ -1444,7 +1472,6 @@ impl Sessions {
         fabrics: &Fabrics,
         fab_idx: NonZeroU8,
         group_id: u16,
-        dev_det: &BasicInfoConfig<'_>,
     ) -> Result<&mut Session, Error> {
         use crate::dm::clusters::decl::groupcast::MulticastAddrPolicyEnum;
         use crate::transport::network::{SocketAddr, SocketAddrV6};
@@ -1526,14 +1553,14 @@ impl Sessions {
 
         let mut rand = crypto.weak_rand()?;
 
-        let session = match self.add(rand.next_u32(), false, peer, None, dev_det) {
+        let session = match self.add(rand.next_u32(), false, peer, None) {
             Ok(session) => session,
             Err(_) => {
                 // Session table is full; evict the least-recently-used session
                 if let Some(lru_id) = self.get_session_for_eviction().map(|sess| sess.id) {
                     debug!("Group TX: Evicting session {} to make room", lru_id);
                     self.remove(lru_id);
-                    self.add(rand.next_u32(), false, peer, None, dev_det)?
+                    self.add(rand.next_u32(), false, peer, None)?
                 } else {
                     return Err(ErrorCode::NoSpaceSessions.into());
                 }
@@ -1584,7 +1611,6 @@ impl Sessions {
         crypto: C,
         fabrics: &Fabrics,
         packet: &mut Packet<N>,
-        dev_det: &BasicInfoConfig<'_>,
     ) -> Result<(&mut Session, (usize, usize)), Error> {
         let src_nodeid = packet
             .header
@@ -1782,14 +1808,14 @@ impl Sessions {
         let peer = packet.peer;
         let mut rand = crypto.weak_rand()?;
 
-        let session = match self.add(rand.next_u32(), false, peer, Some(src_nodeid), dev_det) {
+        let session = match self.add(rand.next_u32(), false, peer, Some(src_nodeid)) {
             Ok(session) => session,
             Err(_) => {
                 // Session table is full; evict the least-recently-used session
                 if let Some(lru_id) = self.get_session_for_eviction().map(|sess| sess.id) {
                     debug!("Group: Evicting session {} to make room", lru_id);
                     self.remove(lru_id);
-                    self.add(rand.next_u32(), false, peer, Some(src_nodeid), dev_det)?
+                    self.add(rand.next_u32(), false, peer, Some(src_nodeid))?
                 } else {
                     return Err(ErrorCode::NoSpaceSessions.into());
                 }
@@ -1950,7 +1976,6 @@ impl Sessions {
         reserved: bool,
         peer_addr: Address,
         peer_nodeid: Option<u64>,
-        dev_det: &BasicInfoConfig<'_>,
     ) -> Result<&mut Session, Error> {
         let session_id = self.next_sess_unique_id;
 
@@ -1960,22 +1985,17 @@ impl Sessions {
             self.next_sess_unique_id = 0;
         }
 
-        // Seed the peer's MRP intervals from our own configured defaults;
-        // they'll be overwritten by Sigma1 / PBKDFParamRequest (or the
-        // initiator's Sigma2 / PBKDFParamResponse) once the peer
-        // advertises its own `session_parameters`.
-        let (peer_active_interval_ms, peer_idle_interval_ms, peer_active_threshold_ms) =
-            mrp::default_peer_mrp_params(dev_det);
-
+        // Until the peer advertises its own session parameters - in the
+        // handshake, or out of band - it is assumed to use the spec defaults.
         let session = Session::init(
             session_id,
             msg_ctr,
             reserved,
             peer_addr,
             peer_nodeid,
-            peer_active_interval_ms,
-            peer_idle_interval_ms,
-            peer_active_threshold_ms,
+            mrp::MRP_BASE_RETRY_INTERVAL_MS,
+            mrp::MRP_DEFAULT_IDLE_INTERVAL_MS,
+            mrp::MRP_DEFAULT_ACTIVE_THRESHOLD_MS,
         );
 
         self.sessions
@@ -2271,23 +2291,18 @@ pub fn derive_group_session_id<C: Crypto>(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
-    use crate::dm::clusters::basic_info::BasicInfoConfig;
     use crate::transport::network::{Address, BtAddr};
 
     use super::*;
 
-    /// Stand-in `BasicInfoConfig` for tests that don't care about the
-    /// peer-MRP defaults — `Sessions::add` only reads `sai`/`sii` from it.
-    const TEST_DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig::new();
-
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
         let mut sm = Sessions::new();
-        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         assert_eq!(sm.get_next_sess_id(), 3);
-        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(4);
         assert_eq!(sm.get_next_sess_id(), 5);
     }
@@ -2295,7 +2310,7 @@ mod tests {
     #[test]
     fn test_next_sess_id_overflows() {
         let mut sm = Sessions::new();
-        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         sm.next_sess_id = 65534;
@@ -2647,20 +2662,14 @@ mod tests {
 
     /// Add a session with the given mode and return its unique ID.
     fn add_with_mode(sm: &mut Sessions, mode: SessionMode) -> u32 {
-        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.mode = mode;
         sess.id
     }
 
     /// Add an encrypted CASE session to a specific peer on a specific fabric.
     fn add_for_node(sm: &mut Sessions, fab_idx: NonZeroU8, peer_node_id: u64) -> u32 {
-        let sess = unwrap!(sm.add(
-            0,
-            false,
-            Address::default(),
-            Some(peer_node_id),
-            &TEST_DEV_DET
-        ));
+        let sess = unwrap!(sm.add(0, false, Address::default(), Some(peer_node_id),));
         sess.mode = SessionMode::Case {
             fab_idx,
             cat_ids: Default::default(),
@@ -2724,7 +2733,7 @@ mod tests {
         let mut sm = Sessions::new();
 
         let live = add_for_node(&mut sm, fab(1), 0x1111);
-        let reserved = unwrap!(sm.add(0, true, Address::default(), None, &TEST_DEV_DET)).id;
+        let reserved = unwrap!(sm.add(0, true, Address::default(), None)).id;
 
         // A predicate that would otherwise take everything.
         assert_eq!(sm.remove_where(|_| true), 1);
@@ -2741,13 +2750,11 @@ mod tests {
         let mut sm = Sessions::new();
 
         for i in 0..MAX_SESSIONS {
-            let sess = unwrap!(sm.add(0, false, udp(i as u16), None, &TEST_DEV_DET));
+            let sess = unwrap!(sm.add(0, false, udp(i as u16), None));
             assert_eq!(sess.id, i as u32);
         }
 
-        let err = unwrap!(sm
-            .add(0, false, Address::default(), None, &TEST_DEV_DET)
-            .err());
+        let err = unwrap!(sm.add(0, false, Address::default(), None).err());
         assert_eq!(err.code(), ErrorCode::NoSpaceSessions);
         assert_eq!(sm.iter().count(), MAX_SESSIONS);
 
@@ -2761,7 +2768,7 @@ mod tests {
 
         // The freed slot is usable again, and the unique ID keeps counting up
         // (the refused add above consumed one as well).
-        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        let sess = unwrap!(sm.add(0, false, Address::default(), None));
         assert_eq!(sess.id, MAX_SESSIONS as u32 + 1);
     }
 
@@ -2940,7 +2947,7 @@ mod tests {
         let mut sm = Sessions::new();
 
         for sess_id in [5, 6, 7] {
-            let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+            let sess = unwrap!(sm.add(0, false, Address::default(), None));
             sess.set_local_sess_id(sess_id);
         }
 
@@ -2963,7 +2970,7 @@ mod tests {
         let second = unwrap!(sm.get_next_exch_id(&crypto));
         assert_eq!(second, if first == u16::MAX { 1 } else { first + 1 });
 
-        let sess = unwrap!(sm.add(0, false, Address::default(), None, &TEST_DEV_DET));
+        let sess = unwrap!(sm.add(0, false, Address::default(), None));
         unwrap!(sess.add_exch(100, Role::Responder(Default::default())));
         unwrap!(sess.add_exch(101, Role::Initiator(Default::default())));
 
@@ -2973,6 +2980,93 @@ mod tests {
         sm.next_exch_id = u16::MAX;
         assert_eq!(unwrap!(sm.get_next_exch_id(&crypto)), u16::MAX);
         assert_eq!(unwrap!(sm.get_next_exch_id(&crypto)), 1);
+    }
+
+    /// The peer is idle until we hear from it, and active for its active
+    /// threshold after that: messages to it are paced by its idle interval,
+    /// respectively by its active one.
+    #[test]
+    fn peer_retry_interval_follows_peer_activity() {
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 15_000, 60_000);
+
+        assert!(!sess.is_peer_active());
+        assert_eq!(sess.peer_retry_interval_ms(), 15_000);
+
+        sess.mark_peer_active(Instant::now());
+        assert!(sess.is_peer_active());
+        assert_eq!(sess.peer_retry_interval_ms(), 300);
+
+        // The active threshold elapses.
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 15_000, 1);
+        sess.mark_peer_active(Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(!sess.is_peer_active());
+        assert_eq!(sess.peer_retry_interval_ms(), 15_000);
+    }
+
+    /// A message received from the peer - even one that is then rejected for
+    /// having nowhere to go - shows it is awake; a duplicate does not count.
+    #[test]
+    fn post_recv_marks_the_peer_active() {
+        use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 5000, 4000);
+
+        let mut rx = PacketHdr::new();
+        rx.plain.ctr = 1;
+        rx.proto.exch_id = 7;
+        rx.proto.proto_id = PROTO_ID_SECURE_CHANNEL;
+        rx.proto.proto_opcode = sc::OpCode::StatusReport as u8;
+
+        assert!(!sess.is_peer_active());
+        assert_eq!(
+            unwrap!(sess.post_recv(&rx).err()).code(),
+            ErrorCode::NoExchange
+        );
+        assert!(sess.is_peer_active());
+
+        sess.peer_active_until = Instant::MIN;
+        assert_eq!(
+            unwrap!(sess.post_recv(&rx).err()).code(),
+            ErrorCode::Duplicate
+        );
+        assert!(!sess.is_peer_active());
+    }
+
+    /// The peer's advertised session parameters are taken while in range;
+    /// zero, and intervals above one hour, are ignored.
+    #[test]
+    fn peer_session_params_out_of_range_are_ignored() {
+        let mut sess = Session::new(1, 0, false, Address::default(), None, 300, 5000, 4000);
+
+        let peer_params = |sess: &Session| {
+            (
+                sess.get_peer_active_interval_ms(),
+                sess.get_peer_idle_interval_ms(),
+                sess.get_peer_active_threshold_ms(),
+            )
+        };
+        let params = |sai, sii, sat| SessionParameters {
+            sai,
+            sii,
+            sat,
+            ..Default::default()
+        };
+
+        sess.set_peer_session_params(&params(Some(700), Some(9000), Some(6000)));
+        assert_eq!(peer_params(&sess), (700, 9000, 6000));
+
+        sess.set_peer_session_params(&params(None, None, None));
+        assert_eq!(peer_params(&sess), (700, 9000, 6000));
+
+        sess.set_peer_session_params(&params(Some(0), Some(0), Some(0)));
+        assert_eq!(peer_params(&sess), (700, 9000, 6000));
+
+        sess.set_peer_session_params(&params(Some(3_600_001), Some(u32::MAX), None));
+        assert_eq!(peer_params(&sess), (700, 9000, 6000));
+
+        sess.set_peer_session_params(&params(Some(3_600_000), Some(3_600_000), None));
+        assert_eq!(peer_params(&sess), (3_600_000, 3_600_000, 6000));
     }
 
     /// Only an unpromoted PASE session can take on a fabric, and only once.
@@ -3277,7 +3371,7 @@ mod tests {
         let mut tx = PacketHdr::new();
         tx.proto.set_reliable();
 
-        let (addr, retransmission) = unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        let (addr, retransmission) = unwrap!(sess.pre_send(None, &mut tx));
         assert_eq!(addr, udp(5540));
         assert!(!retransmission);
         assert_eq!(tx.plain.sess_id, 0);
@@ -3286,12 +3380,12 @@ mod tests {
         assert_eq!(tx.plain.get_dst_unicast_nodeid(), Some(0x22));
         assert!(tx.proto.is_reliable());
 
-        unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        unwrap!(sess.pre_send(None, &mut tx));
         assert_eq!(tx.plain.ctr, 101);
 
         sess.mode = SessionMode::Pase { fab_idx: 0 };
         sess.peer_sess_id = 0x1234;
-        unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        unwrap!(sess.pre_send(None, &mut tx));
         assert_eq!(tx.plain.sess_id, 0x1234);
         assert_eq!(tx.plain.ctr, 102);
         assert!(tx.plain.get_src_nodeid().is_none());
@@ -3306,7 +3400,7 @@ mod tests {
             0,
         )));
         tx.proto.set_ack(Some(50));
-        let (addr, _) = unwrap!(sess.pre_send(None, &mut tx, Some(300), None));
+        let (addr, _) = unwrap!(sess.pre_send(None, &mut tx));
         assert!(addr.is_tcp());
         assert!(!tx.proto.is_reliable());
         assert!(tx.proto.get_ack().is_none());

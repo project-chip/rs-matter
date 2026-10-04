@@ -48,7 +48,7 @@ use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Rng, SecretKey,
     SigningSecretKey, AEAD_CANON_KEY_LEN,
 };
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter::error::Error;
 use rs_matter::onboard::cac::RcacGenerator;
 use rs_matter::onboard::noc::NocGenerator;
@@ -63,7 +63,7 @@ use rs_matter::Matter;
 
 use crate::common::{
     create_localhost_socket_pair, init_env_logger, run_device_controller,
-    secure_sessions_peer_mrp_params, TEST_DEV_DET_MRP,
+    secure_sessions_peer_mrp_params, TEST_CTL_DET_MRP, TEST_DEV_DET_MRP,
 };
 
 #[allow(dead_code)]
@@ -154,7 +154,7 @@ fn test_case_resumption_round_trip() {
         // ---- 2. Set up two Matter instances ----
 
         let device_matter = Matter::new(&TEST_DEV_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
-        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let controller_matter = Matter::new(&TEST_CTL_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         // ---- 3. Install the same fabric in both fabric tables ----
         //
@@ -318,6 +318,14 @@ fn test_case_resumption_round_trip() {
                     assert_eq!((sai, sii), (700, 9000));
                 }
 
+                // And the device paces the controller by what it advertised
+                // in Sigma1, with and without resumption.
+                let params = secure_sessions_peer_mrp_params(&device_matter);
+                assert_eq!(params.len(), 2);
+                for (sai, sii, _) in params {
+                    assert_eq!((sai, sii), (650, 8000));
+                }
+
                 info!("CASE resumption verified end-to-end");
                 Ok::<_, Error>(())
             });
@@ -361,6 +369,7 @@ async fn run_case_handshake<C: Crypto>(
         crypto,
         fab_idx,
         peer_node_id,
+        None,
     ));
     let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 

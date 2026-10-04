@@ -27,7 +27,7 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter::error::Error;
 use rs_matter::respond::Responder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
@@ -40,7 +40,7 @@ use rs_matter::Matter;
 
 use crate::common::{
     create_localhost_socket_pair, init_env_logger, run_device_controller, run_with_transport,
-    secure_sessions_peer_mrp_params, TEST_DEV_DET_MRP,
+    secure_sessions_peer_mrp_params, TEST_CTL_DET_MRP, TEST_DEV_DET_MRP,
 };
 
 /// Test that a full PASE handshake succeeds between two in-process Matter instances.
@@ -55,7 +55,7 @@ fn test_pase_handshake() {
     futures_lite::future::block_on(async {
         let device_matter = Matter::new(&TEST_DEV_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
-        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let controller_matter = Matter::new(&TEST_CTL_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         let crypto = test_only_crypto();
 
@@ -97,6 +97,14 @@ fn test_pase_handshake() {
         for (sai, sii, _) in params {
             assert_eq!((sai, sii), (700, 9000));
         }
+
+        // ... and the device paces the controller by what it advertised in
+        // PBKDFParamRequest.
+        let params = secure_sessions_peer_mrp_params(&device_matter);
+        assert_eq!(params.len(), 1);
+        for (sai, sii, _) in params {
+            assert_eq!((sai, sii), (650, 8000));
+        }
     });
 }
 
@@ -112,7 +120,7 @@ async fn run_pase_handshake<C: Crypto>(
 
     info!("Starting PASE handshake...");
 
-    let mut pase_fut = pin!(PaseInitiator::perform(exchange, crypto, 20202021));
+    let mut pase_fut = pin!(PaseInitiator::perform(exchange, crypto, 20202021, None));
     let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
     let result = match select(&mut pase_fut, &mut timeout).await {

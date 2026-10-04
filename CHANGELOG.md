@@ -6,7 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Fix: as CASE / PASE initiator, apply the responder's MRP session parameters (Sigma2, Sigma2_Resume, PBKDFParamResponse) to the new session instead of keeping our own defaults; the responder now advertises its SAI / SII in them (the SII as over mDNS, via the new `Matter::advertised_sii`); new `Exchange::set_peer_mrp_params` / `PeerMrpParams` to seed a handshake with the peer's mDNS TXT hint
+* More fixes for Sleepy End Devices, now primarily for the initiator (#584)
+  * Fix: as CASE / PASE initiator, apply the responder's MRP session parameters (Sigma2, Sigma2_Resume, PBKDFParamResponse) to the new session instead of keeping our own defaults
+  * Fix: the session parameters of CASE / PASE handshake messages are now always sent, by initiator and responder alike, and carry the SAI / SII (the SII as over mDNS), the ICD's Active Mode Threshold as SAT, and the data model / interaction model revisions and specification version the spec requires
+  * Fix: peer-advertised SAI / SII values above one hour are ignored, like zero ones
+  * Fix: MRP paces each (re)transmission by the peer's idle interval (SII) unless we heard from it within its active threshold (SAT)
+  * Fix: a peer that does not advertise its SAI / SII / SAT is assumed to use the spec defaults (300 / 500 / 4000 ms), rather than our own configured values or a 5000 ms SII; `default_peer_mrp_params` is removed, and a session set up without a handshake takes its peer's parameters from the new `ReservedSession::set_peer_mrp_params`
+  * Fix: an ICD with no configured SII advertises its slow polling interval as its SII, rather than none (which had peers assume 500 ms)
+  * New: an ICD advertises its Active Mode Threshold in the `SAT` mDNS TXT key
+  * Breaking: `IcdAdvertisement` now describes every ICD (SIT-only too)
+  * Breaking: `CaseInitiator::perform` / `PaseInitiator::perform` take an optional `PeerMrpParams` - the peer's mDNS TXT hint - seeding the handshake
 * Fix: `LitIcdMgmtHandler::CLUSTER` no longer claims the Dynamic SIT/LIT feature, which the device did not implement; `LitIcdMgmtHandler::CLUSTER_DSLS` claims it, backed by the new `LitIcd::set_sit_required` (#580)
 * Breaking: the ICD Management cluster is now split into two variants: SIT-only and LIT  (#580)
 * Breaking: ICD LIT cluster handler: new, separate slow poll parameter (SII) for when the device operates in SIT mode, different form its (potentially much longer) LIT SII (#580)

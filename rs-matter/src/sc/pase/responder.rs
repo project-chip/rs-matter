@@ -29,7 +29,9 @@ use crate::crypto::{
 use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{Spake2P, Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys};
-use crate::sc::{check_opcode, complete_with_status, expect_opcode, OpCode, SCStatusCodes};
+use crate::sc::{
+    check_opcode, complete_with_status, expect_opcode, OpCode, SCStatusCodes, SessionParameters,
+};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{ReservedSession, SessionMode};
@@ -222,7 +224,6 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
 
                 // Generate response
-                let dev_det = exchange.matter().dev_det();
                 let resp = PBKDFParamResp {
                     initiator_random: OctetStr::new(initiator_random.access()),
                     responder_random: OctetStr::new(our_random.access()),
@@ -231,12 +232,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                         iterations: count,
                         salt: OctetStr::new(&salt[..salt_len]),
                     }),
-                    session_parameters: Some(crate::sc::SessionParameters {
-                        sii: exchange.matter().advertised_sii(),
-                        sai: Some(exchange.matter().advertised_sai()),
-                        max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
-                        ..Default::default()
-                    }),
+                    session_parameters: Some(SessionParameters::local(exchange.matter())),
                 };
 
                 (local_sessid, req.initiator_ssid, resp)

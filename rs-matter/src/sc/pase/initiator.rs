@@ -31,10 +31,12 @@ use crate::sc::pase::spake2p::{
     ProverContext, Spake2P, Spake2pRandom, Spake2pSessionKeys, Spake2pVerifierPasswordRef,
     SPAKE2P_VERIFIER_SALT_LEN, SPAKE2P_VERIFIER_SALT_MIN_LEN,
 };
-use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
+use crate::sc::{
+    complete_with_status, GeneralCode, OpCode, SCStatusCodes, SessionParameters, StatusReport,
+};
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::transport::session::{ReservedSession, SessionMode};
+use crate::transport::session::{PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
@@ -87,6 +89,10 @@ impl<C: Crypto> PaseInitiator<C> {
     /// - `exchange` - An exchange to the target device over a plaintext session
     /// - `crypto` - The crypto implementation
     /// - `password` - The setup passcode (typically 8 digits, e.g., 20202021)
+    /// - `peer_mrp` - The device's MRP parameters as advertised out of band (in
+    ///   its commissionable mDNS TXT record), if known. They pace the handshake
+    ///   and seed the session, until the device advertises its own in
+    ///   PBKDFParamResponse.
     ///
     /// # Returns
     /// - `Ok(())` on successful session establishment
@@ -95,9 +101,12 @@ impl<C: Crypto> PaseInitiator<C> {
         mut exchange: Exchange<'_>,
         crypto: C,
         password: u32,
+        peer_mrp: Option<&PeerMrpParams>,
     ) -> Result<(), Error> {
         let mut session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
-        session.inherit_peer_session_params(exchange.id())?;
+        if let Some(peer_mrp) = peer_mrp {
+            session.apply_peer_session_params(exchange.id(), &peer_mrp.into())?;
+        }
 
         let mut initiator = Self::new(crypto);
 
@@ -153,7 +162,7 @@ impl<C: Crypto> PaseInitiator<C> {
             initiator_ssid: self.local_sessid,
             passcode_id: 0,
             has_params: false,
-            session_parameters: None,
+            session_parameters: Some(SessionParameters::local(exchange.matter())),
         };
 
         // Start context hash with request payload

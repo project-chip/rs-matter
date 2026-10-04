@@ -24,11 +24,14 @@ use num_derive::FromPrimitive;
 use crate::crypto::Crypto;
 use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
+use crate::im::IM_REVISION;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{FromTLV, ToTLV};
 use crate::transport::exchange::{Exchange, MessageMeta};
+use crate::transport::mrp;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
+use crate::Matter;
 
 use case::CaseResponder;
 use pase::PaseResponder;
@@ -195,6 +198,28 @@ pub(crate) struct SessionParameters {
     pub(crate) spec_version: Option<u32>,
     /// Maximum number of paths per invoke
     pub(crate) max_paths_per_invoke: Option<u16>,
+}
+
+impl SessionParameters {
+    /// The session parameters this node advertises in the CASE / PASE
+    /// handshake messages it sends, as initiator or responder.
+    ///
+    /// Must not be called with the Matter state borrowed, as it reads the ICD
+    /// advertisement from it.
+    pub(crate) fn local(matter: &Matter<'_>) -> Self {
+        let dev_det = matter.dev_det();
+        let icd = matter.icd_advertisement();
+
+        Self {
+            sii: mrp::advertised_sii(dev_det, icd),
+            sai: Some(mrp::advertised_sai(dev_det)),
+            sat: icd.map(|icd| icd.active_threshold_ms),
+            dm_revision: Some(dev_det.data_model_revision),
+            im_revision: Some(IM_REVISION as u16),
+            spec_version: Some(dev_det.specification_version),
+            max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
+        }
+    }
 }
 
 /// Represents a Status Report message, as per "Appendix D: Status Report Messages" of the Matter Spec.
@@ -399,5 +424,83 @@ fn check_opcode(exchange: &Exchange<'_>, opcode: OpCode) -> Result<(), Error> {
         }
 
         Err(ErrorCode::Invalid.into())
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::dm::clusters::basic_info::{
+        BasicInfoConfig, DEFAULT_DATA_MODEL_REVISION, DEFAULT_MATTER_SPEC_VERSION,
+        DEFAULT_MAX_PATHS_PER_INVOKE,
+    };
+    use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
+    use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+    use crate::im::IM_REVISION;
+    use crate::transport::mrp::MRP_BASE_RETRY_INTERVAL_MS;
+    use crate::Matter;
+
+    use super::SessionParameters;
+
+    /// The session parameters a node sends always carry the fields the spec
+    /// requires: the revisions, the max paths per invoke and - because those
+    /// follow it - the active interval, defaulted when none is configured.
+    #[test]
+    fn local_session_parameters_carry_the_required_fields() {
+        let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let params = SessionParameters::local(&matter);
+
+        assert_eq!(params.sii, None);
+        assert_eq!(params.sai, Some(MRP_BASE_RETRY_INTERVAL_MS));
+        assert_eq!(params.sat, None);
+        assert_eq!(params.dm_revision, Some(DEFAULT_DATA_MODEL_REVISION));
+        assert_eq!(params.im_revision, Some(IM_REVISION as u16));
+        assert_eq!(params.spec_version, Some(DEFAULT_MATTER_SPEC_VERSION));
+        assert_eq!(
+            params.max_paths_per_invoke,
+            Some(DEFAULT_MAX_PATHS_PER_INVOKE)
+        );
+    }
+
+    /// An ICD advertises the same intervals as over mDNS - the SII capped while
+    /// a LIT-capable device operates as a SIT, its slow poll when none is
+    /// configured - and its Active Mode Threshold as the SAT.
+    #[test]
+    fn local_session_parameters_of_an_icd() {
+        const DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
+            sai: Some(700),
+            sii: Some(300_000),
+            ..TEST_DEV_DET
+        };
+
+        let adv = |operating_mode, slow_poll_ms| IcdAdvertisement {
+            active_threshold_ms: 5000,
+            slow_poll_ms,
+            operating_mode,
+        };
+
+        let matter = Matter::new(&DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+
+        matter.set_icd_advertisement(Some(adv(Some(OperatingModeEnum::SIT), 15_000)));
+        let params = SessionParameters::local(&matter);
+        assert_eq!(
+            (params.sai, params.sii, params.sat),
+            (Some(700), Some(15_000), Some(5000))
+        );
+
+        matter.set_icd_advertisement(Some(adv(Some(OperatingModeEnum::LIT), 300_000)));
+        let params = SessionParameters::local(&matter);
+        assert_eq!((params.sii, params.sat), (Some(300_000), Some(5000)));
+
+        // A SIT-only ICD advertises its configured SII.
+        matter.set_icd_advertisement(Some(adv(None, 15_000)));
+        let params = SessionParameters::local(&matter);
+        assert_eq!((params.sii, params.sat), (Some(300_000), Some(5000)));
+
+        // An ICD with no configured SII advertises its slow poll.
+        let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        matter.set_icd_advertisement(Some(adv(None, 15_000)));
+        let params = SessionParameters::local(&matter);
+        assert_eq!(params.sii, Some(15_000));
     }
 }

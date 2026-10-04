@@ -18,6 +18,7 @@
 use embassy_time::Instant;
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
 use crate::error::{Error, ErrorCode};
 
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
@@ -53,6 +54,9 @@ macro_rules! mrp_log {
 pub(crate) use mrp_log;
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
+/// The `SESSION_ACTIVE_INTERVAL` assumed for a peer that does not advertise one,
+/// and the one we advertise when none is configured: the Matter Core spec
+/// default.
 pub(crate) const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
 /// The length of the retransmission ladder: a reliable message goes out once
 /// and is then retransmitted up to this many times, so it can be on the wire
@@ -69,39 +73,58 @@ const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
 /// the time the message spends being retransmitted on the wire.
 pub(crate) const MRP_EXPECTED_PROCESSING_MS: u64 = 30_000;
 
-/// Fallback for `MRP_SESSION_IDLE_INTERVAL` when neither the peer nor our
-/// own `BasicInfoConfig::sii` advertised a value. Matches the docstring
-/// default on [`BasicInfoConfig::sii`].
-const MRP_DEFAULT_IDLE_INTERVAL_MS: u32 = 5000;
+/// The `SESSION_IDLE_INTERVAL` assumed for a peer that does not advertise one:
+/// the Matter Core spec default.
+pub(crate) const MRP_DEFAULT_IDLE_INTERVAL_MS: u32 = 500;
 
-/// Fallback for `MRP_SESSION_ACTIVE_THRESHOLD` when the peer didn't
-/// advertise one. Matter Core spec default.
-const MRP_DEFAULT_ACTIVE_THRESHOLD_MS: u16 = 4000;
+/// The `SESSION_ACTIVE_THRESHOLD` assumed for a peer that does not advertise
+/// one: the Matter Core spec default.
+pub(crate) const MRP_DEFAULT_ACTIVE_THRESHOLD_MS: u16 = 4000;
 
-/// Resolve the default peer-MRP timing for a freshly-created [`Session`]
-/// from our own [`BasicInfoConfig`] (Matter Core spec): a peer
-/// that never advertises `session_parameters` will be addressed using
-/// our own SAI / SII as a reasonable approximation. Returns
-/// `(active_interval_ms, idle_interval_ms, active_threshold_ms)`.
+/// The longest `SESSION_IDLE_INTERVAL` / `SESSION_ACTIVE_INTERVAL` a node may
+/// advertise: one hour.
+pub(crate) const MRP_MAX_SESSION_INTERVAL_MS: u32 = 3_600_000;
+
+/// The `SESSION_IDLE_INTERVAL` this node advertises - in the `SII` TXT key and
+/// in the session parameters of its CASE / PASE handshakes.
 ///
-/// `Some(0)` is treated identically to `None` — an interval of zero
-/// would collapse the MRP backoff to a tight retransmit loop and is
-/// never a valid configuration, so the fallback constants are used
-/// instead.
+/// A node that is not an ICD advertises the configured one, if any. An ICD has
+/// to advertise at least the slow polling interval it is reachable within, so
+/// one with none configured advertises that.
 ///
-/// [`Session`]: crate::transport::session::Session
-pub fn default_peer_mrp_params(dev_det: &BasicInfoConfig<'_>) -> (u32, u32, u16) {
-    (
-        dev_det
-            .sai
-            .filter(|&v| v > 0)
-            .unwrap_or(MRP_BASE_RETRY_INTERVAL_MS),
-        dev_det
-            .sii
-            .filter(|&v| v > 0)
-            .unwrap_or(MRP_DEFAULT_IDLE_INTERVAL_MS),
-        MRP_DEFAULT_ACTIVE_THRESHOLD_MS,
-    )
+/// A Long-Idle-Time-capable device configures the idle interval of its LIT
+/// operation (its idle mode duration, typically), but operates as a SIT -
+/// polling within 15 s - until a client registers with its ICD Management
+/// cluster. What it advertises paces its peers' retransmissions towards it, so
+/// it has to follow the mode (Matter Core spec, a LIT ICD operating as a SIT
+/// "SHALL advertise its SESSION_IDLE_INTERVAL using the SII discovery TXT
+/// key"): while operating as a SIT, its configured one is capped to the slow
+/// poll in effect. The mode change re-publishes the record.
+pub(crate) fn advertised_sii(
+    dev_det: &BasicInfoConfig<'_>,
+    icd: Option<IcdAdvertisement>,
+) -> Option<u32> {
+    let Some(icd) = icd else {
+        return dev_det.sii;
+    };
+
+    let sii = match (dev_det.sii, icd.operating_mode) {
+        (None, _) => icd.slow_poll_ms,
+        (Some(sii), Some(OperatingModeEnum::SIT)) => sii.min(icd.slow_poll_ms),
+        (Some(sii), _) => sii,
+    };
+
+    Some(sii)
+}
+
+/// The `SESSION_ACTIVE_INTERVAL` this node advertises in the session
+/// parameters of its handshakes: the configured one, or the spec's default
+/// when none is. Unlike the `SAI` TXT key this is never absent, because the
+/// session parameters always carry later fields (the revisions, the max paths
+/// per invoke) and the spec requires the active interval whenever any field
+/// after it is present.
+pub(crate) fn advertised_sai(dev_det: &BasicInfoConfig<'_>) -> u32 {
+    dev_det.sai.unwrap_or(MRP_BASE_RETRY_INTERVAL_MS)
 }
 
 #[derive(Debug)]
@@ -117,18 +140,21 @@ pub struct RetransEntry {
 
 impl RetransEntry {
     pub fn new(base_delay_interval_ms: Option<u32>, msg_ctr: u32) -> Self {
+        Self {
+            base_delay_interval_ms: Self::base_interval_ms(base_delay_interval_ms),
+            msg_ctr,
+            counter: 0,
+        }
+    }
+
+    fn base_interval_ms(base_delay_interval_ms: Option<u32>) -> u32 {
         // Defence-in-depth: a future code path that bypasses the
         // peer-side / dev_det-side zero filters must never collapse the
         // backoff into a zero-delay retransmit loop. Treat `Some(0)`
         // identically to `None`.
-        let base_delay_interval_ms = base_delay_interval_ms
+        base_delay_interval_ms
             .filter(|&v| v > 0)
-            .unwrap_or(MRP_BASE_RETRY_INTERVAL_MS);
-        Self {
-            base_delay_interval_ms,
-            msg_ctr,
-            counter: 0,
-        }
+            .unwrap_or(MRP_BASE_RETRY_INTERVAL_MS)
     }
 
     pub fn get_msg_ctr(&self) -> u32 {
@@ -147,10 +173,14 @@ impl RetransEntry {
         Self::backoff_ms(self.base_delay_interval_ms, counter, jitter_rand)
     }
 
-    pub fn pre_send(&mut self, ctr: u32) -> Result<(), Error> {
+    /// Account for a retransmission of the message, whose backoff starts from
+    /// `base_delay_interval_ms` - the peer's retry interval at the time of the
+    /// retransmission, as it may have gone idle or become active since.
+    pub fn pre_send(&mut self, ctr: u32, base_delay_interval_ms: u32) -> Result<(), Error> {
         if self.msg_ctr == ctr {
             if self.counter < MRP_MAX_TRANSMISSIONS {
                 self.counter += 1;
+                self.base_delay_interval_ms = Self::base_interval_ms(Some(base_delay_interval_ms));
                 Ok(())
             } else {
                 Err(ErrorCode::TxTimeout.into())
@@ -257,14 +287,15 @@ impl ReliableMessage {
             .unwrap_or(false)
     }
 
+    /// Prepare the (re)transmission of a message; a reliable one is paced by
+    /// `retry_interval_ms`, the peer's retry interval for a message sent now
+    /// (its active or idle one, see
+    /// [`Session::peer_retry_interval_ms`](crate::transport::session::Session::peer_retry_interval_ms)).
     pub fn pre_send(
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        session_active_interval_ms: Option<u32>,
-        // TODO: Need to make use of it in future,
-        // once we detect idle vs active devices
-        _session_idle_interval_ms: Option<u32>,
+        retry_interval_ms: u32,
     ) -> Result<(), Error> {
         // Check if any acknowledgements are pending for this exchange,
         if let Some(ack) = &mut self.ack {
@@ -275,7 +306,7 @@ impl ReliableMessage {
 
         if tx_proto.is_reliable() {
             if let Some(retrans) = &mut self.retrans {
-                if retrans.pre_send(tx_plain.ctr).is_err() {
+                if retrans.pre_send(tx_plain.ctr, retry_interval_ms).is_err() {
                     // Too many retransmissions, give up
                     error!(
                         "Packet {}{}: Too many retransmissions. Giving up",
@@ -291,7 +322,7 @@ impl ReliableMessage {
                     Err(ErrorCode::TxTimeout)?;
                 }
             } else {
-                self.retrans = Some(RetransEntry::new(session_active_interval_ms, tx_plain.ctr));
+                self.retrans = Some(RetransEntry::new(Some(retry_interval_ms), tx_plain.ctr));
             }
         }
 
@@ -369,17 +400,17 @@ mod tests {
 
         for attempt in 0..MRP_MAX_TRANSMISSIONS {
             assert!(
-                entry.pre_send(CTR).is_ok(),
+                entry.pre_send(CTR, 300).is_ok(),
                 "transmission {attempt} should be allowed"
             );
         }
 
-        let err = unwrap!(entry.pre_send(CTR).err());
+        let err = unwrap!(entry.pre_send(CTR, 300).err());
         assert_eq!(err.code(), ErrorCode::TxTimeout);
 
         // ... and it keeps failing rather than resetting.
         assert_eq!(
-            unwrap!(entry.pre_send(CTR).err()).code(),
+            unwrap!(entry.pre_send(CTR, 300).err()).code(),
             ErrorCode::TxTimeout
         );
     }
@@ -458,12 +489,12 @@ mod tests {
         let mut mrp = ReliableMessage::new();
 
         let mut tx_proto = proto(false);
-        unwrap!(mrp.pre_send(&plain(10), &mut tx_proto, Some(300), None));
+        unwrap!(mrp.pre_send(&plain(10), &mut tx_proto, 300));
         assert!(!mrp.is_retrans_pending());
         assert!(tx_proto.get_ack().is_none());
 
         let mut tx_proto = proto(true);
-        unwrap!(mrp.pre_send(&plain(11), &mut tx_proto, Some(300), None));
+        unwrap!(mrp.pre_send(&plain(11), &mut tx_proto, 300));
         assert!(mrp.is_retrans_pending());
         assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), 11);
         assert!(tx_proto.is_reliable());
@@ -480,12 +511,12 @@ mod tests {
         assert!(mrp.is_ack_pending());
 
         let mut tx_proto = proto(false);
-        unwrap!(mrp.pre_send(&plain(1), &mut tx_proto, Some(300), None));
+        unwrap!(mrp.pre_send(&plain(1), &mut tx_proto, 300));
         assert_eq!(tx_proto.get_ack(), Some(7));
         assert!(!mrp.is_ack_pending());
 
         let mut tx_proto = proto(false);
-        unwrap!(mrp.pre_send(&plain(2), &mut tx_proto, Some(300), None));
+        unwrap!(mrp.pre_send(&plain(2), &mut tx_proto, 300));
         assert_eq!(tx_proto.get_ack(), Some(7));
         assert!(!mrp.is_ack_pending());
     }
@@ -501,19 +532,38 @@ mod tests {
         let tx_plain = plain(20);
 
         // The first send arms the entry; each further one is a retransmission.
-        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(300), None));
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
         for _ in 0..MRP_MAX_TRANSMISSIONS {
-            unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(300), None));
+            unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
             assert!(mrp.is_retrans_pending());
         }
         assert_eq!(unwrap!(mrp.retrans.as_ref()).counter, MRP_MAX_TRANSMISSIONS);
 
-        let err = unwrap!(mrp
-            .pre_send(&tx_plain, &mut proto(true), Some(300), None)
-            .err());
+        let err = unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300).err());
         assert_eq!(err.code(), ErrorCode::TxTimeout);
         assert!(!mrp.is_retrans_pending());
         assert!(mrp.ack.is_none());
+    }
+
+    /// Each (re)transmission is paced by the peer's retry interval at the time
+    /// it is sent, so a peer that went idle since the original transmission
+    /// gets the retransmission paced by its idle interval.
+    #[test]
+    fn retransmission_takes_the_current_retry_interval() {
+        let mut mrp = ReliableMessage::new();
+        let tx_plain = plain(20);
+
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
+        assert_eq!(
+            unwrap!(mrp.retrans.as_ref()).delay_ms(0),
+            RetransEntry::backoff_ms(300, 0, 0)
+        );
+
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 15_000));
+        assert_eq!(
+            unwrap!(mrp.retrans.as_ref()).delay_ms(0),
+            RetransEntry::backoff_ms(15_000, 1, 0)
+        );
     }
 
     /// A reliable send with a *different* counter while a retransmission is
@@ -523,8 +573,8 @@ mod tests {
     #[should_panic(expected = "Previous retrans entry")]
     fn pre_send_different_counter_while_retrans_pending_panics() {
         let mut mrp = ReliableMessage::new();
-        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(300), None));
-        let _ = mrp.pre_send(&plain(21), &mut proto(true), Some(300), None);
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), 300));
+        let _ = mrp.pre_send(&plain(21), &mut proto(true), 300);
     }
 
     /// An incoming ACK for the pending counter clears the retransmission (and
@@ -533,7 +583,7 @@ mod tests {
     #[test]
     fn post_recv_ack_must_match_pending_retrans() {
         let mut mrp = ReliableMessage::new();
-        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(300), None));
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), 300));
 
         let mut rx_proto = proto(false);
         rx_proto.set_ack(Some(19));
@@ -581,7 +631,7 @@ mod tests {
         let mut mrp = ReliableMessage::new();
 
         unwrap!(mrp.post_recv(&plain(6), &proto(true)));
-        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(300), None));
+        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), 300));
         assert!(!mrp.is_ack_pending());
 
         unwrap!(mrp.post_recv(&plain(6), &proto(true)));
@@ -610,7 +660,7 @@ mod tests {
         mrp.received_at = Some(Instant::from_ticks(0));
         assert!(!mrp.has_rx_timed_out(1 << 40));
 
-        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(300), None));
+        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), 300));
         assert!(mrp.received_at.is_none());
         assert!(!mrp.has_rx_timed_out(0));
     }
@@ -649,53 +699,6 @@ mod tests {
         assert!(RetransEntry::new(Some(1000), 1).delay_ms(0) > default);
     }
 
-    /// The peer-MRP defaults for a fresh session come from our own SAI / SII,
-    /// with zero and absent values replaced by the built-in fallbacks.
-    #[test]
-    fn default_peer_mrp_params_derive_from_dev_det() {
-        use crate::dm::devices::test::TEST_DEV_DET;
-
-        // The test device advertises neither.
-        assert_eq!(
-            default_peer_mrp_params(&TEST_DEV_DET),
-            (
-                MRP_BASE_RETRY_INTERVAL_MS,
-                MRP_DEFAULT_IDLE_INTERVAL_MS,
-                MRP_DEFAULT_ACTIVE_THRESHOLD_MS
-            )
-        );
-
-        let dev_det = BasicInfoConfig {
-            sai: Some(500),
-            sii: Some(0),
-            ..TEST_DEV_DET
-        };
-        assert_eq!(
-            default_peer_mrp_params(&dev_det),
-            (
-                500,
-                MRP_DEFAULT_IDLE_INTERVAL_MS,
-                MRP_DEFAULT_ACTIVE_THRESHOLD_MS
-            )
-        );
-
-        let dev_det = BasicInfoConfig {
-            sai: None,
-            sii: Some(7000),
-            ..TEST_DEV_DET
-        };
-        assert_eq!(
-            default_peer_mrp_params(&dev_det),
-            (
-                MRP_BASE_RETRY_INTERVAL_MS,
-                7000,
-                MRP_DEFAULT_ACTIVE_THRESHOLD_MS
-            )
-        );
-    }
-
-    /// Any counter can be acknowledged, and a fresh entry is not yet
-    /// acknowledged.
     #[test]
     fn ack_entry_accepts_any_counter() {
         for ctr in [0, 1, u32::MAX] {

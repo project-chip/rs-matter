@@ -29,7 +29,7 @@ use crate::crypto::Crypto;
 use crate::dm::{AuxAclCheck, Metadata, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
-use crate::sc::{self, SessionParameters, PROTO_ID_SECURE_CHANNEL};
+use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::transport::session::Sessions;
 use crate::transport::{TransportPreference, TxPayloadState};
 use crate::utils::storage::pooled::{PooledBuffers, DEFAULT_BUFFER_POOL_SIZE};
@@ -42,7 +42,7 @@ use super::network::mdns::MAX_RESOLVE_CANDIDATES;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
-use super::session::{PeerMrpParams, Session, SessionMode};
+use super::session::{Session, SessionMode};
 use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
@@ -481,8 +481,7 @@ impl ExchangeState {
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        session_active_interval_ms: Option<u32>,
-        session_idle_interval_ms: Option<u32>,
+        retry_interval_ms: u32,
     ) -> Result<(), Error> {
         if matches!(self.role, Role::Initiator(_)) {
             tx_proto.set_initiator();
@@ -492,12 +491,7 @@ impl ExchangeState {
 
         tx_proto.exch_id = self.exch_id;
 
-        self.mrp.pre_send(
-            tx_plain,
-            tx_proto,
-            session_active_interval_ms,
-            session_idle_interval_ms,
-        )
+        self.mrp.pre_send(tx_plain, tx_proto, retry_interval_ms)
     }
 
     pub fn retrans_delay_ms(&mut self, jitter_rand: u8) -> Option<u64> {
@@ -745,17 +739,9 @@ impl TxMessage<'_> {
                 .get(self.exchange_id.session_id())
                 .ok_or(ErrorCode::NoSession)?;
 
-            // The session's `peer_active_interval_ms` / `peer_idle_interval_ms`
-            // are seeded from our own `BasicInfoConfig` at session-creation
-            // time and overwritten once Sigma1 / Sigma2 / PBKDFParamRequest /
-            // PBKDFParamResponse delivers a real peer value, so MRP
-            // retransmission backoff to this peer reflects whichever is
-            // more accurate (Matter Core spec).
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,
-                Some(session.get_peer_active_interval_ms()),
-                Some(session.get_peer_idle_interval_ms()),
             )?;
 
             self.packet.peer = peer;
@@ -1100,8 +1086,8 @@ impl<'a> Exchange<'a> {
     /// the peer's operational address is resolved over mDNS and a fresh CASE
     /// session is established (driving [`crate::sc::case::CaseInitiator`]) before
     /// the exchange is opened on it; the peer's MRP parameters advertised in the
-    /// mDNS TXT records seed the handshake (see [`Exchange::set_peer_mrp_params`]),
-    /// and the ones it advertises in the handshake itself take precedence.
+    /// mDNS TXT records seed the handshake, and the ones it advertises in the
+    /// handshake itself take precedence.
     ///
     /// Establishing requires a running mDNS responder (e.g.
     /// `BuiltinMdns::run`) to service the resolve; without one the
@@ -1219,7 +1205,6 @@ impl<'a> Exchange<'a> {
                 &state.fabrics,
                 fab_idx,
                 group_id,
-                matter.dev_det(),
             )?;
             let session_id = session.id;
 
@@ -1629,37 +1614,6 @@ impl<'a> Exchange<'a> {
         })
     }
 
-    /// Seed the peer's MRP parameters, as advertised by the peer out of band (the
-    /// `SAI` / `SII` / `SAT` keys of its mDNS TXT record), on the session this
-    /// exchange runs on.
-    ///
-    /// Meant for the unsecured exchange a caller opens with
-    /// [`Exchange::initiate_plaintext`] before driving
-    /// [`CaseInitiator::perform`](crate::sc::case::CaseInitiator::perform) or
-    /// [`PaseInitiator::perform`](crate::sc::pase::PaseInitiator::perform)
-    /// itself: the handshake is then paced by the hint, the secure session it
-    /// establishes inherits it, and the parameters the peer advertises in the
-    /// handshake override it. [`Exchange::initiate`] does this on its own from
-    /// the resolved TXT record.
-    ///
-    /// `Some(0)` is ignored.
-    pub fn set_peer_mrp_params(&self, params: &PeerMrpParams) -> Result<(), Error> {
-        let params = SessionParameters {
-            sii: params.sii,
-            sai: params.sai,
-            sat: params.sat,
-            ..Default::default()
-        };
-
-        self.with_state(|state| {
-            self.id()
-                .session(&mut state.sessions)
-                .set_peer_session_params(&params);
-
-            Ok(())
-        })
-    }
-
     pub(crate) fn with_state<F, T>(&self, f: F) -> Result<T, Error>
     where
         F: FnOnce(&mut MatterState) -> Result<T, Error>,
@@ -1733,11 +1687,10 @@ mod tests {
     }
 
     fn fill_sessions(matter: &Matter<'_>, reserved: bool) {
-        let dev_det = matter.dev_det();
         matter.with_state(|state| loop {
             if state
                 .sessions
-                .add(0, reserved, network::Address::new(), None, dev_det)
+                .add(0, reserved, network::Address::new(), None)
                 .is_err()
             {
                 break;

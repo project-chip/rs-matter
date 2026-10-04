@@ -81,6 +81,15 @@ pub const TEST_DEV_DET_MRP: BasicInfoConfig<'static> = BasicInfoConfig {
     ..TEST_DEV_DET
 };
 
+/// `TEST_DEV_DET` with other distinctive MRP intervals, for a controller whose
+/// advertised SAI / SII the device should end up with.
+#[allow(unused)]
+pub const TEST_CTL_DET_MRP: BasicInfoConfig<'static> = BasicInfoConfig {
+    sai: Some(650),
+    sii: Some(8000),
+    ..TEST_DEV_DET
+};
+
 /// The peer MRP parameters - `(active interval, idle interval, active
 /// threshold)`, in ms - of every secure (CASE / PASE) session `matter` holds.
 #[allow(unused)]

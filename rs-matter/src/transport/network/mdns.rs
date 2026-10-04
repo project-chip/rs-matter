@@ -26,6 +26,7 @@ use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
+use crate::transport::mrp;
 use crate::utils::storage::{write_split, Vec, WriteBuf};
 use crate::Matter;
 
@@ -105,6 +106,19 @@ impl MatterLocalService {
         ),
         Error,
     > {
+        let sai = dev_det.sai;
+        let sii = mrp::advertised_sii(dev_det, icd);
+        let sat = icd.map(|icd| icd.active_threshold_ms as u32);
+
+        // The `ICD` key is advertised only by Long-Idle-Time-capable devices: "0"
+        // while operating as SIT, "1" as LIT. A non-ICD device omits it (empty
+        // value, dropped by the filters below).
+        let txt_icd = match icd.and_then(|icd| icd.operating_mode) {
+            Some(OperatingModeEnum::LIT) => "1",
+            Some(OperatingModeEnum::SIT) => "0",
+            None => "",
+        };
+
         match self {
             Self::Commissioned {
                 compressed_fabric_id,
@@ -119,32 +133,17 @@ impl MatterLocalService {
                 // `_I<compressed_fabric_id>._sub._matter._tcp.local.` lets a
                 // controller browse for nodes of a given fabric without
                 // already knowing each node's id.
-                let (subtype_i, mut wb) = write_split!(wb, "_I{:016X}", compressed_fabric_id)?;
-                let (txt_sai, mut wb) = if let Some(sai) = dev_det.sai {
-                    write_split!(wb, "{}", sai)?
-                } else {
-                    ("", wb)
-                };
-                let (txt_sii, wb) = if let Some(sii) = Matter::advertised_sii_for(dev_det, icd) {
-                    write_split!(wb, "{}", sii)?
-                } else {
-                    ("", wb)
-                };
-
-                // The `ICD` key is advertised only by Long-Idle-Time-capable
-                // devices: "0" while operating as SIT, "1" as LIT. A non-ICD
-                // device omits it (empty value, dropped by the filter below).
-                let txt_icd = match icd.map(|icd| icd.operating_mode) {
-                    Some(OperatingModeEnum::LIT) => "1",
-                    Some(OperatingModeEnum::SIT) => "0",
-                    None => "",
-                };
+                let (subtype_i, wb) = write_split!(wb, "_I{:016X}", compressed_fabric_id)?;
+                let (txt_sai, wb) = Self::write_txt_num(wb, sai)?;
+                let (txt_sii, wb) = Self::write_txt_num(wb, sii)?;
+                let (txt_sat, wb) = Self::write_txt_num(wb, sat)?;
 
                 // Per Matter Core Spec, T is a bitmap:
                 // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
                 let txt_kvs = [
                     ("SAI", txt_sai),
                     ("SII", txt_sii),
+                    ("SAT", txt_sat),
                     ("T", if dev_det.tcp_supported { "6" } else { "" }),
                     ("ICD", txt_icd),
                     // Some mDNS responders do not accept empty TXT records
@@ -182,7 +181,7 @@ impl MatterLocalService {
                     Self::compute_short_discriminator(*discriminator)
                 )?;
                 let (subtype_v, mut wb) = write_split!(wb, "_V{}", dev_det.vid)?;
-                let (subtype_t, mut wb) = if let Some(dt) = dev_det.device_type {
+                let (subtype_t, wb) = if let Some(dt) = dev_det.device_type {
                     write_split!(wb, "_T{}", dt)?
                 } else {
                     ("", wb)
@@ -198,40 +197,19 @@ impl MatterLocalService {
                 .into_iter()
                 .filter(|s| !s.is_empty());
 
-                let (txt_discr, mut wb) = write_split!(wb, "{}", *discriminator)?;
-                let (txt_vid_pid, mut wb) = write_split!(wb, "{}+{}", dev_det.vid, dev_det.pid)?;
-                let (txt_sai, mut wb) = if let Some(sai) = dev_det.sai {
-                    write_split!(wb, "{}", sai)?
-                } else {
-                    ("", wb)
-                };
-                let (txt_sii, mut wb) = if let Some(sii) = Matter::advertised_sii_for(dev_det, icd)
-                {
-                    write_split!(wb, "{}", sii)?
-                } else {
-                    ("", wb)
-                };
+                let (txt_discr, mut wb) = Self::write_txt_num(wb, Some((*discriminator).into()))?;
+                let (txt_vid_pid, wb) = write_split!(wb, "{}+{}", dev_det.vid, dev_det.pid)?;
+                let (txt_sai, wb) = Self::write_txt_num(wb, sai)?;
+                let (txt_sii, wb) = Self::write_txt_num(wb, sii)?;
+                let (txt_sat, mut wb) = Self::write_txt_num(wb, sat)?;
                 let (txt_dn, mut wb) = write_split!(wb, "{}", dev_det.device_name)?;
-                let (txt_pi, mut wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
-                let (txt_ph, mut wb) = write_split!(wb, "{}", dev_det.pairing_hint.bits())?;
-                let (txt_dt, mut wb) = if let Some(dt) = dev_det.device_type {
-                    write_split!(wb, "{}", dt)?
-                } else {
-                    ("", wb)
-                };
+                let (txt_pi, wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
+                let (txt_ph, wb) = Self::write_txt_num(wb, Some(dev_det.pairing_hint.bits()))?;
+                let (txt_dt, mut wb) = Self::write_txt_num(wb, dev_det.device_type.map(u32::from))?;
                 let (txt_tcp, wb) = if dev_det.tcp_supported {
                     write_split!(wb, "6")?
                 } else {
                     ("", wb)
-                };
-
-                // As on the operational service, a Long-Idle-Time-capable device
-                // advertises its current mode here too ("0"=SIT, "1"=LIT); a
-                // non-ICD device omits the key.
-                let txt_icd = match icd.map(|icd| icd.operating_mode) {
-                    Some(OperatingModeEnum::LIT) => "1",
-                    Some(OperatingModeEnum::SIT) => "0",
-                    None => "",
                 };
 
                 let txt_kvs = [
@@ -240,6 +218,7 @@ impl MatterLocalService {
                     ("VP", txt_vid_pid),
                     ("SAI", txt_sai),
                     ("SII", txt_sii),
+                    ("SAT", txt_sat),
                     ("DN", txt_dn),
                     ("PI", txt_pi),
                     ("PH", txt_ph),
@@ -263,6 +242,23 @@ impl MatterLocalService {
                     wb.into_buf(),
                 ))
             }
+        }
+    }
+
+    /// Write `value`, if any, as the value of a TXT key; an absent one leaves the
+    /// value empty, which drops the key.
+    ///
+    /// Shared by all the numeric keys, so that their formatting is not
+    /// instantiated once per key.
+    #[inline(never)]
+    fn write_txt_num(
+        mut wb: WriteBuf<'_>,
+        value: Option<u32>,
+    ) -> Result<(&str, WriteBuf<'_>), Error> {
+        if let Some(value) = value {
+            write_split!(wb, "{}", value)
+        } else {
+            Ok(("", wb))
         }
     }
 
@@ -1036,13 +1032,14 @@ mod tests {
 
     /// The `SII` a LIT-capable device advertises follows its operating mode:
     /// its configured (LIT) idle interval as a LIT, the slow poll in effect
-    /// while it operates as a SIT; a non-ICD device advertises what it
-    /// configured.
+    /// while it operates as a SIT; a SIT-only device and a non-ICD one
+    /// advertise what they configured. An ICD with none configured advertises
+    /// its slow poll, a non-ICD one nothing.
     #[test]
-    fn sii_is_capped_while_operating_as_sit() {
+    fn sii_follows_the_icd_slow_poll() {
         use crate::dm::devices::test::TEST_DEV_DET;
 
-        let dev_det = BasicInfoConfig {
+        let configured = BasicInfoConfig {
             sai: Some(300),
             sii: Some(300_000),
             ..TEST_DEV_DET
@@ -1050,12 +1047,12 @@ mod tests {
 
         let mut buf = [0u8; 512];
 
-        let mut sii = |icd| {
+        let mut sii = |dev_det: &BasicInfoConfig<'_>, icd| {
             let (service, _) = MatterLocalService::Commissioned {
                 compressed_fabric_id: 1,
                 node_id: 2,
             }
-            .service_internal(&dev_det, 5540, icd, &mut buf)
+            .service_internal(dev_det, 5540, icd, &mut buf)
             .unwrap();
 
             service
@@ -1067,15 +1064,66 @@ mod tests {
 
         let adv = |operating_mode, slow_poll_ms| {
             Some(IcdAdvertisement {
-                operating_mode,
+                active_threshold_ms: 5000,
                 slow_poll_ms,
+                operating_mode,
             })
         };
 
-        assert_eq!(sii(adv(OperatingModeEnum::SIT, 15_000)), Some(15_000));
-        assert_eq!(sii(adv(OperatingModeEnum::SIT, 5_000)), Some(5_000));
-        assert_eq!(sii(adv(OperatingModeEnum::LIT, 300_000)), Some(300_000));
-        assert_eq!(sii(None), Some(300_000));
+        let sit = Some(OperatingModeEnum::SIT);
+        let lit = Some(OperatingModeEnum::LIT);
+
+        assert_eq!(sii(&configured, adv(sit, 15_000)), Some(15_000));
+        assert_eq!(sii(&configured, adv(sit, 5_000)), Some(5_000));
+        assert_eq!(sii(&configured, adv(lit, 300_000)), Some(300_000));
+        assert_eq!(sii(&configured, adv(None, 15_000)), Some(300_000));
+        assert_eq!(sii(&configured, None), Some(300_000));
+
+        assert_eq!(sii(&TEST_DEV_DET, adv(None, 15_000)), Some(15_000));
+        assert_eq!(sii(&TEST_DEV_DET, adv(sit, 15_000)), Some(15_000));
+        assert_eq!(sii(&TEST_DEV_DET, None), None);
+    }
+
+    /// An ICD advertises its Active Mode Threshold in the `SAT` key, on both
+    /// services; a non-ICD device omits the key.
+    #[test]
+    fn sat_is_advertised_by_an_icd() {
+        use crate::dm::devices::test::TEST_DEV_DET;
+
+        let mut buf = [0u8; 512];
+
+        let mut sat = |service: MatterLocalService, active_threshold_ms: Option<u16>| {
+            let icd = active_threshold_ms.map(|active_threshold_ms| IcdAdvertisement {
+                active_threshold_ms,
+                slow_poll_ms: 15_000,
+                operating_mode: None,
+            });
+
+            let (service, _) = service
+                .service_internal(&TEST_DEV_DET, 5540, icd, &mut buf)
+                .unwrap();
+
+            service
+                .txt_kvs
+                .clone()
+                .find(|(k, _)| *k == "SAT")
+                .map(|(_, v)| v.parse::<u16>().unwrap())
+        };
+
+        let commissioned = || MatterLocalService::Commissioned {
+            compressed_fabric_id: 1,
+            node_id: 2,
+        };
+        let commissionable = || MatterLocalService::Commissionable {
+            id: 1,
+            discriminator: 840,
+            enhanced: false,
+        };
+
+        assert_eq!(sat(commissioned(), Some(5000)), Some(5000));
+        assert_eq!(sat(commissionable(), Some(5000)), Some(5000));
+        assert_eq!(sat(commissioned(), None), None);
+        assert_eq!(sat(commissionable(), None), None);
     }
 
     #[test]

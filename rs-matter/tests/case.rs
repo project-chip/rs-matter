@@ -31,7 +31,7 @@ use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Rng, SecretKey,
     SigningSecretKey, AEAD_CANON_KEY_LEN,
 };
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter::error::Error;
 use rs_matter::onboard::cac::RcacGenerator;
 use rs_matter::onboard::noc::NocGenerator;
@@ -49,7 +49,7 @@ use rs_matter::Matter;
 
 use crate::common::{
     create_localhost_socket_pair, init_env_logger, run_device_controller,
-    secure_sessions_peer_mrp_params, TEST_DEV_DET_MRP,
+    secure_sessions_peer_mrp_params, TEST_CTL_DET_MRP, TEST_DEV_DET_MRP,
 };
 
 #[allow(dead_code)]
@@ -193,7 +193,7 @@ fn run_case_handshake_test(drop_first_sigma2: bool) {
         // ---- 2. Set up two Matter instances ----
 
         let device_matter = Matter::new(&TEST_DEV_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
-        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+        let controller_matter = Matter::new(&TEST_CTL_DET_MRP, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         // ---- 3. Install the same fabric in both fabric tables ----
         //
@@ -337,6 +337,14 @@ fn run_case_handshake_test(drop_first_sigma2: bool) {
             secure_sessions_peer_mrp_params(&controller_matter),
             vec![(700, 9000, HINT_SAT)]
         );
+
+        // ... and the device paces the controller by what it advertised in
+        // Sigma1.
+        let params = secure_sessions_peer_mrp_params(&device_matter);
+        assert_eq!(params.len(), 1);
+        for (sai, sii, _) in params {
+            assert_eq!((sai, sii), (650, 8000));
+        }
     });
 }
 
@@ -354,11 +362,11 @@ async fn run_case_handshake<C: Crypto>(
 
     // An out-of-band hint, as a controller would take it from the device's
     // mDNS TXT record; Sigma2 overrides the SAI / SII.
-    exchange.set_peer_mrp_params(&PeerMrpParams {
+    let peer_mrp = PeerMrpParams {
         sii: Some(1234),
         sai: Some(321),
         sat: Some(HINT_SAT),
-    })?;
+    };
 
     info!("Starting CASE handshake...");
 
@@ -367,6 +375,7 @@ async fn run_case_handshake<C: Crypto>(
         crypto,
         fab_idx,
         peer_node_id,
+        Some(&peer_mrp),
     ));
     let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
