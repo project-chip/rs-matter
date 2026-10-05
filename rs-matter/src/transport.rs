@@ -1630,7 +1630,22 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
     where
         S: NetworkSend,
     {
-        let result = self.decode_packet(packet);
+        let payload_start = packet.payload_start;
+
+        let mut result = self.decode_packet(packet);
+
+        // If session table is full and this is a new session req, run eviction and retry.
+        // n.b. this is the *normal* path once a device is up and running for a while!
+        // It'd be nicer to handle this near the PBKDFParamRequest / CASESigma1 handling
+        // in decode_packet(..), but we need async to send close to the evicted session
+        if matches!(&result, Err(e) if e.code() == ErrorCode::NoSpaceSessions)
+            && MessageMeta::from(&packet.header.proto).is_new_session()
+            && self.evict_some_session().await.is_ok()
+        {
+            // Need to reset the packet to re-decode it
+            packet.payload_start = payload_start;
+            result = self.decode_packet(packet);
+        }
 
         if result.is_ok() {
             self.matter.transport().notify_activity();
@@ -1695,16 +1710,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
-
-                    if self.write_evict_some_session_packet(packet, true)? {
-                        Self::netw_send(
-                            send,
-                            packet.peer,
-                            &packet.buf[packet.payload_start..],
-                            true,
-                        )
-                        .await?;
-                    }
                 } else {
                     error!(
                         "\n>>RCV {}\n      => No space for a new encrypted session, dropping",
