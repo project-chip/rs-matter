@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * New: an ICD advertises its Active Mode Threshold in the `SAT` mDNS TXT key
   * Breaking: `IcdAdvertisement` now describes every ICD (SIT-only too)
   * Breaking: `CaseInitiator::perform` / `PaseInitiator::perform` take an optional `PeerMrpParams` - the peer's mDNS TXT hint - seeding the handshake
+* Fix: correctly order C1 and C2 in the BTP GATT handshake to fix comissioning over bluez/bluer (#582)
 * Fix: `LitIcdMgmtHandler::CLUSTER` no longer claims the Dynamic SIT/LIT feature, which the device did not implement; `LitIcdMgmtHandler::CLUSTER_DSLS` claims it, backed by the new `LitIcd::set_sit_required` (#580)
 * Breaking: the ICD Management cluster is now split into two variants: SIT-only and LIT  (#580)
 * Breaking: ICD LIT cluster handler: new, separate slow poll parameter (SII) for when the device operates in SIT mode, different form its (potentially much longer) LIT SII (#580)

@@ -32,7 +32,7 @@ use bluer::gatt::{CharacteristicWriter, WriteOp};
 use bluer::{Adapter, AdapterEvent, Address, DiscoveryFilter, DiscoveryTransport, Uuid};
 
 use embassy_futures::select::{select, select3, select4, Either};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 
 use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
@@ -400,22 +400,25 @@ pub async fn run_central(adapter_name: Option<&str>, addr: BtAddr, btp: &Btp) ->
 
     debug!("Discovered Matter GATT characteristics C1/C2");
 
-    // Subscribe to C2 indications before we start the handshake, so we don't miss the peer's
-    // Handshake Response.
-    let c2_notify = c2.notify().await?;
-    let mut c2_notify = pin!(c2_notify);
-
-    // We are the initiator: drive the BTP handshake from our side.
-    //
-    // NOTE: we deliberately do NOT `btp.reset()` here - resetting would race with,
-    // and wipe, any Matter SDU the caller has already queued (e.g. the PASE
-    // PBKDFParamRequest a commissioner sends as soon as the transport is up). The
-    // caller resets + sets the initiator role before driving Matter traffic.
-    btp.set_initiator(true);
-
     // We pass `None` for the GATT MTU (as the peripheral side does), relying on the BTP handshake
     // to negotiate the effective MTU. `bluer`'s simple `write`/`notify` don't surface it anyway.
     let gatt_mtu = None;
+
+    // The peripheral prepares its capabilities response after the C1 write,
+    // then sends it when we subscribe to C2. Subscribe-first loses that trigger
+    // on devices using the Matter SDK's BLEEndPoint implementation.
+    btp.set_initiator(true);
+    let mut buf = [0; 512];
+    let len = btp.process_outgoing(gatt_mtu, &mut buf)?;
+    if len == 0 {
+        return Err(ErrorCode::InvalidState.into());
+    }
+    write_c1(&c1, &buf[..len], 1).await?;
+
+    info!("C1 handshake acknowledged; subscribing to C2 indications");
+    let c2_notify = c2.notify().await?;
+    let mut c2_notify = pin!(c2_notify);
+    info!("C2 indication subscription completed; waiting for BTP response");
 
     select3(
         wait_central_complete(btp, &device),
@@ -452,11 +455,48 @@ async fn process_c2_indications(
             value
         );
 
-        btp.process_incoming(gatt_mtu, peer_addr, &value)?;
+        info!(
+            "C2 indication received from {}: {}B",
+            peer_addr,
+            value.len()
+        );
+        match btp.process_incoming(gatt_mtu, peer_addr, &value) {
+            Ok(()) => debug!("C2 indication accepted by BTP: {}B", value.len()),
+            Err(error) => {
+                warn!(
+                    "C2 indication rejected by BTP: {}B, error code {:?}",
+                    value.len(),
+                    error.code()
+                );
+                return Err(error);
+            }
+        }
     }
 
     // The notification stream ended - treat as a disconnect.
     Ok(())
+}
+
+// Report an in-flight write even when the caller's PASE deadline cancels the
+// central future. Never record the frame bytes or the raw D-Bus error body.
+struct C1WriteDiagnostic {
+    frame: usize,
+    len: usize,
+    started: Instant,
+    completed: bool,
+}
+
+impl Drop for C1WriteDiagnostic {
+    fn drop(&mut self) {
+        if !self.completed {
+            warn!(
+                "C1 write cancelled while awaiting GATT response: frame {}, {}B, elapsed {}ms",
+                self.frame,
+                self.len,
+                self.started.elapsed().as_millis()
+            );
+        }
+    }
 }
 
 /// Drive BTP output and write it to characteristic `C1` (as an acknowledged GATT Write Request).
@@ -466,26 +506,58 @@ async fn process_c1_writes(
     c1: &RemoteCharacteristic,
     buf: &mut [u8],
 ) -> Result<(), Error> {
-    // BTP writes to `C1` are GATT "Write Requests" (acknowledged `ATT_WRITE_REQ`),
-    // as mandated by the Matter Core spec (§4.19.4: clients use the GATT Write
-    // Characteristic Value sub-procedure). Beyond conformance, awaiting each Write
-    // Response is the client-to-server half of BTP flow control: it paces the
-    // segments of a multi-segment SDU (e.g. the AddNOC request) one at a time, so
-    // the server's ATT layer doesn't drop back-to-back segments.
+    let mut frame = 1; // The capabilities request was already written.
+    loop {
+        let len = btp.process_outgoing(gatt_mtu, buf)?;
+
+        if len > 0 {
+            frame += 1;
+            write_c1(c1, &buf[..len], frame).await?;
+        } else {
+            btp.wait_outgoing().await;
+        }
+    }
+}
+
+/// Await the ATT Write Response for every C1 frame, including the handshake.
+async fn write_c1(c1: &RemoteCharacteristic, value: &[u8], frame: usize) -> Result<(), Error> {
+    // Acknowledged Write Requests pace segments and are required by Matter.
     let req = bluer::gatt::remote::CharacteristicWriteRequest {
         op_type: WriteOp::Request,
         ..Default::default()
     };
 
-    loop {
-        let len = btp.process_outgoing(gatt_mtu, buf)?;
-
-        if len > 0 {
-            trace!("Writing to C1: {:?}", &buf[..len]);
-
-            c1.write_ext(&buf[..len], &req).await?;
-        } else {
-            btp.wait_outgoing().await;
+    trace!("Writing to C1: {:?}", value);
+    let len = value.len();
+    let mut diagnostic = C1WriteDiagnostic {
+        frame,
+        len,
+        started: Instant::now(),
+        completed: false,
+    };
+    trace!("C1 write requested: frame {}, {}B", frame, len);
+    let result = c1.write_ext(value, &req).await;
+    diagnostic.completed = true;
+    match result {
+        Ok(()) => {
+            trace!(
+                "C1 write completed: frame {}, {}B, elapsed {}ms",
+                frame,
+                len,
+                diagnostic.started.elapsed().as_millis()
+            );
+            Ok(())
+        }
+        Err(error) => {
+            let error: Error = error.into();
+            warn!(
+                "C1 write failed: frame {}, {}B, elapsed {}ms, error code {:?}",
+                frame,
+                len,
+                diagnostic.started.elapsed().as_millis(),
+                error.code()
+            );
+            Err(error)
         }
     }
 }
