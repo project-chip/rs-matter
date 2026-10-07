@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: when the session table is full, a new `CASESigma1` / `PBKDFParamRequest` evicts a session and proceeds, rather than being answered with Busy; Busy is sent only if no session can be evicted (#587)
 * More fixes for Sleepy End Devices, now primarily for the initiator (#584)
   * Fix: as CASE / PASE initiator, apply the responder's MRP session parameters (Sigma2, Sigma2_Resume, PBKDFParamResponse) to the new session instead of keeping our own defaults
   * Fix: the session parameters of CASE / PASE handshake messages are now always sent, by initiator and responder alike, and carry the SAI / SII (the SII as over mDNS), the ICD's Active Mode Threshold as SAT, and the data model / interaction model revisions and specification version the spec requires

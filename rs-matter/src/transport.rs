@@ -1632,37 +1632,108 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
     {
         let payload_start = packet.payload_start;
 
-        let mut result = self.decode_packet(packet);
+        loop {
+            let result = self.decode_packet(packet);
 
-        // If session table is full and this is a new session req, run eviction and retry.
-        // n.b. this is the *normal* path once a device is up and running for a while!
-        // It'd be nicer to handle this near the PBKDFParamRequest / CASESigma1 handling
-        // in decode_packet(..), but we need async to send close to the evicted session
-        if matches!(&result, Err(e) if e.code() == ErrorCode::NoSpaceSessions)
-            && MessageMeta::from(&packet.header.proto).is_new_session()
-            && self.evict_some_session().await.is_ok()
-        {
-            // Need to reset the packet to re-decode it
-            packet.payload_start = payload_start;
-            result = self.decode_packet(packet);
-        }
+            if result.is_ok() {
+                self.matter.transport().notify_activity();
+            }
 
-        if result.is_ok() {
-            self.matter.transport().notify_activity();
-        }
+            match result {
+                Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
+                    if packet.header.plain.is_group_session() {
+                        // Group messages are multicast and don't use MRP; silently discard duplicates
+                        mrp_log!(
+                            "\n>>RCV {}\n      => Duplicate group message, discarding",
+                            packet
+                        );
+                    } else if !packet.peer.is_reliable()
+                        && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
+                    {
+                        mrp_log!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
-        match result {
-            Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
-                if packet.header.plain.is_group_session() {
-                    // Group messages are multicast and don't use MRP; silently discard duplicates
-                    mrp_log!(
-                        "\n>>RCV {}\n      => Duplicate group message, discarding",
+                        self.matter.with_state(|state| {
+                            // `unwrap` is safe because we know we have a session.
+                            // If we didn't have a session, the error code would've been `NoSession`
+                            //
+                            // Also, since the transport code is single threaded, and since we don't `await`
+                            // after decoding the packet, no code can the session
+                            let session = unwrap!(state
+                                .sessions
+                                .get_for_rx(&packet.peer, &packet.header.plain));
+
+                            let ack = packet.header.plain.ctr;
+
+                            packet.header.proto.toggle_initiator();
+                            packet.header.proto.set_ack(Some(ack));
+
+                            self.write_packet(packet, Some(session), None, true, |_| {
+                                Ok(Some(OpCode::MRPStandAloneAck.into()))
+                            })
+                        })?;
+
+                        Self::netw_send(
+                            send,
+                            packet.peer,
+                            &packet.buf[packet.payload_start..],
+                            true,
+                        )
+                        .await?;
+                    } else {
+                        mrp_log!("\n>>RCV {}\n      => Duplicate, discarding", packet);
+                    }
+                }
+                Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
+                    if !packet.header.plain.is_encrypted()
+                        && MessageMeta::from(&packet.header.proto).is_new_session()
+                    {
+                        if self.evict_some_session().await.is_ok() {
+                            // A session slot was freed, so decode the packet again to take it.
+                            // Decoding a plaintext packet doesn't modify the buffer, so
+                            // restoring the payload start is enough.
+                            packet.payload_start = payload_start;
+                            continue;
+                        }
+
+                        warn!(
+                            "\n>>RCV {}\n      => No space for a new unencrypted session, sending Busy",
+                            packet
+                        );
+
+                        let ack = packet.header.plain.ctr;
+
+                        packet.header.proto.toggle_initiator();
+                        packet.header.proto.set_ack(Some(ack));
+
+                        self.write_packet(packet, None, None, true, |wb| {
+                            sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
+                        })?;
+
+                        Self::netw_send(
+                            send,
+                            packet.peer,
+                            &packet.buf[packet.payload_start..],
+                            true,
+                        )
+                        .await?;
+                    } else {
+                        error!(
+                            "\n>>RCV {}\n      => No space for a new encrypted session, dropping",
+                            packet
+                        );
+                    }
+                }
+                Err(e) if matches!(e.code(), ErrorCode::NoSpaceExchanges) => {
+                    // TODO: Before closing the session, try to take other measures:
+                    // - For CASESigma1 & PBKDFParamRequest - send Busy instead
+                    // - For Interaction Model interactions that do need an ACK - send IM Busy,
+                    //   wait for ACK and retransmit without releasing the RX buffer, potentially
+                    //   blocking all other interactions
+
+                    error!(
+                        "\n>>RCV {}\n      => No space for a new exchange, closing session",
                         packet
                     );
-                } else if !packet.peer.is_reliable()
-                    && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
-                {
-                    mrp_log!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
                     self.matter.with_state(|state| {
                         // `unwrap` is safe because we know we have a session.
@@ -1670,206 +1741,152 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         //
                         // Also, since the transport code is single threaded, and since we don't `await`
                         // after decoding the packet, no code can the session
-                        let session = unwrap!(state
+                        let session_id = unwrap!(state
                             .sessions
-                            .get_for_rx(&packet.peer, &packet.header.plain));
+                            .get_for_rx(&packet.peer, &packet.header.plain))
+                        .id;
 
-                        let ack = packet.header.plain.ctr;
+                        packet.header.proto.exch_id =
+                            state.sessions.get_next_exch_id(&self.crypto)?;
+                        packet.header.proto.set_initiator();
 
-                        packet.header.proto.toggle_initiator();
-                        packet.header.proto.set_ack(Some(ack));
+                        // See above why `unwrap` is safe
+                        let mut session = unwrap!(state.sessions.remove(session_id));
+                        self.transport().notify_session_removed();
 
-                        self.write_packet(packet, Some(session), None, true, |_| {
-                            Ok(Some(OpCode::MRPStandAloneAck.into()))
+                        self.write_packet(packet, Some(&mut session), None, true, |wb| {
+                            sc_write(wb, SCStatusCodes::CloseSession, &[])
                         })
                     })?;
 
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
-                } else {
-                    mrp_log!("\n>>RCV {}\n      => Duplicate, discarding", packet);
                 }
-            }
-            Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
-                if !packet.header.plain.is_encrypted()
-                    && MessageMeta::from(&packet.header.proto).is_new_session()
-                {
-                    warn!(
-                        "\n>>RCV {}\n      => No space for a new unencrypted session, sending Busy",
-                        packet
-                    );
-
-                    let ack = packet.header.plain.ctr;
-
-                    packet.header.proto.toggle_initiator();
-                    packet.header.proto.set_ack(Some(ack));
-
-                    self.write_packet(packet, None, None, true, |wb| {
-                        sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
-                    })?;
-
-                    Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
-                        .await?;
-                } else {
-                    error!(
-                        "\n>>RCV {}\n      => No space for a new encrypted session, dropping",
-                        packet
-                    );
-                }
-            }
-            Err(e) if matches!(e.code(), ErrorCode::NoSpaceExchanges) => {
-                // TODO: Before closing the session, try to take other measures:
-                // - For CASESigma1 & PBKDFParamRequest - send Busy instead
-                // - For Interaction Model interactions that do need an ACK - send IM Busy,
-                //   wait for ACK and retransmit without releasing the RX buffer, potentially
-                //   blocking all other interactions
-
-                error!(
-                    "\n>>RCV {}\n      => No space for a new exchange, closing session",
-                    packet
-                );
-
-                self.matter.with_state(|state| {
-                    // `unwrap` is safe because we know we have a session.
-                    // If we didn't have a session, the error code would've been `NoSession`
-                    //
-                    // Also, since the transport code is single threaded, and since we don't `await`
-                    // after decoding the packet, no code can the session
-                    let session_id = unwrap!(state
-                        .sessions
-                        .get_for_rx(&packet.peer, &packet.header.plain))
-                    .id;
-
-                    packet.header.proto.exch_id = state.sessions.get_next_exch_id(&self.crypto)?;
-                    packet.header.proto.set_initiator();
-
-                    // See above why `unwrap` is safe
-                    let mut session = unwrap!(state.sessions.remove(session_id));
-                    self.transport().notify_session_removed();
-
-                    self.write_packet(packet, Some(&mut session), None, true, |wb| {
-                        sc_write(wb, SCStatusCodes::CloseSession, &[])
-                    })
-                })?;
-
-                Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
-                    .await?;
-            }
-            Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
-                mrp_log!(
-                    "\n>>RCV {}\n      => No valid exchange found, dropping",
-                    packet
-                );
-            }
-            Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
-                // NEVER answer a message that expects no answer. Our reply is
-                // itself a Status Report sent on no session, so answering one
-                // makes two peers bounce reports at each other forever.
-                let meta = MessageMeta::from(&packet.header.proto);
-                if meta.is_sc_status()
-                    || meta.is_standalone_ack()
-                    || packet.header.plain.is_group_session()
-                {
+                Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
                     mrp_log!(
-                        "\n>>RCV {}\n      => No valid session found for a message expecting no reply, dropping",
+                        "\n>>RCV {}\n      => No valid exchange found, dropping",
                         packet
                     );
-                } else {
-                    // Per Matter Core spec, when a session-bearing
-                    // message arrives for which we have no matching secure session
-                    // (e.g. after a reboot has wiped the session table while the
-                    // peer still believes the old session is alive), we reply with
-                    // an unsecured `SessionNotFound` Status Report on the Secure
-                    // Channel protocol. This nudges the peer to drop its stale
-                    // session and re-establish CASE, instead of waiting for MRP
-                    // retries to exhaust on its side.
-                    mrp_log!(
-                        "\n>>RCV {}\n      => No valid session found, replying with SessionNotFound",
-                        packet
-                    );
+                }
+                Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
+                    // NEVER answer a message that expects no answer. Our reply is
+                    // itself a Status Report sent on no session, so answering one
+                    // makes two peers bounce reports at each other forever.
+                    let meta = MessageMeta::from(&packet.header.proto);
+                    if meta.is_sc_status()
+                        || meta.is_standalone_ack()
+                        || packet.header.plain.is_group_session()
+                    {
+                        mrp_log!(
+                            "\n>>RCV {}\n      => No valid session found for a message expecting no reply, dropping",
+                            packet
+                        );
+                    } else {
+                        // Per Matter Core spec, when a session-bearing
+                        // message arrives for which we have no matching secure session
+                        // (e.g. after a reboot has wiped the session table while the
+                        // peer still believes the old session is alive), we reply with
+                        // an unsecured `SessionNotFound` Status Report on the Secure
+                        // Channel protocol. This nudges the peer to drop its stale
+                        // session and re-establish CASE, instead of waiting for MRP
+                        // retries to exhaust on its side.
+                        mrp_log!(
+                            "\n>>RCV {}\n      => No valid session found, replying with SessionNotFound",
+                            packet
+                        );
 
-                    // `write_packet` with `session = None` requires the incoming
-                    // header to look like an unsecured, non-reliable, source-tagged
-                    // packet (see its preconditions). Clear `sess_id` so it is not
-                    // considered encrypted, drop the reliable/ack flags since we
-                    // are not party to any exchange, and stamp a placeholder
-                    // `src_nodeid` (echoed as the response's `dst_nodeid` — UDP
-                    // peer addressing is what actually routes the reply).
-                    packet.header.plain.sess_id = 0;
-                    packet.header.plain.set_src_nodeid(Some(0));
-                    packet.header.proto.unset_reliable();
-                    packet.header.proto.set_ack(None);
+                        // `write_packet` with `session = None` requires the incoming
+                        // header to look like an unsecured, non-reliable, source-tagged
+                        // packet (see its preconditions). Clear `sess_id` so it is not
+                        // considered encrypted, drop the reliable/ack flags since we
+                        // are not party to any exchange, and stamp a placeholder
+                        // `src_nodeid` (echoed as the response's `dst_nodeid` — UDP
+                        // peer addressing is what actually routes the reply).
+                        packet.header.plain.sess_id = 0;
+                        packet.header.plain.set_src_nodeid(Some(0));
+                        packet.header.proto.unset_reliable();
+                        packet.header.proto.set_ack(None);
 
-                    self.write_packet(packet, None, None, true, |wb| {
-                        sc_write(wb, SCStatusCodes::SessionNotFound, &[])
-                    })?;
+                        self.write_packet(packet, None, None, true, |wb| {
+                            sc_write(wb, SCStatusCodes::SessionNotFound, &[])
+                        })?;
 
-                    Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
+                        Self::netw_send(
+                            send,
+                            packet.peer,
+                            &packet.buf[packet.payload_start..],
+                            true,
+                        )
                         .await?;
+                    }
+                }
+                Err(e) => {
+                    error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);
+                }
+                Ok(new_exchange) => {
+                    let meta = MessageMeta::from(&packet.header.proto);
+
+                    if meta.is_standalone_ack() {
+                        // No need to propagate this further
+                        debug!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
+                    } else if meta.is_sc_status()
+                        && Self::is_sc_status_code(
+                            &mut packet.buf[packet.payload_start..],
+                            SCStatusCodes::CloseSession,
+                        )
+                    {
+                        warn!(
+                            "\n>>RCV {}\n      => Close session received, removing this session",
+                            packet
+                        );
+
+                        self.matter.with_state(|state| {
+                            if let Some(session_id) = state
+                                .sessions
+                                .get_for_rx(&packet.peer, &packet.header.plain)
+                                .map(|sess| sess.id)
+                            {
+                                state.sessions.remove(session_id);
+                                self.transport().notify_session_removed();
+                            }
+                        });
+                    } else {
+                        self.transport().counters.lock(|counters| {
+                            counters.borrow_mut().record_recv(&packet.header.proto)
+                        });
+
+                        debug!(
+                            "\n>>RCV {}\n      => Processing{}",
+                            packet,
+                            if new_exchange { " (new exchange)" } else { "" }
+                        );
+
+                        #[cfg(feature = "log-tlv-payload")]
+                        debug!(
+                            "{}",
+                            Packet::<0>::display_payload(
+                                &packet.header.proto,
+                                &packet.buf
+                                    [core::cmp::min(packet.payload_start, packet.buf.len())..]
+                            )
+                        );
+
+                        #[cfg(not(feature = "log-tlv-payload"))]
+                        trace!(
+                            "{}",
+                            Packet::<0>::display_payload(
+                                &packet.header.proto,
+                                &packet.buf
+                                    [core::cmp::min(packet.payload_start, packet.buf.len())..]
+                            )
+                        );
+
+                        return Ok(true);
+                    }
                 }
             }
-            Err(e) => {
-                error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);
-            }
-            Ok(new_exchange) => {
-                let meta = MessageMeta::from(&packet.header.proto);
 
-                if meta.is_standalone_ack() {
-                    // No need to propagate this further
-                    debug!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
-                } else if meta.is_sc_status()
-                    && Self::is_sc_status_code(
-                        &mut packet.buf[packet.payload_start..],
-                        SCStatusCodes::CloseSession,
-                    )
-                {
-                    warn!(
-                        "\n>>RCV {}\n      => Close session received, removing this session",
-                        packet
-                    );
-
-                    self.matter.with_state(|state| {
-                        if let Some(session_id) = state
-                            .sessions
-                            .get_for_rx(&packet.peer, &packet.header.plain)
-                            .map(|sess| sess.id)
-                        {
-                            state.sessions.remove(session_id);
-                            self.transport().notify_session_removed();
-                        }
-                    });
-                } else {
-                    self.transport()
-                        .counters
-                        .lock(|counters| counters.borrow_mut().record_recv(&packet.header.proto));
-
-                    debug!(
-                        "\n>>RCV {}\n      => Processing{}",
-                        packet,
-                        if new_exchange { " (new exchange)" } else { "" }
-                    );
-
-                    #[cfg(feature = "log-tlv-payload")]
-                    debug!(
-                        "{}",
-                        Packet::<0>::display_payload(
-                            &packet.header.proto,
-                            &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..]
-                        )
-                    );
-
-                    #[cfg(not(feature = "log-tlv-payload"))]
-                    trace!(
-                        "{}",
-                        Packet::<0>::display_payload(
-                            &packet.header.proto,
-                            &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..]
-                        )
-                    );
-
-                    return Ok(true);
-                }
-            }
+            break;
         }
 
         Ok(false)
