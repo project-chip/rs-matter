@@ -2077,7 +2077,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     session.decode_remaining(&self.crypto, &mut packet.header, pb)?;
                 set_payload(packet, payload_range);
 
-                return session.post_recv(&packet.header);
+                return session.post_recv(&packet.peer, &packet.header);
             }
 
             // No existing session: we either have to create one, or return an error
@@ -2107,7 +2107,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     )?;
 
                     // Session created successfully: decode, indicate packet payload slice and process further
-                    return session.post_recv(&packet.header);
+                    return session.post_recv(&packet.peer, &packet.header);
                 }
 
                 // A `SessionNotFound` is the peer telling us that a session *we*
@@ -2158,7 +2158,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                     set_payload(packet, payload_range);
 
-                    return session.post_recv(&packet.header);
+                    return session.post_recv(&packet.peer, &packet.header);
                 }
 
                 // Encrypted unicast packet with no matching session — cannot be decoded

@@ -515,12 +515,47 @@ impl Session {
             || self.local_nodeid == 0
             || rx_plain.get_dst_unicast_nodeid() == Some(self.local_nodeid);
 
+        // Group session IDs are derived from the group key rather than allocated
+        // by us, so they may collide with the local ID of a unicast session.
+        let is_group = matches!(self.mode, SessionMode::Group { .. });
+
         nodeid_matches
             && dest_nodeid_matches
             && self.local_sess_id == rx_plain.sess_id
-            && self.is_peer(rx_peer)
+            && is_group == rx_plain.is_group_session()
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
+            && self.is_rx_peer(rx_peer, rx_plain)
+    }
+
+    /// Whether a message received from `rx_peer` can belong to this session, as
+    /// far as the peer's address is concerned.
+    ///
+    /// A peer may send the messages of one session from different addresses,
+    /// e.g. a Thread border router with several IPv6 prefixes picks the source
+    /// address per message. So the address is not compared where the message
+    /// itself identifies the session:
+    /// - CASE / PASE: by our local session ID, and only the right session
+    ///   decrypts the message;
+    /// - unsecured: by the initiator's ephemeral node ID, which is the source
+    ///   node ID when we are the responder and the destination node ID (checked
+    ///   by the caller) when we are the initiator.
+    ///
+    /// This only holds within UDP, as a TCP or BTP address stands for a
+    /// connection. Group sessions always keep to their address: those created
+    /// on receive are per sender address, and those used for sending carry the
+    /// multicast destination.
+    fn is_rx_peer(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
+        let identified = match self.mode {
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => true,
+            SessionMode::PlainText => {
+                self.local_nodeid != 0
+                    || self.peer_nodeid.is_some() && self.peer_nodeid == rx_plain.get_src_nodeid()
+            }
+            SessionMode::Group { .. } => false,
+        };
+
+        identified && self.peer_addr.is_udp() && rx_peer.is_udp() || self.is_peer(rx_peer)
     }
 
     pub(crate) fn is_for_tx(&self, session_id: u32) -> bool {
@@ -616,12 +651,27 @@ impl Session {
     /// Update the session state with the data in the received packet headers.
     ///
     /// Return `true` if a new exchange was created, and `false` otherwise.
-    pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr) -> Result<bool, Error> {
+    pub(crate) fn post_recv(
+        &mut self,
+        rx_peer: &Address,
+        rx_header: &PacketHdr,
+    ) -> Result<bool, Error> {
         if !self
             .rx_ctr_state
             .post_recv(rx_header.plain.ctr, self.is_encrypted(), false)
         {
             Err(ErrorCode::Duplicate)?;
+        }
+
+        // Reply to wherever the peer now sends from (see `is_rx_peer`). Only
+        // after the counter check, so that a replayed message cannot redirect
+        // the session.
+        if !self.is_peer(rx_peer) {
+            debug!(
+                "Session {}: peer address changed from {} to {}",
+                self.id, self.peer_addr, rx_peer
+            );
+            self.peer_addr = *rx_peer;
         }
 
         // The session lookup (or creation) for the packet has just stamped
@@ -2656,6 +2706,18 @@ mod tests {
         )))
     }
 
+    /// A TCP peer address on the given port.
+    fn tcp(port: u16) -> Address {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        Address::Tcp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            port,
+            0,
+            0,
+        )))
+    }
+
     fn fab(idx: u8) -> NonZeroU8 {
         unwrap!(NonZeroU8::new(idx))
     }
@@ -3020,14 +3082,14 @@ mod tests {
 
         assert!(!sess.is_peer_active());
         assert_eq!(
-            unwrap!(sess.post_recv(&rx).err()).code(),
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
             ErrorCode::NoExchange
         );
         assert!(sess.is_peer_active());
 
         sess.peer_active_until = Instant::MIN;
         assert_eq!(
-            unwrap!(sess.post_recv(&rx).err()).code(),
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
             ErrorCode::Duplicate
         );
         assert!(!sess.is_peer_active());
@@ -3193,6 +3255,139 @@ mod tests {
         assert!(sess.is_for_rx(&peer, &rx_plain));
     }
 
+    /// A peer may send the messages of one unsecured session from different UDP
+    /// addresses; the session is identified by the initiator's ephemeral node ID.
+    #[test]
+    fn unsecured_session_matches_peer_on_any_udp_address() {
+        const INITIATOR: u64 = 0x3a84_2023_1e3a_d91f;
+
+        let mut rx_plain = PlainHdr::new();
+        rx_plain.set_src_nodeid(Some(INITIATOR));
+
+        // We are the responder.
+        let sess = Session::new(1, 0, false, udp(5540), Some(INITIATOR), 300, 5000, 4000);
+        assert!(sess.is_for_rx(&udp(5541), &rx_plain));
+        assert!(!sess.is_for_rx(&tcp(5540), &rx_plain));
+
+        rx_plain.set_src_nodeid(Some(INITIATOR + 1));
+        assert!(!sess.is_for_rx(&udp(5541), &rx_plain));
+
+        // Without the initiator's node ID only the address is left.
+        let sess = Session::new(2, 0, false, udp(5540), None, 300, 5000, 4000);
+        assert!(sess.is_for_rx(&udp(5540), &rx_plain));
+        assert!(!sess.is_for_rx(&udp(5541), &rx_plain));
+
+        // We are the initiator.
+        let mut sess = Session::new(3, 0, false, udp(5540), None, 300, 5000, 4000);
+        sess.set_local_nodeid(INITIATOR);
+        rx_plain.set_src_nodeid(None);
+        rx_plain.set_dst_unicast_nodeid(Some(INITIATOR));
+        assert!(sess.is_for_rx(&udp(5541), &rx_plain));
+        assert!(!sess.is_for_rx(&tcp(5540), &rx_plain));
+    }
+
+    /// A CASE / PASE session is identified by its local session ID, whatever
+    /// UDP address the peer sends from. A TCP session stays with its connection.
+    #[test]
+    fn encrypted_session_matches_peer_on_any_udp_address() {
+        let mut sess = Session::new(1, 0, false, udp(5540), None, 300, 5000, 4000);
+        sess.mode = SessionMode::Case {
+            fab_idx: fab(1),
+            cat_ids: Default::default(),
+        };
+        sess.set_local_sess_id(5);
+
+        let mut rx_plain = PlainHdr::new();
+        rx_plain.sess_id = 5;
+        assert!(sess.is_for_rx(&udp(5541), &rx_plain));
+        assert!(!sess.is_for_rx(&tcp(5540), &rx_plain));
+
+        sess.peer_addr = tcp(5540);
+        assert!(sess.is_for_rx(&tcp(5540), &rx_plain));
+        assert!(!sess.is_for_rx(&tcp(5541), &rx_plain));
+        assert!(!sess.is_for_rx(&udp(5540), &rx_plain));
+
+        rx_plain.sess_id = 6;
+        assert!(!sess.is_for_rx(&tcp(5540), &rx_plain));
+    }
+
+    /// Group session IDs come from the group key, so a group session must only
+    /// take group messages from its own address. In particular, the session we
+    /// send group messages on (whose peer is the multicast address) must not take
+    /// the group messages of other members.
+    #[test]
+    fn group_sessions_keep_to_their_address() {
+        use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+
+        const GROUP_SESS_ID: u16 = 0x4242;
+        const MEMBER: u64 = 0x77;
+
+        let group = SessionMode::Group {
+            fab_idx: fab(1),
+            group_id: 1,
+        };
+
+        let mut rx_plain = PlainHdr::new();
+        rx_plain.sess_id = GROUP_SESS_ID;
+        rx_plain.set_group_session(true);
+        rx_plain.set_src_nodeid(Some(MEMBER));
+
+        let mcast = Address::Udp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::new(0xff35, 0x40, 0xfd00, 0, 0, 0, 0, 1),
+            5540,
+            0,
+            0,
+        )));
+        let mut tx = Session::new(1, 0, false, mcast, None, 300, 5000, 4000);
+        tx.mode = group.clone();
+        tx.local_sess_id = GROUP_SESS_ID;
+        tx.set_local_nodeid(0x11);
+        assert!(!tx.is_for_rx(&udp(5540), &rx_plain));
+
+        let mut rx = Session::new(2, 0, false, udp(5540), Some(MEMBER), 300, 5000, 4000);
+        rx.mode = group;
+        rx.local_sess_id = GROUP_SESS_ID;
+        assert!(rx.is_for_rx(&udp(5540), &rx_plain));
+        assert!(!rx.is_for_rx(&udp(5541), &rx_plain));
+
+        // A unicast session whose local session ID collides with the group one
+        // takes the unicast messages, and only those.
+        let mut unicast = Session::new(3, 0, false, udp(5540), None, 300, 5000, 4000);
+        unicast.mode = SessionMode::Pase { fab_idx: 0 };
+        unicast.local_sess_id = GROUP_SESS_ID;
+        assert!(!unicast.is_for_rx(&udp(5540), &rx_plain));
+
+        rx_plain.set_group_session(false);
+        assert!(unicast.is_for_rx(&udp(5540), &rx_plain));
+        assert!(!rx.is_for_rx(&udp(5540), &rx_plain));
+    }
+
+    /// Replies follow the peer to the address it last sent from, but a replayed
+    /// message does not redirect them.
+    #[test]
+    fn post_recv_follows_peer_address_of_fresh_messages() {
+        use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+
+        let mut sess = Session::new(1, 0, false, udp(5540), Some(0xaabb), 300, 5000, 4000);
+
+        let mut rx = PacketHdr::new();
+        rx.plain.ctr = 1;
+        rx.proto.exch_id = 7;
+        rx.proto.proto_id = PROTO_ID_SECURE_CHANNEL;
+        rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
+        rx.proto.set_initiator();
+        rx.proto.set_reliable();
+
+        assert!(unwrap!(sess.post_recv(&udp(5541), &rx)));
+        assert_eq!(sess.get_peer_addr(), udp(5541));
+
+        assert_eq!(
+            unwrap!(sess.post_recv(&udp(5542), &rx).err()).code(),
+            ErrorCode::Duplicate
+        );
+        assert_eq!(sess.get_peer_addr(), udp(5541));
+    }
+
     /// A reserved slot is invisible to receive matching until it is completed;
     /// dropping the reservation without completing it frees the slot.
     #[test]
@@ -3310,7 +3505,7 @@ mod tests {
         rx.proto.set_initiator();
         rx.proto.set_reliable();
 
-        assert!(unwrap!(sess.post_recv(&rx)));
+        assert!(unwrap!(sess.post_recv(&Address::default(), &rx)));
         let exch = unwrap!(sess.exchanges[0].as_ref());
         assert_eq!(exch.exch_id, 7);
         assert!(matches!(exch.role, Role::Responder(_)));
@@ -3318,13 +3513,13 @@ mod tests {
 
         // The same counter again is a duplicate ...
         assert_eq!(
-            unwrap!(sess.post_recv(&rx).err()).code(),
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
             ErrorCode::Duplicate
         );
 
         // ... a new counter on the same exchange joins it.
         rx.plain.ctr = 2;
-        assert!(!unwrap!(sess.post_recv(&rx)));
+        assert!(!unwrap!(sess.post_recv(&Address::default(), &rx)));
         assert_eq!(sess.exchanges.len(), 1);
 
         // A responder-flagged message for an unknown exchange has nowhere to go.
@@ -3332,7 +3527,7 @@ mod tests {
         rx.proto.exch_id = 8;
         rx.proto.unset_initiator();
         assert_eq!(
-            unwrap!(sess.post_recv(&rx).err()).code(),
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
             ErrorCode::NoExchange
         );
 
@@ -3341,7 +3536,7 @@ mod tests {
         rx.proto.set_initiator();
         rx.proto.proto_opcode = sc::OpCode::MRPStandAloneAck as u8;
         assert_eq!(
-            unwrap!(sess.post_recv(&rx).err()).code(),
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
             ErrorCode::NoExchange
         );
 
@@ -3350,12 +3545,12 @@ mod tests {
         rx.plain.ctr = 5;
         rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
         assert_eq!(
-            unwrap!(sess.post_recv(&rx).err()).code(),
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
             ErrorCode::NoSession
         );
         rx.plain.ctr = 6;
         rx.proto.exch_id = 7;
-        assert!(!unwrap!(sess.post_recv(&rx)));
+        assert!(!unwrap!(sess.post_recv(&Address::default(), &rx)));
     }
 
     /// Sending stamps the plain header per session mode: plaintext sessions
