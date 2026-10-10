@@ -108,47 +108,6 @@ type SubscriptionsBuffersInner<'a, B, const N: usize> =
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
-/// When a subscription with nothing to report reports anyway, to keep itself
-/// alive.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum KeepAlive {
-    /// Halfway through its max interval.
-    Default,
-    /// An Intermittently Connected Device's: shortly before its max interval
-    /// runs out - which is when the device's next wake-up is scheduled for (see
-    /// [`Subscriptions::next_keep_alive_at`]).
-    Icd,
-}
-
-impl KeepAlive {
-    /// How long before the max interval runs out an ICD reports: time for a
-    /// wake-up, a session resumption and a retransmission or two.
-    const ICD_LEAD_SECS: u16 = 3;
-
-    /// How long after its last report a subscription with nothing to report
-    /// reports anyway.
-    fn due_after_secs(&self, max_int_secs: u16) -> u16 {
-        match self {
-            Self::Default => max_int_secs - max_int_secs / 2,
-            Self::Icd => max_int_secs - Self::ICD_LEAD_SECS.min(max_int_secs / 2),
-        }
-    }
-}
-
-/// The max interval an Intermittently Connected Device grants a subscription:
-/// its idle mode duration, so that it wakes up for the subscription no more
-/// often than it does anyway - but leaving room after the subscriber's min
-/// interval floor for the keep-alive (see [`KeepAlive::Icd`]), which the floor
-/// would otherwise hold back past the max interval.
-pub(crate) fn icd_max_int_secs(idle_mode_duration_s: u32, min_int_floor_secs: u16) -> u16 {
-    let floor_and_lead = min_int_floor_secs as u32 + KeepAlive::ICD_LEAD_SECS as u32;
-
-    idle_mode_duration_s
-        .max(floor_and_lead)
-        .min(u16::MAX as u32) as u16
-}
-
 pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
     state: Mutex<RefCell<SubscriptionsInner<N>>>,
     pub(crate) notification: Notification,
@@ -1968,6 +1927,47 @@ where
     fn drop(&mut self) {
         self.subscriptions.report_complete(self);
     }
+}
+
+/// When a subscription with nothing to report reports anyway, to keep itself
+/// alive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum KeepAlive {
+    /// Halfway through its max interval.
+    Default,
+    /// An Intermittently Connected Device's: shortly before its max interval
+    /// runs out - which is when the device's next wake-up is scheduled for (see
+    /// [`Subscriptions::next_keep_alive_at`]).
+    Icd,
+}
+
+impl KeepAlive {
+    /// How long before the max interval runs out an ICD reports: time for a
+    /// wake-up, a session resumption and a retransmission or two.
+    const ICD_LEAD_SECS: u16 = 3;
+
+    /// How long after its last report a subscription with nothing to report
+    /// reports anyway.
+    fn due_after_secs(&self, max_int_secs: u16) -> u16 {
+        match self {
+            Self::Default => max_int_secs - max_int_secs / 2,
+            Self::Icd => max_int_secs - Self::ICD_LEAD_SECS.min(max_int_secs / 2),
+        }
+    }
+}
+
+/// The max interval an Intermittently Connected Device grants a subscription:
+/// its idle mode duration, so that it wakes up for the subscription no more
+/// often than it does anyway - but leaving room after the subscriber's min
+/// interval floor for the keep-alive (see [`KeepAlive::Icd`]), which the floor
+/// would otherwise hold back past the max interval.
+pub(crate) fn icd_max_int_secs(idle_mode_duration_s: u32, min_int_floor_secs: u16) -> u16 {
+    let floor_and_lead = min_int_floor_secs as u32 + KeepAlive::ICD_LEAD_SECS as u32;
+
+    idle_mode_duration_s
+        .max(floor_and_lead)
+        .min(u16::MAX as u32) as u16
 }
 
 #[cfg(test)]
