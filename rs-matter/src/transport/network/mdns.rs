@@ -1067,6 +1067,7 @@ mod tests {
                 active_threshold_ms: 5000,
                 slow_poll_ms,
                 operating_mode,
+                idle_mode_duration_s: 300,
             })
         };
 
@@ -1097,6 +1098,7 @@ mod tests {
                 active_threshold_ms,
                 slow_poll_ms: 15_000,
                 operating_mode: None,
+                idle_mode_duration_s: 300,
             });
 
             let (service, _) = service

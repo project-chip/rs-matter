@@ -50,7 +50,8 @@ use crate::error::{Error, ErrorCode};
 use crate::im::events::{EventReader, EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
 use crate::im::invoker::HandlerInvoker;
 use crate::im::subscriptions::{
-    ReportContext, Subscriptions, SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
+    icd_max_int_secs, KeepAlive, ReportContext, Subscriptions, SubscriptionsBuffers,
+    DEFAULT_MAX_SUBSCRIPTIONS,
 };
 use crate::persist::{KvBlobStoreAccess, NETWORKS_KEY};
 use crate::respond::ExchangeHandler;
@@ -119,6 +120,14 @@ pub trait ImStats {
     ///
     /// A single-waiter notification: exactly one task should wait on it.
     async fn wait_report_failed(&self);
+
+    /// The earliest point at which a subscription needs a report to keep alive,
+    /// or `None` without subscriptions.
+    ///
+    /// The ICD Management handler wakes the device up no later than this, so
+    /// that the subscriptions keep alive with the device's own wake-ups rather
+    /// than wake it up themselves.
+    fn next_keep_alive_at(&self) -> Option<Instant>;
 }
 
 impl<T> ImStats for &T
@@ -135,6 +144,10 @@ where
 
     async fn wait_report_failed(&self) {
         (**self).wait_report_failed().await
+    }
+
+    fn next_keep_alive_at(&self) -> Option<Instant> {
+        (**self).next_keep_alive_at()
     }
 }
 
@@ -1030,8 +1043,11 @@ where
                 });
         }
 
-        let max_int_secs = core::cmp::max(req.max_int_ceil()?, 40); // Say we need at least 4 secs for potential latencies
         let min_int_secs = req.min_int_floor()?;
+        let max_int_secs = match self.matter.icd_advertisement() {
+            Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_secs),
+            None => core::cmp::max(req.max_int_ceil()?, 40), // Say we need at least 4 secs for potential latencies
+        };
 
         let now = Instant::now();
 
@@ -1048,7 +1064,9 @@ where
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
 
-        let primed = self.report_data(&mut rctx, &mut tx, exchange, true).await?;
+        let primed = self
+            .report_data(&mut rctx, &mut tx, exchange, true, true)
+            .await?;
 
         if primed {
             exchange
@@ -1301,13 +1319,22 @@ where
             let mut notification = pin!(self.state.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.transport().wait_session_removed());
 
+            // An Intermittently Connected Device keeps its subscriptions alive
+            // with its own wake-ups (see `KeepAlive::Icd`).
+            let keep_alive = if matter.icd_advertisement().is_some() {
+                KeepAlive::Icd
+            } else {
+                KeepAlive::Default
+            };
+
             // With no subscription (or none primed) the deadline is `Instant::MAX`,
             // so the timer effectively never fires and the loop just waits to be
-            // notified.
-            let deadline = self
-                .state
-                .subscriptions
-                .next_report_at(self.state.events.watermark(), &self.subscriptions_buffers);
+            // notified. On an idle ICD, it coincides with the ICD's own wake-up.
+            let deadline = self.state.subscriptions.next_report_at(
+                self.state.events.watermark(),
+                keep_alive,
+                &self.subscriptions_buffers,
+            );
             let mut timeout = pin!(Timer::at(deadline));
 
             select3(&mut notification, &mut timeout, &mut session_removed).await;
@@ -1370,16 +1397,34 @@ where
             // its persisted record can be purged.
             let mut dropped_any = false;
 
+            // On an ICD, once a subscription reports, all of them do - empty if
+            // they have nothing to report: the device is awake for it anyway, and
+            // they then keep alive together rather than each with a wake-up of its
+            // own.
+            let report_all = keep_alive == KeepAlive::Icd
+                && self.state.subscriptions.any_reportable(
+                    now,
+                    event_numbers_watermark,
+                    keep_alive,
+                    &self.subscriptions_buffers,
+                );
+
             loop {
                 let Some(mut rctx) = self.state.subscriptions.report(
                     now,
                     event_numbers_watermark,
+                    keep_alive,
+                    report_all,
                     &self.subscriptions_buffers,
                 ) else {
                     break;
                 };
 
-                let result = self.process_subscription(matter, &mut rctx).await;
+                let send_if_empty = report_all || rctx.should_send_if_empty(keep_alive);
+
+                let result = self
+                    .process_subscription(matter, &mut rctx, send_if_empty)
+                    .await;
 
                 match result {
                     Ok(true) => rctx.set_keep(),
@@ -1391,15 +1436,14 @@ where
                         // Reporting failed — typically because the session to the
                         // subscriber died (peer unreachable, MRP retransmissions
                         // exhausted). Drop that session so the next report to this
-                        // peer establishes a fresh one, and keep the subscription
-                        // so it retries rather than being torn down.
+                        // peer establishes a fresh one.
                         let (fab_idx, peer_node_id) = {
                             let ids = rctx.subscription().ids();
                             (ids.fab_idx, ids.peer_node_id)
                         };
 
                         warn!(
-                            "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session, will retry",
+                            "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session",
                             fab_idx.get(),
                             peer_node_id,
                             e
@@ -1415,13 +1459,20 @@ where
                             }
                         });
 
-                        // Keep the subscription to retry, but do NOT advance its
-                        // watermarks: the changes/events this report was carrying
-                        // never reached the subscriber and must be re-sent.
+                        // An ICD drops the subscription: retrying it would keep the
+                        // device awake, and hold its sleep back for a subscriber
+                        // that may well be gone for good.
                         //
+                        // Otherwise, keep the subscription to retry, but do NOT
+                        // advance its watermarks: the changes/events this report was
+                        // carrying never reached the subscriber and must be re-sent.
                         // Unless this was the first report of a subscription resumed
                         // from persistent storage: that one is given up on.
-                        rctx.set_keep_retry();
+                        if keep_alive == KeepAlive::Icd {
+                            rctx.set_drop_failed();
+                        } else {
+                            rctx.set_keep_retry();
+                        }
 
                         if !rctx.is_kept() {
                             dropped_any = true;
@@ -1448,6 +1499,7 @@ where
         &self,
         matter: &Matter<'_>,
         rctx: &mut ReportContext<'_, '_, B, NS>,
+        send_if_empty: bool,
     ) -> Result<bool, Error> {
         // Route the report by the subscriber's `(fabric, node)`: reuse the best
         // live session to that peer, or (with the `case-responder-only` feature
@@ -1462,7 +1514,7 @@ where
             unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
 
             let primed = self
-                .report_data(rctx, &mut tx, &mut exchange, false)
+                .report_data(rctx, &mut tx, &mut exchange, false, send_if_empty)
                 .await?;
 
             exchange.acknowledge().await?;
@@ -1537,6 +1589,7 @@ where
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
         with_dataver: bool,
+        send_if_empty: bool,
     ) -> Result<bool, Error>
     where
         T: DataModel,
@@ -1568,13 +1621,9 @@ where
         );
 
         let sub_valid = resp
-            .respond(
-                &mut wb,
-                false,
-                rctx.should_send_if_empty(),
-                &self.handler,
-                |e, c, a| rctx.should_report_attr(e, c, a),
-            )
+            .respond(&mut wb, false, send_if_empty, &self.handler, |e, c, a| {
+                rctx.should_report_attr(e, c, a)
+            })
             .await?;
 
         if !sub_valid {
@@ -1763,6 +1812,10 @@ where
 
     async fn wait_report_failed(&self) {
         self.state.subscriptions().wait_report_failed().await
+    }
+
+    fn next_keep_alive_at(&self) -> Option<Instant> {
+        self.state.subscriptions().next_keep_alive_at()
     }
 }
 
