@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* ICD-aware subscription reporting: an Intermittently Connected Device keeps its subscriptions alive with its own wake-ups, rather than being woken up by them (#590)
+  * Breaking: `ImStats` gains `next_keep_alive_at`
+  * Breaking: `IcdAdvertisement` gains `idle_mode_duration_s`
 * Evict sessions so that every fabric keeps the CASE sessions it is guaranteed (`CapabilityMinima.CaseSessionsPerFabric`): a full session table evicts a CASE session within its fabric's share only when no other session can be evicted, and group sessions never evict a live CASE session; a startup warning flags `max-sessions-*` too small for 3 CASE sessions per fabric (#597)
 * Breaking: the `max-fabrics-1` to `max-fabrics-4` features now take effect (#597)
 * Breaking: remove the non-standard Secure Channel status code `SCStatusCodes::SessionNotFound` (5), with all associated processing of it (#596)
