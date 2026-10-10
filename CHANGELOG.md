@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * ICD-aware subscription reporting: an Intermittently Connected Device keeps its subscriptions alive with its own wake-ups, rather than being woken up by them (#590)
   * Breaking: `ImStats` gains `next_keep_alive_at`
   * Breaking: `IcdAdvertisement` gains `idle_mode_duration_s`
+* New: `BasicInfoConfig::min_subscription_max_interval_secs` (default `DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS`, 40 s as before): the least max interval granted to a (non-ICD) subscription
 * Fix: when the session table is full, a new `CASESigma1` / `PBKDFParamRequest` evicts a session and proceeds, rather than being answered with Busy; Busy is sent only if no session can be evicted (#587)
 * Fix: support for peers that use multiple IP addresses for the same UDP session (586)
 * More fixes for Sleepy End Devices, now primarily for the initiator (#584)

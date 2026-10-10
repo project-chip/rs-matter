@@ -54,6 +54,9 @@ pub const DEFAULT_DATA_MODEL_REVISION: u16 = 21;
 /// keeping the in-memory CommandRef tracking buffer in `dm::invoke()` small.
 pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 5;
 
+/// The default for [`BasicInfoConfig::min_subscription_max_interval_secs`].
+pub const DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS: u16 = 40;
+
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
@@ -238,6 +241,16 @@ pub struct BasicInfoConfig<'a> {
     /// indicates TCP server support. Required for large payloads such as WebRTC SDP
     /// exchanges and camera snapshots.
     pub tcp_supported: bool,
+    /// The least max interval granted to a subscription, in seconds: what the
+    /// subscriber asks for, but no less than this. A subscription with nothing to
+    /// report keeps alive halfway through its max interval, so this bounds how
+    /// often such keep-alive reports go out.
+    ///
+    /// Not used by an Intermittently Connected Device, whose subscriptions take
+    /// their max interval from its idle mode duration.
+    ///
+    /// Not a real attribute.
+    pub min_subscription_max_interval_secs: u16,
 }
 
 impl BasicInfoConfig<'_> {
@@ -271,6 +284,7 @@ impl BasicInfoConfig<'_> {
             sai: None,
             sii: None,
             tcp_supported: false,
+            min_subscription_max_interval_secs: DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
         }
     }
 }
