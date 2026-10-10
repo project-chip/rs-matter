@@ -119,7 +119,8 @@ pub struct IcdNetParams {
 }
 
 /// What an ICD advertises about itself, over DNS-SD and in the session
-/// parameters of its CASE / PASE handshakes.
+/// parameters of its CASE / PASE handshakes - and what its subscriptions are
+/// paced by.
 ///
 /// The ICD Management handler keeps [`Matter`](crate::Matter) supplied with it
 /// (see [`Matter::icd_advertisement`](crate::Matter::icd_advertisement)); a node
@@ -138,6 +139,10 @@ pub struct IcdAdvertisement {
     /// TXT key (`0` for `SIT`, `1` for `LIT`). `None` for a SIT-only ICD, which
     /// has no `ICD` key.
     pub operating_mode: Option<OperatingModeEnum>,
+    /// The idle mode duration, in seconds. Subscriptions to the device pick
+    /// their max interval from it, so that their reports wake the device no
+    /// more often than idle mode ends anyway.
+    pub idle_mode_duration_s: u32,
 }
 
 /// The timing parameters an ICD advertises through the cluster's mandatory
@@ -434,6 +439,7 @@ impl Icd {
             active_threshold_ms: self.mode.active_mode_threshold_ms,
             slow_poll_ms,
             operating_mode: lit.then_some(operating_mode),
+            idle_mode_duration_s: self.mode.idle_mode_duration_s,
         }
     }
 
@@ -750,14 +756,17 @@ impl Icd {
                     // Check-In, see `ImStats::has_subscription_for`), so nudge the
                     // registered clients that lost touch right away, while awake,
                     // and stay awake long enough for them to come back.
-                    if let Either::Second(()) =
-                        select(self.run_active(&busy), stats.wait_report_failed()).await
+                    if let Either::Second(()) = select(
+                        self.run_active(&busy, || stats.next_keep_alive_at()),
+                        stats.wait_report_failed(),
+                    )
+                    .await
                     {
                         self.request_active();
                         check_ins.send_check_ins(&ctx).await?;
                     }
                 }
-                IcdPowerMode::Active => self.run_active(&busy).await,
+                IcdPowerMode::Active => self.run_active(&busy, || stats.next_keep_alive_at()).await,
                 IcdPowerMode::Idle => {
                     if self.run_idle().await {
                         check_ins.send_check_ins(&ctx).await?;
@@ -773,7 +782,16 @@ impl Icd {
     /// `busy` is whatever work in flight has to keep the device active past its
     /// deadline (an open exchange, an armed fail-safe). Nothing signals the end
     /// of such work, so it is looked at again every `ActiveModeThreshold`.
-    async fn run_active(&self, mut busy: impl FnMut() -> bool) {
+    ///
+    /// `next_keep_alive_at` is when the earliest subscription next needs a
+    /// report to keep alive: idle mode ends by then at the latest, so that the
+    /// subscriptions keep alive with the device's own wake-up rather than wake it
+    /// up themselves - whatever woke the device up last.
+    async fn run_active(
+        &self,
+        mut busy: impl FnMut() -> bool,
+        next_keep_alive_at: impl Fn() -> Option<Instant>,
+    ) {
         loop {
             let (deadline, comm_window_open) = self.state.lock(|s| {
                 let s = s.borrow();
@@ -809,9 +827,11 @@ impl Icd {
                     return false;
                 }
 
+                let now = Instant::now();
+                let idle_until = now + Duration::from_secs(self.mode.idle_mode_duration_s as u64);
+
                 s.power_mode = IcdPowerMode::Idle;
-                s.idle_until =
-                    Instant::now() + Duration::from_secs(self.mode.idle_mode_duration_s as u64);
+                s.idle_until = next_keep_alive_at().map_or(idle_until, |at| at.min(idle_until));
 
                 true
             });
@@ -1116,6 +1136,7 @@ mod tests {
                 active_threshold_ms: mode().active_mode_threshold_ms,
                 slow_poll_ms: 5_000,
                 operating_mode: Some(OperatingModeEnum::SIT),
+                idle_mode_duration_s: mode().idle_mode_duration_s,
             }
         );
 
@@ -1127,6 +1148,7 @@ mod tests {
                 active_threshold_ms: mode().active_mode_threshold_ms,
                 slow_poll_ms: 900_000,
                 operating_mode: Some(OperatingModeEnum::LIT),
+                idle_mode_duration_s: mode().idle_mode_duration_s,
             }
         );
 
@@ -1207,6 +1229,37 @@ mod tests {
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
     }
 
+    /// Idle mode ends by the earliest keep-alive of the subscriptions at the latest.
+    #[test]
+    fn idle_mode_ends_by_next_keep_alive() {
+        let icd = Icd::new(IcdModeConfig {
+            idle_mode_duration_s: 60,
+            active_mode_duration_ms: 50,
+            active_mode_threshold_ms: 50,
+            ..mode()
+        });
+
+        icd.request_active();
+
+        let keep_alive_at = Instant::now() + Duration::from_secs(5);
+        embassy_futures::block_on(icd.run_active(|| false, || Some(keep_alive_at)));
+
+        assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
+        assert_eq!(icd.idle_until(), Some(keep_alive_at));
+
+        // A later one does not stretch idle mode beyond `IdleModeDuration`.
+        icd.request_active();
+
+        let start = Instant::now();
+        embassy_futures::block_on(
+            icd.run_active(|| false, || Some(start + Duration::from_secs(3600))),
+        );
+
+        let idle_until = icd.idle_until().expect("idle");
+        assert!(idle_until <= Instant::now() + Duration::from_secs(60));
+        assert!(idle_until >= start + Duration::from_secs(60));
+    }
+
     /// The two halves of the loop, driven in real time with short durations: the active
     /// window expires into idle mode, and the idle period expires back into active mode.
     #[test]
@@ -1224,7 +1277,7 @@ mod tests {
         icd.request_active();
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
 
-        embassy_futures::block_on(icd.run_active(|| false));
+        embassy_futures::block_on(icd.run_active(|| false, || None));
 
         assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
         assert!(start.elapsed() >= Duration::from_millis(50));
@@ -1266,7 +1319,7 @@ mod tests {
         icd.request_active();
 
         embassy_futures::block_on(embassy_futures::join::join(
-            icd.run_active(|| busy.get()),
+            icd.run_active(|| busy.get(), || None),
             async {
                 Timer::after(Duration::from_millis(250)).await;
                 busy.set(false);

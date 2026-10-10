@@ -462,17 +462,24 @@ impl<const N: usize> Subscriptions<N> {
     /// Begin a report for the subscription with the given parameters.
     /// Returns a context capturing the subscription's current state if successful, or `None`
     /// if no subscription is currently reportable.
+    ///
+    /// With `all`, every subscription allowed to report - and not reported yet at
+    /// `now` - counts as reportable: a report pass in which, once one subscription
+    /// is reportable, all of them report (see [`Self::any_reportable`]).
     pub(crate) fn report<'a, 's, B>(
         &'s self,
         now: Instant,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
+        all: bool,
         buffers: &'s SubscriptionsBuffers<'a, B, N>,
     ) -> Option<ReportContext<'a, 's, B, N>>
     where
         B: Buffers<IMBuffer> + 'a,
     {
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
-            let (sub, buf) = state.report::<B>(now, event_numbers_watermark, buffers)?;
+            let (sub, buf) =
+                state.report::<B>(now, event_numbers_watermark, keep_alive, all, buffers)?;
             let attr_change_ids_watermark = state.changed_attrs.watermark();
 
             debug!("About to report on subscription {:?}, details: max_seen_attr_change_id: {}, max_seen_event_number: {}, attr_change_ids_watermark: {}, event_numbers_watermark: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number, attr_change_ids_watermark, event_numbers_watermark);
@@ -502,13 +509,49 @@ impl<const N: usize> Subscriptions<N> {
     pub(crate) fn next_report_at<'a, B>(
         &self,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
         buffers: &SubscriptionsBuffers<'a, B, N>,
     ) -> Instant
     where
         B: Buffers<IMBuffer> + 'a,
     {
         self.with(buffers, |state, buffers| {
-            state.next_report_at::<B>(event_numbers_watermark, buffers)
+            state.next_report_at::<B>(event_numbers_watermark, keep_alive, buffers)
+        })
+    }
+
+    /// Whether any subscription is reportable at `now`.
+    pub(crate) fn any_reportable<'a, B>(
+        &self,
+        now: Instant,
+        event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
+        buffers: &SubscriptionsBuffers<'a, B, N>,
+    ) -> bool
+    where
+        B: Buffers<IMBuffer> + 'a,
+    {
+        self.with(buffers, |state, buffers| {
+            state
+                .find_reportable::<B>(now, event_numbers_watermark, keep_alive, false, buffers)
+                .is_some()
+        })
+    }
+
+    /// The earliest point at which a subscription, with nothing to report, is to
+    /// report as an Intermittently Connected Device's (see [`KeepAlive::Icd`]), or
+    /// `None` without subscriptions.
+    ///
+    /// An ICD wakes up no later than this, so that its subscriptions keep alive
+    /// with its own wake-ups rather than with wake-ups of their own.
+    pub(crate) fn next_keep_alive_at(&self) -> Option<Instant> {
+        self.state.lock(|state| {
+            state
+                .borrow()
+                .subscriptions
+                .iter()
+                .map(|sub| sub.report_due_at(KeepAlive::Icd))
+                .min()
         })
     }
 
@@ -917,6 +960,8 @@ impl<const N: usize> SubscriptionsInner<N> {
         &mut self,
         now: Instant,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
+        all: bool,
         buffers: &mut SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<(Subscription, B::Buffer<'a>)>
     where
@@ -928,7 +973,9 @@ impl<const N: usize> SubscriptionsInner<N> {
         debug_assert!(self.reporting.is_none());
         debug_assert!(self.reporting_cancelled.is_none());
 
-        if let Some(index) = self.find_reportable::<B>(now, event_numbers_watermark, buffers) {
+        if let Some(index) =
+            self.find_reportable::<B>(now, event_numbers_watermark, keep_alive, all, buffers)
+        {
             let sub = self.subscriptions.swap_remove(index);
             let buf = buffers.swap_remove(index);
 
@@ -980,6 +1027,8 @@ impl<const N: usize> SubscriptionsInner<N> {
         &self,
         now: Instant,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
+        all: bool,
         buffers: &SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<usize>
     where
@@ -990,7 +1039,14 @@ impl<const N: usize> SubscriptionsInner<N> {
             .enumerate()
             .map(|(index, sub)| (sub, &buffers[index]))
             .position(|(sub, rx)| {
-                sub.is_reportable(now, rx, &self.changed_attrs, event_numbers_watermark)
+                (all && sub.is_report_allowed(now) && sub.reported_at < now)
+                    || sub.is_reportable(
+                        now,
+                        rx,
+                        &self.changed_attrs,
+                        event_numbers_watermark,
+                        keep_alive,
+                    )
             })
     }
 
@@ -1014,6 +1070,7 @@ impl<const N: usize> SubscriptionsInner<N> {
     fn next_report_at<'a, B>(
         &self,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
         buffers: &SubscriptionsBuffersInner<'a, B, N>,
     ) -> Instant
     where
@@ -1027,6 +1084,7 @@ impl<const N: usize> SubscriptionsInner<N> {
                     &buffers[index],
                     &self.changed_attrs,
                     event_numbers_watermark,
+                    keep_alive,
                 )
             })
             .min()
@@ -1139,12 +1197,13 @@ impl Subscription {
         rx: &[u8],
         changed_attrs: &ChangedAttrs,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
     ) -> bool {
         if !self.is_report_allowed(now) {
             return false;
         }
 
-        self.is_report_due(now)
+        self.is_report_due(now, keep_alive)
             || self.is_affected_by_attr_changes(rx, changed_attrs)
             || self.is_affected_by_new_events(rx, event_numbers_watermark)
     }
@@ -1190,7 +1249,7 @@ impl Subscription {
     /// [`Instant::MIN`] when not yet primed (`reported_at == Instant::MAX`): a
     /// fresh subscription is immediately due for its priming report (see
     /// [`Self::report_allowed_at`] for why `MIN` is the right sentinel).
-    fn report_due_at(&self) -> Instant {
+    fn report_due_at(&self, keep_alive: KeepAlive) -> Instant {
         // Not yet primed: always due (explicit, for the same reason as
         // `report_allowed_at`).
         if self.reported_at == Instant::MAX {
@@ -1199,14 +1258,14 @@ impl Subscription {
 
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(
-                (self.max_int_secs - self.max_int_secs / 2) as _,
+                keep_alive.due_after_secs(self.max_int_secs) as _,
             ))
             .unwrap_or(Instant::MIN)
     }
 
     /// Return `true` if the subscription is due for a report based on the max interval, or `false` if it is not yet due.
-    fn is_report_due(&self, now: Instant) -> bool {
-        self.report_due_at() <= now
+    fn is_report_due(&self, now: Instant, keep_alive: KeepAlive) -> bool {
+        self.report_due_at(keep_alive) <= now
     }
 
     /// Return `true` if the subscription is affected by changes to the attribute triple `(endpoint, cluster, attr)` based on the subscription's RX and the given table of changed attributes, or `false` if it is not affected.
@@ -1251,6 +1310,7 @@ impl Subscription {
         rx: &[u8],
         changed_attrs: &ChangedAttrs,
         event_numbers_watermark: EventNumber,
+        keep_alive: KeepAlive,
     ) -> Instant {
         let allowed_at = self.report_allowed_at();
 
@@ -1262,7 +1322,7 @@ impl Subscription {
         if pending {
             allowed_at
         } else {
-            allowed_at.max(self.report_due_at())
+            allowed_at.max(self.report_due_at(keep_alive))
         }
     }
 }
@@ -1704,12 +1764,12 @@ where
 
     /// Return `true` if the report should be sent even if it turns out to be empty
     /// (i.e. no attributes or events to report), or `false` if it can be skipped in that case.
-    pub fn should_send_if_empty(&self) -> bool {
+    pub(crate) fn should_send_if_empty(&self, keep_alive: KeepAlive) -> bool {
         // A fresh subscription has `reported_at == Instant::MAX`, which makes
         // `report_due_at` saturate to `Instant::MIN` and `is_report_due` return
         // `true`, so priming reports are delivered unconditionally without a
         // separate `priming` flag.
-        unwrap!(self.subscription.as_ref()).is_report_due(self.next_reported_at)
+        unwrap!(self.subscription.as_ref()).is_report_due(self.next_reported_at, keep_alive)
     }
 
     /// Return `true` if the subscription should report the attribute
@@ -1759,6 +1819,22 @@ where
     /// Whether the subscription will be kept in the table after the report completes.
     pub fn is_kept(&self) -> bool {
         self.keep
+    }
+
+    /// Drop the subscription after a *failed* send to the peer, rather than
+    /// retrying it: what an Intermittently Connected Device does, so that a gone
+    /// subscriber neither keeps it awake retrying nor holds back its sleep. Its
+    /// subscriber re-subscribes - on an ICD, nudged by the Check-In that a gone
+    /// subscription no longer holds back.
+    pub fn set_drop_failed(&mut self) {
+        warn!(
+            "Subscription {:?} could not be reported; dropping it",
+            self.subscription().ids()
+        );
+
+        self.keep = false;
+
+        self.subscriptions.report_failed.notify();
     }
 
     /// Keep the subscription in the table after a *failed* send to the peer, so it
@@ -1851,6 +1927,47 @@ where
     fn drop(&mut self) {
         self.subscriptions.report_complete(self);
     }
+}
+
+/// When a subscription with nothing to report reports anyway, to keep itself
+/// alive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum KeepAlive {
+    /// Halfway through its max interval.
+    Default,
+    /// An Intermittently Connected Device's: shortly before its max interval
+    /// runs out - which is when the device's next wake-up is scheduled for (see
+    /// [`Subscriptions::next_keep_alive_at`]).
+    Icd,
+}
+
+impl KeepAlive {
+    /// How long before the max interval runs out an ICD reports: time for a
+    /// wake-up, a session resumption and a retransmission or two.
+    const ICD_LEAD_SECS: u16 = 3;
+
+    /// How long after its last report a subscription with nothing to report
+    /// reports anyway.
+    fn due_after_secs(&self, max_int_secs: u16) -> u16 {
+        match self {
+            Self::Default => max_int_secs - max_int_secs / 2,
+            Self::Icd => max_int_secs - Self::ICD_LEAD_SECS.min(max_int_secs / 2),
+        }
+    }
+}
+
+/// The max interval an Intermittently Connected Device grants a subscription:
+/// its idle mode duration, so that it wakes up for the subscription no more
+/// often than it does anyway - but leaving room after the subscriber's min
+/// interval floor for the keep-alive (see [`KeepAlive::Icd`]), which the floor
+/// would otherwise hold back past the max interval.
+pub(crate) fn icd_max_int_secs(idle_mode_duration_s: u32, min_int_floor_secs: u16) -> u16 {
+    let floor_and_lead = min_int_floor_secs as u32 + KeepAlive::ICD_LEAD_SECS as u32;
+
+    idle_mode_duration_s
+        .max(floor_and_lead)
+        .min(u16::MAX as u32) as u16
 }
 
 #[cfg(test)]
@@ -2512,7 +2629,7 @@ mod tests {
             // The priming report is un-filtered: every attribute is reported and
             // `should_send_if_empty` is true so that the snapshot is delivered
             // unconditionally.
-            assert!(rctx.should_send_if_empty());
+            assert!(rctx.should_send_if_empty(KeepAlive::Default));
             assert!(rctx.should_report_attr(1, 2, 3));
             assert!(rctx.should_report_attr(42, 55555, 1234556677));
 
@@ -2524,8 +2641,10 @@ mod tests {
         // `min_int` = 1s has not elapsed at `now`, so the subscription is not
         // yet report-allowed; step past it.
         let later = now + Duration::from_secs(2);
-        let rctx = subs.report(later, 0, &subs_bufs).unwrap();
-        assert!(!rctx.should_send_if_empty());
+        let rctx = subs
+            .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+            .unwrap();
+        assert!(!rctx.should_send_if_empty(KeepAlive::Default));
         // The priming commit advanced the sub's `since` past the (1, 2, 3)
         // change, so only the new (1, 2, 4) is pending.
         assert!(!rctx.should_report_attr(1, 2, 3));
@@ -2558,7 +2677,9 @@ mod tests {
         // First report attempt FAILS: the report was carrying (1, 2, 3) but never
         // reached the subscriber.
         {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(1, 2, 3), "change is pending");
             rctx.set_keep_retry();
         }
@@ -2567,7 +2688,9 @@ mod tests {
         // STILL pending on the next report — no silent data loss.
         let later2 = later + Duration::from_secs(2);
         {
-            let rctx = subs.report(later2, 0, &subs_bufs).unwrap();
+            let rctx = subs
+                .report(later2, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(
                 rctx.should_report_attr(1, 2, 3),
                 "a failed report must not consume the pending change"
@@ -2594,7 +2717,9 @@ mod tests {
 
         let later = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(1, 2, 3));
             rctx.set_keep(); // delivered
         }
@@ -2603,7 +2728,8 @@ mod tests {
         // deadline is not yet reached, so there is nothing left to report.
         let later2 = later + Duration::from_secs(2);
         assert!(
-            subs.report(later2, 0, &subs_bufs).is_none(),
+            subs.report(later2, 0, KeepAlive::Default, false, &subs_bufs)
+                .is_none(),
             "a delivered report consumes the pending change"
         );
     }
@@ -2630,7 +2756,9 @@ mod tests {
         // it FAILS.
         let t1 = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(t1, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(t1, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             rctx.set_keep_retry();
         }
 
@@ -2638,18 +2766,25 @@ mod tests {
         // even though the change is still pending and min_int is long past: the
         // back-off gates it. This is the anti-busy-loop guarantee.
         assert!(
-            subs.report(t1, 0, &subs_bufs).is_none(),
+            subs.report(t1, 0, KeepAlive::Default, false, &subs_bufs)
+                .is_none(),
             "a failed report must not be retried in the same instant"
         );
         // Still gated a moment later (BASE back-off is 2s).
         assert!(subs
-            .report(t1 + Duration::from_millis(500), 0, &subs_bufs)
+            .report(
+                t1 + Duration::from_millis(500),
+                0,
+                KeepAlive::Default,
+                false,
+                &subs_bufs
+            )
             .is_none());
 
         // The reporter's wake deadline is pushed to the back-off point, so the
         // loop sleeps rather than spinning.
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             t1 + Duration::from_secs(2),
             "wake is scheduled at the back-off point, not immediately"
         );
@@ -2657,7 +2792,9 @@ mod tests {
         // Once the back-off elapses the pending change is retried.
         let t2 = t1 + Duration::from_secs(2);
         {
-            let rctx = subs.report(t2, 0, &subs_bufs).unwrap();
+            let rctx = subs
+                .report(t2, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(
                 rctx.should_report_attr(1, 2, 3),
                 "pending change is retried"
@@ -2684,12 +2821,14 @@ mod tests {
         // BASE = 2s, doubling each consecutive failure: 2s, 4s, 8s.
         let mut t = now + Duration::from_secs(2);
         for expected_backoff in [2u64, 4, 8] {
-            let mut rctx = subs.report(t, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(t, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             rctx.set_keep_retry();
             drop(rctx);
 
             assert_eq!(
-                subs.next_report_at(0, &subs_bufs),
+                subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
                 t + Duration::from_secs(expected_backoff),
                 "back-off after this failure",
             );
@@ -2733,7 +2872,13 @@ mod tests {
         // A failed report at base+2s must NOT move the expiry deadline.
         {
             let mut rctx = subs
-                .report(base + Duration::from_secs(2), 0, &subs_bufs)
+                .report(
+                    base + Duration::from_secs(2),
+                    0,
+                    KeepAlive::Default,
+                    false,
+                    &subs_bufs,
+                )
                 .unwrap();
             rctx.set_keep_retry();
         }
@@ -2785,7 +2930,7 @@ mod tests {
         // A failed one does signal.
         let t1 = now + Duration::from_secs(2);
         {
-            let mut rctx = unwrap!(subs.report(t1, 0, &subs_bufs));
+            let mut rctx = unwrap!(subs.report(t1, 0, KeepAlive::Default, false, &subs_bufs));
             rctx.set_keep_retry();
         }
 
@@ -2818,7 +2963,7 @@ mod tests {
 
         let t1 = now + Duration::from_secs(2);
         {
-            let mut rctx = unwrap!(subs.report(t1, 0, &subs_bufs));
+            let mut rctx = unwrap!(subs.report(t1, 0, KeepAlive::Default, false, &subs_bufs));
             rctx.set_keep_retry();
         }
         assert!(
@@ -2829,7 +2974,7 @@ mod tests {
         // Past the back-off, the retry gets through.
         let t2 = t1 + Duration::from_secs(10);
         {
-            let mut rctx = unwrap!(subs.report(t2, 0, &subs_bufs));
+            let mut rctx = unwrap!(subs.report(t2, 0, KeepAlive::Default, false, &subs_bufs));
             rctx.set_keep();
         }
         assert!(subs.has_subscription_for(fab(1), 10));
@@ -2851,19 +2996,25 @@ mod tests {
         // Two failures build up a back-off.
         let t1 = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(t1, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(t1, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             rctx.set_keep_retry();
         }
         let t2 = t1 + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(t2, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(t2, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             rctx.set_keep_retry();
         }
 
         // Now a delivered report at t3.
         let t3 = t2 + Duration::from_secs(4);
         {
-            let mut rctx = subs.report(t3, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(t3, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(1, 2, 3));
             rctx.set_keep(); // delivered — resets fail_count and retry_at
         }
@@ -2871,7 +3022,7 @@ mod tests {
         // The back-off is gone: the next wake is the plain liveness point
         // (reported_at + max_int - max_int/2 = t3 + 30s), with no retry floor.
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             t3 + Duration::from_secs(30),
             "a delivered report clears the back-off"
         );
@@ -2934,14 +3085,16 @@ mod tests {
         let now = Instant::now();
         {
             let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
-            assert!(rctx.should_send_if_empty());
+            assert!(rctx.should_send_if_empty(KeepAlive::Default));
             assert_eq!(rctx.max_seen_event_number(), 0);
             rctx.set_keep();
         }
 
         // After priming, a zero-delta report at the same instant finds nothing
         // pending (no attr changes, no new events, min_int not elapsed).
-        assert!(subs.report(now, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(now, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
     }
 
     #[test]
@@ -2987,12 +3140,16 @@ mod tests {
         // At the same instant, min_int (1s) has NOT elapsed so the sub is not
         // report-allowed: even though there is a pending change, `report()`
         // returns None.
-        assert!(subs.report(now, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(now, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
 
         // Past min_int: the pending change makes the sub reportable.
         let later = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(1, 2, 3));
             // A fresh (never recorded) triple is NOT in the table and must
             // not be spuriously reported.
@@ -3002,7 +3159,9 @@ mod tests {
 
         // Watermark has been committed — another call at `later` with no new
         // activity finds nothing.
-        assert!(subs.report(later, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
     }
 
     #[test]
@@ -3021,29 +3180,39 @@ mod tests {
 
         // Same instant, no new events (watermark = 0 same as sub's
         // max_seen), min_int not elapsed → nothing to report.
-        assert!(subs.report(now, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(now, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
 
         let later = now + Duration::from_secs(2);
 
         // Still no new events at `later` (min_int elapsed though).
-        assert!(subs.report(later, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
 
         // A new event bumps the watermark → sub is reportable. The captured
         // `next_max_seen_event_number` mirrors the watermark and is the
         // value that will be committed on `set_keep`.
         {
-            let mut rctx = subs.report(later, 5, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 5, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert_eq!(rctx.max_seen_event_number(), 0);
             assert_eq!(rctx.next_max_seen_event_number(), 5);
             rctx.set_keep();
         }
 
         // After reporting, watermark=5 is no longer "new" for this sub.
-        assert!(subs.report(later, 5, &subs_bufs).is_none());
+        assert!(subs
+            .report(later, 5, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
         // But a further bump does trigger again (past min_int is needed).
         let even_later = later + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(even_later, 6, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(even_later, 6, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert_eq!(rctx.max_seen_event_number(), 5);
             assert_eq!(rctx.next_max_seen_event_number(), 6);
             rctx.set_keep();
@@ -3068,13 +3237,17 @@ mod tests {
 
         // Short of the liveness window: not due.
         let short = now + Duration::from_secs(5);
-        assert!(subs.report(short, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(short, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
 
         // At the liveness window: due even without any attr/event change.
         let long = now + Duration::from_secs(11);
         {
-            let mut rctx = subs.report(long, 0, &subs_bufs).unwrap();
-            assert!(rctx.should_send_if_empty());
+            let mut rctx = subs
+                .report(long, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
+            assert!(rctx.should_send_if_empty(KeepAlive::Default));
             rctx.set_keep();
         }
     }
@@ -3085,7 +3258,10 @@ mod tests {
         // and the reporter waits to be notified.
         let subs: Subscriptions<1> = Subscriptions::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
-        assert_eq!(subs.next_report_at(0, &subs_bufs), Instant::MAX);
+        assert_eq!(
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
+            Instant::MAX
+        );
     }
 
     #[test]
@@ -3104,7 +3280,7 @@ mod tests {
         }
 
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(30)
         );
     }
@@ -3128,10 +3304,12 @@ mod tests {
         subs.notify_attr_changed(1, 2, 3);
 
         // Held back by the quiet period, so still not reportable now...
-        assert!(subs.report(now, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(now, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
         // ...but the wake is scheduled at min_int, not liveness.
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(5)
         );
     }
@@ -3151,7 +3329,7 @@ mod tests {
         }
 
         assert_eq!(
-            subs.next_report_at(7, &subs_bufs),
+            subs.next_report_at(7, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(5)
         );
     }
@@ -3176,16 +3354,28 @@ mod tests {
 
         // Clamped to the gate (now+25), not the earlier liveness point (now+20).
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(25)
         );
         // The scheduled instant matches actual reportability: gated before it,
         // reportable at it.
         assert!(subs
-            .report(now + Duration::from_secs(24), 0, &subs_bufs)
+            .report(
+                now + Duration::from_secs(24),
+                0,
+                KeepAlive::Default,
+                false,
+                &subs_bufs
+            )
             .is_none());
         assert!(subs
-            .report(now + Duration::from_secs(25), 0, &subs_bufs)
+            .report(
+                now + Duration::from_secs(25),
+                0,
+                KeepAlive::Default,
+                false,
+                &subs_bufs
+            )
             .is_some());
     }
 
@@ -3209,9 +3399,302 @@ mod tests {
         }
 
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(20)
         );
+    }
+
+    #[test]
+    fn icd_max_int() {
+        // The idle mode duration...
+        assert_eq!(icd_max_int_secs(60, 0), 60);
+        assert_eq!(icd_max_int_secs(60, 2), 60);
+        // ...but room for the keep-alive after the floor.
+        assert_eq!(icd_max_int_secs(1, 0), 3);
+        assert_eq!(icd_max_int_secs(60, 59), 62);
+        assert_eq!(icd_max_int_secs(70_000, 0), u16::MAX);
+    }
+
+    #[test]
+    fn keep_alive_due_points() {
+        assert_eq!(KeepAlive::Default.due_after_secs(60), 30);
+        assert_eq!(KeepAlive::Default.due_after_secs(41), 21);
+        assert_eq!(KeepAlive::Icd.due_after_secs(60), 57);
+        // The lead never exceeds half the max interval.
+        assert_eq!(KeepAlive::Icd.due_after_secs(4), 2);
+    }
+
+    #[test]
+    fn next_keep_alive_at_is_earliest() {
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        assert_eq!(subs.next_keep_alive_at(), None);
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+        {
+            let later = now + Duration::from_secs(20);
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, later, 1, 11, 1, 30);
+            rctx.set_keep();
+        }
+
+        // `now + 57 s` and `now + 20 s + 27 s`.
+        assert_eq!(
+            subs.next_keep_alive_at(),
+            Some(now + Duration::from_secs(47))
+        );
+    }
+
+    #[test]
+    fn icd_reports_all_once_one_is_due() {
+        let subs: Subscriptions<3> = Subscriptions::new();
+        let pool = TestPool::<4>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<4>, 3> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        for (node, after, min_int) in [(10, 0, 1), (11, 20, 1), (12, 50, 10)] {
+            let at = now + Duration::from_secs(after);
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, at, 1, node, min_int, 60);
+            rctx.set_keep();
+        }
+
+        // Nothing due yet.
+        let early = now + Duration::from_secs(56);
+        assert!(!subs.any_reportable(early, 0, KeepAlive::Icd, &subs_bufs));
+
+        // The first one is due: it reports, the second one along - empty - and
+        // the third one not, its min interval not being over yet.
+        let at = now + Duration::from_secs(57);
+        assert!(subs.any_reportable(at, 0, KeepAlive::Icd, &subs_bufs));
+
+        let mut reported = std::vec::Vec::new();
+        while let Some(mut rctx) = subs.report(at, 0, KeepAlive::Icd, true, &subs_bufs) {
+            reported.push(rctx.subscription().ids().peer_node_id);
+            rctx.set_keep();
+        }
+        reported.sort();
+
+        assert_eq!(reported, [10, 11]);
+    }
+
+    #[test]
+    fn dropped_failed_subscription_is_gone() {
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        let at = now + Duration::from_secs(57);
+        {
+            let mut rctx = subs
+                .report(at, 0, KeepAlive::Icd, false, &subs_bufs)
+                .unwrap();
+            rctx.set_drop_failed();
+        }
+
+        assert_eq!(subs.next_keep_alive_at(), None);
+        assert!(subs
+            .report(
+                at + Duration::from_secs(60),
+                0,
+                KeepAlive::Icd,
+                false,
+                &subs_bufs
+            )
+            .is_none());
+    }
+
+    /// A small deterministic pseudo-random generator (xorshift64*), so that the
+    /// randomized timelines below need no extra dependency.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// The subscriptions of an Intermittently Connected Device, driven along
+    /// random timelines - wake-ups, interruptions, data and physical changes, new
+    /// subscriptions, long active periods, subscribers going away - together
+    /// with a model of the device's idle / active cycle, which goes idle until
+    /// the earliest keep-alive at the latest (see `Icd::run_active`).
+    ///
+    /// No subscription whose subscriber is there outlives its max interval, and
+    /// the reporter never wakes the idle device up for a keep-alive of its own.
+    #[test]
+    fn icd_keep_alive_random_timelines() {
+        for idle_secs in [1, 2, 5, 15, 60, 3600, 4 * 3600] {
+            for seed in 1..=150 {
+                icd_keep_alive_timeline(idle_secs, seed);
+            }
+        }
+    }
+
+    fn icd_keep_alive_timeline(idle_secs: u32, seed: u64) {
+        const ACTIVE: Duration = Duration::from_secs(1);
+        const MAX_STEPS: usize = 100_000;
+
+        let subs: Subscriptions<4> = Subscriptions::new();
+        let pool = TestPool::<5>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let idle = Duration::from_secs(idle_secs as u64);
+        let gap_ms = 2 * idle_secs as u64 * 1000 + 1;
+
+        let start = Instant::from_secs(1_000_000);
+        let end = start + idle * 40;
+
+        let mut t = start;
+        let mut idle_mode = false;
+        let mut active_until = t + ACTIVE;
+        let mut idle_until = Instant::MAX;
+
+        let mut next_external = t;
+        let mut next_node = 1;
+        let mut failing = std::vec::Vec::new();
+
+        let ctx = |what: &str| format!("idle {idle_secs} s, seed {seed}: {what}");
+
+        for _ in 0..MAX_STEPS {
+            let report_at = subs.next_report_at(0, KeepAlive::Icd, &subs_bufs);
+            let icd_at = if idle_mode { idle_until } else { active_until };
+
+            t = report_at.min(icd_at).min(next_external).max(t);
+            if t >= end {
+                return;
+            }
+
+            // The device's own transitions first: a wake-up at the instant of a
+            // reporter's deadline is one and the same wake-up.
+            if idle_mode && t >= idle_until {
+                idle_mode = false;
+                active_until = t + ACTIVE;
+            } else if !idle_mode && t >= active_until {
+                idle_mode = true;
+                idle_until = subs
+                    .next_keep_alive_at()
+                    .map_or(t + idle, |at| at.min(t + idle));
+                continue;
+            }
+
+            let mut traffic = false;
+            let mut notified = false;
+
+            if t >= next_external {
+                next_external = t + Duration::from_millis(rng.below(gap_ms));
+
+                match rng.below(6) {
+                    // An interruption: an incoming command, a read.
+                    0 => traffic = true,
+                    // A data change, or a physical one (a button).
+                    1 | 2 => {
+                        subs.notify_attr_changed(1, 2, 3);
+                        notified = true;
+                    }
+                    // A new subscription, primed right away.
+                    3 => {
+                        if subs.state.lock(|s| s.borrow().subscriptions_count) < 4 {
+                            let min_int = rng.below(3) as u16;
+                            let max_int = icd_max_int_secs(idle_secs, min_int);
+                            let mut rctx = add_sub(
+                                &subs, &subs_bufs, &pool, t, 1, next_node, min_int, max_int,
+                            );
+                            rctx.set_keep();
+
+                            next_node += 1;
+                            traffic = true;
+                            notified = true;
+                        }
+                    }
+                    // Staying active for a while (a stay-active request, a
+                    // commissioning).
+                    4 => {
+                        active_until = active_until.max(t + idle * rng.below(3) as u32);
+                        traffic = true;
+                    }
+                    // A subscriber going away.
+                    _ => {
+                        let nodes = subs.state.lock(|s| {
+                            s.borrow()
+                                .subscriptions
+                                .iter()
+                                .map(|sub| sub.ids.peer_node_id)
+                                .collect::<std::vec::Vec<_>>()
+                        });
+
+                        if !nodes.is_empty() {
+                            failing.push(nodes[rng.below(nodes.len() as u64) as usize]);
+                        }
+                    }
+                }
+            }
+
+            if t >= report_at || notified {
+                if idle_mode && t < idle_until && !notified {
+                    let pending = subs.state.lock(|s| {
+                        let s = s.borrow();
+                        s.subscriptions
+                            .iter()
+                            .any(|sub| s.changed_attrs.any_since(sub.max_seen_attr_change_id))
+                    });
+
+                    assert!(
+                        pending,
+                        "{}",
+                        ctx("the reporter woke the idle device up for a keep-alive")
+                    );
+                }
+
+                subs.state.lock(|s| {
+                    for sub in s.borrow().subscriptions.iter() {
+                        let node = sub.ids.peer_node_id;
+                        assert!(
+                            failing.contains(&node) || !sub.is_expired(t),
+                            "{}",
+                            ctx(&format!("subscription {node} outlived its max interval"))
+                        );
+                    }
+                });
+
+                let all = subs.any_reportable(t, 0, KeepAlive::Icd, &subs_bufs);
+                while let Some(mut rctx) = subs.report(t, 0, KeepAlive::Icd, all, &subs_bufs) {
+                    if failing.contains(&rctx.subscription().ids().peer_node_id) {
+                        rctx.set_drop_failed();
+                    } else {
+                        rctx.set_keep();
+                    }
+
+                    traffic = true;
+                }
+            }
+
+            // Traffic keeps - or makes - the device active.
+            if traffic {
+                idle_mode = false;
+                active_until = active_until.max(t + ACTIVE);
+            }
+        }
+
+        panic!("{}", ctx("the timeline did not end"));
     }
 
     #[test]
@@ -3230,7 +3713,7 @@ mod tests {
         }
 
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(30)
         );
 
@@ -3251,7 +3734,7 @@ mod tests {
 
         assert!(notified);
         assert_eq!(
-            subs.next_report_at(0, &subs_bufs),
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
             now + Duration::from_secs(5)
         );
     }
@@ -3384,7 +3867,9 @@ mod tests {
         subs.notify_attr_changed(1, 2, 3);
         let later = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
 
             // The in-flight sub is currently absent from `state.subscriptions`
             // but must still be visible to `remove` through the `reporting`
@@ -3434,7 +3919,9 @@ mod tests {
         subs.notify_attr_changed(1, 2, 3);
         let later = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             let removed = subs.remove(&subs_bufs, |sub| {
                 (sub.ids().peer_node_id == 999).then_some("no-match")
             });
@@ -3479,7 +3966,9 @@ mod tests {
         // Advance both subs to watermark 2 via two `report` + keep cycles.
         let later = base + Duration::from_secs(2);
         for _ in 0..2 {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(1, 2, 3));
             assert!(rctx.should_report_attr(1, 2, 4));
             rctx.set_keep();
@@ -3489,13 +3978,17 @@ mod tests {
         // entries. The next report should now find nothing pending (same
         // instant, no new changes, min_int elapsed but not half of max_int).
         subs.purge_reported_changes();
-        assert!(subs.report(later, 0, &subs_bufs).is_none());
+        assert!(subs
+            .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
 
         // A brand new change becomes pending again post-purge.
         subs.notify_attr_changed(5, 6, 7);
         let even_later = later + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(even_later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(even_later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(5, 6, 7));
             // Previously-purged entries are no longer visible through the
             // sub's filter either.
@@ -3533,7 +4026,9 @@ mod tests {
         // and the previous watermark (the sub's `max_seen_event_number`) is
         // still 0 until commit.
         {
-            let mut rctx = subs.report(later, 7, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 7, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert_eq!(rctx.max_seen_event_number(), 0);
             assert_eq!(rctx.next_max_seen_event_number(), 7);
             rctx.set_keep();
@@ -3543,7 +4038,9 @@ mod tests {
         // — even though we never recorded a single emitted event during
         // this report. A second call at the same watermark is therefore a
         // no-op (no new events to deliver).
-        assert!(subs.report(later, 7, &subs_bufs).is_none());
+        assert!(subs
+            .report(later, 7, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
 
         let even_later = later + Duration::from_secs(2);
 
@@ -3551,7 +4048,9 @@ mod tests {
         // previous max-seen is the 7 we just committed, the captured next
         // is the new watermark.
         {
-            let mut rctx = subs.report(even_later, 42, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(even_later, 42, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert_eq!(rctx.max_seen_event_number(), 7);
             assert_eq!(rctx.next_max_seen_event_number(), 42);
             rctx.set_keep();
@@ -3704,11 +4203,11 @@ mod tests {
                 // our max-interval deadline.
                 for sub in s.subscriptions.iter() {
                     assert!(
-                        sub.is_report_due(now),
+                        sub.is_report_due(now, KeepAlive::Default),
                         "resumed sub {:?} should be immediately report-due (primed)",
                         sub.ids()
                     );
-                    assert!(sub.is_report_due(now + Duration::from_secs(1)));
+                    assert!(sub.is_report_due(now + Duration::from_secs(1), KeepAlive::Default));
                 }
             });
 
@@ -3759,7 +4258,9 @@ mod tests {
             assert!(subs.has_subscription_for(fab(1), 0xAABB));
 
             // Un-primed, so due at once - and the subscriber cannot be reached.
-            let mut rctx = subs.report(now, 0, &subs_bufs).expect("resume report due");
+            let mut rctx = subs
+                .report(now, 0, KeepAlive::Default, false, &subs_bufs)
+                .expect("resume report due");
             rctx.set_keep_retry();
             assert!(!rctx.is_kept());
             drop(rctx);
@@ -3789,7 +4290,9 @@ mod tests {
                 .unwrap();
 
             {
-                let mut rctx = subs.report(now, 0, &subs_bufs).expect("resume report due");
+                let mut rctx = subs
+                    .report(now, 0, KeepAlive::Default, false, &subs_bufs)
+                    .expect("resume report due");
                 rctx.set_keep();
             }
             assert!(subs.has_subscription_for(fab(1), 0xAABB));
@@ -3798,7 +4301,9 @@ mod tests {
             subs.notify_attr_changed(1, 2, 3);
             let t1 = now + Duration::from_secs(2);
             {
-                let mut rctx = subs.report(t1, 0, &subs_bufs).expect("change report due");
+                let mut rctx = subs
+                    .report(t1, 0, KeepAlive::Default, false, &subs_bufs)
+                    .expect("change report due");
                 rctx.set_keep_retry();
                 assert!(rctx.is_kept());
             }

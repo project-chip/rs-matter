@@ -477,6 +477,7 @@ mod tests {
             active_threshold_ms: 5000,
             slow_poll_ms,
             operating_mode,
+            idle_mode_duration_s: 300,
         };
 
         let matter = Matter::new(&DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
