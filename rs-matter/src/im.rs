@@ -1046,7 +1046,10 @@ where
         let min_int_secs = req.min_int_floor()?;
         let max_int_secs = match self.matter.icd_advertisement() {
             Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_secs),
-            None => core::cmp::max(req.max_int_ceil()?, 40), // Say we need at least 4 secs for potential latencies
+            None => core::cmp::max(
+                req.max_int_ceil()?,
+                self.matter.dev_det().min_subscription_max_interval_secs,
+            ),
         };
 
         let now = Instant::now();
