@@ -213,7 +213,29 @@ impl<C: Crypto> E2eRunner<C> {
         S: rs_matter::dm::clusters::net_comm::Networks,
         K: KvBlobStore,
     {
+        self.run_with_setup(handler, state, kv_store, resume, || Ok(()))
+            .await
+    }
+
+    /// Like [`run_with`](Self::run_with), with a setup hook after the default
+    /// sessions are initialized and before the transports and data model run.
+    /// This lets recovery tests start without an established peer session.
+    pub async fn run_with_setup<H, S, K, F, const NS: usize, const NE: usize>(
+        &self,
+        handler: H,
+        state: &InteractionModelState<S, NS, NE>,
+        kv_store: K,
+        resume: bool,
+        setup: F,
+    ) -> Result<(), Error>
+    where
+        H: DataModel,
+        S: rs_matter::dm::clusters::net_comm::Networks,
+        K: KvBlobStore,
+        F: FnOnce() -> Result<(), Error>,
+    {
         self.init()?;
+        setup()?;
 
         // The e2e fixtures assert exact event queues; the boot-time
         // `BasicInformation::StartUp` emission is covered end-to-end by the
