@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: preserve pending attribute changes while subscription reports are in flight
 * Fix: when the session table is full, a new `CASESigma1` / `PBKDFParamRequest` evicts a session and proceeds, rather than being answered with Busy; Busy is sent only if no session can be evicted (#587)
 * Fix: support for peers that use multiple IP addresses for the same UDP session (586)
 * More fixes for Sleepy End Devices, now primarily for the initiator (#584)

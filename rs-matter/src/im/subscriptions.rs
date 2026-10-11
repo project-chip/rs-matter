@@ -996,6 +996,13 @@ impl<const N: usize> SubscriptionsInner<N> {
 
     /// Remove entries that every subscription has already reported on.
     fn purge_reported_changes(&mut self) {
+        // Report contexts temporarily own subscriptions outside this table,
+        // including fresh subscriptions whose priming report is not complete.
+        // Their watermarks still protect changes that must be reported later.
+        if self.subscriptions_count > self.subscriptions.len() {
+            return;
+        }
+
         if let Some(min_seen_attr_change_id) = self
             .subscriptions
             .iter()
@@ -2532,6 +2539,43 @@ mod tests {
         assert!(rctx.should_report_attr(1, 2, 4));
     }
 
+    /// Live state changes may join an in-flight report, but its completion only
+    /// consumes the starting watermark. Even a coalesced change stays pending
+    /// for the next report if its path was already passed by the current one.
+    #[test]
+    fn changes_during_report_remain_pending_after_success() {
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+        let now = Instant::now();
+
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        subs.notify_attr_changed(1, 2, 3);
+        let later = now + Duration::from_secs(2);
+        {
+            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            assert!(rctx.should_report_attr(1, 2, 3));
+
+            // Coalescing replaces the earlier entry with a newer wildcard.
+            // It must neither hide the old path nor consume the newer state.
+            subs.notify_cluster_changed(1, 2);
+            assert!(rctx.should_report_attr(1, 2, 3));
+            assert!(rctx.should_report_attr(1, 2, 4));
+            rctx.set_keep();
+        }
+
+        subs.purge_reported_changes();
+        let rctx = subs
+            .report(later + Duration::from_secs(2), 0, &subs_bufs)
+            .unwrap();
+        assert!(rctx.should_report_attr(1, 2, 3));
+        assert!(rctx.should_report_attr(1, 2, 4));
+    }
+
     /// A failed report (`set_failed`) keeps the subscription but must NOT advance
     /// its watermark, so the changes it was carrying stay pending and are
     /// re-attempted on the next report. Contrast with `set_keep`, which commits
@@ -3449,6 +3493,85 @@ mod tests {
             assert!(s.reporting.is_none());
             assert!(s.reporting_cancelled.is_none());
         });
+    }
+
+    #[test]
+    fn purge_preserves_changes_for_in_flight_priming_subscriptions() {
+        for existing_subscription in [false, true] {
+            for keep_priming in [false, true] {
+                let subs: Subscriptions<2> = Subscriptions::new();
+                let pool = TestPool::<3>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+                let now = Instant::now();
+
+                if existing_subscription {
+                    let mut established = add_sub(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60);
+                    established.set_keep();
+                }
+                let mut priming = add_sub(&subs, &subs_bufs, &pool, now, 1, 101, 1, 60);
+                subs.notify_attr_changed(1, 2, 3);
+                let later = now + Duration::from_secs(2);
+
+                if existing_subscription {
+                    // The established subscription has caught up, but the
+                    // priming context still owns an older watermark.
+                    let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+                    assert_eq!(report.subscription().ids().peer_node_id, 100);
+                    report.set_keep();
+                }
+                subs.purge_reported_changes();
+                subs.state.lock(|state| {
+                    let state = state.borrow();
+                    assert_eq!(state.subscriptions_count, state.subscriptions.len() + 1);
+                    assert!(state.changed_attrs.contains_since(1, 2, 3, 0));
+                });
+
+                if keep_priming {
+                    priming.set_keep();
+                }
+                drop(priming);
+                subs.purge_reported_changes();
+
+                if keep_priming {
+                    let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+                    assert_eq!(report.subscription().ids().peer_node_id, 101);
+                    assert!(report.should_report_attr(1, 2, 3));
+                    report.set_keep();
+                }
+                // After successful delivery or cancellation, no context keeps
+                // an old watermark alive and normal pruning resumes.
+                subs.purge_reported_changes();
+                subs.state.lock(|state| {
+                    let state = state.borrow();
+                    assert_eq!(state.subscriptions_count, state.subscriptions.len());
+                    assert!(state.changed_attrs.entries.is_empty());
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn purge_preserves_changes_for_in_flight_incremental_report() {
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+        let now = Instant::now();
+        {
+            let mut priming = add_sub(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60);
+            priming.set_keep();
+        }
+        subs.notify_attr_changed(1, 2, 3);
+        {
+            let mut report = subs
+                .report(now + Duration::from_secs(2), 0, &subs_bufs)
+                .unwrap();
+            subs.purge_reported_changes();
+            assert!(report.should_report_attr(1, 2, 3));
+            report.set_keep();
+        }
+        subs.purge_reported_changes();
+        subs.state
+            .lock(|state| assert!(state.borrow().changed_attrs.entries.is_empty()));
     }
 
     #[test]
