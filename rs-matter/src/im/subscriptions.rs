@@ -954,9 +954,19 @@ impl<const N: usize> SubscriptionsInner<N> {
     ) where
         B: Buffers<IMBuffer> + 'a,
     {
-        // Always clear the reporting slot; it was populated in `report()`.
-        self.reporting = None;
-        let cancelled = self.reporting_cancelled.take();
+        // Only the background report that owns this slot may clear it or
+        // consume its cancellation. Another subscription's priming report
+        // can complete while that background report is still in flight.
+        let cancelled = if self
+            .reporting
+            .as_ref()
+            .is_some_and(|reporting| reporting.ids.id == sub.ids.id)
+        {
+            self.reporting = None;
+            self.reporting_cancelled.take()
+        } else {
+            None
+        };
 
         if let Some(reason) = cancelled {
             info!(
@@ -3458,6 +3468,148 @@ mod tests {
         // Slot is free: a new sub can be added.
         let mut r = add_sub(&subs, &subs_bufs, &pool, now, 1, 101, 1, 60);
         r.set_keep();
+    }
+
+    #[test]
+    fn priming_completion_preserves_in_flight_report() {
+        for keep_priming in [false, true] {
+            let subs: Subscriptions<2> = Subscriptions::new();
+            let pool = TestPool::<3>::new();
+            let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+            let now = Instant::now();
+            {
+                let mut priming = add_sub(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60);
+                priming.set_keep();
+            }
+
+            subs.notify_attr_changed(1, 2, 3);
+            let later = now + Duration::from_secs(2);
+            let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+            let reporting_id = report.subscription().ids().id;
+
+            // Completing another subscription's priming report must leave the
+            // background report visible to a subsequent cancellation.
+            let mut priming = add_sub(&subs, &subs_bufs, &pool, later, 1, 100, 1, 60);
+            if keep_priming {
+                priming.set_keep();
+            }
+            drop(priming);
+
+            subs.state.lock(|s| {
+                let s = s.borrow();
+                assert_eq!(
+                    s.reporting.as_ref().map(|sub| sub.ids().id),
+                    Some(reporting_id)
+                );
+                assert!(s.reporting_cancelled.is_none());
+                assert_eq!(s.subscriptions_count, 1 + usize::from(keep_priming));
+            });
+            assert!(subs.remove(&subs_bufs, |sub| {
+                (sub.ids().id == reporting_id).then_some("cancel after priming")
+            }));
+            report.set_keep_retry();
+            drop(report);
+
+            subs.state.lock(|s| {
+                let s = s.borrow();
+                assert!(s.reporting.is_none());
+                assert!(s.reporting_cancelled.is_none());
+                assert_eq!(s.subscriptions_count, usize::from(keep_priming));
+                assert_eq!(s.subscriptions.len(), usize::from(keep_priming));
+                assert!(s
+                    .subscriptions
+                    .iter()
+                    .all(|sub| sub.ids().id != reporting_id));
+            });
+            assert_eq!(
+                subs_bufs.with(|buffers| buffers.len()),
+                usize::from(keep_priming)
+            );
+        }
+    }
+
+    #[test]
+    fn priming_completion_preserves_in_flight_cancellation() {
+        for keep_priming in [false, true] {
+            let subs: Subscriptions<2> = Subscriptions::new();
+            let pool = TestPool::<3>::new();
+            let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+            let now = Instant::now();
+            {
+                let mut priming = add_sub(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60);
+                priming.set_keep();
+            }
+
+            subs.notify_attr_changed(1, 2, 3);
+            let later = now + Duration::from_secs(2);
+            let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+            let reporting_id = report.subscription().ids().id;
+
+            // A replacement subscribe cancels the old report while it is in
+            // flight, then completes its own priming before that report ends.
+            assert!(subs.remove(&subs_bufs, |sub| {
+                (sub.ids().peer_node_id == 100).then_some("subscription replaced")
+            }));
+            let mut priming = add_sub(&subs, &subs_bufs, &pool, later, 1, 100, 1, 60);
+            let replacement_id = priming.subscription().ids().id;
+            if keep_priming {
+                priming.set_keep();
+            }
+            drop(priming);
+
+            subs.state.lock(|s| {
+                let s = s.borrow();
+                assert_eq!(s.reporting_cancelled, Some("subscription replaced"));
+                assert_eq!(
+                    s.reporting.as_ref().map(|sub| sub.ids().id),
+                    Some(reporting_id)
+                );
+                assert_eq!(s.subscriptions_count, 1 + usize::from(keep_priming));
+                assert_eq!(s.subscriptions.len(), usize::from(keep_priming));
+                assert!(s
+                    .subscriptions
+                    .iter()
+                    .all(|sub| sub.ids().id == replacement_id));
+            });
+
+            // A failed old report must not resurrect the cancelled subscription.
+            report.set_keep_retry();
+            drop(report);
+            subs.state.lock(|s| {
+                let s = s.borrow();
+                assert!(s.reporting.is_none());
+                assert!(s.reporting_cancelled.is_none());
+                assert_eq!(s.subscriptions_count, usize::from(keep_priming));
+                assert_eq!(s.subscriptions.len(), usize::from(keep_priming));
+                assert!(s
+                    .subscriptions
+                    .iter()
+                    .all(|sub| sub.ids().id == replacement_id));
+            });
+            assert_eq!(
+                subs_bufs.with(|buffers| buffers.len()),
+                usize::from(keep_priming)
+            );
+
+            // Cancellation frees exactly the old slot, plus the replacement's
+            // slot when its priming failed, without leaking buffers or capacity.
+            for _ in usize::from(keep_priming)..2 {
+                let mut priming = add_sub(&subs, &subs_bufs, &pool, later, 1, 200, 1, 60);
+                priming.set_keep();
+            }
+            assert!(subs
+                .add(
+                    later,
+                    fab(1),
+                    300,
+                    1,
+                    60,
+                    0,
+                    pool.get_immediate().unwrap(),
+                    &subs_bufs,
+                )
+                .is_none());
+        }
     }
 
     #[test]
