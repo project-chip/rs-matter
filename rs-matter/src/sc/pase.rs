@@ -252,7 +252,7 @@ impl Pase {
         let expired = self
             .comm_window
             .as_opt_ref()
-            .map(|comm_window| Instant::now() > comm_window.window_expiry)
+            .map(|comm_window| Instant::now() >= comm_window.window_expiry)
             .unwrap_or(false);
 
         if expired {
@@ -264,6 +264,12 @@ impl Pase {
         } else {
             Ok(false)
         }
+    }
+
+    /// When the opened commissioning window expires, or `None` if none is open.
+    pub fn comm_window_expires_at(&self) -> Option<Instant> {
+        self.comm_window()
+            .map(|comm_window| comm_window.window_expiry)
     }
 
     /// Get the opened commissioning window, if any

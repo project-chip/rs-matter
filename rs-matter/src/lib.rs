@@ -914,6 +914,8 @@ impl<'a> Matter<'a> {
             Ok((fab_idx, handover.regulatory.is_some()))
         })?;
 
+        self.transport().notify_timeouts_changed();
+
         if regulatory {
             let mut persist = Persist::new(&kv);
 

@@ -145,6 +145,10 @@ pub struct Transport {
     /// A notification that a commissioning window was opened or closed (or expired).
     /// Single waiter: the ICD Management cluster handler.
     comm_window_changed: Notification,
+    /// A notification that the fail-safe was armed or a commissioning window
+    /// opened: a new deadline to expire them by.
+    /// Single waiter: the timeout checks of the Interaction Model.
+    timeouts_changed: Notification,
     /// A notification that the groups have been modified.
     /// Unused without the `groups` feature, but kept unconditionally so the
     /// in-place `Transport` initializer needs no feature-specific variant.
@@ -178,6 +182,7 @@ impl Transport {
             session_removed: MultiNotification::new(),
             activity: Notification::new(),
             comm_window_changed: Notification::new(),
+            timeouts_changed: Notification::new(),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
             counters: Mutex::new(RefCell::new(MessageCounters::new())),
@@ -197,6 +202,7 @@ impl Transport {
             session_removed <- MultiNotification::init(),
             activity <- Notification::init(),
             comm_window_changed <- Notification::init(),
+            timeouts_changed <- Notification::init(),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
             counters <- Mutex::init(RefCell::init(MessageCounters::new())),
@@ -290,6 +296,7 @@ impl Transport {
     pub(crate) fn notify_comm_window_changed(&self) {
         self.mdns_changed.notify();
         self.comm_window_changed.notify();
+        self.timeouts_changed.notify();
     }
 
     /// Wait until a commissioning window is opened, closed, or expires
@@ -298,6 +305,25 @@ impl Transport {
     /// A single-waiter notification, consumed by the ICD Management cluster handler.
     pub fn wait_comm_window_changed(&self) -> impl Future<Output = ()> + '_ {
         self.comm_window_changed.wait()
+    }
+
+    /// Notify that the fail-safe was armed (or re-armed), so that it may now
+    /// expire earlier than it would have.
+    ///
+    /// Needed wherever an expiry deadline appears or moves earlier; one that
+    /// goes away or moves later only costs the timeout checks a needless
+    /// wake-up. A commissioning window opening is covered by
+    /// [`Self::notify_comm_window_changed`].
+    pub(crate) fn notify_timeouts_changed(&self) {
+        self.timeouts_changed.notify();
+    }
+
+    /// Wait until the fail-safe is armed or a commissioning window opens.
+    ///
+    /// A single-waiter notification, consumed by the timeout checks of the
+    /// Interaction Model.
+    pub(crate) fn wait_timeouts_changed(&self) -> impl Future<Output = ()> + '_ {
+        self.timeouts_changed.wait()
     }
 
     /// Notify that a session has been removed.

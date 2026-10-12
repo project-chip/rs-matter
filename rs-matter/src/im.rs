@@ -30,7 +30,7 @@ use core::num::NonZeroU8;
 use crate::utils::sync::blocking::Mutex;
 use core::pin::pin;
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::{select, select3, select4};
 use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
@@ -714,10 +714,27 @@ where
     }
 
     async fn run_timeout_checks(&self) -> Result<(), Error> {
-        const CHECK_INTERVAL_SECS: u64 = 1;
-
         loop {
-            Timer::after_secs(CHECK_INTERVAL_SECS).await;
+            // Until the fail-safe or the commissioning window expires - or one of
+            // them is armed / opened anew. Neither armed nor open: until then.
+            let mut changed = pin!(self.matter.transport().wait_timeouts_changed());
+
+            let deadline = self.matter.with_state(|state| {
+                match (
+                    state.failsafe.expires_at(),
+                    state.pase.comm_window_expires_at(),
+                ) {
+                    (Some(failsafe), Some(comm_window)) => Some(failsafe.min(comm_window)),
+                    (failsafe, comm_window) => failsafe.or(comm_window),
+                }
+            });
+
+            match deadline {
+                Some(deadline) => {
+                    select(&mut changed, Timer::at(deadline)).await;
+                }
+                None => changed.await,
+            }
 
             self.check_timeouts(None)?;
         }
