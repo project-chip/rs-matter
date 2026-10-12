@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Fix: a failed subscription report cleans up only its own session and preserves newer sessions for the same peer
+* Fix: a failed subscription report cleans up only its own session and preserves newer sessions for the same peer (#593)
+* Fix: attribute changes made while a new subscription's priming report is in flight are no longer purged before that subscription reports them (#592)
+* Fix: completing a subscription priming report preserves another in-flight report and its cancellation (#591)
 * Fix: when the session table is full, a new `CASESigma1` / `PBKDFParamRequest` evicts a session and proceeds, rather than being answered with Busy; Busy is sent only if no session can be evicted (#587)
 * Fix: support for peers that use multiple IP addresses for the same UDP session (586)
 * More fixes for Sleepy End Devices, now primarily for the initiator (#584)
