@@ -1388,8 +1388,11 @@ where
                     // drop means its persisted record must be purged too.
                     Ok(false) => dropped_any = true,
                     Err(e) => {
-                        // process_subscription cleans up only the session it used.
-                        // A failed lookup must not remove a newer inbound session.
+                        // Sessions to the subscriber are left alone. If the peer
+                        // stopped acknowledging, the transport has already expired
+                        // the session, so the retry establishes a fresh one. After
+                        // any other failure the session is still healthy, and other
+                        // exchanges may be using it.
                         let (fab_idx, peer_node_id) = {
                             let ids = rctx.subscription().ids();
                             (ids.fab_idx, ids.peer_node_id)
@@ -1443,39 +1446,26 @@ where
         let ids = rctx.subscription().ids();
         let mut exchange =
             Exchange::initiate(matter, self.crypto(), ids.fab_idx, ids.peer_node_id).await?;
-        let session_id = exchange.id().session_id();
 
-        let result = async {
-            if let Some(mut tx) = self.buffers.get().await {
-                // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-                unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+        if let Some(mut tx) = self.buffers.get().await {
+            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
+            unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
 
-                let primed = self
-                    .report_data(rctx, &mut tx, &mut exchange, false)
-                    .await?;
+            let primed = self
+                .report_data(rctx, &mut tx, &mut exchange, false)
+                .await?;
 
-                exchange.acknowledge().await?;
+            exchange.acknowledge().await?;
 
-                Ok(primed)
-            } else {
-                error!(
-                    "No TX buffer available for processing subscription {:?}",
-                    rctx.subscription().ids(),
-                );
+            Ok(primed)
+        } else {
+            error!(
+                "No TX buffer available for processing subscription {:?}",
+                rctx.subscription().ids(),
+            );
 
-                Ok(false)
-            }
+            Ok(false)
         }
-        .await;
-
-        drop(exchange);
-        if result.is_err() {
-            matter.with_state(|state| {
-                state.sessions.remove(session_id);
-            });
-        }
-
-        result
     }
 
     /// Process a `TimedReq` request, which is used to set a timeout for the following Write/Invoke request.

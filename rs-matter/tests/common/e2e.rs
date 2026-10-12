@@ -17,6 +17,7 @@
 
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use embassy_futures::select::{select3, select4};
 
@@ -94,6 +95,10 @@ pub struct E2eRunner<C> {
     buffers: MatterBuffers,
     pub state: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
+    /// While set, every packet the remote (tested) instance sends is lost.
+    lose_remote_tx: AtomicBool,
+    /// How many packets of the remote (tested) instance were lost that way.
+    lost_remote_tx: AtomicUsize,
 }
 
 impl<C: Crypto> E2eRunner<C> {
@@ -124,12 +129,17 @@ impl<C: Crypto> E2eRunner<C> {
             buffers: MatterBuffers::new(),
             state: InteractionModelState::new(DummyNetworks),
             cat_ids,
+            lose_remote_tx: AtomicBool::new(false),
+            lost_remote_tx: AtomicUsize::new(0),
         }
     }
 
     /// Initialize the local and remote (tested) Matter instances
     /// that the runner owns
     pub fn init(&self) -> Result<(), Error> {
+        self.lose_remote_tx.store(false, Ordering::Relaxed);
+        self.lost_remote_tx.store(0, Ordering::Relaxed);
+
         Self::init_matter(
             &self.matter,
             &self.crypto,
@@ -150,6 +160,24 @@ impl<C: Crypto> E2eRunner<C> {
     /// Get the Matter instance for the local node (the test driver).
     pub fn matter_client(&self) -> &Matter<'static> {
         &self.matter_client
+    }
+
+    /// Lose (or stop losing) every packet the remote (tested) instance sends,
+    /// as if the local node had become unreachable.
+    ///
+    /// Not honored by [`run_responder`](Self::run_responder); reset by
+    /// [`init`](Self::init).
+    // The `common` module is shared by several test binaries; this helper is
+    // used only by `im_tests`.
+    #[allow(unused)]
+    pub fn lose_remote_tx(&self, lose: bool) {
+        self.lose_remote_tx.store(lose, Ordering::Relaxed);
+    }
+
+    /// How many packets of the remote (tested) instance were lost so far.
+    #[allow(unused)]
+    pub fn lost_remote_tx(&self) -> usize {
+        self.lost_remote_tx.load(Ordering::Relaxed)
     }
 
     /// Add a default ACL entry to the remote (tested) Matter instance.
@@ -283,7 +311,11 @@ impl<C: Crypto> E2eRunner<C> {
             ),
             self.matter.run(
                 &self.crypto,
-                NetworkSendImpl(send_remote),
+                LossyNetworkSend {
+                    send: NetworkSendImpl(send_remote),
+                    lose: &self.lose_remote_tx,
+                    lost: &self.lost_remote_tx,
+                },
                 NetworkReceiveImpl(recv_remote),
                 NoNetwork,
             ),
@@ -403,6 +435,25 @@ impl<const N: usize> NetworkSend for NetworkSendImpl<'_, N> {
 }
 
 struct NetworkSendImpl<'a, const N: usize>(Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>);
+
+/// A [`NetworkSend`] that drops (and counts) every packet while `lose` is set.
+struct LossyNetworkSend<'a, S> {
+    send: S,
+    lose: &'a AtomicBool,
+    lost: &'a AtomicUsize,
+}
+
+impl<S: NetworkSend> NetworkSend for LossyNetworkSend<'_, S> {
+    async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
+        if self.lose.load(Ordering::Relaxed) {
+            self.lost.fetch_add(1, Ordering::Relaxed);
+
+            return Ok(());
+        }
+
+        self.send.send_to(data, addr).await
+    }
+}
 
 impl<const N: usize> NetworkReceive for NetworkReceiveImpl<'_, N> {
     async fn wait_available(&mut self) -> Result<(), Error> {

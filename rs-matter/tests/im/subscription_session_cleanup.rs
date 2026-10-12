@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-//! A failed subscription report must only discard the session it actually used.
+//! A failed subscription report must not remove sessions to its subscriber:
+//! the transport expires a session whose peer stopped acknowledging, and any
+//! other session, such as a newer one the peer just established, stays usable.
 
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
@@ -26,7 +28,7 @@ use embassy_time::{Duration, Timer};
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::net_comm::DummyNetworks;
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::encoding::ReportDataResp;
 use rs_matter::im::{AttrPath, GenericPath, InteractionModelState, OpCode};
@@ -44,10 +46,14 @@ use crate::common::{init_env_logger, run_device_controller, MemKvBlobStore};
 const FABRIC: NonZeroU8 = NonZeroU8::new(1).unwrap();
 const SERVER_ID: u64 = 123456;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Failure {
+    /// The subscriber's address cannot be resolved, so no exchange is opened.
     Resolve,
-    Report,
+    /// The subscriber answers the report with an unexpected message.
+    BadResponse,
+    /// The subscriber never acknowledges the report.
+    Unacknowledged,
 }
 
 async fn persist_subscription(im: &E2eRunner<impl Crypto>, kv: &MemKvBlobStore) -> u32 {
@@ -163,7 +169,11 @@ fn session_cleanup(failure: Failure) {
             run_device_controller(
                 im.run_with_setup(im.handler(), &state, kv.clone(), true, || match failure {
                     Failure::Resolve => im.matter.reset_transport(),
-                    Failure::Report => Ok(()),
+                    Failure::BadResponse => Ok(()),
+                    Failure::Unacknowledged => {
+                        im.lose_remote_tx(true);
+                        Ok(())
+                    }
                 }),
                 async {
                     let (old_session, mut old_report) = match failure {
@@ -178,7 +188,7 @@ fn session_cleanup(failure: Failure) {
                             ));
                             (None, None)
                         }
-                        Failure::Report => {
+                        Failure::BadResponse => {
                             let probe = Exchange::initiate(
                                 &im.matter,
                                 test_only_crypto(),
@@ -191,6 +201,21 @@ fn session_cleanup(failure: Failure) {
                             report.acknowledge().await?;
                             (Some(probe), Some(report))
                         }
+                        Failure::Unacknowledged => {
+                            let probe = Exchange::initiate(
+                                &im.matter,
+                                test_only_crypto(),
+                                FABRIC,
+                                TEST_PEER_ID,
+                            )
+                            .await?;
+                            // Once the device has tried to send the report, its
+                            // exchange is bound to the old session.
+                            while im.lost_remote_tx() == 0 {
+                                futures_lite::future::yield_now().await;
+                            }
+                            (Some(probe), None)
+                        }
                     };
 
                     // Model an inbound CASE handshake completing while the
@@ -201,7 +226,7 @@ fn session_cleanup(failure: Failure) {
                         // TCP wins a peer lookup even when the failing UDP
                         // exchange refreshes its session's last-use timestamp.
                         // The idle probe needs no TCP transport implementation.
-                        Failure::Report => Address::Tcp(address),
+                        Failure::BadResponse | Failure::Unacknowledged => Address::Tcp(address),
                     };
                     add_case_session(&im.matter, SERVER_ID, TEST_PEER_ID, address)?;
                     add_case_session(im.matter_client(), TEST_PEER_ID, SERVER_ID, address)?;
@@ -209,16 +234,20 @@ fn session_cleanup(failure: Failure) {
                         Exchange::initiate(&im.matter, test_only_crypto(), FABRIC, TEST_PEER_ID)
                             .await?;
 
-                    if let Some(report) = old_report.as_mut() {
-                        // Fail the old report without waiting for an ACK from
-                        // the session whose cleanup is under test.
-                        report
-                            .init_send()
-                            .await?
-                            .complete(0, 0, OpCode::ReadRequest)?;
-                    } else {
+                    match failure {
                         // No answer is deposited; the real resolver times out.
-                        assert!(im.matter.transport().mdns_resolve_in_flight());
+                        Failure::Resolve => assert!(im.matter.transport().mdns_resolve_in_flight()),
+                        // Fail the old report with an unexpected answer. Whether
+                        // the device acknowledges that answer does not matter here.
+                        Failure::BadResponse => {
+                            let report = old_report.as_mut().unwrap();
+                            report
+                                .init_send()
+                                .await?
+                                .complete(0, 0, OpCode::ReadRequest)?;
+                        }
+                        // The device runs out of MRP retransmissions on its own.
+                        Failure::Unacknowledged => (),
                     }
                     // A resumed subscription is discarded after its first
                     // failed report. Wait for the normal persistence cleanup
@@ -235,11 +264,16 @@ fn session_cleanup(failure: Failure) {
                         "failed subscription processing removed the new inbound CASE session"
                     );
                     if let Some(old_session) = old_session {
-                        assert_eq!(
-                            old_session.pending_retrans().unwrap_err().code(),
-                            ErrorCode::NoSession
+                        assert!(
+                            old_session.pending_retrans().is_ok(),
+                            "failed subscription processing removed the session it used"
                         );
                     }
+                    // Only a session whose peer stopped acknowledging is expired.
+                    let expired = im.matter.with_state(|state| {
+                        state.sessions.iter().filter(|s| s.is_expired()).count()
+                    });
+                    assert_eq!(expired, usize::from(failure == Failure::Unacknowledged));
                     Ok(())
                 },
             )
@@ -258,6 +292,11 @@ fn resolve_failure_preserves_new_inbound_session() {
 }
 
 #[test]
-fn report_failure_removes_only_its_used_session() {
-    session_cleanup(Failure::Report);
+fn bad_response_preserves_sessions() {
+    session_cleanup(Failure::BadResponse);
+}
+
+#[test]
+fn unacknowledged_report_only_expires_its_session() {
+    session_cleanup(Failure::Unacknowledged);
 }
