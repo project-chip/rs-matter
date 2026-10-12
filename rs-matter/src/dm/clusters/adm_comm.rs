@@ -17,6 +17,8 @@
 
 //! This module contains the implementation of the Administrative Commissioning cluster and its handler.
 
+use core::num::NonZeroU8;
+
 use rand_core::Rng;
 
 use crate::crypto::Crypto;
@@ -47,7 +49,7 @@ const PAKE_VERIFIER_LEN: usize = 97;
 /// invoke context so the IM layer surfaces it in `StatusIB.clusterStatus`,
 /// then build the matching `Failure(0x01)` error to return from the handler.
 fn cluster_status_err(ctx: &impl InvokeContext, status: StatusCode) -> Error {
-    ctx.cmd().set_cluster_status(status as u8);
+    ctx.cmd().set_cluster_status(NonZeroU8::new(status as u8));
     Error::new(ErrorCode::Failure)
 }
 

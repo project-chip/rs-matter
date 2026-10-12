@@ -708,7 +708,7 @@ mod tests {
                 dataver: None,
                 wildcard: false,
                 array: false,
-                cluster_status: Cell::new(0),
+                cluster_status: Cell::new(None),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);
@@ -736,7 +736,7 @@ mod tests {
                 dataver: None,
                 wildcard: false,
                 array: false,
-                cluster_status: Cell::new(0),
+                cluster_status: Cell::new(None),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);
@@ -763,7 +763,7 @@ mod tests {
                 dataver: None,
                 wildcard: false,
                 array: false,
-                cluster_status: Cell::new(0),
+                cluster_status: Cell::new(None),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);

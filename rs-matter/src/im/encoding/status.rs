@@ -17,6 +17,8 @@
 
 //! This module defines the `Status` and `StatusResp` structures used in the Interaction Model.
 
+use core::num::NonZeroU8;
+
 use crate::error::Error;
 use crate::tlv::{FromTLV, TagType, ToTLV};
 use crate::utils::storage::WriteBuf;
@@ -32,12 +34,16 @@ pub struct Status {
     /// The status code of the IM operation.
     pub status: IMStatusCode,
     /// An optional cluster status code, which is used for cluster-specific status codes.
-    pub cluster_status: Option<u16>,
+    ///
+    /// `NonZeroU8` because the spec defines `ClusterStatus` as a one-byte
+    /// `status` value, reserves `0x00` for the global `SUCCESS` code, and
+    /// places cluster-scoped codes in `0x02..=0x10`.
+    pub cluster_status: Option<NonZeroU8>,
 }
 
 impl Status {
     /// Create a new `Status` instance with the given `IMStatusCode` and an optional cluster status code.
-    pub const fn new(status: IMStatusCode, cluster_status: Option<u16>) -> Status {
+    pub const fn new(status: IMStatusCode, cluster_status: Option<NonZeroU8>) -> Status {
         Status {
             status,
             cluster_status,
@@ -86,6 +92,8 @@ impl StatusResp {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use core::num::NonZeroU8;
+
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
     use crate::utils::storage::WriteBuf;
 
@@ -121,7 +129,7 @@ mod tests {
 
         // `Status` with and without a cluster status
         for status in [
-            Status::new(IMStatusCode::Failure, Some(0x1234)),
+            Status::new(IMStatusCode::Failure, NonZeroU8::new(0x10)),
             Status::new(IMStatusCode::Success, None),
         ] {
             wb.reset();

@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::num::NonZeroU8;
+
 use num_enum::TryFromPrimitive;
 
 use crate::error::{Error, ErrorCode};
@@ -114,7 +116,11 @@ pub struct EventStatus {
 
 impl EventStatus {
     /// Create a new `EventStatus` with the given path, status code, and optional cluster status.
-    pub const fn new(path: EventPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
+    pub const fn new(
+        path: EventPath,
+        status: IMStatusCode,
+        cluster_status: Option<NonZeroU8>,
+    ) -> Self {
         Self {
             path,
             status: Status::new(status, cluster_status),
@@ -130,7 +136,7 @@ impl EventStatus {
     pub const fn from_gp(
         path: &GenericPath,
         status: IMStatusCode,
-        cluster_status: Option<u16>,
+        cluster_status: Option<NonZeroU8>,
     ) -> Self {
         Self::new(EventPath::from_gp(path), status, cluster_status)
     }
@@ -361,6 +367,8 @@ pub enum EventDataTimestamp {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use core::num::NonZeroU8;
+
     use crate::im::IMStatusCode;
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
     use crate::utils::storage::WriteBuf;
@@ -488,7 +496,7 @@ mod tests {
         let status = EventResp::Status(EventStatus::from_gp(
             &GenericPath::new(Some(0), Some(0x28), Some(1)),
             IMStatusCode::UnsupportedEvent,
-            Some(1),
+            NonZeroU8::new(1),
         ));
         wb.reset();
         status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();

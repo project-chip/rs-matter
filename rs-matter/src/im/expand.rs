@@ -209,7 +209,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
             fab_filter: self.fabric_filtered,
             dataver: dataver(self.dataver_filters.as_ref(), endpoint_id, cluster_id)?,
             array,
-            cluster_status: Cell::new(0),
+            cluster_status: Cell::new(None),
         })
     }
 
@@ -251,7 +251,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
                 fab_filter: true,
                 dataver: self.data_ver,
                 array,
-                cluster_status: Cell::new(0),
+                cluster_status: Cell::new(None),
             },
             self.data.clone(),
         );
