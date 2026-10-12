@@ -1388,32 +1388,22 @@ where
                     // drop means its persisted record must be purged too.
                     Ok(false) => dropped_any = true,
                     Err(e) => {
-                        // Reporting failed — typically because the session to the
-                        // subscriber died (peer unreachable, MRP retransmissions
-                        // exhausted). Drop that session so the next report to this
-                        // peer establishes a fresh one, and keep the subscription
-                        // so it retries rather than being torn down.
+                        // Sessions to the subscriber are left alone. If the peer
+                        // stopped acknowledging, the transport has already expired
+                        // the session, so the retry establishes a fresh one. After
+                        // any other failure the session is still healthy, and other
+                        // exchanges may be using it.
                         let (fab_idx, peer_node_id) = {
                             let ids = rctx.subscription().ids();
                             (ids.fab_idx, ids.peer_node_id)
                         };
 
                         warn!(
-                            "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session, will retry",
+                            "Error processing subscription (fab {}, node {:x}): {:?}",
                             fab_idx.get(),
                             peer_node_id,
                             e
                         );
-
-                        matter.with_state(|state| {
-                            if let Some(id) = state
-                                .sessions
-                                .get_for_node(fab_idx, peer_node_id)
-                                .map(|s| s.id)
-                            {
-                                state.sessions.remove(id);
-                            }
-                        });
 
                         // Keep the subscription to retry, but do NOT advance its
                         // watermarks: the changes/events this report was carrying

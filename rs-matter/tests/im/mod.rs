@@ -21,3 +21,8 @@ mod client_subscribes;
 mod client_writes;
 #[cfg(feature = "persistent-subscriptions")]
 mod subscription_reboot;
+#[cfg(all(
+    feature = "persistent-subscriptions",
+    not(feature = "case-responder-only")
+))]
+mod subscription_session_cleanup;
