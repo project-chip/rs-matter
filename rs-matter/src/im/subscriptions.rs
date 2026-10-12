@@ -2686,7 +2686,9 @@ mod tests {
         subs.notify_attr_changed(1, 2, 3);
         let later = now + Duration::from_secs(2);
         {
-            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut rctx = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             assert!(rctx.should_report_attr(1, 2, 3));
 
             // Coalescing replaces the earlier entry with a newer wildcard.
@@ -2699,7 +2701,13 @@ mod tests {
 
         subs.purge_reported_changes();
         let rctx = subs
-            .report(later + Duration::from_secs(2), 0, &subs_bufs)
+            .report(
+                later + Duration::from_secs(2),
+                0,
+                KeepAlive::Default,
+                false,
+                &subs_bufs,
+            )
             .unwrap();
         assert!(rctx.should_report_attr(1, 2, 3));
         assert!(rctx.should_report_attr(1, 2, 4));
@@ -3969,7 +3977,9 @@ mod tests {
 
             subs.notify_attr_changed(1, 2, 3);
             let later = now + Duration::from_secs(2);
-            let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut report = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             let reporting_id = report.subscription().ids().id;
 
             // Completing another subscription's priming report must leave the
@@ -4027,7 +4037,9 @@ mod tests {
 
             subs.notify_attr_changed(1, 2, 3);
             let later = now + Duration::from_secs(2);
-            let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+            let mut report = subs
+                .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
             let reporting_id = report.subscription().ids().id;
 
             // A replacement subscribe cancels the old report while it is in
@@ -4154,7 +4166,9 @@ mod tests {
                 if existing_subscription {
                     // The established subscription has caught up, but the
                     // priming context still owns an older watermark.
-                    let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+                    let mut report = subs
+                        .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                        .unwrap();
                     assert_eq!(report.subscription().ids().peer_node_id, 100);
                     report.set_keep();
                 }
@@ -4172,7 +4186,9 @@ mod tests {
                 subs.purge_reported_changes();
 
                 if keep_priming {
-                    let mut report = subs.report(later, 0, &subs_bufs).unwrap();
+                    let mut report = subs
+                        .report(later, 0, KeepAlive::Default, false, &subs_bufs)
+                        .unwrap();
                     assert_eq!(report.subscription().ids().peer_node_id, 101);
                     assert!(report.should_report_attr(1, 2, 3));
                     report.set_keep();
@@ -4202,7 +4218,13 @@ mod tests {
         subs.notify_attr_changed(1, 2, 3);
         {
             let mut report = subs
-                .report(now + Duration::from_secs(2), 0, &subs_bufs)
+                .report(
+                    now + Duration::from_secs(2),
+                    0,
+                    KeepAlive::Default,
+                    false,
+                    &subs_bufs,
+                )
                 .unwrap();
             subs.purge_reported_changes();
             assert!(report.should_report_attr(1, 2, 3));
