@@ -31,6 +31,7 @@ use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 #[cfg(feature = "groups")]
 use crate::fabric::Fabrics;
+use crate::fabric::MAX_FABRICS;
 #[cfg(feature = "groups")]
 use crate::group_keys::KeySet;
 #[cfg(feature = "groups")]
@@ -1235,6 +1236,14 @@ cfg_if! {
     }
 }
 
+/// The CASE sessions each fabric is guaranteed, as advertised in
+/// `CapabilityMinima.CaseSessionsPerFabric`.
+///
+/// A fabric may use more while the session table has room. Making room in a
+/// full table evicts a CASE session of a fabric within this share only when no
+/// other session can be evicted.
+pub const CASE_SESSIONS_PER_FABRIC: usize = MAX_SESSIONS / MAX_FABRICS;
+
 cfg_if! {
     if #[cfg(feature = "max-exchanges-per-session-16")] {
         /// Max number of supported exchanges per session
@@ -1606,8 +1615,9 @@ impl Sessions {
         let session = match self.add(rand.next_u32(), false, peer, None) {
             Ok(session) => session,
             Err(_) => {
-                // Session table is full; evict the least-recently-used session
-                if let Some(lru_id) = self.get_session_for_eviction().map(|sess| sess.id) {
+                // Session table is full; evict an expired session or one that is not
+                // a live CASE session, whose peer would not be told
+                if let Some(lru_id) = self.get_non_case_session_for_eviction().map(|sess| sess.id) {
                     debug!("Group TX: Evicting session {} to make room", lru_id);
                     self.remove(lru_id);
                     self.add(rand.next_u32(), false, peer, None)?
@@ -1861,8 +1871,9 @@ impl Sessions {
         let session = match self.add(rand.next_u32(), false, peer, Some(src_nodeid)) {
             Ok(session) => session,
             Err(_) => {
-                // Session table is full; evict the least-recently-used session
-                if let Some(lru_id) = self.get_session_for_eviction().map(|sess| sess.id) {
+                // Session table is full; evict an expired session or one that is not
+                // a live CASE session, whose peer would not be told
+                if let Some(lru_id) = self.get_non_case_session_for_eviction().map(|sess| sess.id) {
                     debug!("Group: Evicting session {} to make room", lru_id);
                     self.remove(lru_id);
                     self.add(rand.next_u32(), false, peer, Some(src_nodeid))?
@@ -1998,26 +2009,75 @@ impl Sessions {
         Ok(next_exch_id)
     }
 
+    /// The session to evict to make room in a full table: an expired session,
+    /// else the least-recently-used one.
+    ///
+    /// A CASE session of a fabric holding no more than its
+    /// [`CASE_SESSIONS_PER_FABRIC`] share is passed over while any other session
+    /// can be evicted, so that a fabric using more than its share gives up its
+    /// surplus before another fabric loses one of the sessions it is guaranteed.
+    ///
+    /// Reserved sessions and sessions with exchanges are never evicted.
     pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
-        let mut lru_index = None;
-        let mut lru_ts = Instant::now();
-        for (i, s) in self.sessions.iter().enumerate() {
-            if (s.expired || s.last_use < lru_ts)
-                && !s.reserved
-                && s.exchanges.iter().all(Option::is_none)
-            {
-                lru_ts = s.last_use;
-                lru_index = Some(i);
+        let index = self
+            .expired()
+            .or_else(|| self.lru(|sess| !self.is_within_fabric_share(sess)))
+            .or_else(|| self.lru(|_| true))?;
 
-                if s.expired {
-                    // Expired sessons are the prime candidates for eviction,
-                    // so we can break early
-                    break;
-                }
-            }
-        }
+        Some(&mut self.sessions[index])
+    }
 
-        lru_index.map(|index| &mut self.sessions[index])
+    /// Like [`Self::get_session_for_eviction`], but never picks a live CASE
+    /// session, for callers that evict without a `CloseSession` to the peer.
+    #[cfg(feature = "groups")]
+    fn get_non_case_session_for_eviction(&mut self) -> Option<&mut Session> {
+        let index = self
+            .expired()
+            .or_else(|| self.lru(|sess| !matches!(sess.mode, SessionMode::Case { .. })))?;
+
+        Some(&mut self.sessions[index])
+    }
+
+    /// An expired evictable session: those are the prime candidates for eviction.
+    fn expired(&self) -> Option<usize> {
+        self.sessions
+            .iter()
+            .position(|sess| sess.expired && Self::is_evictable(sess))
+    }
+
+    /// The least-recently-used evictable session matching `f`.
+    fn lru<F>(&self, f: F) -> Option<usize>
+    where
+        F: Fn(&Session) -> bool,
+    {
+        let now = Instant::now();
+
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, sess)| Self::is_evictable(sess) && sess.last_use < now && f(sess))
+            .min_by_key(|(_, sess)| sess.last_use)
+            .map(|(index, _)| index)
+    }
+
+    /// Whether `sess` is a CASE session of a fabric holding no more than its
+    /// [`CASE_SESSIONS_PER_FABRIC`] share.
+    fn is_within_fabric_share(&self, sess: &Session) -> bool {
+        let SessionMode::Case { fab_idx, .. } = sess.mode else {
+            return false;
+        };
+
+        self.sessions
+            .iter()
+            .filter(|other| {
+                matches!(other.mode, SessionMode::Case { fab_idx: idx, .. } if idx == fab_idx)
+            })
+            .count()
+            <= CASE_SESSIONS_PER_FABRIC
+    }
+
+    fn is_evictable(sess: &Session) -> bool {
+        !sess.reserved && sess.exchanges.iter().all(Option::is_none)
     }
 
     pub fn add(
@@ -2891,6 +2951,54 @@ mod tests {
         unwrap!(sm.get(expired)).set_last_use(Instant::MAX);
         unwrap!(sm.get(old)).set_last_use(Instant::from_ticks(1));
         assert_eq!(unwrap!(sm.get_session_for_eviction()).id, old);
+    }
+
+    /// A CASE session within its fabric's share is evicted only when nothing
+    /// else can be: a newer session that belongs to no fabric goes first.
+    #[test]
+    fn eviction_passes_over_case_sessions_within_their_fabric_share() {
+        let mut sm = Sessions::new();
+
+        let mut case = Vec::<u32, MAX_SESSIONS>::new();
+        for i in 0..CASE_SESSIONS_PER_FABRIC {
+            let id = add_for_node(&mut sm, fab(1), i as u64);
+            unwrap!(sm.get(id)).set_last_use(Instant::from_ticks(i as u64 + 1));
+            unwrap!(case.push(id));
+        }
+
+        let plain = add_with_mode(&mut sm, SessionMode::PlainText);
+        unwrap!(sm.get(plain)).set_last_use(Instant::from_ticks(100));
+        advance_clock_past(100);
+
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, plain);
+
+        sm.remove(plain);
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, case[0]);
+    }
+
+    /// A fabric holding more than its share gives up its surplus before another
+    /// fabric loses a session within its share, even an older one.
+    #[test]
+    fn eviction_takes_from_a_fabric_over_its_share() {
+        let mut sm = Sessions::new();
+
+        let other = add_for_node(&mut sm, fab(2), 100);
+        unwrap!(sm.get(other)).set_last_use(Instant::from_ticks(1));
+
+        let mut over = Vec::<u32, MAX_SESSIONS>::new();
+        for i in 0..=CASE_SESSIONS_PER_FABRIC {
+            let id = add_for_node(&mut sm, fab(1), i as u64);
+            unwrap!(sm.get(id)).set_last_use(Instant::from_ticks(i as u64 + 10));
+            unwrap!(over.push(id));
+        }
+        advance_clock_past(100);
+
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, over[0]);
+
+        // A caller that evicts without a `CloseSession` takes no live CASE
+        // session at all.
+        #[cfg(feature = "groups")]
+        assert!(sm.get_non_case_session_for_eviction().is_none());
     }
 
     /// Removing a fabric's sessions drops every session on that fabric

@@ -21,13 +21,12 @@ use core::str::FromStr;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::MAX_FABRICS;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::tlv::{
     FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder,
 };
 use crate::transport::exchange::Exchange;
-use crate::transport::session::MAX_SESSIONS;
+use crate::transport::session::CASE_SESSIONS_PER_FABRIC;
 use crate::utils::bitflags::bitflags;
 use crate::utils::init::{init, Init};
 use crate::{except, with};
@@ -318,12 +317,11 @@ const READ_PATHS_SUPPORTED: u16 = 9;
 const SUBSCRIBE_PATHS_SUPPORTED: u16 = 3;
 
 impl CapabilityMinima {
-    /// Create a default instance of `CapabilityMinima`, with CASE sessions per
-    /// fabric derived from the session table and the spec-minimum subscriptions
-    /// per fabric.
+    /// Create a default instance of `CapabilityMinima`, with the CASE sessions
+    /// each fabric is guaranteed and the spec-minimum subscriptions per fabric.
     pub const fn new() -> Self {
         Self {
-            case_sessions_per_fabric: (MAX_SESSIONS / MAX_FABRICS) as _,
+            case_sessions_per_fabric: CASE_SESSIONS_PER_FABRIC as _,
             subscriptions_per_fabric: SUBSCRIPTIONS_PER_FABRIC,
             simultaneous_invocations_supported: SIMULTANEOUS_INVOCATIONS_SUPPORTED,
             simultaneous_writes_supported: SIMULTANEOUS_WRITES_SUPPORTED,

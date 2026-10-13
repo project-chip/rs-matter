@@ -1099,6 +1099,21 @@ cfg_if! {
     } else if #[cfg(feature = "max-fabrics-6")] {
         /// Max number of supported fabrics
         pub const MAX_FABRICS: usize = 6;
+    } else if #[cfg(feature = "max-fabrics-5")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 5;
+    } else if #[cfg(feature = "max-fabrics-4")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 4;
+    } else if #[cfg(feature = "max-fabrics-3")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 3;
+    } else if #[cfg(feature = "max-fabrics-2")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 2;
+    } else if #[cfg(feature = "max-fabrics-1")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 1;
     } else { // Matter requires a minimum of 5 fabrics
         /// Max number of supported fabrics
         pub const MAX_FABRICS: usize = 5;
