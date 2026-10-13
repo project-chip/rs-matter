@@ -1244,25 +1244,6 @@ cfg_if! {
 /// other session can be evicted.
 pub const CASE_SESSIONS_PER_FABRIC: usize = MAX_SESSIONS / MAX_FABRICS;
 
-// Warn - rather than fail the build - when `max-sessions-*` is too small for
-// `max-fabrics-*` to give each fabric the 3 CASE sessions Matter requires.
-const _: () = SessionsPerFabric::<{ CASE_SESSIONS_PER_FABRIC >= 3 }>::check();
-
-struct SessionsPerFabric<const SPEC_COMPLIANT: bool>;
-
-impl SessionsPerFabric<true> {
-    #[allow(dead_code)]
-    const fn check() {}
-}
-
-impl SessionsPerFabric<false> {
-    #[allow(dead_code)]
-    #[deprecated(
-        note = "`max-sessions-*` is too small for `max-fabrics-*`: each fabric gets fewer than the 3 CASE sessions Matter requires"
-    )]
-    const fn check() {}
-}
-
 cfg_if! {
     if #[cfg(feature = "max-exchanges-per-session-16")] {
         /// Max number of supported exchanges per session

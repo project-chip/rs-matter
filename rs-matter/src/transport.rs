@@ -33,8 +33,9 @@ use rand_core::Rng;
 use crate::crypto::Crypto;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
+use crate::fabric::MAX_FABRICS;
 #[cfg(feature = "groups")]
-use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
+use crate::fabric::MAX_GROUPS_PER_FABRIC;
 use crate::fmt::Bytes;
 use crate::im::PROTO_ID_INTERACTION_MODEL;
 #[cfg(not(feature = "case-responder-only"))]
@@ -66,7 +67,7 @@ use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
 #[cfg(not(feature = "case-responder-only"))]
 use session::PeerMrpParams;
-use session::{Session, Sessions};
+use session::{Session, Sessions, CASE_SESSIONS_PER_FABRIC, MAX_SESSIONS};
 
 use self::mrp::mrp_log;
 
@@ -1279,6 +1280,15 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         M: NetworkMulticast,
     {
         info!("Running Matter transport");
+
+        if CASE_SESSIONS_PER_FABRIC < 3 {
+            warn!(
+                "Only {} CASE sessions per fabric ({} sessions for {} fabrics), Matter requires 3: raise `max-sessions-*` or lower `max-fabrics-*`",
+                CASE_SESSIONS_PER_FABRIC,
+                MAX_SESSIONS,
+                MAX_FABRICS
+            );
+        }
 
         // Do not remove this logging line or change its formatting.
         // C++ E2E tests rely on this log line to determine when the tested app is ready.
