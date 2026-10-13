@@ -284,7 +284,7 @@ pub struct AttrDetails {
     ///
     /// Mirrors the same field on `CmdDetails`. Kept off `Error` so that
     /// `Result<T, Error>` stays a compact 1-byte error payload across the
-    /// codebase (see `docs/error-and-cluster-status-design.md`). Cluster
+    /// codebase. Cluster
     /// handlers set this via `ReadContext::attr().set_cluster_status(...)` /
     /// `WriteContext::attr().set_cluster_status(...)` before returning an
     /// error.

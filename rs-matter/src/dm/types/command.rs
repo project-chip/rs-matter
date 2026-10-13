@@ -108,7 +108,7 @@ pub struct CmdDetails {
     /// Cluster handlers set this via `ctx.cmd().set_cluster_status(..)`
     /// before returning an error. Stored here rather than on `Error` so that
     /// `Result<T, Error>` keeps its compact 1-byte error payload across the
-    /// codebase — see `docs/error-and-cluster-status-design.md`.
+    /// codebase.
     pub cluster_status: Cell<Option<NonZeroU8>>,
 }
 
