@@ -1769,56 +1769,14 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     );
                 }
                 Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
-                    // NEVER answer a message that expects no answer. Our reply is
-                    // itself a Status Report sent on no session, so answering one
-                    // makes two peers bounce reports at each other forever.
-                    let meta = MessageMeta::from(&packet.header.proto);
-                    if meta.is_sc_status()
-                        || meta.is_standalone_ack()
-                        || packet.header.plain.is_group_session()
-                    {
-                        mrp_log!(
-                            "\n>>RCV {}\n      => No valid session found for a message expecting no reply, dropping",
-                            packet
-                        );
-                    } else {
-                        // Per Matter Core spec, when a session-bearing
-                        // message arrives for which we have no matching secure session
-                        // (e.g. after a reboot has wiped the session table while the
-                        // peer still believes the old session is alive), we reply with
-                        // an unsecured `SessionNotFound` Status Report on the Secure
-                        // Channel protocol. This nudges the peer to drop its stale
-                        // session and re-establish CASE, instead of waiting for MRP
-                        // retries to exhaust on its side.
-                        mrp_log!(
-                            "\n>>RCV {}\n      => No valid session found, replying with SessionNotFound",
-                            packet
-                        );
-
-                        // `write_packet` with `session = None` requires the incoming
-                        // header to look like an unsecured, non-reliable, source-tagged
-                        // packet (see its preconditions). Clear `sess_id` so it is not
-                        // considered encrypted, drop the reliable/ack flags since we
-                        // are not party to any exchange, and stamp a placeholder
-                        // `src_nodeid` (echoed as the response's `dst_nodeid` — UDP
-                        // peer addressing is what actually routes the reply).
-                        packet.header.plain.sess_id = 0;
-                        packet.header.plain.set_src_nodeid(Some(0));
-                        packet.header.proto.unset_reliable();
-                        packet.header.proto.set_ack(None);
-
-                        self.write_packet(packet, None, None, true, |wb| {
-                            sc_write(wb, SCStatusCodes::SessionNotFound, &[])
-                        })?;
-
-                        Self::netw_send(
-                            send,
-                            packet.peer,
-                            &packet.buf[packet.payload_start..],
-                            true,
-                        )
-                        .await?;
-                    }
+                    // A message on a session we don't have (e.g. one we lost to a
+                    // reboot) is dropped without an answer: nothing about it can be
+                    // authenticated, and the protocol defines no reply. The peer
+                    // gives up on the session once its retransmissions run out.
+                    mrp_log!(
+                        "\n>>RCV {}\n      => No valid session found, dropping",
+                        packet
+                    );
                 }
                 Err(e) => {
                     error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);
@@ -2108,30 +2066,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                     // Session created successfully: decode, indicate packet payload slice and process further
                     return session.post_recv(&packet.peer, &packet.header);
-                }
-
-                // A `SessionNotFound` is the peer telling us that a session *we*
-                // still hold is dead on its side (e.g. it rebooted). Drop it, so the
-                // exchange waiting on it fails at once with `NoSession` instead of
-                // exhausting its MRP retries, and the next attempt re-establishes it.
-                if MessageMeta::from(&packet.header.proto).is_sc_status()
-                    && Self::is_sc_status_code(
-                        &mut packet.buf[packet.payload_start..],
-                        SCStatusCodes::SessionNotFound,
-                    )
-                {
-                    let peer = packet.peer;
-                    let removed = state
-                        .sessions
-                        .remove_where(|sess| sess.is_encrypted() && sess.is_peer(&peer));
-
-                    if removed > 0 {
-                        info!(
-                            "\n>>RCV {}\n      => Peer lost our session, dropping it",
-                            packet
-                        );
-                        self.transport().notify_session_removed();
-                    }
                 }
             } else {
                 #[cfg(feature = "groups")]

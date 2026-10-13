@@ -102,16 +102,12 @@ pub enum SCStatusCodes {
     InvalidParameter = 2,
     CloseSession = 3,
     Busy = 4,
-    SessionNotFound = 5,
 }
 
 impl SCStatusCodes {
     pub fn reliable(&self) -> bool {
-        // CloseSession, Busy and SessionNotFound are sent without the R flag raised
-        !matches!(
-            self,
-            SCStatusCodes::CloseSession | SCStatusCodes::Busy | SCStatusCodes::SessionNotFound
-        )
+        // CloseSession and Busy are sent without the R flag raised
+        !matches!(self, SCStatusCodes::CloseSession | SCStatusCodes::Busy)
     }
 
     pub fn as_report<'a>(&self, payload: &'a [u8]) -> StatusReport<'a> {
@@ -119,9 +115,9 @@ impl SCStatusCodes {
             SCStatusCodes::SessionEstablishmentSuccess => GeneralCode::Success,
             SCStatusCodes::CloseSession => GeneralCode::Success,
             SCStatusCodes::Busy => GeneralCode::Busy,
-            SCStatusCodes::InvalidParameter
-            | SCStatusCodes::NoSharedTrustRoots
-            | SCStatusCodes::SessionNotFound => GeneralCode::Failure,
+            SCStatusCodes::InvalidParameter | SCStatusCodes::NoSharedTrustRoots => {
+                GeneralCode::Failure
+            }
         };
 
         StatusReport {

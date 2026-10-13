@@ -2721,8 +2721,8 @@ impl ITests {
         // sessions — re-handshakes against whichever process answers first.
         // That race lets a fresh CASE session get pinned to the dying
         // process; the next invoke (e.g. `RemoveFabric` in TC_ACL_2_10
-        // step 14) then hits the new app, which has no such session, and
-        // times out with `SessionNotFound`. The pattern matches the
+        // step 14) then hits the new app, which has no such session, drops
+        // the invoke, and the invoke times out. The pattern matches the
         // `info!("Running Matter transport")` line emitted from
         // `rs_matter::transport::TransportRunner::run`.
         Ok(format!(

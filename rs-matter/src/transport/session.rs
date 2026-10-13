@@ -696,10 +696,10 @@ impl Session {
             }
 
             if self.expired {
-                // Per Matter Core spec, an expired session must not
-                // accept new inbound messages. Skipping expired sessions here lets the
-                // caller surface a `SessionNotFound` to the peer rather than running
-                // the request through ACL checks against a removed fabric.
+                // An expired session does not accept new exchanges. Refusing them
+                // here keeps a request from running through ACL checks against a
+                // removed fabric; the caller drops it, as it does a message on a
+                // session we don't have.
                 Err(ErrorCode::NoSession)?;
             }
 
@@ -2753,7 +2753,7 @@ mod tests {
 
     /// Tearing down one device must drop that device's sessions and nothing
     /// else. A session left behind after the peer has discarded its half is
-    /// what later provokes an unsecured `SessionNotFound` from the peer.
+    /// one the peer ignores, so anything sent on it waits out the MRP retries.
     #[test]
     fn remove_where_targets_only_the_matching_peer() {
         const DEV_A: u64 = 0x1111;

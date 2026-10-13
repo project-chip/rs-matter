@@ -685,20 +685,10 @@ fn spawn_with_large_stack(f: impl FnOnce() + Send + 'static) {
         .unwrap();
 }
 
-/// How long to let any Status Report ping-pong run before counting packets.
-const LOOP_SETTLE_SECS: u64 = 3;
-
-/// Packet budget for the scenario below. The legitimate traffic is one read
-/// plus its MRP retransmissions and the device's answers - a couple of dozen
-/// at most. A ping-pong loop runs at pipe speed and blows through this by
-/// orders of magnitude within the settle window.
-const LOOP_PACKET_BUDGET: u32 = 200;
-
 /// A link half that only counts packets.
 ///
-/// Unlike [`LossySend`] it does not decode headers: the scenario below
-/// deliberately produces *unsecured* packets, which carry no session to decode
-/// against, and a raw count is all the assertion needs.
+/// Unlike [`LossySend`] it does not decode headers: a raw count is all the
+/// scenario below needs.
 struct CountingSend<'a, const N: usize> {
     pipe: Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>,
     count: &'a Cell<u32>,
@@ -717,114 +707,15 @@ impl<const N: usize> NetworkSend for CountingSend<'_, N> {
     }
 }
 
-/// Two nodes where only one still believes a session exists.
+/// Two nodes where only one still believes a session exists, as after the
+/// other one rebooted.
 ///
-/// The node that cannot match an incoming message answers with an unsecured
-/// `SessionNotFound` Status Report. That answer is itself an unsecured Status
-/// Report on no session - so if the peer also has nothing to match it against,
-/// it answers the answer, and the two trade identical reports forever at line
-/// rate. Nothing in the loop establishes a session, so it neither converges nor
-/// decays; observed in the field at ~430 packets/s until a node was killed.
-///
-/// A Status Report must therefore never be answered with a Status Report: an
-/// unmatched one is dropped, and traffic dies once MRP retries are spent.
+/// The node without the session cannot authenticate anything sent on it, and
+/// the protocol defines no reply, so it stays silent. The node with the stale
+/// session learns nothing until its retransmissions run out; it then expires
+/// the session, so the next attempt establishes a fresh one.
 #[test]
-fn status_report_to_a_sessionless_peer_does_not_loop() {
-    init_env_logger();
-
-    spawn_with_large_stack(|| {
-        let device = new_matter();
-        let client = new_matter();
-
-        // Only the client believes the session exists. The device's table is
-        // empty - as after a reboot, a `RemoveFabric`, or a controller dropping
-        // a device it could no longer reach.
-        install_session(&client, CLIENT_NODE_ID, DEVICE_NODE_ID);
-
-        let device_count = Cell::new(0u32);
-        let client_count = Cell::new(0u32);
-
-        let mut to_client_buf = [heapless::Vec::new(); 1];
-        let mut to_device_buf = [heapless::Vec::new(); 1];
-
-        let mut to_client = Pipe::<MAX_RX_PACKET_SIZE>::new(&mut to_client_buf);
-        let mut to_device = Pipe::<MAX_TX_PACKET_SIZE>::new(&mut to_device_buf);
-
-        let (device_send, client_recv) = to_client.split();
-        let (client_send, device_recv) = to_device.split();
-
-        let crypto = test_only_crypto();
-
-        futures_lite::future::block_on(async {
-            let mut transports = pin!(select(
-                device.run(
-                    &crypto,
-                    CountingSend {
-                        pipe: device_send,
-                        count: &device_count,
-                    },
-                    PipeRecv(device_recv),
-                    NoNetwork,
-                ),
-                client.run(
-                    &crypto,
-                    CountingSend {
-                        pipe: client_send,
-                        count: &client_count,
-                    },
-                    PipeRecv(client_recv),
-                    NoNetwork,
-                ),
-            )
-            .coalesce());
-
-            let mut flow = pin!(async {
-                // One message on the stale session is all it takes to start it.
-                // The read itself is expected to fail - the device can decrypt
-                // nothing - so only the traffic it provokes matters.
-                if let Ok(mut exchange) = initiate_exchange(&client).await {
-                    let _ = read_att1(&mut exchange).await;
-                }
-
-                // Let any loop run freely, then measure.
-                Timer::after(Duration::from_secs(LOOP_SETTLE_SECS)).await;
-            });
-
-            match select(&mut transports, &mut flow).await {
-                Either::First(r) => panic!("Transport exited prematurely: {r:?}"),
-                Either::Second(()) => (),
-            }
-        });
-
-        let total = device_count.get() + client_count.get();
-
-        info!(
-            "packets offered: device={} client={} total={}",
-            device_count.get(),
-            client_count.get(),
-            total
-        );
-
-        assert!(
-            total < LOOP_PACKET_BUDGET,
-            "Status Report ping-pong: {total} packets in {LOOP_SETTLE_SECS}s \
-             (budget {LOOP_PACKET_BUDGET}) - an unmatched Status Report is being \
-             answered with another Status Report"
-        );
-    });
-}
-
-/// A node whose session the peer no longer has must give it up after one round
-/// trip, not after its whole MRP retransmission ladder.
-///
-/// The peer answers the first message on the stale session with an unsecured
-/// `SessionNotFound`. It cannot name the session (it could not decrypt the
-/// message, so the exchange ID is unknown to it), so the node drops its secure
-/// sessions to that peer. That fails the waiting exchange at once with
-/// `NoSession`, and the next attempt re-establishes the session. Before, the
-/// report was ignored and the exchange retransmitted until MRP gave up.
-#[test]
-fn session_not_found_abandons_the_stale_session_immediately() {
+fn message_on_a_session_the_peer_does_not_have_goes_unanswered() {
     init_env_logger();
 
     spawn_with_large_stack(|| {
@@ -888,34 +779,30 @@ fn session_not_found_abandons_the_stale_session_immediately() {
             client_count.get()
         );
 
-        // The exchange fails because its session was dropped...
+        // The device answered nothing, not even an MRP ack...
+        assert_eq!(
+            device_count.get(),
+            0,
+            "the device answered on a session it does not have"
+        );
+
+        // ...so the read fails once the client's retransmissions run out...
         let err = result.expect_err("a read on a session the peer does not have must fail");
         assert_eq!(
             err.code(),
-            ErrorCode::NoSession,
+            ErrorCode::TxTimeout,
             "unexpected failure: {err:?}"
         );
+        assert!(client_count.get() > 1, "the client never retransmitted");
 
-        // ...after one message and one answer, not after the retransmission ladder
-        // (which would put the client at `MRP_MAX_TRANSMISSIONS + 1` packets).
-        assert_eq!(
-            client_count.get(),
-            1,
-            "the client retransmitted on a dead session"
-        );
-        assert_eq!(
-            device_count.get(),
-            1,
-            "the device should answer exactly once"
-        );
-
-        // And the stale session is gone, so the next attempt establishes a new one.
-        assert_eq!(
+        // ...and the stale session is expired, so the next attempt establishes a
+        // new one.
+        assert!(
             client.with_state(|state| state
                 .sessions
-                .remove_where(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID))),
-            0,
-            "the stale session was not dropped"
+                .iter()
+                .any(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID) && sess.is_expired())),
+            "the stale session was not expired"
         );
     });
 }

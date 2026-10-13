@@ -468,7 +468,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 Ok(None)
             } else {
                 error!("PAKE session not found or expired");
-                Ok(Some(SCStatusCodes::SessionNotFound))
+                Ok(Some(SCStatusCodes::InvalidParameter))
             }
         })?;
 
