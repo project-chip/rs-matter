@@ -17,6 +17,7 @@
 
 use core::cell::Cell;
 use core::fmt;
+use core::num::NonZeroU8;
 
 use crate::im::encoding::{CmdPath, CmdStatus, IMStatusCode};
 
@@ -97,18 +98,22 @@ pub struct CmdDetails {
     /// Echoed back in the response so the requester can correlate batched invokes.
     pub command_ref: Option<u16>,
     /// Cluster-specific status to stamp into the response `StatusIB.clusterStatus`
-    /// when the handler returns `Err`. `0` means "no cluster status" (the
-    /// reserved `kSuccess` value in Matter cluster-status enums).
+    /// when the handler returns `Err`, or `None` for no cluster status.
     ///
-    /// Cluster handlers set this via `InvokeContext::set_cluster_status`
-    /// before returning an error. Stored here as a `Cell<u8>` rather than
-    /// on `Error` so that `Result<T, Error>` keeps its compact 1-byte error
-    /// payload across the codebase.
-    pub cluster_status: Cell<u8>,
+    /// `NonZeroU8` because the spec reserves `0x00` for the global `SUCCESS`
+    /// code and places cluster-scoped codes in `0x02..=0x10`, so zero is never
+    /// a valid cluster status (`Interaction-Model.adoc`, "Interaction Model
+    /// Status Codes").
+    ///
+    /// Cluster handlers set this via `ctx.cmd().set_cluster_status(..)`
+    /// before returning an error. Stored here rather than on `Error` so that
+    /// `Result<T, Error>` keeps its compact 1-byte error payload across the
+    /// codebase.
+    pub cluster_status: Cell<Option<NonZeroU8>>,
 }
 
 impl CmdDetails {
-    /// Construct a new `CmdDetails`. Initializes `cluster_status` to `0`
+    /// Construct a new `CmdDetails`. Initializes `cluster_status` to `None`
     /// (no cluster-specific status to report).
     pub const fn new(
         endpoint_id: EndptId,
@@ -125,23 +130,24 @@ impl CmdDetails {
             fab_idx,
             wildcard,
             command_ref,
-            cluster_status: Cell::new(0),
+            cluster_status: Cell::new(None),
         }
     }
 
-    /// Stamp a cluster-specific status code onto this invoke. The value is
-    /// echoed in `StatusIB.clusterStatus` when the handler returns `Err`.
-    /// `0` is treated as "none" (Matter reserves it for `kSuccess`).
-    pub fn set_cluster_status(&self, cluster_status: u8) {
+    /// Stamp a cluster-specific status code onto this invoke, or `None` to
+    /// clear it. The value is echoed in `StatusIB.clusterStatus` when the
+    /// handler returns `Err`.
+    ///
+    /// Callers holding a raw code convert at the call site with
+    /// `NonZeroU8::new(code)`, which maps the reserved `0x00` (global
+    /// `SUCCESS`) to `None` visibly rather than silently.
+    pub fn set_cluster_status(&self, cluster_status: Option<NonZeroU8>) {
         self.cluster_status.set(cluster_status);
     }
 
     /// The currently stashed cluster-specific status, if any.
-    pub fn cluster_status(&self) -> Option<u16> {
-        match self.cluster_status.get() {
-            0 => None,
-            n => Some(n as u16),
-        }
+    pub fn cluster_status(&self) -> Option<NonZeroU8> {
+        self.cluster_status.get()
     }
 }
 

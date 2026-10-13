@@ -18,6 +18,7 @@
 //! This module contains types related to command invocations in the Interaction Model.
 
 use core::fmt;
+use core::num::NonZeroU8;
 
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, ToTLV};
@@ -110,7 +111,7 @@ impl CmdStatus {
     pub const fn new(
         path: CmdPath,
         status: IMStatusCode,
-        cluster_status: Option<u16>,
+        cluster_status: Option<NonZeroU8>,
         command_ref: Option<u16>,
     ) -> Self {
         Self {
@@ -176,7 +177,7 @@ impl CmdResp<'_> {
     pub const fn status_new(
         cmd_path: CmdPath,
         status: IMStatusCode,
-        cluster_status: Option<u16>,
+        cluster_status: Option<NonZeroU8>,
         command_ref: Option<u16>,
     ) -> Self {
         Self::Status(CmdStatus {
@@ -458,6 +459,8 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use core::num::NonZeroU8;
+
     use crate::error::ErrorCode;
     use crate::im::IM_REVISION;
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
@@ -488,7 +491,7 @@ mod tests {
         let status = CmdResp::status_new(
             cmd_path(1, 6, 2),
             IMStatusCode::InvalidCommand,
-            Some(0x1234),
+            NonZeroU8::new(0x10),
             Some(7),
         );
         status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
@@ -498,7 +501,7 @@ mod tests {
                 0x15, // InvokeResponseIB
                 0x35, 1, // Status
                 0x37, 0, 0x24, 0, 1, 0x24, 1, 6, 0x24, 2, 2, 0x18, // Path list
-                0x35, 1, 0x24, 0, 0x85, 0x25, 1, 0x34, 0x12, 0x18, // StatusIB
+                0x35, 1, 0x24, 0, 0x85, 0x24, 1, 0x10, 0x18, // StatusIB
                 0x24, 2, 7, // CommandRef
                 0x18, 0x18,
             ]
@@ -512,7 +515,7 @@ mod tests {
             CmdStatus::new(
                 cmd_path(1, 6, 2),
                 IMStatusCode::InvalidCommand,
-                Some(0x1234),
+                NonZeroU8::new(0x10),
                 Some(7)
             )
         );

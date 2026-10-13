@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::num::NonZeroU8;
+
 use crate::error::{Error, ErrorCode};
 use crate::im::{EventFilter, NodeId};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
@@ -127,7 +129,11 @@ pub struct AttrStatus {
 
 impl AttrStatus {
     /// Create a new `AttrStatus` with the given path, status code, and optional cluster status.
-    pub const fn new(path: AttrPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
+    pub const fn new(
+        path: AttrPath,
+        status: IMStatusCode,
+        cluster_status: Option<NonZeroU8>,
+    ) -> Self {
         Self {
             path,
             status: Status::new(status, cluster_status),
@@ -143,7 +149,7 @@ impl AttrStatus {
     pub const fn from_gp(
         path: &GenericPath,
         status: IMStatusCode,
-        cluster_status: Option<u16>,
+        cluster_status: Option<NonZeroU8>,
     ) -> Self {
         Self::new(AttrPath::from_gp(path), status, cluster_status)
     }
@@ -399,6 +405,8 @@ pub enum ReportDataRespTag {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use core::num::NonZeroU8;
+
     use crate::error::ErrorCode;
     use crate::im::{IMStatusCode, IM_REVISION};
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
@@ -448,7 +456,7 @@ mod tests {
         let status = AttrResp::from(AttrStatus::new(
             attr_path(1, 6, 0),
             IMStatusCode::UnsupportedAttribute,
-            Some(2),
+            NonZeroU8::new(2),
         ));
         status.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
         assert_eq!(

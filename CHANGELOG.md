@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * `acl_add_init` now rejects PASE auth mode;
   * A fresh session's replay window is seeded by the first received message;
 * Miri support: fixed an aliasing issue in `PooledBuffers` and a `transmute` flagged by miri; unit tests for covering all unsafe code; miri CI run on those unit tests (#556)
+* Fix: narrow size of `cluster_status`.
+* Breaking: change to `set_cluster_status` and `cluster_status` on `CmdDetails` and `AttrDetails` and to the status constructors.
 
 ## [0.4.1] - 2026-09-17
 * Fix: `NameSliceIter::next_back` in the builtin mDNS responder always returned `None`, breaking reverse label iteration (#554)
@@ -108,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Fix: A subscription is no longer pinned to its establishing session which was incorrect
   * Fix: A not-yet-primed subscription with a `MinIntervalFloor` of 0 is now reported immediately instead of never
   * Fix: A failed report no longer advances the subscription's watermark, so the changes/events it was carrying are retried instead of silently dropped
-* Secure Channel Handler (#502)  
+* Secure Channel Handler (#502)
 * (Breaking) ICD support: Check-In Protocol, ICD cluster handler, mDNS advertisements (#501)
 * Warn on packet retransmission (#500)
   * (Breaking) Rename feature `debug-tlv-payload` to `log-tlv-payload`

@@ -18,6 +18,7 @@
 
 use core::cell::Cell;
 use core::fmt::{self, Debug};
+use core::num::NonZeroU8;
 
 use strum::FromRepr;
 
@@ -276,16 +277,18 @@ pub struct AttrDetails {
     /// Whether the attribute is an array
     pub array: bool,
     /// Cluster-specific status to stamp into the response `StatusIB.clusterStatus`
-    /// for this attribute read or write. `0` means "no cluster status" (the
-    /// reserved `kSuccess` value in Matter cluster-status enums).
+    /// for this attribute read or write, or `None` for no cluster status.
     ///
-    /// Mirrors the same field on `CmdDetails` — kept off `Error` so that
+    /// `NonZeroU8` because the spec reserves `0x00` for the global `SUCCESS`
+    /// code, so zero is never a valid cluster status.
+    ///
+    /// Mirrors the same field on `CmdDetails`. Kept off `Error` so that
     /// `Result<T, Error>` stays a compact 1-byte error payload across the
-    /// codebase. Cluster handlers set this via
-    /// `ReadContext::attr().set_cluster_status(...)` /
+    /// codebase. Cluster
+    /// handlers set this via `ReadContext::attr().set_cluster_status(...)` /
     /// `WriteContext::attr().set_cluster_status(...)` before returning an
     /// error.
-    pub cluster_status: Cell<u8>,
+    pub cluster_status: Cell<Option<NonZeroU8>>,
 }
 
 impl AttrDetails {
@@ -337,20 +340,20 @@ impl AttrDetails {
         })
     }
 
-    /// Stamp a cluster-specific status code onto this attribute access. The
-    /// value is echoed in `StatusIB.clusterStatus` when the read or write
-    /// returns `Err`. `0` is treated as "none" (Matter reserves it for
-    /// `kSuccess`).
-    pub fn set_cluster_status(&self, cluster_status: u8) {
+    /// Stamp a cluster-specific status code onto this attribute access, or
+    /// `None` to clear it. The value is echoed in `StatusIB.clusterStatus`
+    /// when the read or write returns `Err`.
+    ///
+    /// Callers holding a raw code convert at the call site with
+    /// `NonZeroU8::new(code)`, which maps the reserved `0x00` (global
+    /// `SUCCESS`) to `None` visibly rather than silently.
+    pub fn set_cluster_status(&self, cluster_status: Option<NonZeroU8>) {
         self.cluster_status.set(cluster_status);
     }
 
     /// The currently stashed cluster-specific status, if any.
-    pub fn cluster_status(&self) -> Option<u16> {
-        match self.cluster_status.get() {
-            0 => None,
-            n => Some(n as u16),
-        }
+    pub fn cluster_status(&self) -> Option<NonZeroU8> {
+        self.cluster_status.get()
     }
 
     pub fn status(&self, status: IMStatusCode) -> Option<AttrStatus> {
