@@ -25,7 +25,7 @@ use core::pin::pin;
 
 use domain::base::Message;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::{select, select4, Either};
 use embassy_time::{Duration, Timer};
 
 use rand_core::Rng;
@@ -58,6 +58,15 @@ mod respond;
 mod types;
 
 const MAX_SERVICES: usize = MAX_FABRICS + 1;
+
+/// The TTL of the records announced and answered with.
+const TTL_SECS: u32 = 120;
+
+/// How many times the services are announced, at startup and on a change.
+const ANNOUNCEMENTS: u8 = 2;
+
+/// The interval between those announcements.
+const ANNOUNCE_INTERVAL_SECS: u64 = 1;
 
 /// A built-in mDNS responder for Matter, utilizing a custom mDNS protocol implementation.
 ///
@@ -301,36 +310,55 @@ impl BuiltinMdns {
         S: NetworkSend,
         C: Crypto,
     {
+        // The services are announced at startup and whenever they change -
+        // twice, a second apart (RFC 6762 section 8.3) - and not otherwise:
+        // queriers refresh their caches by themselves, and a device that sleeps
+        // is not woken up to re-announce.
+        let mut announcements = ANNOUNCEMENTS;
+
         loop {
-            let mut notification = pin!(matter.transport().wait_mdns());
-            let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
+            {
+                let mut send_guard = send.lock().await;
 
-            select(&mut notification, &mut timeout).await;
+                let send_guard = &mut *send_guard;
+                let (send, services_new) = (&mut send_guard.0, &mut *send_guard.1);
 
-            let mut send_guard = send.lock().await;
+                services_new.clear();
+                matter.mdns_services(|s| {
+                    services_new
+                        .push(s)
+                        .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
+                })?;
 
-            let send_guard = &mut *send_guard;
-            let (send, services_new) = (&mut send_guard.0, &mut *send_guard.1);
+                for service in &*services_cur {
+                    if !services_new.iter().any(|s| s == service) {
+                        trace!(
+                            "MdnsLocalService {:?} is no longer live and will be retired",
+                            service
+                        );
 
-            services_new.clear();
-            matter.mdns_services(|s| {
-                services_new
-                    .push(s)
-                    .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
-            })?;
+                        Self::broadcast_one(
+                            &mut *send,
+                            host,
+                            service,
+                            true,
+                            ipv4_interface,
+                            ipv6_interface,
+                            matter,
+                            &crypto,
+                        )
+                        .await?;
+                    }
+                }
 
-            for service in &*services_cur {
-                if !services_new.iter().any(|s| s == service) {
-                    trace!(
-                        "MdnsLocalService {:?} is no longer live and will be retired",
-                        service
-                    );
+                for service in &*services_new {
+                    trace!("Announcing service {:?}", service);
 
                     Self::broadcast_one(
                         &mut *send,
                         host,
                         service,
-                        true,
+                        false,
                         ipv4_interface,
                         ipv6_interface,
                         matter,
@@ -338,28 +366,26 @@ impl BuiltinMdns {
                     )
                     .await?;
                 }
+
+                services_cur.clear();
+                services_cur
+                    .extend_from_slice(services_new)
+                    .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
             }
 
-            for service in &*services_new {
-                trace!("Announcing service {:?}", service);
+            announcements -= 1;
 
-                Self::broadcast_one(
-                    &mut *send,
-                    host,
-                    service,
-                    false,
-                    ipv4_interface,
-                    ipv6_interface,
-                    matter,
-                    &crypto,
-                )
-                .await?;
+            if announcements > 0 {
+                let changed = matter.transport().wait_mdns();
+                let next = Timer::after(Duration::from_secs(ANNOUNCE_INTERVAL_SECS));
+
+                if let Either::First(()) = select(changed, next).await {
+                    announcements = ANNOUNCEMENTS;
+                }
+            } else {
+                matter.transport().wait_mdns().await;
+                announcements = ANNOUNCEMENTS;
             }
-
-            services_cur.clear();
-            services_cur
-                .extend_from_slice(services_new)
-                .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
         }
     }
 
@@ -378,7 +404,7 @@ impl BuiltinMdns {
         S: NetworkSend,
         C: Crypto,
     {
-        let ttl = if service_remove { 0 } else { 60 };
+        let ttl = if service_remove { 0 } else { TTL_SECS };
 
         for addr in Iterator::chain(
             ipv4_interface
@@ -405,7 +431,7 @@ impl BuiltinMdns {
             let buf = &mut *tx_buf;
 
             let (service_dns, buf) = service.service(matter, buf)?;
-            let len = host.broadcast(&service_dns, buf, 60, ttl)?;
+            let len = host.broadcast(&service_dns, buf, TTL_SECS, ttl)?;
             if len == 0 {
                 continue;
             }
@@ -544,7 +570,7 @@ impl BuiltinMdns {
         let src_addr = unwrap!(addr.udp());
         let legacy_unicast = src_addr.port() != MDNS_PORT;
 
-        let (len, mode) = match host.respond(&service, query, buf, 60, legacy_unicast) {
+        let (len, mode) = match host.respond(&service, query, buf, TTL_SECS, legacy_unicast) {
             Ok(r) => r,
             Err(err) => {
                 warn!("mDNS protocol error {} while replying to {}", err, addr);
