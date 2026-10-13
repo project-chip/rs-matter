@@ -321,11 +321,11 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     // Phase 5 - the device reboots and is commissioned again by the *same*
     // controller. A reboot wipes the device's session table, but the controller
     // still holds its half of the PASE session from the first run, and
-    // `initiate_pase` reuses a PASE session by peer address alone. So the first
-    // step of the second run lands on a session the device no longer has. The
-    // device answers `SessionNotFound`, the controller drops its stale session,
-    // and phase 1 must retry on a fresh one rather than fail - which is what
-    // used to limit a controller to one commissioning per process.
+    // `initiate_pase` reuses a PASE session by peer address alone. The device
+    // ignores anything sent on a session it no longer has, so
+    // `Commissioner::commission` must start on a fresh PASE session rather than
+    // lose phase 1 to a stale one - which is what used to limit a controller to
+    // one commissioning per process.
     //
     // `test_commission` mints a fresh controller fabric, so the device simply
     // gains a second fabric (no `AddNOC` conflict with the first).
@@ -425,17 +425,10 @@ async fn test_commission<C: Crypto>(
 /// drops it up front; otherwise phase 2 resumes it and only learns it is dead by
 /// losing an attempt - fatal when given a single one, as here.
 ///
-/// Two other things would clear that session first and let this pass without
-/// the fix, so both are ruled out. The device is reset *locally*: a
-/// `RemoveFabric` could close the session over the wire. And phase 1 starts on
-/// a fresh PASE session: a stale one draws a `SessionNotFound`, which drops
-/// every secure session to the device, the stale CASE session included.
-///
-/// Over UDP a third one can't be ruled out, so only the TCP variant exercises
-/// the fix: the controller's trailing MRP ack for `CommissioningComplete` can
-/// reach the device after its reset, and draws a `SessionNotFound` that clears
-/// the session anyway. TCP has no MRP acks - nor does BTP, where commissioning
-/// is typically given a single phase 2 attempt.
+/// The device is reset *locally*: a `RemoveFabric` could close the session
+/// over the wire and let this pass without the fix. A device that merely lost
+/// the session ignores anything sent on it, so nothing else clears it - over
+/// UDP or TCP.
 async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
@@ -488,8 +481,6 @@ async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
     device_matter.with_state(|state| state.sessions.remove_where(|_| true));
     device_matter.with_state(|state| state.fabrics.remove(first.fabric_index))?;
     device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
-    // A fresh PASE session for phase 1, so nothing there clears the stale one.
-    matter.with_state(|state| state.sessions.remove_where(pase_to_device));
 
     // Second run: same fabric and node ID, a single phase 2 attempt.
     let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
