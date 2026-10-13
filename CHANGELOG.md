@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Evict sessions so that every fabric keeps the CASE sessions it is guaranteed (`CapabilityMinima.CaseSessionsPerFabric`): a full session table evicts a CASE session within its fabric's share only when no other session can be evicted, and group sessions never evict a live CASE session; a build warning flags `max-sessions-*` too small for 3 CASE sessions per fabric (#597)
+* Breaking: the `max-fabrics-1` to `max-fabrics-4` features now take effect (#597)
 * Breaking: remove the non-standard Secure Channel status code `SCStatusCodes::SessionNotFound` (5), with all associated processing of it (#596)
 * Fix: a failed subscription report no longer removes a session to the subscriber, which could hit a newer, healthy session to the same peer; the transport already expires a session whose peer stopped acknowledging (#594)
 * Fix: attribute changes made while a new subscription's priming report is in flight are no longer purged before that subscription reports them (#592)
