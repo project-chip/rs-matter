@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * ICD-aware subscription reporting: an Intermittently Connected Device keeps its subscriptions alive with its own wake-ups, rather than being woken up by them (#590)
   * Breaking: `ImStats` gains `next_keep_alive_at`
   * Breaking: `IcdAdvertisement` gains `idle_mode_duration_s`
-* New: `BasicInfoConfig::min_subscription_max_interval_secs` (default `DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS`, 40 s as before): the * Fix: the fail-safe and commissioning window expiry checks no longer wake the device every second; they sleep until the earlier of the two deadlines, or until one is armed / opened (#590)
-least max interval granted to a (non-ICD) subscription (#590)
+* New: `BasicInfoConfig::min_subscription_max_interval_secs` (default `DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS`, 40 s as before): the least max interval granted to a (non-ICD) subscription (#590)
+* Fix: the fail-safe and commissioning window expiry checks no longer wake the device every second; they sleep until the earlier of the two deadlines, or until one is armed / opened (#590)
 * Evict sessions so that every fabric keeps the CASE sessions it is guaranteed (`CapabilityMinima.CaseSessionsPerFabric`): a full session table evicts a CASE session within its fabric's share only when no other session can be evicted, and group sessions never evict a live CASE session; a startup warning flags `max-sessions-*` too small for 3 CASE sessions per fabric (#597)
 * Breaking: the `max-fabrics-1` to `max-fabrics-4` features now take effect (#597)
 * Breaking: remove the non-standard Secure Channel status code `SCStatusCodes::SessionNotFound` (5), with all associated processing of it (#596)

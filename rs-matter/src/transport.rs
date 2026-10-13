@@ -145,10 +145,6 @@ pub struct Transport {
     /// A notification that a commissioning window was opened or closed (or expired).
     /// Single waiter: the ICD Management cluster handler.
     comm_window_changed: Notification,
-    /// A notification that the fail-safe was armed or a commissioning window
-    /// opened: a new deadline to expire them by.
-    /// Single waiter: the timeout checks of the Interaction Model.
-    timeouts_changed: Notification,
     /// A notification that the groups have been modified.
     /// Unused without the `groups` feature, but kept unconditionally so the
     /// in-place `Transport` initializer needs no feature-specific variant.
@@ -165,6 +161,10 @@ pub struct Transport {
     resumption_dirty: Notification,
     /// Counters for the messages crossing this node.
     counters: Mutex<RefCell<MessageCounters>>,
+    /// A notification that the fail-safe was armed or a commissioning window
+    /// opened: a new deadline to expire them by.
+    /// Single waiter: the timeout checks of the Interaction Model.
+    timeouts_changed: Notification,
 }
 
 impl Transport {
@@ -314,6 +314,7 @@ impl Transport {
     /// goes away or moves later only costs the timeout checks a needless
     /// wake-up. A commissioning window opening is covered by
     /// [`Self::notify_comm_window_changed`].
+    #[inline(never)]
     pub(crate) fn notify_timeouts_changed(&self) {
         self.timeouts_changed.notify();
     }

@@ -716,25 +716,22 @@ where
     async fn run_timeout_checks(&self) -> Result<(), Error> {
         loop {
             // Until the fail-safe or the commissioning window expires - or one of
-            // them is armed / opened anew. Neither armed nor open: until then.
-            let mut changed = pin!(self.matter.transport().wait_timeouts_changed());
-
+            // them is armed / opened anew.
             let deadline = self.matter.with_state(|state| {
                 match (
                     state.failsafe.expires_at(),
                     state.pase.comm_window_expires_at(),
                 ) {
-                    (Some(failsafe), Some(comm_window)) => Some(failsafe.min(comm_window)),
-                    (failsafe, comm_window) => failsafe.or(comm_window),
+                    (Some(failsafe), Some(comm_window)) => failsafe.min(comm_window),
+                    (failsafe, comm_window) => failsafe.or(comm_window).unwrap_or(Instant::MAX),
                 }
             });
 
-            match deadline {
-                Some(deadline) => {
-                    select(&mut changed, Timer::at(deadline)).await;
-                }
-                None => changed.await,
-            }
+            select(
+                self.matter.transport().wait_timeouts_changed(),
+                Timer::at(deadline),
+            )
+            .await;
 
             self.check_timeouts(None)?;
         }

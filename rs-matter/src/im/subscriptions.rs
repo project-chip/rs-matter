@@ -1049,14 +1049,14 @@ impl<const N: usize> SubscriptionsInner<N> {
             .enumerate()
             .map(|(index, sub)| (sub, &buffers[index]))
             .position(|(sub, rx)| {
-                (all && sub.is_report_allowed(now) && sub.reported_at < now)
-                    || sub.is_reportable(
-                        now,
-                        rx,
-                        &self.changed_attrs,
-                        event_numbers_watermark,
-                        keep_alive,
-                    )
+                sub.is_reportable(
+                    now,
+                    rx,
+                    &self.changed_attrs,
+                    event_numbers_watermark,
+                    keep_alive,
+                    all,
+                )
             })
     }
 
@@ -1208,6 +1208,9 @@ impl Subscription {
     }
 
     /// Return `true` if the subscription is due for a report based on the given parameters, or `false` if it is not.
+    ///
+    /// With `along`, a subscription allowed to report and not reported yet at
+    /// `now` is reportable too (see [`Subscriptions::report`]).
     fn is_reportable(
         &self,
         now: Instant,
@@ -1215,12 +1218,14 @@ impl Subscription {
         changed_attrs: &ChangedAttrs,
         event_numbers_watermark: EventNumber,
         keep_alive: KeepAlive,
+        along: bool,
     ) -> bool {
         if !self.is_report_allowed(now) {
             return false;
         }
 
-        self.is_report_due(now, keep_alive)
+        (along && self.reported_at < now)
+            || self.is_report_due(now, keep_alive)
             || self.is_affected_by_attr_changes(rx, changed_attrs)
             || self.is_affected_by_new_events(rx, event_numbers_watermark)
     }

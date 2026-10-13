@@ -402,7 +402,7 @@ impl ClusterHandler for GenCommHandler<'_> {
                 Ok(())
             }))?
         } else {
-            let status = CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
+            CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 state.failsafe.arm(
@@ -411,15 +411,13 @@ impl ClusterHandler for GenCommHandler<'_> {
                     sess.get_session_mode(),
                     &mut state.pase,
                 )
-            }))?;
-
-            ctx.exchange()
-                .matter()
-                .transport()
-                .notify_timeouts_changed();
-
-            status
+            }))?
         };
+
+        ctx.exchange()
+            .matter()
+            .transport()
+            .notify_timeouts_changed();
 
         // Broadcast for a fabric the expiry dropped (a not-yet-committed
         // `AddNOC` one; an `UpdateNOC`-mutated fabric is resurrected instead
