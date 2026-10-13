@@ -417,6 +417,8 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     Ok(())
                 })?;
 
+                exchange.matter().transport().notify_timeouts_changed();
+
                 SCStatusCodes::SessionEstablishmentSuccess
             }
             Err(status) => status,

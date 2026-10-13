@@ -359,6 +359,17 @@ impl FailSafe {
         Ok(fabric)
     }
 
+    /// When the armed fail-safe expires, or `None` if it is not armed.
+    pub fn expires_at(&self) -> Option<Instant> {
+        match &self.state {
+            State::Armed(ctx) => Some(
+                ctx.armed_at
+                    .saturating_add(Duration::from_secs(ctx.timeout_secs as u64)),
+            ),
+            _ => None,
+        }
+    }
+
     pub fn is_armed(&self) -> bool {
         matches!(self.state, State::Armed(_))
     }
@@ -1049,6 +1060,32 @@ mod tests {
         (rcac, fab_idx)
     }
 
+    /// The deadlines the timeout checks sleep until: the fail-safe's while armed,
+    /// the commissioning window's while open.
+    #[test]
+    fn expiry_deadlines() {
+        use embassy_time::{Duration, Instant};
+
+        let mut fs = FailSafe::new();
+        assert_eq!(fs.expires_at(), None);
+
+        let before = Instant::now();
+        fs = armed(&pase(0));
+        let expires_at = fs.expires_at().unwrap();
+        assert!(expires_at >= before + Duration::from_secs(DEFAULT_FAILSAFE_EXPIRY_SECS as u64));
+        assert!(
+            expires_at <= Instant::now() + Duration::from_secs(DEFAULT_FAILSAFE_EXPIRY_SECS as u64)
+        );
+
+        let mut pase = Pase::new();
+        assert_eq!(pase.comm_window_expires_at(), None);
+
+        let before = Instant::now();
+        open_window(&mut pase);
+        let expires_at = pase.comm_window_expires_at().unwrap();
+        assert!(expires_at >= before + Duration::from_secs(180));
+        assert!(expires_at <= Instant::now() + Duration::from_secs(180));
+    }
     #[test]
     fn new_and_init_are_idle() {
         use crate::utils::init::InitMaybeUninit;

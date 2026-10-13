@@ -414,6 +414,11 @@ impl ClusterHandler for GenCommHandler<'_> {
             }))?
         };
 
+        ctx.exchange()
+            .matter()
+            .transport()
+            .notify_timeouts_changed();
+
         // Broadcast for a fabric the expiry dropped (a not-yet-committed
         // `AddNOC` one; an `UpdateNOC`-mutated fabric is resurrected instead
         // and not reported). Outside `with_state`, since the broadcast runs
