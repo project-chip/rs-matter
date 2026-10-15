@@ -248,6 +248,18 @@ pub struct BasicInfoConfig<'a> {
     ///
     /// Not a real attribute.
     pub min_subscription_max_interval_secs: u16,
+    /// The greatest max interval granted to a subscription, in seconds: if specified,
+    /// what the subscriber asks for, but no more than this. This bounds how long a
+    /// subscriber will wait before timing out a silent device, speeding up background
+    /// reconnects after reboots.
+    ///
+    /// Not used by an Intermittently Connected Device, whose subscriptions take
+    /// their max interval from its idle mode duration.
+    ///
+    /// If `None`, the subscriber's requested ceiling is accepted without an upper cap.
+    ///
+    /// Not a real attribute.
+    pub max_subscription_max_interval_secs: Option<u16>,
 }
 
 impl BasicInfoConfig<'_> {
@@ -282,6 +294,7 @@ impl BasicInfoConfig<'_> {
             sii: None,
             tcp_supported: false,
             min_subscription_max_interval_secs: DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
+            max_subscription_max_interval_secs: None,
         }
     }
 }

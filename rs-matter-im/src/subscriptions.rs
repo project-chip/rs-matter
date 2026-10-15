@@ -2004,6 +2004,24 @@ pub(crate) fn icd_max_int_secs(idle_mode_duration_s: u32, min_int_floor_secs: u1
         .min(u16::MAX as u32) as u16
 }
 
+/// The max interval granted to a non-ICD subscription: what the subscriber asks
+/// for, bounded below by the configured minimum max interval and above by the
+/// optional maximum max interval (clamped no lower than the subscriber's min
+/// interval floor).
+pub(crate) fn subscription_max_int_secs(
+    req_max_int_ceil: u16,
+    min_int_floor: u16,
+    min_subscription_max_interval_secs: u16,
+    max_subscription_max_interval_secs: Option<u16>,
+) -> u16 {
+    let mut max_int = core::cmp::max(req_max_int_ceil, min_subscription_max_interval_secs);
+    if let Some(max_cap) = max_subscription_max_interval_secs {
+        let effective_cap = core::cmp::max(max_cap, min_int_floor);
+        max_int = core::cmp::min(max_int, effective_cap);
+    }
+    max_int
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -3542,6 +3560,27 @@ mod tests {
         assert_eq!(icd_max_int_secs(1, 0), 3);
         assert_eq!(icd_max_int_secs(60, 59), 62);
         assert_eq!(icd_max_int_secs(70_000, 0), u16::MAX);
+    }
+
+    #[test]
+    fn subscription_max_int() {
+        // When uncapped (None), the subscriber's requested ceiling is accepted
+        assert_eq!(subscription_max_int_secs(600, 0, 40, None), 600);
+
+        // When uncapped (None), the lower bound floor is enforced
+        assert_eq!(subscription_max_int_secs(10, 0, 40, None), 40);
+
+        // When capped, ceilings above the cap are clamped down
+        assert_eq!(subscription_max_int_secs(600, 0, 40, Some(120)), 120);
+
+        // When capped, ceilings below the cap are accepted
+        assert_eq!(subscription_max_int_secs(80, 0, 40, Some(120)), 80);
+
+        // When capped, lower bound floor is still enforced
+        assert_eq!(subscription_max_int_secs(10, 0, 40, Some(120)), 40);
+
+        // The effective cap never drops below the subscriber's min interval floor
+        assert_eq!(subscription_max_int_secs(600, 50, 40, Some(30)), 50);
     }
 
     #[test]
