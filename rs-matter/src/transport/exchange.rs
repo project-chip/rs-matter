@@ -1311,6 +1311,15 @@ impl<'a> Exchange<'a> {
     ) -> Result<Self, Error> {
         if received_timeout_ms > 0 {
             loop {
+                // The timer below only matters for a packet that is already waiting to be
+                // accepted, so wait for one first: an idle stack does not wake up every
+                // `received_timeout_ms` that way
+                matter
+                    .transport()
+                    .rx
+                    .wait_until(|packet| !packet.buf.is_empty())
+                    .await;
+
                 let mut accept = pin!(matter.transport().accept_if(matter, |_, exch, _| {
                     exch.mrp.has_rx_timed_out(received_timeout_ms as _)
                 }));
