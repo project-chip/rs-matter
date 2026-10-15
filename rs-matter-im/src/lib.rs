@@ -51,8 +51,8 @@ use crate::events::{EventReader, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
 use crate::invoker::HandlerInvoker;
 use crate::persist::KvBlobStoreAccess;
 use crate::subscriptions::{
-    icd_max_int_secs, KeepAlive, ReportContext as SubscriptionReport, Subscriptions,
-    SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
+    icd_max_int_secs, subscription_max_int_secs, KeepAlive, ReportContext as SubscriptionReport,
+    Subscriptions, SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
 };
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
@@ -869,9 +869,11 @@ where
         let min_int_secs = req.min_int_floor()?;
         let max_int_secs = match self.matter.icd_advertisement() {
             Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_secs),
-            None => core::cmp::max(
+            None => subscription_max_int_secs(
                 req.max_int_ceil()?,
+                min_int_secs,
                 self.matter.dev_det().min_subscription_max_interval_secs,
+                self.matter.dev_det().max_subscription_max_interval_secs,
             ),
         };
 
