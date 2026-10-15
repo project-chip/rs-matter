@@ -143,8 +143,9 @@ pub struct Transport {
     /// Single waiter: the ICD Management cluster handler.
     activity: Notification,
     /// A notification that a commissioning window was opened or closed (or expired).
-    /// Single waiter: the ICD Management cluster handler.
-    comm_window_changed: Notification,
+    /// Waiters: the ICD Management cluster handler, and whatever drives the BLE
+    /// commissioning transport.
+    comm_window_changed: MultiNotification,
     /// A notification that the groups have been modified.
     /// Unused without the `groups` feature, but kept unconditionally so the
     /// in-place `Transport` initializer needs no feature-specific variant.
@@ -181,7 +182,7 @@ impl Transport {
             mdns_browse: Signal::new(MdnsBrowseState::Idle),
             session_removed: MultiNotification::new(),
             activity: Notification::new(),
-            comm_window_changed: Notification::new(),
+            comm_window_changed: MultiNotification::new(),
             timeouts_changed: Notification::new(),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
@@ -201,7 +202,7 @@ impl Transport {
             mdns_browse <- Signal::init(MdnsBrowseState::Idle),
             session_removed <- MultiNotification::init(),
             activity <- Notification::init(),
-            comm_window_changed <- Notification::init(),
+            comm_window_changed <- MultiNotification::init(),
             timeouts_changed <- Notification::init(),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
@@ -302,7 +303,12 @@ impl Transport {
     /// Wait until a commissioning window is opened, closed, or expires
     /// (see [`crate::Matter::comm_window_state`]).
     ///
-    /// A single-waiter notification, consumed by the ICD Management cluster handler.
+    /// Only changes after this call count, so call it *before* reading the current
+    /// [`crate::Matter::comm_window_state`] and await the returned future afterwards: that
+    /// way a change in between is not missed.
+    ///
+    /// Any number of waiters, as long as they all run in the same async task as each other
+    /// (or else the notification busy-loops between the tasks).
     pub fn wait_comm_window_changed(&self) -> impl Future<Output = ()> + '_ {
         self.comm_window_changed.wait()
     }
@@ -768,6 +774,12 @@ impl Transport {
         let exchange = self
             .rx
             .with(|packet| {
+                // An empty buffer holds no packet: its peer and header are those of an earlier,
+                // already consumed one.
+                if packet.buf.is_empty() {
+                    return None;
+                }
+
                 matter.with_state(|state| {
                     let session = state
                         .sessions
