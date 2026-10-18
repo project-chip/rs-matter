@@ -140,7 +140,7 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
         impl core::convert::TryFrom<#krate::dm::AttrId> for AttributeId {
             type Error = #krate::error::Error;
 
-            fn try_from(id: #krate::dm::CmdId) -> Result<Self, Self::Error> {
+            fn try_from(id: #krate::dm::AttrId) -> Result<Self, Self::Error> {
                 AttributeId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::AttributeNotFound.into())
             }
         }
