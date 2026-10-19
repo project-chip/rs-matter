@@ -97,6 +97,10 @@ jobs:
         if: matrix.features == 'os'
         run: cd rs-matter; cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,persistent-subscriptions,max-group-keys-per-fabric-2,max-groups-per-fabric-4
 
+      - name: Test - Codegen & Macros
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cargo test -p rs-matter-codegen -p rs-matter-macros
+
       - name: Examples
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus
