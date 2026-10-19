@@ -69,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Miri support: fixed an aliasing issue in `PooledBuffers` and a `transmute` flagged by miri; unit tests for covering all unsafe code; miri CI run on those unit tests (#556)
 * Fix: narrow size of `cluster_status`.
 * Breaking: change to `set_cluster_status` and `cluster_status` on `CmdDetails` and `AttrDetails` and to the status constructors.
+* Fix: change argument type of `TryFrom` for `AttributeId` from `CmdId` to `AttrId` (#600).
 
 ## [0.4.1] - 2026-09-17
 * Fix: `NameSliceIter::next_back` in the builtin mDNS responder always returned `None`, breaking reverse label iteration (#554)
