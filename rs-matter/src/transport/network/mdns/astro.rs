@@ -31,7 +31,7 @@ use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::mdns::{CommissionableFilter, DottedName, MdnsRemoteService};
+use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::Matter;
 
@@ -171,9 +171,9 @@ impl AstroMdns {
     /// while the browse is in flight, so the Matter transport is not starved.
     async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            let _filter: CommissionableFilter = matter.transport().wait_mdns_browse_request().await;
+            let query = matter.transport().wait_mdns_browse_request().await;
 
-            let browser = ServiceBrowserBuilder::new("_matterc._udp")
+            let browser = ServiceBrowserBuilder::new(query.base_service_type())
                 .browse()
                 .map_err(|e| {
                     error!("Failed to create service browser: {:?}", e);

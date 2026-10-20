@@ -167,9 +167,13 @@ impl ZeroconfMdns {
     /// happen in the deposit) while the browse is in flight.
     async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            let _filter = matter.transport().wait_mdns_browse_request().await;
+            let query = matter.transport().wait_mdns_browse_request().await;
 
-            let service_type = ServiceType::new("matterc", "udp")?;
+            let [service, protocol] = query.base_service_labels();
+            let service_type = ServiceType::new(
+                service.trim_start_matches('_'),
+                protocol.trim_start_matches('_'),
+            )?;
             let (discovered, _stop) = Self::spawn_browser(service_type);
 
             while matter.transport().mdns_browse_in_flight() {

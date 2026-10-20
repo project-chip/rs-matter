@@ -871,47 +871,127 @@ pub(crate) enum MdnsResolveState {
     },
 }
 
-/// Maximum number of already-tried commissionable instance ids a single
-/// [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
-/// request can exclude - i.e. how many short-discriminator-collision candidates
-/// a caller can step through before giving up. Small and fixed (no heap).
-pub(crate) const MAX_BROWSE_EXCLUDE: usize = 6;
+/// How many ids one window of a
+/// [`Transport::browse`](crate::transport::Transport::browse) collects. Small and
+/// fixed (no heap): more nodes just take more windows.
+pub(crate) const MAX_BROWSE_IDS: usize = 6;
 
-/// The set of commissionable instance ids to skip on a browse (already tried).
-pub(crate) type BrowseExclude = Vec<u64, MAX_BROWSE_EXCLUDE>;
+/// The ids an mDNS browse request holds (see [`MAX_BROWSE_IDS`]).
+pub(crate) type BrowseIds = Vec<u64, MAX_BROWSE_IDS>;
 
-/// The state of the single in-flight mDNS commissionable-**browse** "rendezvous"
-/// shared between
-/// [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
-/// callers and the running mDNS responder.
+/// What an mDNS browse looks for.
 ///
-/// Prototype: at most one browse in flight at a time, returning the *first*
-/// matching node whose id is not in the request's exclude set (so a caller can
-/// step to the "next" candidate on a short-discriminator collision). See
-/// `Transport::browse_commissionable` for the protocol.
+/// An mDNS responder awaits one with
+/// [`Transport::wait_mdns_browse_request`](crate::transport::Transport::wait_mdns_browse_request),
+/// browses the service it names, and deposits what it finds with
+/// [`Transport::try_deposit_mdns_browse`](crate::transport::Transport::try_deposit_mdns_browse).
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MdnsBrowseQuery {
+    /// Commissionable nodes matching the filter.
+    Commissionable(CommissionableFilter),
+    /// The operational nodes of the fabric with this compressed fabric ID.
+    Operational { compressed_fabric_id: u64 },
+}
+
+impl MdnsBrowseQuery {
+    /// The DNS-SD service type browsed, without subtype or domain:
+    /// `_matterc._udp` or `_matter._tcp`.
+    pub fn base_service_type(&self) -> &'static str {
+        match self {
+            Self::Commissionable(_) => "_matterc._udp",
+            Self::Operational { .. } => "_matter._tcp",
+        }
+    }
+
+    /// Whether a found instance must be resolved before it is deposited: a
+    /// commissionable one is matched by its TXT records, while an operational
+    /// one needs only its instance name.
+    pub fn needs_resolve(&self) -> bool {
+        matches!(self, Self::Commissionable(_))
+    }
+
+    /// The labels of [`Self::base_service_type`], e.g. `["_matter", "_tcp"]`.
+    pub(crate) fn base_service_labels(&self) -> [&'static str; 2] {
+        match self {
+            Self::Commissionable(_) => ["_matterc", "_udp"],
+            Self::Operational { .. } => ["_matter", "_tcp"],
+        }
+    }
+
+    /// The service type to browse, narrowed to the most selective subtype (see
+    /// [`Self::subtype`]), with `.local` appended if `include_local`.
+    pub fn service_type(&self, buf: &mut heapless::String<64>, include_local: bool) {
+        buf.clear();
+        let suffix = if include_local { ".local" } else { "" };
+
+        let mut sbuf = heapless::String::<24>::new();
+        if let Some(sub) = self.subtype(&mut sbuf) {
+            write_unwrap!(buf, "{}._sub.{}{}", sub, self.base_service_type(), suffix);
+        } else {
+            write_unwrap!(buf, "{}{}", self.base_service_type(), suffix);
+        }
+    }
+
+    /// The most selective browse subtype label, written into `buf`: that of the
+    /// [`CommissionableFilter`], or `_I<compressed fabric id>` for an operational
+    /// browse. `None` for an unfiltered commissionable browse.
+    pub(crate) fn subtype<'b>(&self, buf: &'b mut heapless::String<24>) -> Option<&'b str> {
+        match self {
+            Self::Commissionable(filter) => filter.subtype(buf),
+            Self::Operational {
+                compressed_fabric_id,
+            } => {
+                buf.clear();
+                write_unwrap!(buf, "_I{:016X}", compressed_fabric_id);
+
+                Some(buf.as_str())
+            }
+        }
+    }
+
+    /// The id of a discovered service if it matches this query: its
+    /// commissionable instance id, or its operational node ID.
+    pub(crate) fn matching_id<'a, I, A, T>(
+        &self,
+        service: &MdnsRemoteService<I, A, T>,
+    ) -> Option<u64>
+    where
+        I: ToLabelIter,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+    {
+        match self {
+            Self::Commissionable(filter) => commissionable_instance_id(&service.instance_name)
+                .filter(|_| filter.matches(service)),
+            Self::Operational {
+                compressed_fabric_id,
+            } => operational_instance_ids(&service.instance_name)
+                .filter(|(fabric, _)| fabric == compressed_fabric_id)
+                .map(|(_, node_id)| node_id),
+        }
+    }
+}
+
+/// A browse request: what to look for, and the smallest matching ids above
+/// `after` found so far.
+#[derive(Debug, Clone)]
+pub(crate) struct MdnsBrowse {
+    pub query: MdnsBrowseQuery,
+    pub after: u64,
+    pub ids: BrowseIds,
+}
+
+/// The state of the single mDNS **browse** "rendezvous" shared between
+/// [`Transport::browse`](crate::transport::Transport::browse) callers and the
+/// running mDNS responder. At most one browse is in flight at a time.
 #[derive(Debug, Clone)]
 pub(crate) enum MdnsBrowseState {
     /// No browse in progress; a caller may place a request.
     Idle,
-    /// A caller has placed a request (filter + ids to skip); not yet picked up.
-    Requested {
-        filter: CommissionableFilter,
-        exclude: BrowseExclude,
-    },
-    /// The responder picked up the request and sent the browse query; awaiting a match.
-    InFlight {
-        filter: CommissionableFilter,
-        exclude: BrowseExclude,
-    },
-    /// The responder deposited the first matching, non-excluded commissionable node.
-    Found {
-        ip: IpAddr,
-        port: u16,
-        /// IPv6 scope (zone) id for a link-local `ip`; 0 otherwise. See
-        /// [`MdnsRemoteService::scope_id`].
-        scope_id: u32,
-        id: u64,
-    },
+    /// A caller has placed a request; not yet picked up.
+    Requested(MdnsBrowse),
+    /// The responder picked up the request and is browsing.
+    InFlight(MdnsBrowse),
 }
 
 /// Score an IP address for prioritization; higher is more preferred.
@@ -1011,6 +1091,17 @@ fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
 pub(crate) fn commissionable_instance_id<I: ToLabelIter>(instance: &I) -> Option<u64> {
     let first = instance.iter_labels().find(|l| !l.is_empty())?;
     parse_hex_u64(core::str::from_utf8(first.as_slice()).ok()?)
+}
+
+/// The compressed fabric ID and node ID of a discovered operational instance
+/// (`<fabric>-<node>`, both hex), or `None` if the first label isn't one.
+pub(crate) fn operational_instance_ids<I: ToLabelIter>(instance: &I) -> Option<(u64, u64)> {
+    let first = instance.iter_labels().find(|l| !l.is_empty())?;
+    let (fabric, node) = core::str::from_utf8(first.as_slice())
+        .ok()?
+        .split_once('-')?;
+
+    Some((parse_hex_u64(fabric)?, parse_hex_u64(node)?))
 }
 
 /// Parse a hex string as a `u64` (case-insensitive). `None` on empty/overflow/
@@ -1331,6 +1422,36 @@ mod tests {
         }
         .service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_matterc._udp");
+    }
+
+    #[test]
+    fn operational_browse_query_uses_the_fabric_subtype() {
+        let query = MdnsBrowseQuery::Operational {
+            compressed_fabric_id: 0xEADD_BAEB_88C4_1C26,
+        };
+
+        let mut buf = heapless::String::new();
+        query.service_type(&mut buf, true);
+        assert_eq!(buf.as_str(), "_IEADDBAEB88C41C26._sub._matter._tcp.local");
+        assert_eq!(query.base_service_type(), "_matter._tcp");
+    }
+
+    #[test]
+    fn operational_instance_ids_parse() {
+        assert_eq!(
+            operational_instance_ids(&DottedName(
+                "EADDBAEB88C41C26-000000000001B66B._matter._tcp.local"
+            )),
+            Some((0xEADD_BAEB_88C4_1C26, 0x1B66B))
+        );
+        assert_eq!(
+            operational_instance_ids(&DottedName("000000000001B66B._matterc._udp.local")),
+            None
+        );
+        assert_eq!(
+            operational_instance_ids(&DottedName("XYZ-1._matter._tcp.local")),
+            None
+        );
     }
 
     // --- small helpers ---

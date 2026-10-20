@@ -246,12 +246,11 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
 
     /// Phase 1 — drive `ArmFailSafe` through `AddNOC` over PASE.
     ///
-    /// Pre-condition: PASE handshake against the device has completed
-    /// successfully on `matter`'s transport. The function locates that
-    /// PASE session by the `(fab=0, peer=0, secure=true)` lookup tuple
-    /// every step uses — it implicitly assumes a single in-flight PASE
-    /// session, which is the case in practice for a controller driving
-    /// one device at a time.
+    /// Runs over the PASE session to `peer_addr` if there is one, e.g. one the
+    /// caller opened to read the device first: while the device holds it, it
+    /// accepts no other. Otherwise it establishes one with `passcode`. Either
+    /// way the session is expired on return, so a later commissioning of the
+    /// same peer starts a new one.
     ///
     /// `device_node_id` is the NodeID the caller wishes to assign to
     /// the device on the controller's fabric. `validity` is the NOC's
@@ -262,7 +261,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     ///
     /// On success the device has accepted our RCAC + NOC and assigned
     /// us a [`CommissionResult::fabric_index`], but its fail-safe is
-    /// still armed and PASE is still live. Phase 2
+    /// still armed. Phase 2
     /// ([`Self::complete_via_case`]) finalises commissioning over
     /// CASE; if the caller doesn't run it before the fail-safe expires
     /// the device rolls back.
@@ -279,24 +278,76 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         // decommission): no live device can hold an ID we are only now handing
         // out. Left in place, phase 2 would resume it and lose an attempt finding
         // out it is dead - fatal when it is given a single one.
-        //
-        // Likewise, every commissioning starts on a fresh PASE session. One left
-        // over from an earlier commissioning of this peer may be one the device
-        // has since lost (e.g. it rebooted); the device ignores anything sent on
-        // it, so reusing it would cost the first step its whole MRP retry ladder.
         let fab_idx = self.fab_idx;
         self.matter.with_state(|state| {
             state.sessions.remove_case_for_peer(fab_idx, device_node_id);
-            state
-                .sessions
-                .remove_where(|sess| sess.is_pase_for_addr(&peer_addr));
         });
 
         // Notify that a session was removed
         self.matter.transport().notify_session_removed();
 
+        let result = self
+            .add_to_fabric(peer_addr, passcode, opts, device_node_id, validity)
+            .await;
+
+        // Expired rather than removed, so the last step's trailing ack still goes
+        // out. The device drops the session once commissioned, and after a
+        // failure it may have lost it already (e.g. it rebooted).
+        self.matter.with_state(|state| {
+            state
+                .sessions
+                .expire_where(|sess| !sess.is_expired() && sess.is_pase_for_addr(&peer_addr));
+        });
+
+        result
+    }
+
+    /// Phase 2 — establish CASE against the device's freshly-installed
+    /// operational identity and invoke `CommissioningComplete` over it.
+    ///
+    /// The device's operational endpoint is discovered via `_matter._tcp` mDNS
+    /// from `(fabric, device_node_id)`.
+    ///
+    /// The sequence is attempted up to [`Self::with_case_attempts`] times: it
+    /// runs immediately after the device was told to join its network, so losing
+    /// the first race against the device coming online is routine.
+    pub async fn complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
+        let fab_idx = self.fab_idx;
+
+        let mut last_err = None;
+
+        for attempt in 0..self.case_attempts.max(1) {
+            match self
+                .commissioning_complete(fab_idx, phase1.device_node_id)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(err) if Self::phase2_worth_retrying(&err) => {
+                    warn!(
+                        "Commissioning phase 2 attempt {} failed: {}; retrying",
+                        attempt + 1,
+                        err
+                    );
+                    last_err = Some(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| ErrorCode::Failure.into()))
+    }
+
+    /// Phase 1 of [`Self::commission`], over PASE.
+    async fn add_to_fabric(
+        &mut self,
+        peer_addr: Address,
+        passcode: u32,
+        opts: &CommissionOptions,
+        device_node_id: NodeId,
+        validity: Validity,
+    ) -> Result<CommissionResult, Error> {
         // The first PASE step (ArmFailSafe) establishes the PASE session via
-        // `initiate_pase`; the rest reuse it.
+        // `initiate_pase` unless there is one already; the rest reuse it.
         self.arm_fail_safe(peer_addr, passcode, opts.fail_safe_secs)
             .await?;
 
@@ -381,41 +432,6 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
             fabric_index,
             device_node_id,
         })
-    }
-
-    /// Phase 2 — establish CASE against the device's freshly-installed
-    /// operational identity and invoke `CommissioningComplete` over it.
-    ///
-    /// The device's operational endpoint is discovered via `_matter._tcp` mDNS
-    /// from `(fabric, device_node_id)`.
-    ///
-    /// The sequence is attempted up to [`Self::with_case_attempts`] times: it
-    /// runs immediately after the device was told to join its network, so losing
-    /// the first race against the device coming online is routine.
-    pub async fn complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
-        let fab_idx = self.fab_idx;
-
-        let mut last_err = None;
-
-        for attempt in 0..self.case_attempts.max(1) {
-            match self
-                .commissioning_complete(fab_idx, phase1.device_node_id)
-                .await
-            {
-                Ok(()) => return Ok(()),
-                Err(err) if Self::phase2_worth_retrying(&err) => {
-                    warn!(
-                        "Commissioning phase 2 attempt {} failed: {}; retrying",
-                        attempt + 1,
-                        err
-                    );
-                    last_err = Some(err);
-                }
-                Err(err) => return Err(err),
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| ErrorCode::Failure.into()))
     }
 
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.

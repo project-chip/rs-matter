@@ -323,9 +323,10 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     // still holds its half of the PASE session from the first run, and
     // `initiate_pase` reuses a PASE session by peer address alone. The device
     // ignores anything sent on a session it no longer has, so
-    // `Commissioner::commission` must start on a fresh PASE session rather than
-    // lose phase 1 to a stale one - which is what used to limit a controller to
-    // one commissioning per process.
+    // `Commissioner::commission` expires its PASE session on return, and the
+    // second run starts on a fresh one rather than lose phase 1 to the stale
+    // one - which is what used to limit a controller to one commissioning per
+    // process.
     //
     // `test_commission` mints a fresh controller fabric, so the device simply
     // gains a second fabric (no `AddNOC` conflict with the first).
@@ -337,6 +338,17 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
 
     info!("=== Phase 6: a stale CASE session to the node ID being assigned is dropped ===");
     test_stale_case_is_dropped(
+        matter,
+        crypto,
+        device_matter,
+        device_crypto,
+        peer_addr,
+        use_tcp,
+    )
+    .await?;
+
+    info!("=== Phase 7: commission() runs over the PASE session the caller opened ===");
+    test_open_pase_is_reused(
         matter,
         crypto,
         device_matter,
@@ -494,6 +506,52 @@ async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
     .with_transport(transport(use_tcp))
     .with_case_attempts(1);
     run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+
+    Ok(())
+}
+
+/// `Commissioner::commission` must run over a PASE session the caller opened
+/// to the device (e.g. to read it first), not replace it: while a device holds
+/// a PASE session it accepts no other.
+async fn test_open_pase_is_reused<C: Crypto, D: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    device_matter: &Matter<'_>,
+    device_crypto: &D,
+    peer_addr: Address,
+    use_tcp: bool,
+) -> Result<(), Error> {
+    let device = peer_addr.canonical();
+    let pase_to_device = move |sess: &Session| {
+        matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+            && sess.get_peer_addr().canonical() == device
+    };
+
+    device_matter.with_state(|state| state.sessions.remove_where(|_| true));
+    device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
+
+    drop(Exchange::initiate_pase(matter, crypto, peer_addr, TEST_PASSCODE).await?);
+
+    let open = matter.with_state(|state| {
+        state
+            .sessions
+            .iter()
+            .find(|sess| pase_to_device(sess) && !sess.is_expired())
+            .map(Session::get_local_sess_id)
+    });
+    let open = open.expect("no PASE session to the device");
+
+    test_commission(matter, crypto, peer_addr, use_tcp).await?;
+
+    // Still there, so it was used rather than replaced; expired, as it is done.
+    let expired = matter.with_state(|state| {
+        state
+            .sessions
+            .iter()
+            .find(|sess| pase_to_device(sess) && sess.get_local_sess_id() == open)
+            .map(Session::is_expired)
+    });
+    assert_eq!(expired, Some(true));
 
     Ok(())
 }

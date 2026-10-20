@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: `Commissioner::commission` runs over an already open PASE session to the device instead of dropping it; a device accepts no other while it holds one (#603)
+* New: `Transport::browse` lists every commissionable node matching a filter, or every node of a fabric, over mDNS; `Transport::resolve_commissionable_addrs` resolves a commissionable node (#603)
+  * Breaking: replaces `Transport::browse_commissionable`
+  * Breaking: `Transport::wait_mdns_browse_request` returns an `MdnsBrowseQuery`
 * New: `rs_matter::ota`: the OTA image file format (#602)
 * New: `cargo xtask ota-image`: create, show, extract and re-header OTA images (#602)
 * Fix: the OTA Provider sends the image's own `SoftwareVersionString` (#602)
