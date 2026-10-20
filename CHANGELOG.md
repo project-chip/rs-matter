@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: `rs_matter::ota`: the OTA image file format (#602)
+* New: `cargo xtask ota-image`: create, show, extract and re-header OTA images (#602)
+* Fix: the OTA Provider sends the image's own `SoftwareVersionString` (#602)
+  * Breaking: `OtaImageMeta` gains `version_str`, loses `size`
+* OTA Provider: `OtaImagesRegistry` is told the requesting node, and gets `NotifyUpdateApplied` (#602)
+  * Breaking: `query` and `apply` take an `OtaRequestorId`; new `applied` method
 * Fix: the built-in mDNS responder no longer re-announces its services every 30 s, which kept waking a sleeping device (#598)
 * ICD-aware subscription reporting: an Intermittently Connected Device keeps its subscriptions alive with its own wake-ups, rather than being woken up by them (#590)
   * Breaking: `ImStats` gains `next_keep_alive_at`

@@ -32,6 +32,7 @@ mod copyright;
 mod coverage;
 mod itest;
 mod onboard;
+mod ota;
 mod pics;
 mod tlv;
 
@@ -102,6 +103,11 @@ enum Command {
     /// the NFC tag NDEF message and, on request, the QR code itself on the
     /// console or as a text/SVG file.
     Onboard(onboard::OnboardArgs),
+    /// Create, show, unpack or re-header Matter OTA image files
+    OtaImage {
+        #[command(subcommand)]
+        action: ota::Action,
+    },
     /// Decode TLV octets
     Tlv {
         /// The TLV octets are decimal
@@ -267,6 +273,7 @@ impl Command {
                 tlv,
             } => tlv::decode(tlv, *dec, *cert, *as_asn1),
             Command::Onboard(args) => onboard::run(args),
+            Command::OtaImage { action } => ota::run(action),
             Command::Coverage(args) => coverage::run(args),
         }
     }

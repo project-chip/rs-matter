@@ -40,7 +40,10 @@ use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::IfMutex;
 
-use super::{OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, MAX_FILE_DESIGNATOR};
+use super::{
+    OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, OtaRequestorId,
+    MAX_FILE_DESIGNATOR,
+};
 
 /// The CSA-IOT production DCL REST endpoint.
 pub const DCL_MAINNET: &str = "https://on.dcl.csa-iot.org";
@@ -191,7 +194,7 @@ impl<H: OtaHttp> DclImages<'_, H> {
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
-        designator_buf: &'b mut [u8],
+        buf: &'b mut [u8],
     ) -> Option<OtaImageMeta<'b>> {
         let mut guard = self.locked.lock().await;
         let locked = &mut *guard;
@@ -227,18 +230,23 @@ impl<H: OtaHttp> DclImages<'_, H> {
             return None;
         }
 
-        // 3. Mint the designator and cache the resolution for the imminent download.
+        // 3. Copy out the version string, mint the designator, cache for the download.
+        let (version_buf, designator_buf) =
+            buf.split_at_mut_checked(mv.software_version_str.len())?;
+        version_buf.copy_from_slice(mv.software_version_str.as_bytes());
+        let version_str = core::str::from_utf8(version_buf).ok()?;
+
         let designator =
             write_designator(designator_buf, vendor_id, product_id, mv.software_version)?;
         store(&mut locked.cache, designator, mv.ota_url, mv.ota_file_size)?;
 
         Some(OtaImageMeta {
             version: mv.software_version,
+            version_str,
             file_designator: designator,
             // The designator (`<vid>-<pid>-<version>`) is well under 32 bytes, so
             // it doubles as the update token - identifying the image at apply time.
             update_token: designator.as_bytes(),
-            size: Some(mv.ota_file_size),
             user_consent_needed: false,
         })
     }
@@ -263,14 +271,15 @@ impl<H: OtaHttp> OtaImagesRegistry for DclImages<'_, H> {
     // `OtaImagesRegistry`); `apply` uses the default (immediate `Proceed`).
     async fn query<'b>(
         &self,
+        _requestor: OtaRequestorId,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
         _requestor_can_consent: bool,
-        designator_buf: &'b mut [u8],
+        buf: &'b mut [u8],
     ) -> OtaQueryOutcome<'b> {
         match self
-            .resolve_query(vendor_id, product_id, current_version, designator_buf)
+            .resolve_query(vendor_id, product_id, current_version, buf)
             .await
         {
             Some(image) => OtaQueryOutcome::Available(image),
@@ -375,6 +384,8 @@ struct DetailResponse<'a> {
 struct ModelVersion<'a> {
     #[serde(rename = "softwareVersion")]
     software_version: u32,
+    #[serde(borrow, rename = "softwareVersionString")]
+    software_version_str: &'a str,
     #[serde(rename = "softwareVersionValid")]
     valid: bool,
     #[serde(borrow, rename = "otaUrl")]
@@ -431,9 +442,15 @@ fn parse_designator(fd: &[u8]) -> Option<(u16, u16, u32)> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::future::Future;
+    use core::num::NonZeroU8;
     use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use super::*;
+
+    const REQUESTOR: OtaRequestorId = OtaRequestorId {
+        fab_idx: NonZeroU8::MIN,
+        node_id: 0x1122,
+    };
 
     const VERSIONS_JSON: &[u8] =
         br#"{"modelVersions":{"vid":4660,"pid":22136,"softwareVersions":[1,2,10]}}"#;
@@ -483,6 +500,7 @@ mod tests {
         let (detail, _) = serde_json_core::from_slice::<DetailResponse>(DETAIL_JSON).unwrap();
         let mv = detail.model_version;
         assert_eq!(mv.software_version, 10);
+        assert_eq!(mv.software_version_str, "1.0.10");
         assert!(mv.valid);
         assert_eq!(mv.ota_url, "https://fw.example.com/fw/10.ota");
         assert_eq!(mv.ota_file_size, 2500);
@@ -562,15 +580,16 @@ mod tests {
         block_on(async {
             // Registry: a v1 requestor is offered v10.
             let mut fd_buf = [0u8; 64];
-            let OtaQueryOutcome::Available(meta) =
-                dcl.query(0x1234, 0x5678, 1, false, &mut fd_buf).await
+            let OtaQueryOutcome::Available(meta) = dcl
+                .query(REQUESTOR, 0x1234, 0x5678, 1, false, &mut fd_buf)
+                .await
             else {
                 panic!("expected an available image");
             };
             assert_eq!(meta.version, 10);
+            assert_eq!(meta.version_str, "1.0.10");
             assert_eq!(meta.file_designator, "1234-5678-10");
             assert_eq!(meta.update_token, b"1234-5678-10");
-            assert_eq!(meta.size, Some(2500));
             assert!(!meta.user_consent_needed);
 
             // Data: the BDX server resolves that designator and streams the bytes.
@@ -593,7 +612,8 @@ mod tests {
             // An up-to-date requestor (already at v10) is offered nothing.
             let mut fd_buf = [0u8; 64];
             assert!(matches!(
-                dcl.query(0x1234, 0x5678, 10, false, &mut fd_buf).await,
+                dcl.query(REQUESTOR, 0x1234, 0x5678, 10, false, &mut fd_buf)
+                    .await,
                 OtaQueryOutcome::NotAvailable
             ));
         });

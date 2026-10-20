@@ -30,6 +30,8 @@
 //!   is an RAII session the app uses to report progress.
 //! - [`parse_bdx_url`] turns a `bdx://` image URI into a `(node, file-designator)`
 //!   pair for a BDX download via [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download).
+//! - [`OtaImageHeader::load`](crate::ota::OtaImageHeader::load) reads the
+//!   downloaded image's header.
 
 use core::num::NonZeroU8;
 
