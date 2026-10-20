@@ -191,7 +191,7 @@ impl<H: OtaHttp> DclImages<'_, H> {
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
-        designator_buf: &'b mut [u8],
+        buf: &'b mut [u8],
     ) -> Option<OtaImageMeta<'b>> {
         let mut guard = self.locked.lock().await;
         let locked = &mut *guard;
@@ -227,18 +227,23 @@ impl<H: OtaHttp> DclImages<'_, H> {
             return None;
         }
 
-        // 3. Mint the designator and cache the resolution for the imminent download.
+        // 3. Copy out the version string, mint the designator, cache for the download.
+        let (version_buf, designator_buf) =
+            buf.split_at_mut_checked(mv.software_version_str.len())?;
+        version_buf.copy_from_slice(mv.software_version_str.as_bytes());
+        let version_str = core::str::from_utf8(version_buf).ok()?;
+
         let designator =
             write_designator(designator_buf, vendor_id, product_id, mv.software_version)?;
         store(&mut locked.cache, designator, mv.ota_url, mv.ota_file_size)?;
 
         Some(OtaImageMeta {
             version: mv.software_version,
+            version_str,
             file_designator: designator,
             // The designator (`<vid>-<pid>-<version>`) is well under 32 bytes, so
             // it doubles as the update token - identifying the image at apply time.
             update_token: designator.as_bytes(),
-            size: Some(mv.ota_file_size),
             user_consent_needed: false,
         })
     }
@@ -267,10 +272,10 @@ impl<H: OtaHttp> OtaImagesRegistry for DclImages<'_, H> {
         product_id: u16,
         current_version: u32,
         _requestor_can_consent: bool,
-        designator_buf: &'b mut [u8],
+        buf: &'b mut [u8],
     ) -> OtaQueryOutcome<'b> {
         match self
-            .resolve_query(vendor_id, product_id, current_version, designator_buf)
+            .resolve_query(vendor_id, product_id, current_version, buf)
             .await
         {
             Some(image) => OtaQueryOutcome::Available(image),
@@ -375,6 +380,8 @@ struct DetailResponse<'a> {
 struct ModelVersion<'a> {
     #[serde(rename = "softwareVersion")]
     software_version: u32,
+    #[serde(borrow, rename = "softwareVersionString")]
+    software_version_str: &'a str,
     #[serde(rename = "softwareVersionValid")]
     valid: bool,
     #[serde(borrow, rename = "otaUrl")]
@@ -483,6 +490,7 @@ mod tests {
         let (detail, _) = serde_json_core::from_slice::<DetailResponse>(DETAIL_JSON).unwrap();
         let mv = detail.model_version;
         assert_eq!(mv.software_version, 10);
+        assert_eq!(mv.software_version_str, "1.0.10");
         assert!(mv.valid);
         assert_eq!(mv.ota_url, "https://fw.example.com/fw/10.ota");
         assert_eq!(mv.ota_file_size, 2500);
@@ -568,9 +576,9 @@ mod tests {
                 panic!("expected an available image");
             };
             assert_eq!(meta.version, 10);
+            assert_eq!(meta.version_str, "1.0.10");
             assert_eq!(meta.file_designator, "1234-5678-10");
             assert_eq!(meta.update_token, b"1234-5678-10");
-            assert_eq!(meta.size, Some(2500));
             assert!(!meta.user_consent_needed);
 
             // Data: the BDX server resolves that designator and streams the bytes.

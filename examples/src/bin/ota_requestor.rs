@@ -22,10 +22,11 @@
 //! application-defined update loop built from the cluster's building blocks:
 //! [`Providers::wait_changed`] to react to changes, [`Provider::query`] to ask a
 //! provider for an update, [`parse_bdx_url`] + [`Exchange::download`] to download it
-//! over BDX, and [`OtaState`] to report progress.
+//! over BDX, [`OtaImageHeader::load`] to read the image's header, and
+//! [`OtaState`] to report progress.
 //!
-//! The image handling is stubbed out (the downloaded bytes are just counted). A
-//! real device would write them to a spare firmware slot and reboot into it.
+//! The image is checked (header, payload size and digest) but not installed; a
+//! real device writes the payload to a spare slot and reboots into it.
 
 use core::pin::pin;
 
@@ -39,7 +40,7 @@ use log::{info, warn};
 use rand::Rng;
 
 use rs_matter::bdx::BdxDownloadInitiator;
-use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::crypto::{default_crypto, Crypto, CryptoSensitive, Digest};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
 use rs_matter::dm::clusters::ota_req::{
@@ -53,6 +54,7 @@ use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
@@ -295,27 +297,57 @@ async fn try_update(
     let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
     let mut reader = exchange.download(fd.as_bytes(), None).await?;
 
-    let total = reader.len();
+    // Check the header before taking any of the payload.
+    let mut header_buf = [0u8; 512];
+    let header = OtaImageHeader::load(&mut reader, &mut header_buf).await?;
+
+    let dev = matter.dev_det();
+    if !header.is_for_product(dev.vid, dev.pid)
+        || header.software_version != version
+        || !header.is_update_for(SOFTWARE_VERSION)
+        || header.image_digest_type != OTA_IMAGE_DIGEST_SHA256
+    {
+        warn!("OTA: the downloaded image is not the offered update for this device");
+        return Ok(false);
+    }
+
+    // Take the payload, hashing it on the way.
+    let mut hasher = crypto.hash()?;
     let mut received = 0u64;
     let mut buf = [0u8; 1024];
-    loop {
-        let n = reader.read(&mut buf).await?;
+
+    while received < header.payload_size {
+        let len = (header.payload_size - received).min(buf.len() as u64) as usize;
+        let n = reader.read(&mut buf[..len]).await?;
         if n == 0 {
-            break;
+            // The transfer ended before the payload did.
+            return Err(ErrorCode::InvalidData.into());
         }
 
         // A real device writes `&buf[..n]` to a spare firmware slot here.
+        hasher.update(&buf[..n])?;
         received += n as u64;
 
-        if let Some(total) = total.filter(|t| *t > 0) {
-            // `u128` so an absurd provider-advertised `total` can't overflow.
-            update.downloading(Some(
-                (received.min(total) as u128 * 100 / total as u128) as u8,
-            ));
-        }
+        // `u128` so an absurd `PayloadSize` can't overflow.
+        update.downloading(Some(
+            (received as u128 * 100 / header.payload_size as u128) as u8,
+        ));
     }
 
-    info!("OTA: downloaded {received} bytes");
+    // Nothing may follow the payload; reading to the end completes the transfer.
+    if reader.read(&mut buf).await? != 0 {
+        return Err(ErrorCode::InvalidData.into());
+    }
+
+    // Only a payload matching its digest may be applied.
+    let mut digest = CryptoSensitive::new();
+    hasher.finish(&mut digest)?;
+    if digest.access().as_slice() != header.image_digest.0 {
+        warn!("OTA: the downloaded payload does not match its digest; discarding");
+        return Ok(false);
+    }
+
+    info!("OTA: downloaded {received} bytes of payload, digest OK");
 
     // Ask the provider for permission to apply (its consent / scheduling gate).
     match provider

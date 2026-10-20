@@ -61,6 +61,8 @@ const REQUIRED_TOOLING: &[&str] = &[
     "gn",
     "python3",
     "pip3",
+    // Needed by the `ot-br-posix` build (`ChipBuilder::build_otbr`).
+    "protoc",
 ];
 
 /// The Debian/Ubuntu-specific packages that need to be installed
@@ -1061,9 +1063,11 @@ impl ChipBuilder {
             output_dir,
         );
 
+        // Skip activate.sh's `pw doctor` check, as for the Python wheel.
         run_command_with(
             Command::new("bash")
                 .current_dir(chip_dir)
+                .env("PW_ACTIVATE_SKIP_CHECKS", "1")
                 .arg("-c")
                 .arg(&build_script),
             self.print_cmd_output,

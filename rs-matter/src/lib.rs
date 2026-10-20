@@ -93,6 +93,7 @@ pub mod group_keys;
 pub mod handover;
 pub mod im;
 pub mod onboard;
+pub mod ota;
 pub mod pairing;
 pub mod persist;
 #[cfg(feature = "pics")]

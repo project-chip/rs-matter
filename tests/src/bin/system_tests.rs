@@ -37,7 +37,7 @@ use log::{info, trace, warn};
 use rand::Rng;
 
 use rs_matter::bdx::{Bdx, BdxDownloadInitiator, PROTO_ID_BDX};
-use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::crypto::{default_crypto, Crypto, CryptoSensitive, Digest};
 use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::adm_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
@@ -109,6 +109,7 @@ use rs_matter::dm::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
@@ -1405,31 +1406,32 @@ async fn persist_icd_counter_on_trigger(
 
 /// The BDX file designator for the single OTA image we serve (also reused as the
 /// `UpdateToken`, which it fits at 19 bytes within the spec's 8..=32 bound).
-const OTA_FILE_DESIGNATOR: &[u8] = b"rs-matter-ota-image";
-
-/// The software version we offer. Must match the `-vn 2` that the OTA test
-/// harness passes to `ota_image_tool create`, so the CHIP requestor accepts the
-/// offered image (its version must be strictly newer than the requestor's).
-const OTA_OFFERED_VERSION: u32 = 2;
+const OTA_FILE_DESIGNATOR: &str = "rs-matter-ota-image";
 
 /// A file-backed [`OtaImagesRegistry`] + [`OtaImages`] for the OTA Provider role:
 /// it offers, and serves over BDX, the single Matter OTA image file given via
-/// `--filepath`. Active only when a path is supplied (the OTA gate); otherwise
-/// `query`/`size` report nothing so the provider is inert.
+/// `--filepath`, as its header describes it. Inert without a path.
 struct OtaFileImages {
     path: Option<String>,
+    /// The prefix and the header of the image file.
+    header: std::vec::Vec<u8>,
     size: u64,
 }
 
 impl OtaFileImages {
     fn new(path: Option<String>) -> Self {
-        let size = path
+        let (header, size) = path
             .as_ref()
-            .and_then(|p| std::fs::metadata(p).ok())
-            .map(|m| m.len())
-            .unwrap_or(0);
+            .map(|path| {
+                let image = std::fs::read(path).expect("Cannot read the OTA image file");
+                let (_, payload_offset) =
+                    OtaImageHeader::decode(&image).expect("Not a Matter OTA image file");
 
-        Self { path, size }
+                (image[..payload_offset].to_vec(), image.len() as u64)
+            })
+            .unwrap_or_default();
+
+        Self { path, header, size }
     }
 }
 
@@ -1438,26 +1440,36 @@ impl OtaImagesRegistry for OtaFileImages {
         &self,
         _vendor_id: u16,
         _product_id: u16,
-        _current_version: u32,
+        current_version: u32,
         _requestor_can_consent: bool,
-        designator_buf: &'b mut [u8],
+        buf: &'b mut [u8],
     ) -> OtaQueryOutcome<'b> {
         if self.path.is_none() {
             return OtaQueryOutcome::NotAvailable;
         }
 
-        let Some(slot) = designator_buf.get_mut(..OTA_FILE_DESIGNATOR.len()) else {
+        let Ok((header, _)) = OtaImageHeader::decode(&self.header) else {
             return OtaQueryOutcome::NotAvailable;
         };
-        slot.copy_from_slice(OTA_FILE_DESIGNATOR);
-        // `OTA_FILE_DESIGNATOR` is ASCII, so this is always valid UTF-8.
-        let file_designator = core::str::from_utf8(slot).unwrap();
+
+        // Any vendor and product, like CHIP's single-file provider: the upstream
+        // test image is for VID 0xDEAD / PID 0xBEEF.
+        if !header.is_update_for(current_version) {
+            return OtaQueryOutcome::NotAvailable;
+        }
+
+        let Some((version_str, buf)) = copy_str(buf, header.software_version_str) else {
+            return OtaQueryOutcome::NotAvailable;
+        };
+        let Some((file_designator, _)) = copy_str(buf, OTA_FILE_DESIGNATOR) else {
+            return OtaQueryOutcome::NotAvailable;
+        };
 
         OtaQueryOutcome::Available(OtaImageMeta {
-            version: OTA_OFFERED_VERSION,
+            version: header.software_version,
+            version_str,
             file_designator,
-            update_token: OTA_FILE_DESIGNATOR,
-            size: Some(self.size),
+            update_token: OTA_FILE_DESIGNATOR.as_bytes(),
             user_consent_needed: false,
         })
     }
@@ -1465,7 +1477,8 @@ impl OtaImagesRegistry for OtaFileImages {
 
 impl OtaImages for OtaFileImages {
     async fn size(&self, file_designator: &[u8]) -> Option<u64> {
-        (self.path.is_some() && file_designator == OTA_FILE_DESIGNATOR).then_some(self.size)
+        (self.path.is_some() && file_designator == OTA_FILE_DESIGNATOR.as_bytes())
+            .then_some(self.size)
     }
 
     async fn read(
@@ -1476,7 +1489,7 @@ impl OtaImages for OtaFileImages {
     ) -> Result<usize, Error> {
         use std::io::{Read, Seek, SeekFrom};
 
-        if file_designator != OTA_FILE_DESIGNATOR {
+        if file_designator != OTA_FILE_DESIGNATOR.as_bytes() {
             return Err(rs_matter::error::ErrorCode::NotFound.into());
         }
         let Some(path) = &self.path else {
@@ -1492,6 +1505,14 @@ impl OtaImages for OtaFileImages {
 
         Ok(n)
     }
+}
+
+/// Copy `s` to the start of `buf`, returning the copy and the rest of `buf`.
+fn copy_str<'b>(buf: &'b mut [u8], s: &str) -> Option<(&'b str, &'b mut [u8])> {
+    let (head, rest) = buf.split_at_mut_checked(s.len())?;
+    head.copy_from_slice(s.as_bytes());
+
+    Some((core::str::from_utf8(head).ok()?, rest))
 }
 
 /// A file-backed [`DiagLogs`] for the `TestDiagnosticLogs` itest:
@@ -1553,8 +1574,8 @@ impl DiagLogs for LogFileProvider {
 
 /// OTA Requestor role (active only when `--otaDownloadPath` is given): on each
 /// `AnnounceOTAProvider`, query the announced provider, download its image over
-/// BDX, strip the Matter OTA header, write the raw payload to the download path,
-/// and print "OTA image downloaded" (the line the test harness waits for).
+/// BDX, write the payload following the OTA header to the download path, and
+/// print "OTA image downloaded" (the line the test harness waits for).
 async fn run_ota_requestor(
     matter: &Matter<'_>,
     crypto: impl Crypto,
@@ -1595,8 +1616,8 @@ async fn run_ota_requestor(
     }
 }
 
-/// Query `provider`, download the offered image over BDX, strip the OTA header,
-/// and write the raw payload to `download_path`.
+/// Query `provider`, download the offered image over BDX, and write its checked
+/// payload to `download_path`.
 async fn download_image(
     matter: &Matter<'_>,
     crypto: &impl Crypto,
@@ -1605,6 +1626,8 @@ async fn download_image(
     notifier: &dyn AttrChangeNotifier,
     download_path: &str,
 ) -> Result<(), Error> {
+    use std::io::Write;
+
     let update = ota_state.initiate_update(notifier);
     update.querying();
 
@@ -1633,23 +1656,45 @@ async fn download_image(
 
     update.downloading(Some(0));
 
-    // Download the whole (small, test) OTA image over BDX into memory.
+    // No vendor or product check: the upstream test image is for 0xDEAD / 0xBEEF.
     let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
     let mut reader = exchange.download(fd.as_bytes(), None).await?;
-    let mut image: std::vec::Vec<u8> = std::vec::Vec::new();
-    let mut buf = [0u8; 1024];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        image.extend_from_slice(&buf[..n]);
+
+    let mut header_buf = [0u8; 512];
+    let header = OtaImageHeader::load(&mut reader, &mut header_buf).await?;
+    if header.image_digest_type != OTA_IMAGE_DIGEST_SHA256 {
+        return Err(ErrorCode::InvalidData.into());
     }
 
-    // Strip the Matter OTA header and write the raw payload; a real device would
-    // instead stream blocks to a firmware slot and verify as it goes.
-    let payload = strip_ota_header(&image)?;
-    std::fs::write(download_path, payload).map_err(|_| ErrorCode::Invalid)?;
+    // Write the payload as it arrives, hashing it on the way.
+    let mut file = std::fs::File::create(download_path).map_err(|_| ErrorCode::Invalid)?;
+    let mut hasher = crypto.hash()?;
+    let mut remaining = header.payload_size;
+    let mut buf = [0u8; 1024];
+
+    while remaining > 0 {
+        let len = remaining.min(buf.len() as u64) as usize;
+        let n = reader.read(&mut buf[..len]).await?;
+        if n == 0 {
+            // The transfer ended before the payload did.
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        hasher.update(&buf[..n])?;
+        file.write_all(&buf[..n]).map_err(|_| ErrorCode::Invalid)?;
+        remaining -= n as u64;
+    }
+
+    // Nothing may follow the payload; reading to the end completes the transfer.
+    if reader.read(&mut buf).await? != 0 {
+        return Err(ErrorCode::InvalidData.into());
+    }
+
+    let mut digest = CryptoSensitive::new();
+    hasher.finish(&mut digest)?;
+    if digest.access().as_slice() != header.image_digest.0 {
+        return Err(ErrorCode::InvalidData.into());
+    }
 
     update.applying();
     // The exact substring the harness's `WaitForMessage` blocks on.
@@ -1657,20 +1702,4 @@ async fn download_image(
     update.complete();
 
     Ok(())
-}
-
-/// Strip the Matter OTA image fixed header (`<u32 magic><u64 totalSize><u32
-/// headerSize>` followed by `headerSize` TLV bytes), returning the raw payload.
-fn strip_ota_header(image: &[u8]) -> Result<&[u8], Error> {
-    const MAGIC: u32 = 0x1BEE_F11E;
-    const FIXED: usize = 16; // u32 magic + u64 total size + u32 header size
-
-    if image.len() < FIXED || u32::from_le_bytes(image[0..4].try_into().unwrap()) != MAGIC {
-        return Err(ErrorCode::InvalidData.into());
-    }
-    let header_size = u32::from_le_bytes(image[12..16].try_into().unwrap()) as usize;
-
-    image
-        .get(FIXED + header_size..)
-        .ok_or_else(|| ErrorCode::InvalidData.into())
 }
