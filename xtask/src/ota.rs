@@ -250,7 +250,8 @@ fn change_header(args: &ChangeHeaderArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Reject or warn about header values making an image no device is offered.
+/// Reject header values that make the image apply to no device; warn about
+/// dubious ones.
 fn check_header(header: &OtaImageHeader) -> anyhow::Result<()> {
     if header
         .release_notes_url
