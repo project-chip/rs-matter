@@ -44,9 +44,9 @@ use crate::sc::pase::PaseInitiator;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
-    commissionable_instance_id, merge_resolve_candidate, score_ip_address,
-    score_ip_address_on_link, BrowseExclude, CommissionableFilter, MdnsBrowseState,
-    MdnsRemoteService, MdnsResolveState, ResolvedAddr, ResolvedNode, MAX_RESOLVE_CANDIDATES,
+    merge_resolve_candidate, score_ip_address_on_link, BrowseIds, MdnsBrowse, MdnsBrowseQuery,
+    MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedAddr, ResolvedNode,
+    MAX_BROWSE_IDS, MAX_RESOLVE_CANDIDATES,
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::cell::RefCell;
@@ -133,8 +133,8 @@ pub struct Transport {
     /// The single in-flight mDNS resolve rendezvous, shared between [`Transport::resolve`]
     /// callers and the running mDNS responder.
     mdns_resolve: Signal<MdnsResolveState>,
-    /// The single in-flight mDNS commissionable-browse rendezvous, shared between
-    /// [`Transport::browse_commissionable`] callers and the running mDNS responder.
+    /// The single in-flight mDNS browse rendezvous, shared between
+    /// [`Transport::browse`] callers and the running mDNS responder.
     mdns_browse: Signal<MdnsBrowseState>,
     /// A notification that a session had been removed
     session_removed: MultiNotification,
@@ -581,51 +581,100 @@ impl Transport {
         });
     }
 
-    /// Browse the mDNS network for a **commissionable** node matching `filter`,
-    /// returning the first match's address and commissionable instance id.
+    /// Browse the mDNS network for every node matching `query`, calling `f` with
+    /// each one's id, in ascending order: the commissionable instance id of a
+    /// commissionable node, or the node ID of an operational one.
     ///
-    /// Places a single browse request into the shared rendezvous and waits up to
-    /// `timeout_ms` for the running mDNS responder to fire the browse query and
-    /// deposit the first node whose advertisement matches **all** non-`None`
-    /// fields of `filter` (see [`CommissionableFilter::matches`]) and whose
-    /// commissionable instance id is **not** in `exclude`. Multiple concurrent
-    /// callers serialize.
+    /// Browses in windows of `window_ms`, each collecting the few smallest ids
+    /// above the last one reported, until a window comes back short; so `n`
+    /// nodes take about `n / 6 + 1` windows. A commissionable node's addresses
+    /// come from [`Self::resolve_commissionable_addrs`]; an operational node is
+    /// reached with [`Exchange::initiate`].
     ///
-    /// `exclude` is how a caller steps to the **next** candidate when several
-    /// nodes share a (short) discriminator: pass the ids already tried (PASE
-    /// failed), and the next un-tried match is returned; repeat until
-    /// [`ErrorCode::NotFound`] (exhausted). Pass `&[]` for the first attempt.
-    /// At most [`MAX_BROWSE_EXCLUDE`](crate::transport::network::mdns) ids - more
-    /// returns [`ErrorCode::ResourceExhausted`].
-    ///
-    /// Returns `(address, commissionable_instance_id)` - the address can be fed
-    /// straight into [`Transport::initiate_pase`] to start PASE. Returns
-    /// [`ErrorCode::NotFound`] on timeout; the rendezvous is reset if this future
-    /// is dropped.
-    ///
-    /// Requires a running mDNS responder (e.g. `BuiltinMdns::run`).
+    /// Concurrent browses serialize. Requires a running mDNS responder (e.g.
+    /// `BuiltinMdns::run`).
     ///
     // TODO: A BLE/BTP equivalent is needed to discover wireless devices that
     // advertise commissionable over BLE rather than mDNS - future work.
-    pub async fn browse_commissionable(
+    pub async fn browse<F>(
         &self,
-        filter: &CommissionableFilter,
-        exclude: &[u64],
-        timeout_ms: u32,
-    ) -> Result<(Address, u64), Error> {
-        let mut exclude_vec = BrowseExclude::new();
-        exclude_vec
-            .extend_from_slice(exclude)
-            .map_err(|_| ErrorCode::ResourceExhausted)?;
+        query: &MdnsBrowseQuery,
+        window_ms: u32,
+        mut f: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(u64),
+    {
+        let mut after = 0;
 
-        // 1. Serialize with other browsers and place the request.
+        loop {
+            let guard = self
+                .place_mdns_browse(MdnsBrowse {
+                    query: query.clone(),
+                    after,
+                    ids: BrowseIds::new(),
+                })
+                .await;
+
+            Timer::after(Duration::from_millis(window_ms as u64)).await;
+
+            let mut ids = self.mdns_browse.modify(|state| {
+                let ids = match core::mem::replace(state, MdnsBrowseState::Idle) {
+                    MdnsBrowseState::Requested(browse) | MdnsBrowseState::InFlight(browse) => {
+                        browse.ids
+                    }
+                    MdnsBrowseState::Idle => BrowseIds::new(),
+                };
+
+                (true, ids)
+            });
+
+            guard.disarm();
+
+            ids.sort_unstable();
+            ids.iter().copied().for_each(&mut f);
+
+            match ids.last() {
+                Some(last) if ids.len() == MAX_BROWSE_IDS => after = *last,
+                _ => return Ok(()),
+            }
+        }
+    }
+
+    /// Resolve the addresses of the commissionable node with instance id `id`
+    /// (e.g. from [`Self::browse`]), best-scored first.
+    pub async fn resolve_commissionable_addrs(
+        &self,
+        id: u64,
+    ) -> Result<Vec<Address, MAX_RESOLVE_CANDIDATES>, Error> {
+        let resolved = self
+            .resolve(
+                MatterRemoteService::Commissionable { id },
+                Self::RESOLVE_TIMEOUT_MS,
+            )
+            .await?;
+
+        let mut addrs = Vec::new();
+
+        for addr in resolved.addrs.iter() {
+            // Both are bounded by `MAX_RESOLVE_CANDIDATES`, so this cannot
+            // overflow.
+            let _ = addrs.push(Address::Udp(*addr));
+        }
+
+        Ok(addrs)
+    }
+
+    /// Place `browse` into the rendezvous once it is free (serializing with other
+    /// browsers), returning a guard that frees it again if dropped armed.
+    async fn place_mdns_browse(&self, browse: MdnsBrowse) -> MdnsBrowseGuard<'_> {
+        let mut browse = Some(browse);
+
         self.mdns_browse
             .wait(|state| {
                 if matches!(state, MdnsBrowseState::Idle) {
-                    *state = MdnsBrowseState::Requested {
-                        filter: filter.clone(),
-                        exclude: exclude_vec.clone(),
-                    };
+                    // `wait` may call this again only until it returns `Some`.
+                    *state = MdnsBrowseState::Requested(unwrap!(browse.take()));
                     Some(())
                 } else {
                     None
@@ -633,81 +682,54 @@ impl Transport {
             })
             .await;
 
-        // 2. Release the slot if this future is dropped (or times out).
-        let mut guard = MdnsBrowseGuard {
+        MdnsBrowseGuard {
             signal: &self.mdns_browse,
             armed: true,
-        };
-
-        // 3. Wait for the first matching, non-excluded commissionable node, or time out.
-        let mut wait = pin!(self.mdns_browse.wait(|state| match state {
-            MdnsBrowseState::Found {
-                ip,
-                port,
-                scope_id,
-                id,
-            } => {
-                let found = (
-                    Address::Udp(Self::scoped_socket_addr(*ip, *port, *scope_id)),
-                    *id,
-                );
-                *state = MdnsBrowseState::Idle;
-                Some(found)
-            }
-            _ => None,
-        }));
-
-        let mut timer = pin!(Timer::after(Duration::from_millis(timeout_ms as u64)));
-
-        match select(&mut wait, &mut timer).await {
-            Either::First(found) => {
-                guard.armed = false;
-
-                Ok(found)
-            }
-            Either::Second(_) => Err(ErrorCode::NotFound.into()),
         }
     }
 
     /// Responder-side: await the next pending mDNS browse request, marking it
-    /// in-flight. Returns the filter to query for (the exclude set is consulted
-    /// later, at deposit time).
+    /// in-flight, and return what to browse for. Which matches the request
+    /// takes is decided at deposit time.
     ///
     /// Part of the public responder contract: a third-party mDNS responder
-    /// (living outside this crate) drives the commissionable-browse use case by
-    /// awaiting a request here, issuing its own query, and depositing matches via
-    /// [`Transport::try_deposit_mdns_browse`].
-    pub async fn wait_mdns_browse_request(&self) -> CommissionableFilter {
+    /// (living outside this crate) serves browse requests by awaiting one here,
+    /// issuing its own query for it, and depositing every service it finds via
+    /// [`Transport::try_deposit_mdns_browse`] while
+    /// [`Transport::mdns_browse_in_flight`].
+    pub async fn wait_mdns_browse_request(&self) -> MdnsBrowseQuery {
         self.mdns_browse
-            .wait(|state| match state {
-                MdnsBrowseState::Requested { filter, exclude } => {
-                    let filter = filter.clone();
-                    *state = MdnsBrowseState::InFlight {
-                        filter: filter.clone(),
-                        exclude: core::mem::take(exclude),
-                    };
+            .wait(
+                |state| match core::mem::replace(state, MdnsBrowseState::Idle) {
+                    MdnsBrowseState::Requested(browse) => {
+                        let query = browse.query.clone();
+                        *state = MdnsBrowseState::InFlight(browse);
 
-                    Some(filter)
-                }
-                _ => None,
-            })
+                        Some(query)
+                    }
+                    other => {
+                        *state = other;
+
+                        None
+                    }
+                },
+            )
             .await
     }
 
-    /// Whether a commissionable browse is currently in flight.
+    /// Whether a browse is currently in flight.
     ///
     /// Used by mDNS implementations to poll-drive their browse
     /// loop only while a request is outstanding.
     #[allow(dead_code)]
     pub fn mdns_browse_in_flight(&self) -> bool {
         self.mdns_browse
-            .modify(|state| (false, matches!(state, MdnsBrowseState::InFlight { .. })))
+            .modify(|state| (false, matches!(state, MdnsBrowseState::InFlight(_))))
     }
 
     /// Deposit a discovered [`MdnsRemoteService`] against an in-flight browse
-    /// request, transitioning it to `Found` if the instance is not excluded and
-    /// its TXT records match the filter. Best-effort: a non-matching, excluded,
-    /// address-less, or absent request is a no-op.
+    /// request. Best-effort: a service not matching the request, one already
+    /// collected, or one deposited with no request in flight is ignored.
     ///
     /// The single browse-deposit entry point shared by the builtin parser, the
     /// OS-backed responders, and any third-party responder - all hand it an
@@ -715,51 +737,27 @@ impl Transport {
     pub fn try_deposit_mdns_browse<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
     where
         I: ToLabelIter,
-        A: Iterator<Item = IpAddr> + Clone,
         T: Iterator<Item = (&'a str, &'a str)> + Clone,
     {
-        let Some(id) = commissionable_instance_id(&answer.instance_name) else {
-            return;
-        };
-        let Some(ip) = answer.addrs.clone().max_by_key(score_ip_address) else {
-            return;
-        };
-        let Some(port) = answer.port else {
-            return;
-        };
-        let scope_id = answer.scope_id;
+        self.mdns_browse.modify(|state| {
+            let MdnsBrowseState::InFlight(browse) = state else {
+                return (false, ());
+            };
 
-        self.mdns_browse.modify(|state| match state {
-            MdnsBrowseState::InFlight { filter, exclude }
-                if !exclude.contains(&id) && filter.matches(answer) =>
-            {
-                *state = MdnsBrowseState::Found {
-                    ip,
-                    port,
-                    scope_id,
-                    id,
-                };
-                (true, ())
+            let Some(id) = browse.query.matching_id(answer) else {
+                return (false, ());
+            };
+
+            if id > browse.after && !browse.ids.contains(&id) && browse.ids.push(id).is_err() {
+                // Keep the smallest ids: past capacity, a smaller one replaces
+                // the largest.
+                if let Some(largest) = browse.ids.iter_mut().max().filter(|largest| **largest > id)
+                {
+                    *largest = id;
+                }
             }
-            // Already matched this same instance but not yet consumed: keep the
-            // better-scoring address. Backends that surface one address per
-            // family at a time (e.g. zeroconf fires a callback per A/AAAA record)
-            // can thus still yield the preferred IPv6 address even if the IPv4
-            // one was deposited first.
-            MdnsBrowseState::Found {
-                ip: cur_ip,
-                id: cur_id,
-                ..
-            } if *cur_id == id && score_ip_address(&ip) > score_ip_address(cur_ip) => {
-                *state = MdnsBrowseState::Found {
-                    ip,
-                    port,
-                    scope_id,
-                    id,
-                };
-                (true, ())
-            }
-            _ => (false, ()),
+
+            (false, ())
         });
     }
 
@@ -1030,8 +1028,9 @@ impl Transport {
     /// Reuse is keyed by peer address (not a single global PASE session), so a
     /// commissioner can drive several concurrent commissionings.
     ///
-    /// Discovery of the address is out of scope (mDNS via
-    /// [`Transport::browse_commissionable`], a BLE/BTP advertisement, etc.); this
+    /// Discovery of the address is out of scope (mDNS via [`Transport::browse`]
+    /// and [`Transport::resolve_commissionable_addrs`], a BLE/BTP advertisement,
+    /// etc.); this
     /// method is transport-agnostic and takes the already-known address.
     pub(crate) async fn initiate_pase<'a, C: Crypto>(
         &self,
@@ -1270,6 +1269,13 @@ impl Drop for MdnsResolveGuard<'_> {
 struct MdnsBrowseGuard<'a> {
     signal: &'a Signal<MdnsBrowseState>,
     armed: bool,
+}
+
+impl MdnsBrowseGuard<'_> {
+    /// Leave the rendezvous as it is.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for MdnsBrowseGuard<'_> {
@@ -3075,146 +3081,161 @@ mod resolve_tests {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod browse_tests {
-    use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use core::net::{IpAddr, Ipv4Addr};
 
     use futures_lite::future::{block_on, zip};
 
-    use crate::error::ErrorCode;
     use crate::test::test_matter;
-    use crate::transport::network::mdns::{CommissionableFilter, DottedName, MdnsRemoteService};
-    use crate::transport::network::Address;
+    use crate::transport::network::mdns::{
+        CommissionableFilter, DottedName, MdnsBrowseQuery, MdnsRemoteService,
+    };
+    use crate::utils::storage::Vec;
 
-    /// A browser and the responder rendezvous: the responder picks up the request,
-    /// deposits a matching commissionable answer, and the browser returns its
-    /// address + commissionable instance id.
+    /// Without a responder, a browse finds nothing and frees the slot for the next.
     #[test]
-    fn browse_rendezvous_delivers_first_match() {
+    fn browse_without_a_responder_finds_nothing() {
         let matter = test_matter();
+        let query = MdnsBrowseQuery::Commissionable(CommissionableFilter::default());
 
-        let filter = CommissionableFilter {
-            discriminator: Some(0xA5A),
+        for _ in 0..2 {
+            let mut found = 0;
+            block_on(matter.transport().browse(&query, 20, |_| found += 1)).unwrap();
+            assert_eq!(found, 0);
+        }
+    }
+
+    /// A discovered service, as the tests deposit it.
+    type Answer<'a> = MdnsRemoteService<
+        DottedName<'a>,
+        core::array::IntoIter<IpAddr, 1>,
+        core::iter::Copied<core::slice::Iter<'a, (&'a str, &'a str)>>,
+    >;
+
+    /// An answer for `instance` with one address and the given TXT records.
+    fn answer<'a>(instance: &'a str, txt: &'a [(&'a str, &'a str)]) -> Answer<'a> {
+        MdnsRemoteService {
+            instance_name: DottedName(instance),
+            port: Some(5540),
+            addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
+            txt: txt.iter().copied(),
+            scope_id: 0,
+        }
+    }
+
+    /// Browse `query` against a responder that, for each of `windows` requests,
+    /// deposits `instances` (in the given order) with `txt`.
+    fn browse(
+        query: MdnsBrowseQuery,
+        instances: &[&str],
+        txt: &[(&str, &str)],
+        windows: usize,
+    ) -> Vec<u64, 16> {
+        let matter = test_matter();
+        let mut found = Vec::new();
+
+        block_on(async {
+            let browser = matter.transport().browse(&query, 20, |id| {
+                found.push(id).unwrap();
+            });
+
+            let responder = async {
+                for _ in 0..windows {
+                    assert_eq!(matter.transport().wait_mdns_browse_request().await, query);
+
+                    for instance in instances {
+                        matter
+                            .transport()
+                            .try_deposit_mdns_browse(&answer(instance, txt));
+                    }
+                }
+            };
+
+            let (result, ()) = zip(browser, responder).await;
+            result
+        })
+        .unwrap();
+
+        found
+    }
+
+    /// All the nodes of a fabric are listed in order, across windows; other
+    /// fabrics' nodes and repeated answers are not.
+    #[test]
+    fn browse_lists_the_operational_nodes_of_a_fabric_in_order() {
+        let instances = [
+            "00000000000000AA-0000000000000009._matter._tcp.local",
+            "00000000000000AA-0000000000000003._matter._tcp.local",
+            "00000000000000BB-0000000000000001._matter._tcp.local",
+            "00000000000000AA-0000000000000007._matter._tcp.local",
+            "00000000000000AA-0000000000000001._matter._tcp.local",
+            "00000000000000AA-0000000000000003._matter._tcp.local",
+            "00000000000000AA-0000000000000008._matter._tcp.local",
+            "00000000000000AA-0000000000000002._matter._tcp.local",
+            "00000000000000AA-0000000000000005._matter._tcp.local",
+            "00000000000000AA-0000000000000004._matter._tcp.local",
+        ];
+
+        let found = browse(
+            MdnsBrowseQuery::Operational {
+                compressed_fabric_id: 0xAA,
+            },
+            &instances,
+            &[],
+            2,
+        );
+
+        assert_eq!(found.as_slice(), &[1, 2, 3, 4, 5, 7, 8, 9]);
+    }
+
+    /// A full window is followed by another, which ends the listing when empty.
+    #[test]
+    fn browse_ends_after_a_short_window() {
+        let instances = [
+            "00000000000000AA-0000000000000001._matter._tcp.local",
+            "00000000000000AA-0000000000000002._matter._tcp.local",
+            "00000000000000AA-0000000000000003._matter._tcp.local",
+            "00000000000000AA-0000000000000004._matter._tcp.local",
+            "00000000000000AA-0000000000000005._matter._tcp.local",
+            "00000000000000AA-0000000000000006._matter._tcp.local",
+        ];
+
+        let found = browse(
+            MdnsBrowseQuery::Operational {
+                compressed_fabric_id: 0xAA,
+            },
+            &instances,
+            &[],
+            2,
+        );
+
+        assert_eq!(found.as_slice(), &[1, 2, 3, 4, 5, 6]);
+    }
+
+    /// Commissionable nodes are listed only if they match the filter.
+    #[test]
+    fn browse_applies_the_commissionable_filter() {
+        let query = MdnsBrowseQuery::Commissionable(CommissionableFilter {
             vendor_id: Some(0xFFF1),
             ..Default::default()
-        };
+        });
 
-        let found = block_on(async {
-            let browser = matter
-                .transport()
-                .browse_commissionable(&filter, &[], 5_000);
-
-            let responder = async {
-                let picked = matter.transport().wait_mdns_browse_request().await;
-                assert_eq!(picked, filter);
-
-                // A non-matching node (wrong vendor) must be ignored.
-                let other = MdnsRemoteService {
-                    instance_name: DottedName("0000000000000001._matterc._udp.local"),
-                    port: Some(5540),
-                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
-                    txt: [("D", "2650"), ("VP", "9999+1"), ("CM", "1")].into_iter(),
-                    scope_id: 0,
-                };
-                matter.transport().try_deposit_mdns_browse(&other);
-
-                // The matching node (D=0xA5A=2650, VP vendor 0xFFF1=65521).
-                let answer = MdnsRemoteService {
-                    instance_name: DottedName("00000000ABCD1234._matterc._udp.local"),
-                    port: Some(5541),
-                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))].into_iter(),
-                    txt: [("D", "2650"), ("VP", "65521+42"), ("CM", "1")].into_iter(),
-                    scope_id: 0,
-                };
-                matter.transport().try_deposit_mdns_browse(&answer);
-            };
-
-            let (found, ()) = zip(browser, responder).await;
-            found
-        })
-        .unwrap();
-
-        assert_eq!(
-            found,
-            (
-                Address::Udp(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)),
-                    5541
-                )),
-                0x00000000ABCD1234,
-            )
+        let matching = browse(
+            query.clone(),
+            &[
+                "0000000000002222._matterc._udp.local",
+                "0000000000001111._matterc._udp.local",
+            ],
+            &[("D", "2650"), ("VP", "65521+42"), ("CM", "1")],
+            1,
         );
-    }
+        assert_eq!(matching.as_slice(), &[0x1111, 0x2222]);
 
-    /// Without a responder, a browse times out and releases the slot (drop-clean).
-    #[test]
-    fn browse_times_out_and_releases_slot() {
-        let matter = test_matter();
-        let filter = CommissionableFilter {
-            short_discriminator: Some(0xA),
-            ..Default::default()
-        };
-
-        let err = block_on(matter.transport().browse_commissionable(&filter, &[], 50)).unwrap_err();
-        assert!(matches!(err.code(), ErrorCode::NotFound));
-
-        let err = block_on(matter.transport().browse_commissionable(&filter, &[], 50)).unwrap_err();
-        assert!(matches!(err.code(), ErrorCode::NotFound));
-    }
-
-    /// `exclude` steps past an already-tried candidate: with two nodes sharing the
-    /// (short) discriminator, excluding the first id yields the second.
-    #[test]
-    fn browse_exclude_steps_to_next_match() {
-        let matter = test_matter();
-
-        // Short discriminator 0xA = top 4 bits of 0xA12 (2578) and 0xAFF (2815).
-        let filter = CommissionableFilter {
-            short_discriminator: Some(0xA),
-            ..Default::default()
-        };
-
-        // Both nodes match the filter; exclude the first id, expect the second.
-        let found = block_on(async {
-            let browser = matter
-                .transport()
-                .browse_commissionable(&filter, &[0x1111], 5_000);
-
-            let responder = async {
-                matter.transport().wait_mdns_browse_request().await;
-
-                let node_a = MdnsRemoteService {
-                    instance_name: DottedName("0000000000001111._matterc._udp.local"),
-                    port: Some(5540),
-                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
-                    txt: [("D", "2578"), ("CM", "1")].into_iter(), // 0xA12, short 0xA
-                    scope_id: 0,
-                };
-                // Excluded id -> ignored.
-                matter.transport().try_deposit_mdns_browse(&node_a);
-
-                let node_b = MdnsRemoteService {
-                    instance_name: DottedName("0000000000002222._matterc._udp.local"),
-                    port: Some(5541),
-                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))].into_iter(),
-                    txt: [("D", "2815"), ("CM", "1")].into_iter(), // 0xAFF, short 0xA
-                    scope_id: 0,
-                };
-                matter.transport().try_deposit_mdns_browse(&node_b);
-            };
-
-            let (found, ()) = zip(browser, responder).await;
-            found
-        })
-        .unwrap();
-
-        assert_eq!(
-            found,
-            (
-                Address::Udp(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-                    5541
-                )),
-                0x2222,
-            )
+        let other_vendor = browse(
+            query,
+            &["0000000000003333._matterc._udp.local"],
+            &[("D", "2650"), ("VP", "9999+1"), ("CM", "1")],
+            1,
         );
+        assert!(other_vendor.is_empty());
     }
 }

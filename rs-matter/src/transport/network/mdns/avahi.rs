@@ -259,10 +259,10 @@ impl AvahiMdns {
     /// so it stops as soon as the first match is consumed or the caller gives up.
     async fn run_browse(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
         loop {
-            let filter = matter.transport().wait_mdns_browse_request().await;
+            let query = matter.transport().wait_mdns_browse_request().await;
 
             let mut service_type: heapless::String<64> = heapless::String::new();
-            filter.service_type(&mut service_type, false);
+            query.service_type(&mut service_type, false);
 
             let avahi = Server2Proxy::new(connection).await?;
             let browser_path = avahi
@@ -289,6 +289,19 @@ impl AvahiMdns {
                 };
 
                 let Ok(args) = signal.args() else { continue };
+
+                if !query.needs_resolve() {
+                    matter
+                        .transport()
+                        .try_deposit_mdns_browse(&MdnsRemoteService {
+                            instance_name: DottedName(args.name),
+                            port: None,
+                            addrs: core::iter::empty::<IpAddr>(),
+                            txt: core::iter::empty::<(&str, &str)>(),
+                            scope_id: 0,
+                        });
+                    continue;
+                }
 
                 // Resolve both families for this browsed instance and deposit all
                 // addresses together (transport prefers IPv6 via

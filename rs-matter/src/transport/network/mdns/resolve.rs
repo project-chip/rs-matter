@@ -126,25 +126,33 @@ impl ResolveMdns {
     /// happen in the deposit) while the browse is in flight.
     async fn run_browse(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
         loop {
-            let _filter = matter.transport().wait_mdns_browse_request().await;
+            let query = matter.transport().wait_mdns_browse_request().await;
+            let ptr_name = format!("{}.local", query.base_service_type());
 
             let resolve = ManagerProxy::new(connection).await?;
 
             while matter.transport().mdns_browse_in_flight() {
                 if let Ok((records, _flags)) = resolve
-                    .resolve_record(
-                        IF_INDEX_ANY,
-                        "_matterc._udp.local",
-                        DNS_CLASS_IN,
-                        DNS_TYPE_PTR,
-                        0,
-                    )
+                    .resolve_record(IF_INDEX_ANY, &ptr_name, DNS_CLASS_IN, DNS_TYPE_PTR, 0)
                     .await
                 {
                     for instance in records
                         .into_iter()
                         .filter_map(|(_if, _rt, _rc, rdata)| parse_dns_name(&rdata))
                     {
+                        if !query.needs_resolve() {
+                            matter
+                                .transport()
+                                .try_deposit_mdns_browse(&MdnsRemoteService {
+                                    instance_name: DottedName(&instance),
+                                    port: None,
+                                    addrs: core::iter::empty::<IpAddr>(),
+                                    txt: core::iter::empty::<(&str, &str)>(),
+                                    scope_id: 0,
+                                });
+                            continue;
+                        }
+
                         let Some((name, type_, domain)) = parse_service_instance(&instance) else {
                             continue;
                         };
@@ -398,15 +406,17 @@ fn parse_dns_name(data: &[u8]) -> Option<String> {
 }
 
 /// Parse a service instance name into (name, type, domain) components
-/// Input format: "Instance Name._matterc._udp.local"
+/// Input format: "Instance Name._matterc._udp.local" (or `._matter._tcp`)
 fn parse_service_instance(instance: &str) -> Option<(String, String, String)> {
     let instance = instance.trim_end_matches('.');
 
-    let type_start = instance.find("._matterc._udp")?;
+    let type_start = instance
+        .find("._matterc._udp")
+        .or_else(|| instance.find("._matter._tcp"))?;
     let name = &instance[..type_start];
 
     // Find the domain (everything after the service type)
-    let after_name = &instance[type_start + 1..]; // Skip the dot before _matterc
+    let after_name = &instance[type_start + 1..]; // Skip the dot before the type
     let domain_start = after_name.find(".local")?;
     let type_ = &after_name[..domain_start + ".local".len()];
 
@@ -556,6 +566,16 @@ mod tests {
     fn parse_service_instance_invalid_no_matterc() {
         let result = parse_service_instance("MyDevice._http._tcp.local");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_service_instance_operational() {
+        let result = parse_service_instance("EADDBAEB88C41C26-000000000001B66B._matter._tcp.local");
+        assert!(result.is_some());
+        let (name, service_type, domain) = result.unwrap();
+        assert_eq!(name, "EADDBAEB88C41C26-000000000001B66B");
+        assert_eq!(service_type, "_matter._tcp");
+        assert_eq!(domain, "local");
     }
 
     #[test]

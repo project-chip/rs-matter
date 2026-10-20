@@ -98,7 +98,7 @@ impl BuiltinMdns {
     /// On a single shared socket, this concurrently:
     /// - broadcasts the local Matter services and answers inbound queries about them,
     /// - services [`Transport::resolve`](crate::transport::Transport::resolve) requests, and
-    /// - services [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
+    /// - services [`Transport::browse`](crate::transport::Transport::browse)
     ///   requests,
     ///
     /// firing the corresponding mDNS query and depositing the parsed answers back
@@ -223,12 +223,10 @@ impl BuiltinMdns {
         }
     }
 
-    /// MdnsLocalService [`Transport::browse_commissionable`] requests: pick up a pending
-    /// browse request and emit the corresponding commissionable mDNS query on the
-    /// shared socket. The query is narrowed to the most selective subtype the
-    /// filter offers (`_L`/`_S`/`_V`/`_T`/`_CM`, see
-    /// [`CommissionableFilter::service_type`]); the responder then deposits the
-    /// first answer matching the full filter.
+    /// Serve browse requests: pick up a pending one and emit the corresponding
+    /// mDNS query on the shared socket, narrowed to the most selective subtype
+    /// (see [`MdnsBrowseQuery::service_type`](super::MdnsBrowseQuery::service_type));
+    /// the responder then deposits the answers.
     async fn browse<S, C>(
         send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
         ipv4_interface: Option<Ipv4Addr>,
@@ -241,7 +239,7 @@ impl BuiltinMdns {
         C: Crypto,
     {
         loop {
-            let filter = matter.transport().wait_mdns_browse_request().await;
+            let query = matter.transport().wait_mdns_browse_request().await;
 
             // A small random delay before sending, as per spec (collision avoidance).
             Self::rand_delay(&crypto).await?;
@@ -254,16 +252,17 @@ impl BuiltinMdns {
             let buf = &mut *tx_buf;
 
             // Compose the browse name straight from labels: the most-selective
-            // subtype (a tiny buffer) under `_sub._matterc._udp.local`, or the
-            // bare service type for an unfiltered browse - no full-name buffer.
+            // subtype (a tiny buffer) under `_sub.<service>.local`, or the bare
+            // service type for an unfiltered browse - no full-name buffer.
+            let [service, protocol] = query.base_service_labels();
             let mut sbuf = heapless::String::<24>::new();
-            let len = if let Some(sub) = filter.subtype(&mut sbuf) {
+            let len = if let Some(sub) = query.subtype(&mut sbuf) {
                 build_browse_query(
-                    NameSlice::new([sub, "_sub", "_matterc", "_udp", "local"]),
+                    NameSlice::new([sub, "_sub", service, protocol, "local"]),
                     buf,
                 )?
             } else {
-                build_browse_query(NameSlice::new(["_matterc", "_udp", "local"]), buf)?
+                build_browse_query(NameSlice::new([service, protocol, "local"]), buf)?
             };
 
             for addr in Self::broadcast_addrs(ipv4_interface, ipv6_interface) {

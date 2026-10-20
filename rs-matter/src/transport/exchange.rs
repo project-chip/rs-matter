@@ -1153,7 +1153,7 @@ impl<'a> Exchange<'a> {
     /// (PBKDFParamRequest/Response).
     ///
     /// Discovery of the address is out of scope here (it may come from mDNS - see
-    /// [`crate::transport::Transport::browse_commissionable`] - or from a BLE/BTP
+    /// [`crate::transport::Transport::browse`] - or from a BLE/BTP
     /// advertisement, etc.); this method is transport-agnostic and takes the
     /// already-known address.
     #[inline(always)]
