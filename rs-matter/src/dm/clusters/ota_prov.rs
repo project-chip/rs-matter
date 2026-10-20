@@ -41,7 +41,7 @@ use core::fmt::Write as _;
 use core::num::NonZeroU8;
 
 use crate::bdx::{BdxHandler, BdxResponder, BdxStatus};
-use crate::dm::{Cluster, Dataver, InvokeContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::ota::MAX_SOFTWARE_VERSION_STR_LEN;
 use crate::tlv::{Octets, TLVBuilderParent};
@@ -67,6 +67,16 @@ pub mod dcl;
 
 /// The maximum supported BDX file designator length.
 const MAX_FILE_DESIGNATOR: usize = 128;
+
+/// The node asking a provider for an update.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OtaRequestorId {
+    /// The fabric the requestor asks on.
+    pub fab_idx: NonZeroU8,
+    /// The requestor's node ID on that fabric.
+    pub node_id: NodeId,
+}
 
 /// Metadata describing an OTA image that a provider is willing to offer.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -162,7 +172,7 @@ pub enum OtaApplyOutcome {
 /// A common way to add consent on top of an existing registry (e.g. the [`dcl`]
 /// sample) is a thin proxy that wraps it and overrides these decisions.
 pub trait OtaImagesRegistry {
-    /// Decide what to offer a requestor querying for an image newer than
+    /// Decide what to offer `requestor`, querying for an image newer than
     /// `current_version` for `(vendor_id, product_id)`: [`OtaQueryOutcome::Available`]
     /// with the image to offer, [`OtaQueryOutcome::Busy`] to retry later (e.g. consent
     /// pending), or [`OtaQueryOutcome::NotAvailable`].
@@ -176,6 +186,7 @@ pub trait OtaImagesRegistry {
     /// its strings and update token, so they can be minted at runtime.
     async fn query<'b>(
         &self,
+        requestor: OtaRequestorId,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
@@ -183,7 +194,7 @@ pub trait OtaImagesRegistry {
         buf: &'b mut [u8],
     ) -> OtaQueryOutcome<'b>;
 
-    /// Authorize the requestor to apply the already-downloaded image, upgrading to
+    /// Authorize `requestor` to apply the already-downloaded image, upgrading to
     /// `new_version`. `update_token` is the exact [`OtaImageMeta::update_token`]
     /// this registry assigned in [`query`](Self::query) and the requestor echoed
     /// back, so the registry can correlate this call with that offer.
@@ -191,8 +202,25 @@ pub trait OtaImagesRegistry {
     /// The default authorizes an immediate apply. Override it to defer (e.g. until
     /// provider-side consent is granted, with [`OtaApplyOutcome::Await`]) or to rescind a
     /// previously offered image ([`OtaApplyOutcome::Discontinue`]).
-    async fn apply(&self, _update_token: &[u8], _new_version: u32) -> OtaApplyOutcome {
+    async fn apply(
+        &self,
+        _requestor: OtaRequestorId,
+        _update_token: &[u8],
+        _new_version: u32,
+    ) -> OtaApplyOutcome {
         OtaApplyOutcome::Proceed { delay_secs: 0 }
+    }
+
+    /// `requestor` reports with `NotifyUpdateApplied` that it now runs
+    /// `software_version`, from the image of `update_token`.
+    ///
+    /// The default does nothing.
+    async fn applied(
+        &self,
+        _requestor: OtaRequestorId,
+        _update_token: &[u8],
+        _software_version: u32,
+    ) {
     }
 }
 
@@ -200,27 +228,42 @@ impl<T> OtaImagesRegistry for &T
 where
     T: OtaImagesRegistry,
 {
-    async fn query<'b>(
+    fn query<'b>(
         &self,
+        requestor: OtaRequestorId,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
         requestor_can_consent: bool,
         buf: &'b mut [u8],
-    ) -> OtaQueryOutcome<'b> {
+    ) -> impl core::future::Future<Output = OtaQueryOutcome<'b>> {
         T::query(
             self,
+            requestor,
             vendor_id,
             product_id,
             current_version,
             requestor_can_consent,
             buf,
         )
-        .await
     }
 
-    async fn apply(&self, update_token: &[u8], new_version: u32) -> OtaApplyOutcome {
-        T::apply(self, update_token, new_version).await
+    fn apply(
+        &self,
+        requestor: OtaRequestorId,
+        update_token: &[u8],
+        new_version: u32,
+    ) -> impl core::future::Future<Output = OtaApplyOutcome> {
+        T::apply(self, requestor, update_token, new_version)
+    }
+
+    fn applied(
+        &self,
+        requestor: OtaRequestorId,
+        update_token: &[u8],
+        software_version: u32,
+    ) -> impl core::future::Future<Output = ()> {
+        T::applied(self, requestor, update_token, software_version)
     }
 }
 
@@ -305,10 +348,13 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
         // Absent means the requestor cannot obtain user consent on its own.
         let requestor_can_consent = request.requestor_can_consent()?.unwrap_or(false);
 
+        let requestor = requestor(&ctx)?;
+
         let mut buf = [0u8; MAX_FILE_DESIGNATOR + MAX_SOFTWARE_VERSION_STR_LEN];
         let image = match self
             .images
             .query(
+                requestor,
                 vendor_id,
                 product_id,
                 current_version,
@@ -356,10 +402,9 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 
         // The download URI points at this node (on the accessing fabric) and
         // carries the file designator as its path.
-        let fab_idx = NonZeroU8::new(ctx.cmd().fab_idx).ok_or(ErrorCode::Invalid)?;
         let node_id = ctx
             .exchange()
-            .with_state(|state| Ok(state.fabrics.fabric(fab_idx)?.node_id()))?;
+            .with_state(|state| Ok(state.fabrics.fabric(requestor.fab_idx)?.node_id()))?;
 
         let mut uri = heapless::String::<200>::new();
         write!(uri, "bdx://{:016X}/{}", node_id, image.file_designator)
@@ -380,15 +425,21 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 
     async fn handle_apply_update_request<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: ApplyUpdateRequestRequest<'_>,
         response: ApplyUpdateResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let requestor = requestor(&ctx)?;
         let update_token = request.update_token()?;
         let new_version = request.new_version()?;
 
         // The registry owns apply policy (e.g. deferring until consent is granted).
-        let (action, delay) = match self.images.apply(update_token.0, new_version).await {
+        let outcome = self
+            .images
+            .apply(requestor, update_token.0, new_version)
+            .await;
+
+        let (action, delay) = match outcome {
             OtaApplyOutcome::Proceed { delay_secs } => (ApplyUpdateActionEnum::Proceed, delay_secs),
             OtaApplyOutcome::Await { delay_secs } => {
                 (ApplyUpdateActionEnum::AwaitNextAction, delay_secs)
@@ -401,10 +452,19 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 
     async fn handle_notify_update_applied(
         &self,
-        _ctx: impl InvokeContext,
-        _request: NotifyUpdateAppliedRequest<'_>,
+        ctx: impl InvokeContext,
+        request: NotifyUpdateAppliedRequest<'_>,
     ) -> Result<(), Error> {
-        // Stateless provider: nothing to clean up.
+        let requestor = requestor(&ctx)?;
+
+        self.images
+            .applied(
+                requestor,
+                request.update_token()?.0,
+                request.software_version()?,
+            )
+            .await;
+
         Ok(())
     }
 }
@@ -548,4 +608,21 @@ where
 
         writer.finish().await
     }
+}
+
+/// The requestor invoking a command: the accessing fabric and the peer node.
+fn requestor(ctx: impl InvokeContext) -> Result<OtaRequestorId, Error> {
+    let fab_idx = NonZeroU8::new(ctx.cmd().fab_idx).ok_or(ErrorCode::Invalid)?;
+
+    let exchange = ctx.exchange();
+    let node_id = exchange
+        .with_state(|state| {
+            Ok(exchange
+                .id()
+                .session(&mut state.sessions)
+                .get_peer_node_id())
+        })?
+        .ok_or(ErrorCode::Invalid)?;
+
+    Ok(OtaRequestorId { fab_idx, node_id })
 }

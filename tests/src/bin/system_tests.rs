@@ -67,7 +67,7 @@ use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{
     ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
-    OtaImagesRegistry, OtaProviderHandler, OtaQueryOutcome, StatusEnum,
+    OtaImagesRegistry, OtaProviderHandler, OtaQueryOutcome, OtaRequestorId, StatusEnum,
 };
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
@@ -1438,6 +1438,7 @@ impl OtaFileImages {
 impl OtaImagesRegistry for OtaFileImages {
     async fn query<'b>(
         &self,
+        _requestor: OtaRequestorId,
         _vendor_id: u16,
         _product_id: u16,
         current_version: u32,

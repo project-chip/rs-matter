@@ -40,7 +40,10 @@ use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::IfMutex;
 
-use super::{OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, MAX_FILE_DESIGNATOR};
+use super::{
+    OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, OtaRequestorId,
+    MAX_FILE_DESIGNATOR,
+};
 
 /// The CSA-IOT production DCL REST endpoint.
 pub const DCL_MAINNET: &str = "https://on.dcl.csa-iot.org";
@@ -268,6 +271,7 @@ impl<H: OtaHttp> OtaImagesRegistry for DclImages<'_, H> {
     // `OtaImagesRegistry`); `apply` uses the default (immediate `Proceed`).
     async fn query<'b>(
         &self,
+        _requestor: OtaRequestorId,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
@@ -438,9 +442,15 @@ fn parse_designator(fd: &[u8]) -> Option<(u16, u16, u32)> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::future::Future;
+    use core::num::NonZeroU8;
     use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use super::*;
+
+    const REQUESTOR: OtaRequestorId = OtaRequestorId {
+        fab_idx: NonZeroU8::MIN,
+        node_id: 0x1122,
+    };
 
     const VERSIONS_JSON: &[u8] =
         br#"{"modelVersions":{"vid":4660,"pid":22136,"softwareVersions":[1,2,10]}}"#;
@@ -570,8 +580,9 @@ mod tests {
         block_on(async {
             // Registry: a v1 requestor is offered v10.
             let mut fd_buf = [0u8; 64];
-            let OtaQueryOutcome::Available(meta) =
-                dcl.query(0x1234, 0x5678, 1, false, &mut fd_buf).await
+            let OtaQueryOutcome::Available(meta) = dcl
+                .query(REQUESTOR, 0x1234, 0x5678, 1, false, &mut fd_buf)
+                .await
             else {
                 panic!("expected an available image");
             };
@@ -601,7 +612,8 @@ mod tests {
             // An up-to-date requestor (already at v10) is offered nothing.
             let mut fd_buf = [0u8; 64];
             assert!(matches!(
-                dcl.query(0x1234, 0x5678, 10, false, &mut fd_buf).await,
+                dcl.query(REQUESTOR, 0x1234, 0x5678, 10, false, &mut fd_buf)
+                    .await,
                 OtaQueryOutcome::NotAvailable
             ));
         });
