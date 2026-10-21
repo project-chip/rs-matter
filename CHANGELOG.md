@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: General Diagnostics reports a Wi-Fi or Ethernet interface's hardware address as its 6-byte MAC, not zero-padded to 8 bytes (#606)
+* Fix: the Unix network interfaces report their type (Wi-Fi, Ethernet) on Linux (#606)
+  * Breaking: `UnixNetif` gains `netif_type`
 * Fix: `Commissioner::commission` leaves the PASE session open on success, for network commissioning over it; `complete_via_case` ends it when done, or `Commissioner::end_pase` (#605)
   * Breaking: `CommissionResult` gains `peer_addr`
 * Fix: a peer over BLE (BTP) may take up to 30 s to answer, as over TCP, instead of 5 s (#605)

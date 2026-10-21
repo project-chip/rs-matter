@@ -46,8 +46,9 @@ pub struct NetifInfo<'a> {
     /// Whether any Ipv6 off-premise services used by the node are reachable on this interface.
     /// `None` if the node does not use such services or it is unclear if these are reachable.
     pub offprem_svc_reachable_ipv6: Option<bool>,
-    /// 0-padded hardware address of the network interface.
-    /// (i.e. either 6 bytes for Eth and Wifi (prefixed with two zero bytes) or 8 bytes for Thread)
+    /// The hardware address of the network interface: the 8-byte extended
+    /// address of a Thread interface, else a 6-byte MAC in the first 6 bytes
+    /// (the last two zero).
     pub hw_addr: &'a [u8; 8],
     /// The IPv4 addresses assigned to the network interface.
     pub ipv4_addrs: &'a [Ipv4Addr],
@@ -61,6 +62,16 @@ pub struct NetifInfo<'a> {
 }
 
 impl NetifInfo<'_> {
+    /// The hardware address as reported: all 8 bytes for Thread, the 6-byte MAC
+    /// otherwise.
+    pub fn hardware_address(&self) -> &[u8] {
+        if self.netif_type == InterfaceTypeEnum::Thread {
+            self.hw_addr
+        } else {
+            &self.hw_addr[..6]
+        }
+    }
+
     /// Read the network interface info into the given `NetworkInterfaceBuilder`.
     fn read_into<P: TLVBuilderParent>(
         &self,
@@ -71,7 +82,7 @@ impl NetifInfo<'_> {
             .is_operational(self.operational)?
             .off_premise_services_reachable_i_pv_4(Nullable::new(self.offprem_svc_reachable_ipv4))?
             .off_premise_services_reachable_i_pv_6(Nullable::new(self.offprem_svc_reachable_ipv6))?
-            .hardware_address(Octets::new(self.hw_addr))?
+            .hardware_address(Octets::new(self.hardware_address()))?
             .i_pv_4_addresses()?
             .with(|mut builder| {
                 for addr in self.ipv4_addrs {

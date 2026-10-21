@@ -60,6 +60,7 @@ impl UnixNetifs {
                     ipv6addrs: Vec::new(),
                     operational: false,
                     netif_index: 0,
+                    netif_type: netif_type(&ia.interface_name),
                 };
 
                 netif.load(&ia, netif_index)?;
@@ -115,6 +116,8 @@ pub struct UnixNetif {
     pub operational: bool,
     /// Interface index
     pub netif_index: u32,
+    /// Interface type
+    pub netif_type: InterfaceTypeEnum,
 }
 
 impl UnixNetif {
@@ -128,7 +131,7 @@ impl UnixNetif {
             hw_addr: &self.hw_addr,
             ipv4_addrs: &self.ipv4addrs,
             ipv6_addrs: &self.ipv6addrs,
-            netif_type: InterfaceTypeEnum::Unspecified, // TODO
+            netif_type: self.netif_type,
             netif_index: self.netif_index,
         }
     }
@@ -155,4 +158,27 @@ impl UnixNetif {
 
         Ok(())
     }
+}
+
+/// The type of interface `name`, as Linux tells it (elsewhere, unspecified).
+fn netif_type(name: &str) -> InterfaceTypeEnum {
+    #[cfg(target_os = "linux")]
+    {
+        let dir = std::path::Path::new("/sys/class/net").join(name);
+
+        if dir.join("wireless").exists() || dir.join("phy80211").exists() {
+            return InterfaceTypeEnum::WiFi;
+        }
+
+        // An Ethernet link layer on a device: not a bridge, a veth, a tunnel.
+        let ether = std::fs::read_to_string(dir.join("type")).is_ok_and(|t| t.trim() == "1");
+        if ether && dir.join("device").exists() {
+            return InterfaceTypeEnum::Ethernet;
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    let _ = name;
+
+    InterfaceTypeEnum::Unspecified
 }
