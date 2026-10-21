@@ -17,7 +17,7 @@
 
 //! Matter Commissioner support.
 //!
-//! Building blocks for the **controller / commissioner** role — driving
+//! Building blocks for the **commissioner** role — driving
 //! a freshly-paired accessory through the standard commissioning
 //! sequence and onto a fabric.
 //!
@@ -142,24 +142,23 @@ pub struct CommissionResult {
     /// be threaded into [`Commissioner::complete_via_case`] without the
     /// caller having to plumb it separately.
     pub device_node_id: NodeId,
+    /// Where phase 1 reached the device: its PASE session stays open until
+    /// [`Commissioner::complete_via_case`] is done.
+    pub peer_addr: Address,
 }
 
 /// Stateful commissioner.
-///
-/// Holds the references needed for the whole flow so individual steps
-/// don't have to take them. `&mut NocGenerator` because each
-/// `commission()` call mutably borrows the generator's scratch buffer
-/// to write the device NOC into; `&mut [u8] buf` is a caller-owned
-/// scratch slice used to stage the fabric's RCAC and ICAC bytes
-/// across the on-wire async calls (the fabric record itself can only
-/// be borrowed inside [`Matter::with_state`], which doesn't compose
-/// with `await`).
 ///
 /// **The controller's fabric is expected to already be in
 /// `matter.state.fabrics`** at the given `fab_idx` — the caller installs
 /// it once via [`crate::fabric::Fabrics::add`] before constructing any
 /// commissioner. A single `Commissioner` instance can then be reused to
 /// commission any number of devices onto that fabric.
+///
+/// It is built on rs-matter's public API only: [`Exchange`], the generated
+/// cluster clients and the session table ([`Matter::with_state`]). An
+/// application is therefore free to roll its own commissioning workflow, or to
+/// add steps around this one.
 pub struct Commissioner<'a, 'b, C: Crypto> {
     matter: &'a Matter<'a>,
     crypto: C,
@@ -248,9 +247,12 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     ///
     /// Runs over the PASE session to `peer_addr` if there is one, e.g. one the
     /// caller opened to read the device first: while the device holds it, it
-    /// accepts no other. Otherwise it establishes one with `passcode`. Either
-    /// way the session is expired on return, so a later commissioning of the
-    /// same peer starts a new one.
+    /// accepts no other. Otherwise it establishes one with `passcode`. On
+    /// success the session stays open for the steps the caller runs over it
+    /// before phase 2 (e.g. network commissioning), and phase 2 expires it when
+    /// done; a caller not going on to phase 2 ends it with [`Self::end_pase`].
+    /// On failure it is expired on return. Either way a later commissioning of
+    /// the same peer starts a new one.
     ///
     /// `device_node_id` is the NodeID the caller wishes to assign to
     /// the device on the controller's fabric. `validity` is the NOC's
@@ -290,16 +292,50 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
             .add_to_fabric(peer_addr, passcode, opts, device_node_id, validity)
             .await;
 
-        // Expired rather than removed, so the last step's trailing ack still goes
-        // out. The device drops the session once commissioned, and after a
-        // failure it may have lost it already (e.g. it rebooted).
+        if result.is_err() {
+            // Roll the device back at once, as CHIP does, so it can be
+            // commissioned again right away: some steps can only be taken once
+            // per armed fail-safe. Best-effort, as the device may be gone.
+            let _ = self.disarm_fail_safe(peer_addr).await;
+            self.end_pase(peer_addr);
+        }
+
+        result
+    }
+
+    /// Disarm the device's fail-safe (`ArmFailSafe` with a zero expiry) over the
+    /// PASE session to `peer_addr` that [`Self::commission`] left open, so the
+    /// device rolls the commissioning back at once: for a caller cancelling, or
+    /// giving up before phase 2. Never opens a new PASE session, and does not
+    /// end this one (see [`Self::end_pase`]).
+    pub async fn disarm_fail_safe(&self, peer_addr: Address) -> Result<(), Error> {
+        let sess_id = self
+            .matter
+            .with_state(|state| {
+                state
+                    .sessions
+                    .iter()
+                    .find(|sess| !sess.is_expired() && sess.is_pase_for_addr(&peer_addr))
+                    .map(|sess| sess.id())
+            })
+            .ok_or(ErrorCode::NoSession)?;
+
+        let exchange = Exchange::initiate_for_session(self.matter, &self.crypto, sess_id)?;
+
+        Self::send_arm_fail_safe(exchange, 0).await
+    }
+
+    /// Expire the PASE session to `peer_addr`, for a caller not going on to
+    /// phase 2 after [`Self::commission`]. Expired rather than removed, so the
+    /// last step's trailing ack still goes out. The device drops the session
+    /// once commissioned, and after a failure it may have lost it already (e.g.
+    /// it rebooted).
+    pub fn end_pase(&self, peer_addr: Address) {
         self.matter.with_state(|state| {
             state
                 .sessions
                 .expire_where(|sess| !sess.is_expired() && sess.is_pase_for_addr(&peer_addr));
         });
-
-        result
     }
 
     /// Phase 2 — establish CASE against the device's freshly-installed
@@ -312,6 +348,16 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// runs immediately after the device was told to join its network, so losing
     /// the first race against the device coming online is routine.
     pub async fn complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
+        let result = self.try_complete_via_case(phase1).await;
+
+        // As CHIP does, the PASE session lasts until commissioning is over.
+        self.end_pase(phase1.peer_addr);
+
+        result
+    }
+
+    /// [`Self::complete_via_case`], short of ending the PASE session.
+    async fn try_complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
         let fab_idx = self.fab_idx;
 
         let mut last_err = None;
@@ -431,6 +477,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         Ok(CommissionResult {
             fabric_index,
             device_node_id,
+            peer_addr,
         })
     }
 
@@ -444,6 +491,11 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         let exchange =
             Exchange::initiate_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
 
+        Self::send_arm_fail_safe(exchange, expiry_seconds).await
+    }
+
+    /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)` on `exchange`.
+    async fn send_arm_fail_safe(exchange: Exchange<'_>, expiry_seconds: u16) -> Result<(), Error> {
         let handle = exchange
             .general_commissioning()
             .arm_fail_safe(ROOT_ENDPOINT_ID, |req| {

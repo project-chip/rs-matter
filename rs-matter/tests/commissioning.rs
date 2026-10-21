@@ -543,7 +543,8 @@ async fn test_open_pase_is_reused<C: Crypto, D: Crypto>(
 
     test_commission(matter, crypto, peer_addr, use_tcp).await?;
 
-    // Still there, so it was used rather than replaced; expired, as it is done.
+    // Still there, so it was used rather than replaced; expired, as phase 2 is
+    // done.
     let expired = matter.with_state(|state| {
         state
             .sessions
@@ -643,6 +644,18 @@ async fn run_commissioner<C: Crypto>(
         "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
         result.fabric_index, result.device_node_id,
     );
+
+    // The PASE session stays open for the steps that run over it before phase 2,
+    // like network commissioning.
+    let device = peer_addr.canonical();
+    let pase_open = matter.with_state(|state| {
+        state.sessions.iter().any(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+                && sess.get_peer_addr().canonical() == device
+                && !sess.is_expired()
+        })
+    });
+    assert!(pase_open, "phase 1 closed the PASE session");
 
     // Phase 2 — operational discovery, then CASE against the device's
     // operational identity, then CommissioningComplete on the new session.

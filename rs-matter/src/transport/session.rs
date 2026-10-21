@@ -67,8 +67,11 @@ const TCP_RX_TIMEOUT_MS: u64 = 30_000;
 /// Receive timeout for a BTP (BLE) session.
 ///
 /// BTP runs its own acknowledgement scheme underneath, so the MRP ladder does not
-/// describe it; this matches the BTP layer's own ack timeout.
-const BTP_RX_TIMEOUT_MS: u64 = 5_000;
+/// describe it, and that scheme already notices a dead link. So, as for TCP,
+/// this is a flat upper bound on how long the peer may take to answer: a
+/// commissionee answers `ConnectNetwork` only once it has tried to join, and the
+/// spec allows a commissioning step at least 30 seconds.
+const BTP_RX_TIMEOUT_MS: u64 = 30_000;
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
@@ -494,7 +497,7 @@ impl Session {
     /// identity yet), so the peer *address* is what distinguishes one PASE
     /// session from another - which matters on a commissioner that may have
     /// several PASE sessions (to different devices) in flight at once.
-    pub(crate) fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
+    pub fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
         matches!(self.mode, SessionMode::Pase { .. }) && self.is_peer(peer_addr) && !self.reserved
     }
 
@@ -2194,7 +2197,7 @@ impl Sessions {
     /// Remove every CASE session associated with the given fabric and given peer id
     ///
     /// Returns the number of sessions removed.
-    pub(crate) fn remove_case_for_peer(&mut self, fab_idx: NonZeroU8, peer_id: NodeId) -> usize {
+    pub fn remove_case_for_peer(&mut self, fab_idx: NonZeroU8, peer_id: NodeId) -> usize {
         self.remove_where(|sess| {
             matches!(sess.get_session_mode(), SessionMode::Case { .. })
                 && sess.get_local_fabric_idx() == fab_idx.get()
