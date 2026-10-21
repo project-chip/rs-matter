@@ -23,9 +23,9 @@ use core::pin::pin;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use embassy_futures::select::{select, select3, Either};
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
@@ -37,11 +37,29 @@ use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
+use crate::utils::zbus_proxies::avahi::record_browser::RecordBrowserProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
 use crate::utils::zbus_proxies::avahi::service_browser::ServiceBrowserProxy;
 use crate::Matter;
 
-/// Frees an Avahi `ServiceBrowser` even if the future that owns it is cancelled
+/// An Avahi browser object, freed through a [`BrowserGuard`].
+trait Browser {
+    async fn free(&self) -> zbus::Result<()>;
+}
+
+impl Browser for ServiceBrowserProxy<'_> {
+    async fn free(&self) -> zbus::Result<()> {
+        ServiceBrowserProxy::free(self).await
+    }
+}
+
+impl Browser for RecordBrowserProxy<'_> {
+    async fn free(&self) -> zbus::Result<()> {
+        RecordBrowserProxy::free(self).await
+    }
+}
+
+/// Frees an Avahi browser even if the future that owns it is cancelled
 /// (dropped) mid-loop - otherwise the browser leaks on the daemon.
 ///
 /// The normal path calls [`BrowserGuard::free`], releasing the browser
@@ -51,13 +69,13 @@ use crate::Matter;
 /// being torn down, so `block_on` can complete rather than deadlock. (The same
 /// `block_on`-in-`Drop` idiom is used for D-Bus cleanup elsewhere in the crate, e.g.
 /// the NetworkManager and wpa_supplicant controllers.)
-struct BrowserGuard<'b, 'a> {
-    browser: &'b ServiceBrowserProxy<'a>,
+struct BrowserGuard<'b, B: Browser> {
+    browser: &'b B,
     armed: bool,
 }
 
-impl<'b, 'a> BrowserGuard<'b, 'a> {
-    fn new(browser: &'b ServiceBrowserProxy<'a>) -> Self {
+impl<'b, B: Browser> BrowserGuard<'b, B> {
+    fn new(browser: &'b B) -> Self {
         Self {
             browser,
             armed: true,
@@ -74,7 +92,7 @@ impl<'b, 'a> BrowserGuard<'b, 'a> {
     }
 }
 
-impl Drop for BrowserGuard<'_, '_> {
+impl<B: Browser> Drop for BrowserGuard<'_, B> {
     fn drop(&mut self) {
         if self.armed {
             // Reached only if the future was cancelled before `free` was called.
@@ -87,6 +105,17 @@ impl Drop for BrowserGuard<'_, '_> {
 const AVAHI_IF_UNSPEC: i32 = -1;
 /// Avahi constant for "any protocol" (IPv4 or IPv6)
 const AVAHI_PROTO_UNSPEC: i32 = -1;
+
+/// The `IN` DNS class.
+const DNS_CLASS_IN: u16 = 1;
+/// The `A` DNS record type.
+const DNS_TYPE_A: u16 = 1;
+/// The `AAAA` DNS record type.
+const DNS_TYPE_AAAA: u16 = 28;
+
+/// Upper bound (ms) on reading a host's addresses from Avahi's cache, in case
+/// the daemon never signals the end of it.
+const HOST_ADDRS_TIMEOUT_MS: u64 = 500;
 
 /// Interval (ms) at which a running browse re-checks whether it is still in
 /// flight (first match consumed, or caller timed out / dropped).
@@ -216,7 +245,7 @@ impl AvahiMdns {
                 }
 
                 // The instance exists now, so this resolve is near-instant.
-                let (name, ips, port, txt, scope_id) = resolve_browsed_all_families(
+                let Some(mut resolved) = resolve_browsed(
                     &avahi,
                     args.interface,
                     args.protocol,
@@ -224,26 +253,31 @@ impl AvahiMdns {
                     args.type_,
                     args.domain,
                 )
-                .await;
+                .await
+                else {
+                    continue;
+                };
 
-                let _ = name;
-                if !ips.is_empty() {
-                    let txt_pairs = txt_pairs(&txt);
-                    // Deposit under the full requested instance name (the transport
-                    // matches on it). `name` from the browser is the bare label.
-                    matter.transport().try_deposit_mdns_resolve(
-                        &MdnsRemoteService {
-                            instance_name: DottedName(name_buf.as_str()),
-                            port: Some(port),
-                            addrs: ips.iter().copied(),
-                            txt: txt_pairs.iter().copied(),
-                            scope_id,
-                        },
-                        // The Avahi daemon owns the host A/AAAA records; this backend never
-                        // sees the local interface addresses.
-                        &[],
-                    );
-                }
+                // All of the peer's addresses, so the transport can rank them.
+                resolved.add_cached_host_addrs(connection, &avahi).await;
+
+                debug!("Avahi resolved {}: {:?}", name_buf, resolved.ips);
+
+                let txt_pairs = txt_pairs(&resolved.txt);
+                // Deposit under the full requested instance name (the transport
+                // matches on it). `name` from the browser is the bare label.
+                matter.transport().try_deposit_mdns_resolve(
+                    &MdnsRemoteService {
+                        instance_name: DottedName(name_buf.as_str()),
+                        port: Some(resolved.port),
+                        addrs: resolved.ips.iter().copied(),
+                        txt: txt_pairs.iter().copied(),
+                        scope_id: resolved.scope_id(),
+                    },
+                    // The Avahi daemon owns the host A/AAAA records; this backend never
+                    // sees the local interface addresses.
+                    &[],
+                );
             }
 
             guard.free().await;
@@ -303,10 +337,9 @@ impl AvahiMdns {
                     continue;
                 }
 
-                // Resolve both families for this browsed instance and deposit all
-                // addresses together (transport prefers IPv6 via
-                // `score_ip_address`).
-                let (name, ips, port, txt, scope_id) = resolve_browsed_all_families(
+                // A browse matches on the TXT records; the addresses come from a
+                // later resolve.
+                let Some(resolved) = resolve_browsed(
                     &avahi,
                     args.interface,
                     args.protocol,
@@ -314,20 +347,21 @@ impl AvahiMdns {
                     args.type_,
                     args.domain,
                 )
-                .await;
+                .await
+                else {
+                    continue;
+                };
 
-                if !ips.is_empty() {
-                    let txt_pairs = txt_pairs(&txt);
-                    matter
-                        .transport()
-                        .try_deposit_mdns_browse(&MdnsRemoteService {
-                            instance_name: DottedName(&name),
-                            port: Some(port),
-                            addrs: ips.iter().copied(),
-                            txt: txt_pairs.iter().copied(),
-                            scope_id,
-                        });
-                }
+                let txt_pairs = txt_pairs(&resolved.txt);
+                matter
+                    .transport()
+                    .try_deposit_mdns_browse(&MdnsRemoteService {
+                        instance_name: DottedName(&resolved.name),
+                        port: Some(resolved.port),
+                        addrs: resolved.ips.iter().copied(),
+                        txt: txt_pairs.iter().copied(),
+                        scope_id: resolved.scope_id(),
+                    });
             }
 
             guard.free().await;
@@ -462,6 +496,104 @@ impl AvahiMdns {
     }
 }
 
+/// A browsed instance, resolved by [`resolve_browsed`].
+struct ResolvedService {
+    name: String,
+    /// The SRV target host.
+    host: String,
+    /// The interface the instance was resolved on.
+    interface: i32,
+    ips: Vec<IpAddr>,
+    port: u16,
+    txt: Vec<Vec<u8>>,
+}
+
+impl ResolvedService {
+    /// The IPv6 scope id for a link-local address among `ips`, else `0`.
+    fn scope_id(&self) -> u32 {
+        if self.interface > 0 && self.ips.iter().any(is_link_local_v6) {
+            self.interface as u32
+        } else {
+            0
+        }
+    }
+
+    /// Add every address Avahi has cached for the host to `ips`.
+    ///
+    /// `ResolveService` returns one address, and for a dual-stack peer that is
+    /// often the IPv4 one. The host's A/AAAA records came with its SRV record, so
+    /// they are cached by now: reading just the cache gets all of them without
+    /// waiting, also when the host lacks a family.
+    async fn add_cached_host_addrs(&mut self, connection: &Connection, avahi: &Server2Proxy<'_>) {
+        for type_ in [DNS_TYPE_AAAA, DNS_TYPE_A] {
+            if let Err(e) = self.add_cached_records(connection, avahi, type_).await {
+                debug!("Avahi record browse for {} failed: {:?}", self.host, e);
+            }
+        }
+    }
+
+    /// Add the addresses of the host's cached `type_` (A or AAAA) records.
+    async fn add_cached_records(
+        &mut self,
+        connection: &Connection,
+        avahi: &Server2Proxy<'_>,
+        type_: u16,
+    ) -> Result<(), Error> {
+        let browser_path = avahi
+            .record_browser_prepare(
+                self.interface,
+                AVAHI_PROTO_UNSPEC,
+                &self.host,
+                DNS_CLASS_IN,
+                type_,
+                0,
+            )
+            .await?;
+        let browser = RecordBrowserProxy::builder(connection)
+            .path(browser_path)?
+            .build()
+            .await?;
+        let mut item_new_stream = browser.receive_item_new().await?;
+        let mut cache_exhausted_stream = browser.receive_cache_exhausted().await?;
+        let mut failure_stream = browser.receive_failure().await?;
+        browser.start().await?;
+
+        // Frees the browser on cancellation too (see `BrowserGuard`).
+        let guard = BrowserGuard::new(&browser);
+
+        let mut timer = pin!(Timer::after(Duration::from_millis(HOST_ADDRS_TIMEOUT_MS)));
+
+        loop {
+            // Items go first: the cached ones are signalled before
+            // `CacheExhausted`, so they are all queued once it is.
+            let item = pin!(item_new_stream.next());
+            let end = pin!(select(cache_exhausted_stream.next(), failure_stream.next()));
+
+            let Either3::First(Some(signal)) = select3(item, end, &mut timer).await else {
+                break;
+            };
+
+            let Ok(args) = signal.args() else { continue };
+
+            let ip = if let Ok(octets) = <[u8; 16]>::try_from(args.rdata.as_slice()) {
+                IpAddr::V6(Ipv6Addr::from(octets))
+            } else if let Ok(octets) = <[u8; 4]>::try_from(args.rdata.as_slice()) {
+                IpAddr::V4(Ipv4Addr::from(octets))
+            } else {
+                continue;
+            };
+
+            if !self.ips.contains(&ip) {
+                self.ips.push(ip);
+            }
+        }
+
+        guard.free().await;
+
+        Ok(())
+    }
+}
+
 /// Parse Avahi TXT entries (`key=value` / bare `key` byte strings) into borrowed
 /// `(key, value)` pairs.
 fn txt_pairs(txt: &[Vec<u8>]) -> Vec<(&str, &str)> {
@@ -478,35 +610,20 @@ fn txt_pairs(txt: &[Vec<u8>]) -> Vec<(&str, &str)> {
 }
 
 /// Resolve a *browsed* instance (identified by the browser's
-/// `name`/`type_`/`domain`), returning the resolved instance name plus its
-/// address, port and TXT.
+/// `name`/`type_`/`domain`).
 ///
-/// We resolve with `aprotocol = AVAHI_PROTO_UNSPEC` in a **single** call, letting
-/// Avahi return the address it already has for this browsed instance. We do *not*
-/// loop over IPv6 then IPv4: `ResolveService` for an address family the instance
-/// does not have blocks for Avahi's full ~5 s resolve timeout before failing, and
-/// a Thread device typically advertises only an IPv6 (mesh-local) address — so a
-/// per-family loop would stall ~5 s on the missing IPv4 every time, which (given
-/// the caller's own resolve timeout) makes the resolve appear to fail even though
-/// the record is right there. One UNSPEC resolve returns immediately with the
-/// address that exists, which is all CASE needs to reach the peer.
-#[allow(clippy::type_complexity)]
-async fn resolve_browsed_all_families(
+/// One `ResolveService` with `aprotocol = AVAHI_PROTO_UNSPEC`, rather than one
+/// per address family: a family the instance lacks would block for Avahi's ~5 s
+/// resolve timeout (a Thread device has no IPv4). It yields a single address;
+/// see [`ResolvedService::add_cached_host_addrs`] for the rest.
+async fn resolve_browsed(
     avahi: &Server2Proxy<'_>,
     interface: i32,
     protocol: i32,
     name: &str,
     type_: &str,
     domain: &str,
-) -> (String, Vec<IpAddr>, u16, Vec<Vec<u8>>, u32) {
-    let mut instance_name = String::new();
-    let mut ips: Vec<IpAddr> = Vec::new();
-    let mut port = 0u16;
-    let mut txt: Vec<Vec<u8>> = Vec::new();
-    // Interface index of a link-local result → IPv6 scope id, so a `fe80::`
-    // address is routable.
-    let mut scope_id = 0u32;
-
+) -> Option<ResolvedService> {
     match avahi
         .resolve_service(
             interface,
@@ -519,23 +636,27 @@ async fn resolve_browsed_all_families(
         )
         .await
     {
-        Ok((iface, _proto, rname, _type, _domain, _host, _ap, address, p, t, _fl)) => {
-            if let Ok(ip) = address.parse::<IpAddr>() {
-                if is_link_local_v6(&ip) && iface > 0 {
-                    scope_id = iface as u32;
+        Ok((iface, _proto, rname, _type, _domain, host, _ap, address, port, txt, _fl)) => {
+            match address.parse::<IpAddr>() {
+                Ok(ip) => Some(ResolvedService {
+                    name: rname,
+                    host,
+                    interface: iface,
+                    ips: vec![ip],
+                    port,
+                    txt,
+                }),
+                Err(_) => {
+                    warn!("Could not parse IP address: {address}");
+                    None
                 }
-                ips.push(ip);
-                instance_name = rname;
-                port = p;
-                txt = t;
-            } else {
-                warn!("Could not parse IP address: {address}");
             }
         }
-        Err(e) => debug!("Avahi resolve (browsed) failed: {e:?}"),
+        Err(e) => {
+            debug!("Avahi resolve (browsed) failed: {e:?}");
+            None
+        }
     }
-
-    (instance_name, ips, port, txt, scope_id)
 }
 
 /// `true` for a unicast link-local IPv6 address (`fe80::/10`) — the only kind
