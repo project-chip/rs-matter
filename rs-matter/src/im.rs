@@ -1634,6 +1634,10 @@ where
             })
             .await?;
 
+        if !resp.sent {
+            rctx.set_unsent();
+        }
+
         if !sub_valid {
             warn!(
                 "Subscription {:?} removed during reporting",
@@ -1980,6 +1984,8 @@ struct ReportDataResponder<'a, 'b, 'c, const NE: usize, C> {
     invoker: HandlerInvoker<'b, 'c, C>,
     event_reader: EventReader,
     events: &'a Events<NE>,
+    /// Whether anything was sent to the peer.
+    sent: bool,
 }
 
 impl<'a, 'b, 'c, const NE: usize, C> ReportDataResponder<'a, 'b, 'c, NE, C>
@@ -2004,6 +2010,7 @@ where
             invoker,
             event_reader,
             events,
+            sent: false,
         }
     }
 
@@ -2291,6 +2298,8 @@ where
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
         self.end_reply(state, suppress_last_resp, wb)?;
+
+        self.sent = true;
 
         self.invoker
             .exchange()
