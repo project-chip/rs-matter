@@ -1843,6 +1843,16 @@ where
         self.keep
     }
 
+    /// Mark the report as not sent, as it turned out empty.
+    ///
+    /// The watermarks still advance past the changes and events it had nothing
+    /// to report on, but the last-report timestamp does not: the min interval,
+    /// the keep-alive and the expiry keep counting from the last report the
+    /// subscriber actually received.
+    pub(crate) fn set_unsent(&mut self) {
+        self.next_reported_at = self.subscription().reported_at;
+    }
+
     /// Drop the subscription after a *failed* send to the peer, rather than
     /// retrying it: what an Intermittently Connected Device does, so that a gone
     /// subscriber neither keeps it awake retrying nor holds back its sleep. Its
@@ -3309,6 +3319,56 @@ mod tests {
             .is_none());
 
         // At the liveness window: due even without any attr/event change.
+        let long = now + Duration::from_secs(11);
+        {
+            let mut rctx = subs
+                .report(long, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
+            assert!(rctx.should_send_if_empty(KeepAlive::Default));
+            rctx.set_keep();
+        }
+    }
+
+    #[test]
+    fn unsent_report_does_not_postpone_liveness_deadline() {
+        // Changes the subscription has nothing to report on produce no report,
+        // so they must not push its keep-alive (or expiry) further out.
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        // max_int = 20s → report-due at now+10s.
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 20);
+            rctx.set_keep();
+        }
+
+        // A change the subscription turns out not to cover, shortly before the
+        // keep-alive point.
+        subs.notify_attr_changed(1, 2, 3);
+
+        let changed = now + Duration::from_secs(9);
+        {
+            let mut rctx = subs
+                .report(changed, 0, KeepAlive::Default, false, &subs_bufs)
+                .unwrap();
+            assert!(!rctx.should_send_if_empty(KeepAlive::Default));
+            rctx.set_unsent();
+            rctx.set_keep();
+        }
+
+        // The change is consumed...
+        assert!(subs
+            .report(changed, 0, KeepAlive::Default, false, &subs_bufs)
+            .is_none());
+
+        // ...but the keep-alive is still due 10s after the last sent report.
+        assert_eq!(
+            subs.next_report_at(0, KeepAlive::Default, &subs_bufs),
+            now + Duration::from_secs(10)
+        );
+
         let long = now + Duration::from_secs(11);
         {
             let mut rctx = subs

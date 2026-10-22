@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a subscription report skipped as empty no longer postpones the subscription's keep-alive (#608)
 * New: Ethernet Network Diagnostics serves its optional attributes from an `EthDiag` data source, advertised with `clusters!(eth, eth_diag(…))` / `root_endpoint!(eth, eth_diag(…))` (#607)
   * Breaking: `eth_net_handler`, `eth_sys_handler` and `EthDiagHandler::new` take an `&dyn EthDiag`
 * New: Thread and Wi-Fi Network Diagnostics advertise their optional attributes and features with `thread_diag(…)` / `wifi_diag(…)`; `ThreadDiag` and `WifiDiag` gain methods for them, and `ResetCounts` (#607)
