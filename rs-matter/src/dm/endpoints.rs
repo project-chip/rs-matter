@@ -52,7 +52,7 @@ use super::clusters::acl::{self, AclHandler, ClusterHandler as _};
 use super::clusters::adm_comm::{self, AdminCommHandler, ClusterHandler as _};
 use super::clusters::basic_info::{self, BasicInfoHandler, ClusterHandler as _};
 use super::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
+use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiag, EthDiagHandler};
 use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
@@ -82,6 +82,12 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId};
 ///   Diagnostics cluster.
 /// - `time_sync(time_zone | ntp_client | ntp_server | time_sync_client, …)` —
 ///   shapes the Time Synchronization cluster.
+/// - `eth_diag(phy_rate | full_duplex | carrier_detect | time_since_reset | packet_counts |
+///   error_counts, …)` — `eth` only; shapes the Ethernet Network Diagnostics cluster.
+/// - `thread_diag(error_counts | mle_counts | mac_counts | active_timestamp | pending_timestamp |
+///   delay, …)` — `thread` only; shapes the Thread Network Diagnostics cluster.
+/// - `wifi_diag(error_counts | packet_counts | current_max_rate, …)` — `wifi` only; shapes the
+///   Wi-Fi Network Diagnostics cluster.
 ///
 /// See the [`crate::clusters!`] docs for the token semantics.
 ///
@@ -96,6 +102,9 @@ macro_rules! root_endpoint {
         $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
+        $(, eth_diag($($ed_opt:ident),* $(,)?))?
+        $(, thread_diag($($td_opt:ident),* $(,)?))?
+        $(, wifi_diag($($wd_opt:ident),* $(,)?))?
     ) => {
         $crate::dm::Endpoint {
             id: $crate::dm::endpoints::ROOT_ENDPOINT_ID,
@@ -105,6 +114,9 @@ macro_rules! root_endpoint {
                 $(, acl($($acl_opt),*))?
                 $(, sw_diag($($sw_opt),*))?
                 $(, time_sync($($ts_opt),*))?
+                $(, eth_diag($($ed_opt),*))?
+                $(, thread_diag($($td_opt),*))?
+                $(, wifi_diag($($wd_opt),*))?
                 ;
             ),
             client_clusters: &[],
@@ -150,7 +162,7 @@ pub type OperNetHandler<'a, N, T = EmptyHandler> = handler_chain_type!(
 
 /// A type alias for the handler chain returned by `eth_net_handler()`.
 pub type EthNetHandler<'a, H> =
-    NetHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler>, H>;
+    NetHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler<'a>>, H>;
 
 /// A type alias for the handler chain returned by `wifi_net_handler()`.
 pub type WifiNetHandler<'a, T, H> =
@@ -171,7 +183,7 @@ pub type NetHandler<'a, T, N, H> = handler_chain_type!(
 
 /// A type alias for the handler chain returned by `eth_sys_handler()`.
 pub type EthSysHandler<'a> =
-    SysHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler>>;
+    SysHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler<'a>>>;
 
 /// A type alias for the handler chain returned by `wifi_sys_handler()`.
 pub type WifiSysHandler<'a, T> = SysHandler<'a, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>;
@@ -212,12 +224,14 @@ pub fn root_handler<'a, R: Rng>(sw_diag: &'a dyn SwDiag, rand: R) -> RootHandler
 /// - `comm_policy`: The `CommPolicy` implementation.
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
+/// - `eth_diag`: The `EthDiag` implementation (pass `&()` if it has nothing to report).
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
 pub fn eth_net_handler<'a, R: Rng, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
+    eth_diag: &'a dyn EthDiag,
     next: H,
     mut rand: R,
 ) -> EthNetHandler<'a, H> {
@@ -233,7 +247,7 @@ pub fn eth_net_handler<'a, R: Rng, H>(
                     || c == GenDiagHandler::CLUSTER.id
                     || c == EthDiagHandler::CLUSTER.id)
         },
-        EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+        EthDiagHandler::new(Dataver::new_rand(&mut rand), eth_diag).adapt(),
         next,
         rand,
     )
@@ -332,6 +346,7 @@ where
 /// - `comm_policy`: The `CommPolicy` implementation.
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
+/// - `eth_diag`: The `EthDiag` implementation (pass `&()` if it has nothing to report).
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the
 ///   no-op default: heap counters report `0`).
 /// - `rand`: A random number generator.
@@ -340,6 +355,7 @@ pub fn eth_sys_handler<'a, R: Rng>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
+    eth_diag: &'a dyn EthDiag,
     sw_diag: &'a dyn SwDiag,
     mut rand: R,
 ) -> EthSysHandler<'a> {
@@ -351,7 +367,7 @@ pub fn eth_sys_handler<'a, R: Rng>(
         EthNetCtl::new_default(),
         &AlwaysConnected,
         |e, c| e == ROOT_ENDPOINT_ID && c == EthDiagHandler::CLUSTER.id,
-        EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+        EthDiagHandler::new(Dataver::new_rand(&mut rand), eth_diag).adapt(),
         rand,
     )
 }
@@ -581,7 +597,7 @@ where
 // `thread_sys_handler` free fns: each cluster-data hook is a setter, unset
 // ones fall back to the canonical no-op default (`&true` for `CommPolicy`,
 // `&()` for every other trait — `bool: CommPolicy` and `(): GenDiag` /
-// `NetifDiag` / `TimeSync` / `SwDiag` are already impls in the crate). New
+// `NetifDiag` / `EthDiag` / `TimeSync` / `SwDiag` are already impls in the crate). New
 // hooks can be added later by extending one struct + adding a setter, with
 // no churn on existing call sites.
 
@@ -601,6 +617,7 @@ pub struct EthSysHandlerBuilder<'a> {
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
+    eth_diag: &'a dyn EthDiag,
     sw_diag: &'a dyn SwDiag,
 }
 
@@ -617,6 +634,7 @@ impl<'a> EthSysHandlerBuilder<'a> {
             comm_policy: &true,
             gen_diag: &(),
             netif_diag: &(),
+            eth_diag: &(),
             sw_diag: &(),
         }
     }
@@ -639,6 +657,12 @@ impl<'a> EthSysHandlerBuilder<'a> {
         self
     }
 
+    /// Set the `EthDiag` hook (Ethernet Network Diagnostics data provider).
+    pub const fn eth_diag(mut self, eth_diag: &'a dyn EthDiag) -> Self {
+        self.eth_diag = eth_diag;
+        self
+    }
+
     /// Set the `SwDiag` hook (Software Diagnostics data provider).
     pub const fn sw_diag(mut self, sw_diag: &'a dyn SwDiag) -> Self {
         self.sw_diag = sw_diag;
@@ -651,6 +675,7 @@ impl<'a> EthSysHandlerBuilder<'a> {
             self.comm_policy,
             self.gen_diag,
             self.netif_diag,
+            self.eth_diag,
             self.sw_diag,
             rand,
         )

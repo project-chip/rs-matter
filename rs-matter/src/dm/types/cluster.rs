@@ -591,6 +591,19 @@ impl defmt::Format for Cluster<'_> {
 ///   [`crate::dm::clusters::time_sync::Options`] and to the matching Matter
 ///   features (`TIME_ZONE`, `NTP_CLIENT`, `NTP_SERVER`, `TIME_SYNC_CLIENT`).
 ///
+/// - `eth_diag(phy_rate | full_duplex | carrier_detect | time_since_reset | packet_counts |
+///   error_counts, …)` - `eth;` only; shape the Ethernet Network Diagnostics cluster. Tokens map
+///   1:1 to [`crate::dm::clusters::eth_diag::Options`]; `packet_counts` and `error_counts` claim
+///   the Matter `PKTCNT` and `ERRCNT` features.
+/// - `thread_diag(error_counts | mle_counts | mac_counts | active_timestamp | pending_timestamp |
+///   delay, …)` - `thread;` only; shape the Thread Network Diagnostics cluster. Tokens map 1:1 to
+///   [`crate::dm::clusters::thread_diag::Options`]; the `*_counts` ones claim the Matter
+///   `ERRCNT`, `MLECNT` and `MACCNT` features.
+/// - `wifi_diag(error_counts | packet_counts | current_max_rate, …)` - `wifi;` only; shape the
+///   Wi-Fi Network Diagnostics cluster. Tokens map 1:1 to
+///   [`crate::dm::clusters::wifi_diag::Options`]; the `*_counts` ones claim the Matter `ERRCNT`
+///   and `PKTCNT` features.
+///
 /// Omitting a modifier advertises the corresponding cluster's empty-options
 /// shape (required globals + always-on attributes, no features, no commands).
 ///
@@ -634,6 +647,7 @@ macro_rules! clusters {
         $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
+        $(, eth_diag($($ed_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
@@ -643,7 +657,9 @@ macro_rules! clusters {
             $(, time_sync($($ts_opt),*))?
             ;
             $crate::dm::clusters::net_comm::NetworkType::Ethernet.cluster(),
-            <$crate::dm::clusters::eth_diag::EthDiagHandler as $crate::dm::clusters::eth_diag::ClusterHandler>::CLUSTER,
+            $crate::dm::clusters::eth_diag::cluster::<{
+                $crate::__eth_diag_options!( $($($ed_opt),*)? ).bits()
+            }>(),
             $($cluster,)*
         )
     };
@@ -651,6 +667,7 @@ macro_rules! clusters {
         $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
+        $(, thread_diag($($td_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
@@ -660,7 +677,9 @@ macro_rules! clusters {
             $(, time_sync($($ts_opt),*))?
             ;
             $crate::dm::clusters::net_comm::NetworkType::Thread.cluster(),
-            <$crate::dm::clusters::thread_diag::ThreadDiagHandler as $crate::dm::clusters::thread_diag::ClusterHandler>::CLUSTER,
+            $crate::dm::clusters::thread_diag::cluster::<{
+                $crate::__thread_diag_options!( $($($td_opt),*)? ).bits()
+            }>(),
             $($cluster,)*
         )
     };
@@ -668,6 +687,7 @@ macro_rules! clusters {
         $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
+        $(, wifi_diag($($wd_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
@@ -677,7 +697,9 @@ macro_rules! clusters {
             $(, time_sync($($ts_opt),*))?
             ;
             $crate::dm::clusters::net_comm::NetworkType::Wifi.cluster(),
-            <$crate::dm::clusters::wifi_diag::WifiDiagHandler as $crate::dm::clusters::wifi_diag::ClusterHandler>::CLUSTER,
+            $crate::dm::clusters::wifi_diag::cluster::<{
+                $crate::__wifi_diag_options!( $($($wd_opt),*)? ).bits()
+            }>(),
             $($cluster,)*
         )
     };
@@ -735,6 +757,117 @@ macro_rules! __sw_diag_option_bit {
     };
     (thread) => {
         $crate::dm::clusters::sw_diag::Options::THREAD
+    };
+}
+
+/// Internal helper: turn a comma-separated list of `eth_diag(...)` lowercase
+/// tokens into the corresponding [`crate::dm::clusters::eth_diag::Options`]
+/// bitset value.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __eth_diag_options {
+    () => { $crate::dm::clusters::eth_diag::Options::empty() };
+    ($($opt:ident),+ $(,)?) => {
+        $crate::dm::clusters::eth_diag::Options::empty()
+            $(.union($crate::__eth_diag_option_bit!($opt)))+
+    };
+}
+
+/// Internal helper: map one lowercase `eth_diag(...)` token to the matching
+/// [`crate::dm::clusters::eth_diag::Options`] constant.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __eth_diag_option_bit {
+    (phy_rate) => {
+        $crate::dm::clusters::eth_diag::Options::PHY_RATE
+    };
+    (full_duplex) => {
+        $crate::dm::clusters::eth_diag::Options::FULL_DUPLEX
+    };
+    (carrier_detect) => {
+        $crate::dm::clusters::eth_diag::Options::CARRIER_DETECT
+    };
+    (time_since_reset) => {
+        $crate::dm::clusters::eth_diag::Options::TIME_SINCE_RESET
+    };
+    (packet_counts) => {
+        $crate::dm::clusters::eth_diag::Options::PACKET_COUNTS
+    };
+    (error_counts) => {
+        $crate::dm::clusters::eth_diag::Options::ERROR_COUNTS
+    };
+}
+
+/// Internal helper: turn a comma-separated list of `thread_diag(...)` lowercase
+/// tokens into the corresponding [`crate::dm::clusters::thread_diag::Options`]
+/// bitset value.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __thread_diag_options {
+    () => { $crate::dm::clusters::thread_diag::Options::empty() };
+    ($($opt:ident),+ $(,)?) => {
+        $crate::dm::clusters::thread_diag::Options::empty()
+            $(.union($crate::__thread_diag_option_bit!($opt)))+
+    };
+}
+
+/// Internal helper: map one lowercase `thread_diag(...)` token to the matching
+/// [`crate::dm::clusters::thread_diag::Options`] constant.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __thread_diag_option_bit {
+    (error_counts) => {
+        $crate::dm::clusters::thread_diag::Options::ERROR_COUNTS
+    };
+    (mle_counts) => {
+        $crate::dm::clusters::thread_diag::Options::MLE_COUNTS
+    };
+    (mac_counts) => {
+        $crate::dm::clusters::thread_diag::Options::MAC_COUNTS
+    };
+    (active_timestamp) => {
+        $crate::dm::clusters::thread_diag::Options::ACTIVE_TIMESTAMP
+    };
+    (pending_timestamp) => {
+        $crate::dm::clusters::thread_diag::Options::PENDING_TIMESTAMP
+    };
+    (delay) => {
+        $crate::dm::clusters::thread_diag::Options::DELAY
+    };
+}
+
+/// Internal helper: turn a comma-separated list of `wifi_diag(...)` lowercase
+/// tokens into the corresponding [`crate::dm::clusters::wifi_diag::Options`]
+/// bitset value.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __wifi_diag_options {
+    () => { $crate::dm::clusters::wifi_diag::Options::empty() };
+    ($($opt:ident),+ $(,)?) => {
+        $crate::dm::clusters::wifi_diag::Options::empty()
+            $(.union($crate::__wifi_diag_option_bit!($opt)))+
+    };
+}
+
+/// Internal helper: map one lowercase `wifi_diag(...)` token to the matching
+/// [`crate::dm::clusters::wifi_diag::Options`] constant.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __wifi_diag_option_bit {
+    (error_counts) => {
+        $crate::dm::clusters::wifi_diag::Options::ERROR_COUNTS
+    };
+    (packet_counts) => {
+        $crate::dm::clusters::wifi_diag::Options::PACKET_COUNTS
+    };
+    (current_max_rate) => {
+        $crate::dm::clusters::wifi_diag::Options::CURRENT_MAX_RATE
     };
 }
 

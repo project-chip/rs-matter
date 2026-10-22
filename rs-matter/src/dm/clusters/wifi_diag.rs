@@ -16,14 +16,18 @@
  */
 
 //! This module contains the implementation of the Wifi Network Diagnostics cluster and its handler.
+//!
+//! The optional attributes and features to advertise are picked endpoint-side with [`Options`],
+//! e.g. `clusters!(wifi, wifi_diag(packet_counts); …)`.
 
 use core::fmt::Debug;
 
-use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
-use crate::error::{Error, ErrorCode};
+use bitflags::bitflags;
+
+use crate::dm::{Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext};
+use crate::error::Error;
 use crate::tlv::{Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::utils::sync::DynBase;
-use crate::with;
 
 pub use crate::dm::clusters::decl::wi_fi_network_diagnostics::*;
 
@@ -87,6 +91,43 @@ pub trait WifiDiag: WirelessDiag {
     fn rssi(&self) -> Result<Nullable<i8>, Error> {
         Ok(Nullable::none())
     }
+
+    fn beacon_lost_count(&self) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn beacon_rx_count(&self) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn packet_multicast_rx_count(&self) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn packet_multicast_tx_count(&self) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn packet_unicast_rx_count(&self) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn packet_unicast_tx_count(&self) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn current_max_rate(&self) -> Result<Nullable<u64>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn overrun_count(&self) -> Result<Nullable<u64>, Error> {
+        Ok(Nullable::none())
+    }
+
+    /// Reset the beacon and packet counts to 0
+    fn reset_counts(&self) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<T> WifiDiag for &T
@@ -112,9 +153,113 @@ where
     fn rssi(&self) -> Result<Nullable<i8>, Error> {
         (*self).rssi()
     }
+
+    fn beacon_lost_count(&self) -> Result<Nullable<u32>, Error> {
+        (*self).beacon_lost_count()
+    }
+
+    fn beacon_rx_count(&self) -> Result<Nullable<u32>, Error> {
+        (*self).beacon_rx_count()
+    }
+
+    fn packet_multicast_rx_count(&self) -> Result<Nullable<u32>, Error> {
+        (*self).packet_multicast_rx_count()
+    }
+
+    fn packet_multicast_tx_count(&self) -> Result<Nullable<u32>, Error> {
+        (*self).packet_multicast_tx_count()
+    }
+
+    fn packet_unicast_rx_count(&self) -> Result<Nullable<u32>, Error> {
+        (*self).packet_unicast_rx_count()
+    }
+
+    fn packet_unicast_tx_count(&self) -> Result<Nullable<u32>, Error> {
+        (*self).packet_unicast_tx_count()
+    }
+
+    fn current_max_rate(&self) -> Result<Nullable<u64>, Error> {
+        (*self).current_max_rate()
+    }
+
+    fn overrun_count(&self) -> Result<Nullable<u64>, Error> {
+        (*self).overrun_count()
+    }
+
+    fn reset_counts(&self) -> Result<(), Error> {
+        (*self).reset_counts()
+    }
 }
 
 impl WifiDiag for () {}
+
+bitflags! {
+    /// The optional attributes and features of the cluster to advertise.
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct Options: u8 {
+        /// The `ERRCNT` feature: `BeaconLostCount`, `OverrunCount` and the `ResetCounts` command
+        const ERROR_COUNTS = 0x01;
+        /// The `PKTCNT` feature: `BeaconRxCount` and the `Packet*Count` attributes
+        const PACKET_COUNTS = 0x02;
+        /// `CurrentMaxRate`
+        const CURRENT_MAX_RATE = 0x04;
+    }
+}
+
+/// Compute the `Cluster<'static>` metadata advertising the options encoded in `OPTS`
+/// (the [`Options::bits`] value).
+pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
+    let opts = Options::from_bits_truncate(OPTS);
+
+    let mut features = 0u32;
+
+    if opts.contains(Options::ERROR_COUNTS) {
+        features |= Feature::ERROR_COUNTS.bits();
+    }
+
+    if opts.contains(Options::PACKET_COUNTS) {
+        features |= Feature::PACKET_COUNTS.bits();
+    }
+
+    Cluster {
+        feature_map: features,
+        with_attrs: wifi_diag_attrs::<OPTS>,
+        with_cmds: wifi_diag_cmds::<OPTS>,
+        ..FULL_CLUSTER
+    }
+}
+
+const fn wifi_diag_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bool {
+    use AttributeId as A;
+
+    if !attr.quality.contains(Quality::OPTIONAL) {
+        return true;
+    }
+
+    let id = attr.id;
+
+    let opt = if id == A::BeaconLostCount as u32 || id == A::OverrunCount as u32 {
+        Options::ERROR_COUNTS
+    } else if id == A::BeaconRxCount as u32
+        || id == A::PacketMulticastRxCount as u32
+        || id == A::PacketMulticastTxCount as u32
+        || id == A::PacketUnicastRxCount as u32
+        || id == A::PacketUnicastTxCount as u32
+    {
+        Options::PACKET_COUNTS
+    } else if id == A::CurrentMaxRate as u32 {
+        Options::CURRENT_MAX_RATE
+    } else {
+        return false;
+    };
+
+    Options::from_bits_truncate(OPTS).contains(opt)
+}
+
+const fn wifi_diag_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
+    cmd.id == CommandId::ResetCounts as u32
+        && Options::from_bits_truncate(OPTS).contains(Options::ERROR_COUNTS)
+}
 
 /// A cluster implementing the Matter Wifi Diagnostics Cluster.
 #[derive(Clone)]
@@ -136,7 +281,7 @@ impl<'a> WifiDiagHandler<'a> {
 }
 
 impl ClusterHandler for WifiDiagHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
+    const CLUSTER: Cluster<'static> = cluster::<0>();
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -185,8 +330,40 @@ impl ClusterHandler for WifiDiagHandler<'_> {
         self.diag.rssi()
     }
 
+    fn beacon_lost_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        self.diag.beacon_lost_count()
+    }
+
+    fn beacon_rx_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        self.diag.beacon_rx_count()
+    }
+
+    fn packet_multicast_rx_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        self.diag.packet_multicast_rx_count()
+    }
+
+    fn packet_multicast_tx_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        self.diag.packet_multicast_tx_count()
+    }
+
+    fn packet_unicast_rx_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        self.diag.packet_unicast_rx_count()
+    }
+
+    fn packet_unicast_tx_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        self.diag.packet_unicast_tx_count()
+    }
+
+    fn current_max_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        self.diag.current_max_rate()
+    }
+
+    fn overrun_count(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        self.diag.overrun_count()
+    }
+
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.diag.reset_counts()
     }
 }
 
