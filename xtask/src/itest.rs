@@ -247,11 +247,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestDiagnosticLogs",
     // Skipped: every Ethernet Network Diagnostics attribute (PHYRate ..
     // TimeSinceReset) is optional and `ResetCounts` is its only command, while
-    // `eth_diag::EthDiagHandler` declares `with_attrs(with!(required))` and
-    // `with_cmds(with!())` - so it serves the global attributes and nothing
-    // else. Both tests read the optional attributes under PICS gates, so
-    // enabling them requires the handler to source real interface counters;
-    // claiming them in the `.pics` without that just buys a vacuous pass.
+    // the system tests advertise the cluster with no `eth_diag(...)` options -
+    // so it serves the global attributes and nothing else. Both tests read the
+    // optional attributes under PICS gates, so enabling them requires an
+    // `EthDiag` sourcing real interface counters; claiming them in the `.pics`
+    // without that just buys a vacuous pass.
     // "Test_TC_DGETH_2_1",
     // "Test_TC_DGETH_2_2",
     "TestDiscovery",

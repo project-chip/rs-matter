@@ -913,6 +913,42 @@ where
     fn rssi(&self) -> Result<crate::tlv::Nullable<i8>, Error> {
         self.net_ctl.rssi()
     }
+
+    fn beacon_lost_count(&self) -> Result<crate::tlv::Nullable<u32>, Error> {
+        self.net_ctl.beacon_lost_count()
+    }
+
+    fn beacon_rx_count(&self) -> Result<crate::tlv::Nullable<u32>, Error> {
+        self.net_ctl.beacon_rx_count()
+    }
+
+    fn packet_multicast_rx_count(&self) -> Result<crate::tlv::Nullable<u32>, Error> {
+        self.net_ctl.packet_multicast_rx_count()
+    }
+
+    fn packet_multicast_tx_count(&self) -> Result<crate::tlv::Nullable<u32>, Error> {
+        self.net_ctl.packet_multicast_tx_count()
+    }
+
+    fn packet_unicast_rx_count(&self) -> Result<crate::tlv::Nullable<u32>, Error> {
+        self.net_ctl.packet_unicast_rx_count()
+    }
+
+    fn packet_unicast_tx_count(&self) -> Result<crate::tlv::Nullable<u32>, Error> {
+        self.net_ctl.packet_unicast_tx_count()
+    }
+
+    fn current_max_rate(&self) -> Result<crate::tlv::Nullable<u64>, Error> {
+        self.net_ctl.current_max_rate()
+    }
+
+    fn overrun_count(&self) -> Result<crate::tlv::Nullable<u64>, Error> {
+        self.net_ctl.overrun_count()
+    }
+
+    fn reset_counts(&self) -> Result<(), Error> {
+        self.net_ctl.reset_counts()
+    }
 }
 
 impl<T> thread_diag::ThreadDiag for NetCtlWithStatusImpl<'_, T>
@@ -983,6 +1019,14 @@ where
         self.net_ctl.leader_router_id()
     }
 
+    fn ext_address(&self) -> Result<Option<u64>, Error> {
+        self.net_ctl.ext_address()
+    }
+
+    fn rloc_16(&self) -> Result<Option<u16>, Error> {
+        self.net_ctl.rloc_16()
+    }
+
     fn security_policy(&self) -> Result<Option<thread_diag::SecurityPolicy>, Error> {
         self.net_ctl.security_policy()
     }
@@ -1013,6 +1057,33 @@ where
         f: &mut dyn FnMut(Option<&thread_diag::MacCounters>) -> Result<(), Error>,
     ) -> Result<(), Error> {
         self.net_ctl.mac_counters(f)
+    }
+
+    fn mle_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&thread_diag::MleCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.net_ctl.mle_counters(f)
+    }
+
+    fn overrun_count(&self) -> Result<u64, Error> {
+        self.net_ctl.overrun_count()
+    }
+
+    fn reset_counts(&self) -> Result<(), Error> {
+        self.net_ctl.reset_counts()
+    }
+
+    fn active_timestamp(&self) -> Result<Option<u64>, Error> {
+        self.net_ctl.active_timestamp()
+    }
+
+    fn pending_timestamp(&self) -> Result<Option<u64>, Error> {
+        self.net_ctl.pending_timestamp()
+    }
+
+    fn delay(&self) -> Result<Option<u32>, Error> {
+        self.net_ctl.delay()
     }
 }
 

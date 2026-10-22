@@ -16,18 +16,24 @@
  */
 
 //! This module contains the implementation of the Thread Network Diagnostics cluster and its handler.
+//!
+//! The optional attributes and features to advertise are picked endpoint-side with [`Options`],
+//! e.g. `clusters!(thread, thread_diag(mle_counts, mac_counts); …)`.
 
 use core::fmt::Debug;
 
+use bitflags::bitflags;
+
 use rs_matter_macros::{FromTLV, ToTLV};
 
-use crate::dm::{ArrayAttributeRead, Dataver, InvokeContext, ReadContext};
+use crate::dm::{
+    ArrayAttributeRead, Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext,
+};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent, ToTLVArrayBuilder,
     ToTLVBuilder, Utf8StrBuilder,
 };
-use crate::with;
 
 pub use crate::dm::clusters::decl::thread_network_diagnostics::*;
 
@@ -58,7 +64,7 @@ pub struct NeighborTable {
 /// as returned by [`ThreadDiag::mac_counters`].
 ///
 /// The two `*MaxRetryExpiryCount` values are `Option`s because not every
-/// Thread backend tracks them; `None` surfaces as an unsupported attribute.
+/// Thread backend tracks them; `None` reads as 0.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MacCounters {
@@ -96,6 +102,22 @@ pub struct MacCounters {
     pub rx_err_sec_count: u32,
     pub rx_err_fcs_count: u32,
     pub rx_err_other_count: u32,
+}
+
+/// A snapshot of the MLE counters — the cluster's `MLECounts` (`MLECNT`) feature set,
+/// attributes `DetachedRoleCount` .. `ParentChangeCount` — as returned by
+/// [`ThreadDiag::mle_counters`].
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MleCounters {
+    pub detached_role_count: u16,
+    pub child_role_count: u16,
+    pub router_role_count: u16,
+    pub leader_role_count: u16,
+    pub attach_attempt_count: u16,
+    pub partition_id_change_count: u16,
+    pub better_partition_attach_attempt_count: u16,
+    pub parent_change_count: u16,
 }
 
 impl NeighborTable {
@@ -317,8 +339,8 @@ pub trait ThreadDiag: WirelessDiag {
 
     /// Lend a snapshot of the IEEE 802.15.4 MAC counters (the cluster's
     /// `MACCounts` feature set) to the provided closure, or call it with
-    /// `None` if the backend does not track them - in which case the
-    /// corresponding attributes read as unsupported.
+    /// `None` if the backend does not track them (now) - in which case the
+    /// corresponding attributes read as 0.
     ///
     /// Lent by reference (as the other composite payloads of this trait)
     /// rather than returned by value: the snapshot is a ~144-byte struct.
@@ -328,6 +350,42 @@ pub trait ThreadDiag: WirelessDiag {
         f: &mut dyn FnMut(Option<&MacCounters>) -> Result<(), Error>,
     ) -> Result<(), Error> {
         f(None)
+    }
+
+    /// Lend a snapshot of the MLE counters (the cluster's `MLECounts` feature set)
+    /// to the provided closure, or call it with `None` if the backend does not track them (now) -
+    /// in which case the corresponding attributes read as 0.
+    #[allow(clippy::type_complexity)]
+    fn mle_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&MleCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        f(None)
+    }
+
+    /// The `OverrunCount` attribute (the `ErrorCounts` feature set)
+    fn overrun_count(&self) -> Result<u64, Error> {
+        Ok(0)
+    }
+
+    /// Reset `OverrunCount` to 0
+    fn reset_counts(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// The Active Timestamp of the Operational Dataset
+    fn active_timestamp(&self) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
+    /// The Pending Timestamp of the Operational Dataset
+    fn pending_timestamp(&self) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
+    /// The Delay Timer of the Operational Dataset
+    fn delay(&self) -> Result<Option<u32>, Error> {
+        Ok(None)
     }
 }
 
@@ -340,6 +398,33 @@ where
         f: &mut dyn FnMut(Option<&MacCounters>) -> Result<(), Error>,
     ) -> Result<(), Error> {
         (*self).mac_counters(f)
+    }
+
+    fn mle_counters(
+        &self,
+        f: &mut dyn FnMut(Option<&MleCounters>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        (*self).mle_counters(f)
+    }
+
+    fn overrun_count(&self) -> Result<u64, Error> {
+        (*self).overrun_count()
+    }
+
+    fn reset_counts(&self) -> Result<(), Error> {
+        (*self).reset_counts()
+    }
+
+    fn active_timestamp(&self) -> Result<Option<u64>, Error> {
+        (*self).active_timestamp()
+    }
+
+    fn pending_timestamp(&self) -> Result<Option<u64>, Error> {
+        (*self).pending_timestamp()
+    }
+
+    fn delay(&self) -> Result<Option<u32>, Error> {
+        (*self).delay()
     }
 
     fn channel(&self) -> Result<Option<u16>, Error> {
@@ -442,6 +527,85 @@ where
 
 impl ThreadDiag for () {}
 
+bitflags! {
+    /// The optional attributes and features of the cluster to advertise.
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct Options: u8 {
+        /// The `ERRCNT` feature: `OverrunCount` and the `ResetCounts` command
+        const ERROR_COUNTS = 0x01;
+        /// The `MLECNT` feature: `DetachedRoleCount` .. `ParentChangeCount`
+        const MLE_COUNTS = 0x02;
+        /// The `MACCNT` feature: `TxTotalCount` .. `RxErrOtherCount`
+        const MAC_COUNTS = 0x04;
+        /// `ActiveTimestamp`
+        const ACTIVE_TIMESTAMP = 0x08;
+        /// `PendingTimestamp`
+        const PENDING_TIMESTAMP = 0x10;
+        /// `Delay`
+        const DELAY = 0x20;
+    }
+}
+
+/// Compute the `Cluster<'static>` metadata advertising the options encoded in `OPTS`
+/// (the [`Options::bits`] value).
+pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
+    let opts = Options::from_bits_truncate(OPTS);
+
+    let mut features = 0u32;
+
+    if opts.contains(Options::ERROR_COUNTS) {
+        features |= Feature::ERROR_COUNTS.bits();
+    }
+
+    if opts.contains(Options::MLE_COUNTS) {
+        features |= Feature::MLE_COUNTS.bits();
+    }
+
+    if opts.contains(Options::MAC_COUNTS) {
+        features |= Feature::MAC_COUNTS.bits();
+    }
+
+    Cluster {
+        feature_map: features,
+        with_attrs: thread_diag_attrs::<OPTS>,
+        with_cmds: thread_diag_cmds::<OPTS>,
+        ..FULL_CLUSTER
+    }
+}
+
+const fn thread_diag_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bool {
+    use AttributeId as A;
+
+    if !attr.quality.contains(Quality::OPTIONAL) {
+        return true;
+    }
+
+    let id = attr.id;
+
+    let opt = if id == A::OverrunCount as u32 {
+        Options::ERROR_COUNTS
+    } else if id >= A::DetachedRoleCount as u32 && id <= A::ParentChangeCount as u32 {
+        Options::MLE_COUNTS
+    } else if id >= A::TxTotalCount as u32 && id <= A::RxErrOtherCount as u32 {
+        Options::MAC_COUNTS
+    } else if id == A::ActiveTimestamp as u32 {
+        Options::ACTIVE_TIMESTAMP
+    } else if id == A::PendingTimestamp as u32 {
+        Options::PENDING_TIMESTAMP
+    } else if id == A::Delay as u32 {
+        Options::DELAY
+    } else {
+        return false;
+    };
+
+    Options::from_bits_truncate(OPTS).contains(opt)
+}
+
+const fn thread_diag_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
+    cmd.id == CommandId::ResetCounts as u32
+        && Options::from_bits_truncate(OPTS).contains(Options::ERROR_COUNTS)
+}
+
 /// A cluster implementing the Matter Thread Diagnostics Cluster.
 #[derive(Clone)]
 pub struct ThreadDiagHandler<'a> {
@@ -456,8 +620,7 @@ impl<'a> ThreadDiagHandler<'a> {
     }
 
     /// Read one MAC counter off the wrapped [`ThreadDiag`]'s (lent) snapshot;
-    /// `AttributeNotFound` when the backend does not track the counters (or
-    /// this particular one).
+    /// 0 when the backend does not track the counters (or this particular one).
     fn counter(&self, pick: impl FnOnce(&MacCounters) -> Option<u32>) -> Result<u32, Error> {
         let mut pick = Some(pick);
         let mut value = None;
@@ -470,7 +633,24 @@ impl<'a> ThreadDiagHandler<'a> {
             Ok(())
         })?;
 
-        value.ok_or_else(|| ErrorCode::AttributeNotFound.into())
+        Ok(value.unwrap_or(0))
+    }
+
+    /// Read one MLE counter off the wrapped [`ThreadDiag`]'s (lent) snapshot;
+    /// 0 when the backend does not track the counters.
+    fn mle_counter(&self, pick: impl FnOnce(&MleCounters) -> u16) -> Result<u16, Error> {
+        let mut pick = Some(pick);
+        let mut value = None;
+
+        self.diag.mle_counters(&mut |counters| {
+            if let (Some(counters), Some(pick)) = (counters, pick.take()) {
+                value = Some(pick(counters));
+            }
+
+            Ok(())
+        })?;
+
+        Ok(value.unwrap_or(0))
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -480,8 +660,7 @@ impl<'a> ThreadDiagHandler<'a> {
 }
 
 impl ClusterHandler for ThreadDiagHandler<'_> {
-    const CLUSTER: crate::dm::Cluster<'static> =
-        FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
+    const CLUSTER: Cluster<'static> = cluster::<0>();
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -910,8 +1089,56 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         self.counter(|counters| counters.tx_indirect_max_retry_expiry_count)
     }
 
+    fn overrun_count(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
+        self.diag.overrun_count()
+    }
+
+    fn detached_role_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.detached_role_count)
+    }
+
+    fn child_role_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.child_role_count)
+    }
+
+    fn router_role_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.router_role_count)
+    }
+
+    fn leader_role_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.leader_role_count)
+    }
+
+    fn attach_attempt_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.attach_attempt_count)
+    }
+
+    fn partition_id_change_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.partition_id_change_count)
+    }
+
+    fn better_partition_attach_attempt_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.better_partition_attach_attempt_count)
+    }
+
+    fn parent_change_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.mle_counter(|counters| counters.parent_change_count)
+    }
+
+    fn active_timestamp(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        Ok(Nullable::new(self.diag.active_timestamp()?))
+    }
+
+    fn pending_timestamp(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        Ok(Nullable::new(self.diag.pending_timestamp()?))
+    }
+
+    fn delay(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+        Ok(Nullable::new(self.diag.delay()?))
+    }
+
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.diag.reset_counts()
     }
 }
 
