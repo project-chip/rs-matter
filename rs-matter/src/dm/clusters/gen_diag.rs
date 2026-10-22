@@ -214,7 +214,15 @@ impl ClusterHandler for GenDiagHandler<'_> {
         // cluster now is - so `TC_IDM_10_2` fails if it is absent. The IDL
         // renders it `optional` (it cannot express revision-conditional
         // conformance), hence it has to be listed explicitly here.
-        .with_attrs(with!(required; AttributeId::UpTime | AttributeId::DeviceLoadStatus))
+        //
+        // `TotalOperationalHours` and `BootReason` are kept by `Matter`.
+        .with_attrs(with!(
+            required;
+            AttributeId::UpTime
+                | AttributeId::TotalOperationalHours
+                | AttributeId::BootReason
+                | AttributeId::DeviceLoadStatus
+        ))
         .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot));
 
     fn dataver(&self) -> u32 {
@@ -270,6 +278,14 @@ impl ClusterHandler for GenDiagHandler<'_> {
 
     fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(embassy_time::Instant::now().as_secs())
+    }
+
+    fn total_operational_hours(&self, ctx: impl ReadContext) -> Result<u32, Error> {
+        Ok(ctx.exchange().matter().total_operational_hours())
+    }
+
+    fn boot_reason(&self, ctx: impl ReadContext) -> Result<BootReasonEnum, Error> {
+        Ok(ctx.exchange().matter().boot_reason())
     }
 
     fn device_load_status<P: TLVBuilderParent>(

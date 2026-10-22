@@ -39,6 +39,7 @@ use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
 };
 use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::clusters::gen_diag::BootReasonEnum;
 use crate::dm::clusters::icd_mgmt::IcdAdvertisement;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::clusters::time_sync::Rtc;
@@ -53,7 +54,8 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist, REBOOT_COUNT_KEY,
+    KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist, OPERATIONAL_HOURS_KEY,
+    REBOOT_COUNT_KEY,
 };
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
@@ -330,6 +332,63 @@ impl<'a> Matter<'a> {
     /// reboots and resets only on a factory reset.
     pub fn reboot_count(&self) -> u16 {
         self.with_state(|state| state.reboot_count)
+    }
+
+    /// Persist the node's operational hours, so that
+    /// [`Matter::total_operational_hours`] carries them across reboots.
+    ///
+    /// Call periodically, e.g. hourly. A call with no new hour to record writes
+    /// nothing, and the hours since the last call are lost on a reboot, which
+    /// the spec's "best-effort" wording allows.
+    ///
+    /// A device that never calls this reports the hours of the current boot only.
+    pub fn persist_operational_hours<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+        let hours = self.total_operational_hours();
+
+        kv.access(|store, buf| {
+            let stored = store
+                .load(OPERATIONAL_HOURS_KEY, buf)?
+                .map(|data| TLVElement::new(data).u32())
+                .transpose()?;
+
+            if stored == Some(hours) {
+                return Ok(());
+            }
+
+            let mut wb = WriteBuf::new(buf);
+
+            hours.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+
+            let len = wb.get_tail();
+            let (data, buf) = buf.split_at_mut(len);
+
+            store.store(OPERATIONAL_HOURS_KEY, data, buf)
+        })
+    }
+
+    /// The node's operational hours, as reported by
+    /// `GeneralDiagnostics::TotalOperationalHours`: those on record at
+    /// [`Matter::startup`] plus those of the current boot.
+    ///
+    /// Reset only by [`Matter::factory_reset`].
+    pub fn total_operational_hours(&self) -> u32 {
+        let recorded = self.with_state(|state| state.operational_hours);
+        let current = embassy_time::Instant::now().as_secs() / (60 * 60);
+
+        recorded.saturating_add(current.min(u32::MAX as u64) as u32)
+    }
+
+    /// The reason for the node's latest boot, as reported by
+    /// `GeneralDiagnostics::BootReason`.
+    ///
+    /// `Unspecified` unless the platform sets it with [`Matter::set_boot_reason`].
+    pub fn boot_reason(&self) -> BootReasonEnum {
+        self.with_state(|state| state.boot_reason)
+    }
+
+    /// Set the reason for the node's latest boot. Call once at startup.
+    pub fn set_boot_reason(&self, reason: BootReasonEnum) {
+        self.with_state(|state| state.boot_reason = reason);
     }
 
     /// What the device advertises as an ICD - its `SAT`, and for a
@@ -931,9 +990,9 @@ impl<'a> Matter<'a> {
     }
 
     /// Factory-reset the `Matter` persistable state by removing all fabrics and
-    /// resetting the basic info settings, the RTC state and (if compiled in) the
-    /// CASE resumption cache and the group data message counter - both in-memory
-    /// and in the provided KV store.
+    /// resetting the basic info settings, the RTC state, the operational hours
+    /// and (if compiled in) the CASE resumption cache and the group data message
+    /// counter - both in-memory and in the provided KV store.
     ///
     /// The counterpart of [`Matter::startup`]. Call when the node is
     /// factory-reset, alongside
@@ -953,6 +1012,9 @@ impl<'a> Matter<'a> {
                 state.resumption.reset_persist(&mut store, buf)?;
                 #[cfg(feature = "groups")]
                 state.sessions.reset_persist(&mut store, buf)?;
+
+                state.operational_hours = 0;
+                store.remove(OPERATIONAL_HOURS_KEY, buf)?;
 
                 Ok::<_, Error>(())
             })
@@ -1006,6 +1068,14 @@ impl<'a> Matter<'a> {
                     .transpose()?
                     .unwrap_or(0)
                     .saturating_add(1);
+
+                // `TotalOperationalHours` on record; the current boot's hours
+                // count on top of it.
+                state.operational_hours = store
+                    .load(OPERATIONAL_HOURS_KEY, buf)?
+                    .map(|data| TLVElement::new(data).u32())
+                    .transpose()?
+                    .unwrap_or(0);
 
                 Ok::<_, Error>(())
             })
@@ -1118,6 +1188,10 @@ pub struct MatterState {
     icd_adv: Option<IcdAdvertisement>,
     /// The node's reboot counter, bumped and persisted by `Matter::startup`.
     reboot_count: u16,
+    /// The operational hours on record at `Matter::startup`.
+    operational_hours: u32,
+    /// The reason for the latest boot, as set by the platform.
+    boot_reason: BootReasonEnum,
 }
 
 impl MatterState {
@@ -1135,6 +1209,8 @@ impl MatterState {
             rtc: Rtc::new(),
             icd_adv: None,
             reboot_count: 0,
+            operational_hours: 0,
+            boot_reason: BootReasonEnum::Unspecified,
         }
     }
 
@@ -1153,6 +1229,8 @@ impl MatterState {
             rtc <- Rtc::init(),
             icd_adv: None,
             reboot_count: 0,
+            operational_hours: 0,
+            boot_reason: BootReasonEnum::Unspecified,
         })
     }
 
@@ -1168,6 +1246,8 @@ impl MatterState {
             rtc <- Rtc::init(),
             icd_adv: None,
             reboot_count: 0,
+            operational_hours: 0,
+            boot_reason: BootReasonEnum::Unspecified,
         })
     }
 }
@@ -1175,6 +1255,11 @@ impl MatterState {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod test {
+    use crate::dm::clusters::gen_diag::BootReasonEnum;
+    use crate::fabric::tests::{MemKv, MemKvBlobStore};
+    use crate::persist::{KvBlobStoreAccess, OPERATIONAL_HOURS_KEY};
+    use crate::tlv::{TLVTag, ToTLV};
+    use crate::utils::storage::WriteBuf;
     use crate::Matter;
 
     pub fn test_matter() -> Matter<'static> {
@@ -1184,5 +1269,40 @@ pub mod test {
             &crate::dm::devices::test::TEST_DEV_ATT,
             0,
         )
+    }
+
+    #[test]
+    fn operational_hours_and_boot_reason() {
+        let store = MemKvBlobStore::default();
+        let kv = MemKv::new(store.clone());
+
+        // The hours a previous boot recorded.
+        kv.access(|store, buf| {
+            let mut wb = WriteBuf::new(buf);
+            41_u32.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+
+            let len = wb.get_tail();
+            let (data, buf) = buf.split_at_mut(len);
+
+            store.store(OPERATIONAL_HOURS_KEY, data, buf)
+        })
+        .unwrap();
+
+        let matter = test_matter();
+        matter.startup(&kv).unwrap();
+
+        assert_eq!(matter.total_operational_hours(), 41);
+
+        matter.persist_operational_hours(&kv).unwrap();
+        assert!(store.contains_key(OPERATIONAL_HOURS_KEY));
+
+        assert_eq!(matter.boot_reason(), BootReasonEnum::Unspecified);
+        matter.set_boot_reason(BootReasonEnum::BrownOutReset);
+        assert_eq!(matter.boot_reason(), BootReasonEnum::BrownOutReset);
+
+        matter.factory_reset(&kv).unwrap();
+
+        assert_eq!(matter.total_operational_hours(), 0);
+        assert!(!store.contains_key(OPERATIONAL_HOURS_KEY));
     }
 }
