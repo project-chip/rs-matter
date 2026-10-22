@@ -257,6 +257,7 @@ const fn wifi_diag_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bo
 }
 
 const fn wifi_diag_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
+    // `ERRCNT` only - unlike Ethernet's `PKTCNT | ERRCNT` - although it resets the packet counts too
     cmd.id == CommandId::ResetCounts as u32
         && Options::from_bits_truncate(OPTS).contains(Options::ERROR_COUNTS)
 }
