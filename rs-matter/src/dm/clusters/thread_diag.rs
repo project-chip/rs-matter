@@ -64,7 +64,7 @@ pub struct NeighborTable {
 /// as returned by [`ThreadDiag::mac_counters`].
 ///
 /// The two `*MaxRetryExpiryCount` values are `Option`s because not every
-/// Thread backend tracks them; `None` surfaces as an unsupported attribute.
+/// Thread backend tracks them; `None` reads as 0.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MacCounters {
@@ -339,8 +339,8 @@ pub trait ThreadDiag: WirelessDiag {
 
     /// Lend a snapshot of the IEEE 802.15.4 MAC counters (the cluster's
     /// `MACCounts` feature set) to the provided closure, or call it with
-    /// `None` if the backend does not track them - in which case the
-    /// corresponding attributes read as unsupported.
+    /// `None` if the backend does not track them (now) - in which case the
+    /// corresponding attributes read as 0.
     ///
     /// Lent by reference (as the other composite payloads of this trait)
     /// rather than returned by value: the snapshot is a ~144-byte struct.
@@ -353,7 +353,8 @@ pub trait ThreadDiag: WirelessDiag {
     }
 
     /// Lend a snapshot of the MLE counters (the cluster's `MLECounts` feature set)
-    /// to the provided closure, or call it with `None` if the backend does not track them.
+    /// to the provided closure, or call it with `None` if the backend does not track them (now) -
+    /// in which case the corresponding attributes read as 0.
     #[allow(clippy::type_complexity)]
     fn mle_counters(
         &self,
@@ -619,8 +620,7 @@ impl<'a> ThreadDiagHandler<'a> {
     }
 
     /// Read one MAC counter off the wrapped [`ThreadDiag`]'s (lent) snapshot;
-    /// `AttributeNotFound` when the backend does not track the counters (or
-    /// this particular one).
+    /// 0 when the backend does not track the counters (or this particular one).
     fn counter(&self, pick: impl FnOnce(&MacCounters) -> Option<u32>) -> Result<u32, Error> {
         let mut pick = Some(pick);
         let mut value = None;
@@ -633,11 +633,11 @@ impl<'a> ThreadDiagHandler<'a> {
             Ok(())
         })?;
 
-        value.ok_or_else(|| ErrorCode::AttributeNotFound.into())
+        Ok(value.unwrap_or(0))
     }
 
     /// Read one MLE counter off the wrapped [`ThreadDiag`]'s (lent) snapshot;
-    /// `AttributeNotFound` when the backend does not track the counters.
+    /// 0 when the backend does not track the counters.
     fn mle_counter(&self, pick: impl FnOnce(&MleCounters) -> u16) -> Result<u16, Error> {
         let mut pick = Some(pick);
         let mut value = None;
@@ -650,7 +650,7 @@ impl<'a> ThreadDiagHandler<'a> {
             Ok(())
         })?;
 
-        value.ok_or_else(|| ErrorCode::AttributeNotFound.into())
+        Ok(value.unwrap_or(0))
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
