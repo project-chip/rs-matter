@@ -1060,8 +1060,10 @@ impl Fabric {
         false
     }
 
-    /// Compute the compressed fabric ID
-    pub(crate) fn compute_compressed_fabric_id<C: Crypto>(
+    /// The compressed fabric ID of the fabric with root public key
+    /// `root_pubkey` and fabric ID `fabric_id`: what its nodes advertise over
+    /// mDNS.
+    pub fn compute_compressed_fabric_id<C: Crypto>(
         crypto: C,
         root_pubkey: CanonPkcPublicKeyRef<'_>,
         fabric_id: u64,
