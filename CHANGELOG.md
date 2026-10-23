@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: Expose `rs_matter_codegen::parse_idl` and its syntax tree `rs_matter_codegen::ast` as a public API, for build scripts / proc-macros generating code of their own from the IDL (#613)
 * New: `Transport::browse` lists the operational nodes of every fabric with `MdnsBrowseQuery::Operational { compressed_fabric_id: None }`; `Transport::resolve_operational_addrs` resolves any operational node (#612)
   * Breaking: `browse` reports each node as an `MdnsBrowseMatch`
 * New: `Fabric::compute_compressed_fabric_id` is public, to tell which fabric an operational advertisement is of (#612)

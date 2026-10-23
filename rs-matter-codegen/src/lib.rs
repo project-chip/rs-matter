@@ -29,6 +29,11 @@ use idl::{cluster_content, globals, Idl, IdlGenerateContext, CSA_STANDARD_CLUSTE
 #[allow(unused_assignments)]
 mod idl;
 
+/// The syntax tree of the Matter IDL (see [`parse_idl`]).
+pub mod ast {
+    pub use crate::idl::parser::*;
+}
+
 /// Render a generated token stream as Rust source.
 ///
 /// By default this uses a fast printer that only respects token spacing and
@@ -122,19 +127,7 @@ fn print_tokens(tokens: proc_macro2::TokenStream, out: &mut String, indent: usiz
 /// the rs-matter crate (e.g. `"crate"` when called from rs-matter's own build.rs,
 /// or `"rs_matter"` when used by external crates).
 pub fn generate(rs_matter_crate: &str, dest_dir: &Path) {
-    let idl_file = CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0;
-
-    let idl = match Idl::parse(idl_file.into()) {
-        Ok(result) => result,
-        Err(e) => {
-            let span_bytes = &idl_file.as_bytes()[e.error_location.offset()..];
-            panic!(
-                "Parser failed with {:?}, at\n===\n{}\n===\n",
-                e,
-                String::from_utf8_lossy(&span_bytes[..span_bytes.len().min(256)])
-            );
-        }
-    };
+    let idl = parse_idl();
 
     let context = IdlGenerateContext::new(rs_matter_crate);
 
@@ -180,4 +173,22 @@ pub fn generate(rs_matter_crate: &str, dest_dir: &Path) {
     }
 
     std::fs::write(dest_dir.join("clusters_generated.rs"), root).unwrap();
+}
+
+/// Parse the Matter IDL the clusters are generated from: for build scripts
+/// generating code of their own from it.
+pub fn parse_idl() -> Idl {
+    let idl_file = CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0;
+
+    match Idl::parse(idl_file.into()) {
+        Ok(idl) => idl,
+        Err(e) => {
+            let span_bytes = &idl_file.as_bytes()[e.error_location.offset()..];
+            panic!(
+                "Parser failed with {:?}, at\n===\n{}\n===\n",
+                e,
+                String::from_utf8_lossy(&span_bytes[..span_bytes.len().min(256)])
+            );
+        }
+    }
 }
