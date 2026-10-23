@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: the Time Synchronization client takes the trusted source's granularity, as CHIP does, instead of always seconds, and ignores a source with no time (#611)
 * New: General Diagnostics serves `TotalOperationalHours` and `BootReason`, kept by `Matter` (`persist_operational_hours`, `set_boot_reason`) (#610)
 * Fix: a subscription report skipped as empty no longer postpones the subscription's keep-alive (#609)
 * New: Ethernet Network Diagnostics serves its optional attributes from an `EthDiag` data source, advertised with `clusters!(eth, eth_diag(…))` / `root_endpoint!(eth, eth_diag(…))` (#607)
