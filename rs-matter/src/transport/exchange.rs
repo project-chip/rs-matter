@@ -1287,9 +1287,13 @@ impl<'a> Exchange<'a> {
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
     ) -> Result<Vec<network::Address, MAX_RESOLVE_CANDIDATES>, Error> {
+        let compressed_fabric_id = matter.with_state(|state| {
+            Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
+        })?;
+
         matter
             .transport
-            .resolve_operational_addrs(matter, fabric_idx, peer_node_id)
+            .resolve_operational_addrs(compressed_fabric_id, peer_node_id)
             .await
     }
 

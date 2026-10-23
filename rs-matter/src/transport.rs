@@ -44,9 +44,9 @@ use crate::sc::pase::PaseInitiator;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
-    merge_resolve_candidate, score_ip_address_on_link, BrowseIds, MdnsBrowse, MdnsBrowseQuery,
-    MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedAddr, ResolvedNode,
-    MAX_BROWSE_IDS, MAX_RESOLVE_CANDIDATES,
+    merge_resolve_candidate, score_ip_address_on_link, BrowseIds, MdnsBrowse, MdnsBrowseMatch,
+    MdnsBrowseQuery, MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedAddr,
+    ResolvedNode, MAX_BROWSE_IDS, MAX_RESOLVE_CANDIDATES,
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::cell::RefCell;
@@ -582,13 +582,14 @@ impl Transport {
     }
 
     /// Browse the mDNS network for every node matching `query`, calling `f` with
-    /// each one's id, in ascending order: the commissionable instance id of a
-    /// commissionable node, or the node ID of an operational one.
+    /// each one, in ascending order: by commissionable instance id, or by
+    /// compressed fabric ID and node ID.
     ///
-    /// Browses in windows of `window_ms`, each collecting the few smallest ids
-    /// above the last one reported, until a window comes back short; so `n`
-    /// nodes take about `n / 6 + 1` windows. A commissionable node's addresses
-    /// come from [`Self::resolve_commissionable_addrs`]; an operational node is
+    /// Browses in windows of `window_ms`, each collecting the few smallest
+    /// matches above the last one reported, until a window comes back short; so
+    /// `n` nodes take about `n / 6 + 1` windows. A commissionable node's
+    /// addresses come from [`Self::resolve_commissionable_addrs`]; an operational
+    /// node's from [`Self::resolve_operational_addrs`], and one on our fabric is
     /// reached with [`Exchange::initiate`].
     ///
     /// Concurrent browses serialize. Requires a running mDNS responder (e.g.
@@ -603,9 +604,9 @@ impl Transport {
         mut f: F,
     ) -> Result<(), Error>
     where
-        F: FnMut(u64),
+        F: FnMut(MdnsBrowseMatch),
     {
-        let mut after = 0;
+        let mut after = None;
 
         loop {
             let guard = self
@@ -635,7 +636,7 @@ impl Transport {
             ids.iter().copied().for_each(&mut f);
 
             match ids.last() {
-                Some(last) if ids.len() == MAX_BROWSE_IDS => after = *last,
+                Some(last) if ids.len() == MAX_BROWSE_IDS => after = Some(*last),
                 _ => return Ok(()),
             }
         }
@@ -647,12 +648,31 @@ impl Transport {
         &self,
         id: u64,
     ) -> Result<Vec<Address, MAX_RESOLVE_CANDIDATES>, Error> {
-        let resolved = self
-            .resolve(
-                MatterRemoteService::Commissionable { id },
-                Self::RESOLVE_TIMEOUT_MS,
-            )
-            .await?;
+        self.resolve_addrs(MatterRemoteService::Commissionable { id })
+            .await
+    }
+
+    /// Resolve the addresses of operational node `node_id` of the fabric with
+    /// `compressed_fabric_id`, ours or not (e.g. from [`Self::browse`]),
+    /// best-scored first.
+    pub async fn resolve_operational_addrs(
+        &self,
+        compressed_fabric_id: u64,
+        node_id: u64,
+    ) -> Result<Vec<Address, MAX_RESOLVE_CANDIDATES>, Error> {
+        self.resolve_addrs(MatterRemoteService::Operational {
+            compressed_fabric_id,
+            node_id,
+        })
+        .await
+    }
+
+    /// The addresses of `service`, best-scored first.
+    async fn resolve_addrs(
+        &self,
+        service: MatterRemoteService,
+    ) -> Result<Vec<Address, MAX_RESOLVE_CANDIDATES>, Error> {
+        let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
 
         let mut addrs = Vec::new();
 
@@ -744,16 +764,23 @@ impl Transport {
                 return (false, ());
             };
 
-            let Some(id) = browse.query.matching_id(answer) else {
+            let Some(found) = browse.query.matching(answer) else {
                 return (false, ());
             };
 
-            if id > browse.after && !browse.ids.contains(&id) && browse.ids.push(id).is_err() {
-                // Keep the smallest ids: past capacity, a smaller one replaces
-                // the largest.
-                if let Some(largest) = browse.ids.iter_mut().max().filter(|largest| **largest > id)
+            if browse.after.is_none_or(|after| found > after)
+                && !browse.ids.contains(&found)
+                && browse.ids.push(found).is_err()
+            {
+                // Keep the smallest matches: past capacity, a smaller one
+                // replaces the largest.
+                if let Some(largest) = browse
+                    .ids
+                    .iter_mut()
+                    .max()
+                    .filter(|largest| **largest > found)
                 {
-                    *largest = id;
+                    *largest = found;
                 }
             }
 
@@ -985,36 +1012,6 @@ impl Transport {
         _transport: TransportPreference,
     ) -> Result<Exchange<'a>, Error> {
         Err(ErrorCode::NoSession.into())
-    }
-
-    /// Resolve an already-commissioned node's operational addresses over mDNS,
-    /// returning **every** ranked candidate rather than just the best-scored one.
-    pub(crate) async fn resolve_operational_addrs(
-        &self,
-        matter: &Matter<'_>,
-        fabric_idx: NonZeroU8,
-        peer_node_id: NodeId,
-    ) -> Result<Vec<Address, MAX_RESOLVE_CANDIDATES>, Error> {
-        let compressed_fabric_id = matter.with_state(|state| {
-            Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
-        })?;
-
-        let service = MatterRemoteService::Operational {
-            compressed_fabric_id,
-            node_id: peer_node_id,
-        };
-
-        let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
-
-        let mut addrs = Vec::new();
-
-        for addr in resolved.addrs.iter() {
-            // Both are bounded by `MAX_RESOLVE_CANDIDATES`, so this cannot
-            // overflow.
-            let _ = addrs.push(Address::Udp(*addr));
-        }
-
-        Ok(addrs)
     }
 
     /// Open an exchange over a PASE session to a not-yet-commissioned node at the
@@ -3087,7 +3084,7 @@ mod browse_tests {
 
     use crate::test::test_matter;
     use crate::transport::network::mdns::{
-        CommissionableFilter, DottedName, MdnsBrowseQuery, MdnsRemoteService,
+        CommissionableFilter, DottedName, MdnsBrowseMatch, MdnsBrowseQuery, MdnsRemoteService,
     };
     use crate::utils::storage::Vec;
 
@@ -3129,7 +3126,7 @@ mod browse_tests {
         instances: &[&str],
         txt: &[(&str, &str)],
         windows: usize,
-    ) -> Vec<u64, 16> {
+    ) -> Vec<MdnsBrowseMatch, 16> {
         let matter = test_matter();
         let mut found = Vec::new();
 
@@ -3158,6 +3155,19 @@ mod browse_tests {
         found
     }
 
+    /// Operational node `node_id` of fabric `fabric`, as a browse finds it.
+    fn node(fabric: u64, node_id: u64) -> MdnsBrowseMatch {
+        MdnsBrowseMatch::Operational {
+            compressed_fabric_id: fabric,
+            node_id,
+        }
+    }
+
+    /// Commissionable node `id`, as a browse finds it.
+    fn commissionable(id: u64) -> MdnsBrowseMatch {
+        MdnsBrowseMatch::Commissionable { id }
+    }
+
     /// All the nodes of a fabric are listed in order, across windows; other
     /// fabrics' nodes and repeated answers are not.
     #[test]
@@ -3177,14 +3187,56 @@ mod browse_tests {
 
         let found = browse(
             MdnsBrowseQuery::Operational {
-                compressed_fabric_id: 0xAA,
+                compressed_fabric_id: Some(0xAA),
             },
             &instances,
             &[],
             2,
         );
 
-        assert_eq!(found.as_slice(), &[1, 2, 3, 4, 5, 7, 8, 9]);
+        assert_eq!(
+            found.as_slice(),
+            &[1, 2, 3, 4, 5, 7, 8, 9].map(|node_id| node(0xAA, node_id))
+        );
+    }
+
+    /// Without a fabric, the nodes of every fabric are listed, by fabric then
+    /// node ID, across windows that end inside a fabric.
+    #[test]
+    fn browse_lists_the_operational_nodes_of_every_fabric_in_order() {
+        let instances = [
+            "00000000000000BB-0000000000000003._matter._tcp.local",
+            "00000000000000AA-0000000000000005._matter._tcp.local",
+            "00000000000000BB-0000000000000001._matter._tcp.local",
+            "00000000000000AA-0000000000000002._matter._tcp.local",
+            "00000000000000AA-0000000000000004._matter._tcp.local",
+            "00000000000000BB-0000000000000001._matter._tcp.local",
+            "00000000000000AA-0000000000000001._matter._tcp.local",
+            "00000000000000AA-0000000000000003._matter._tcp.local",
+            "0000000000001111._matterc._udp.local",
+        ];
+
+        let found = browse(
+            MdnsBrowseQuery::Operational {
+                compressed_fabric_id: None,
+            },
+            &instances,
+            &[],
+            2,
+        );
+
+        assert_eq!(
+            found.as_slice(),
+            &[
+                node(0xAA, 1),
+                node(0xAA, 2),
+                node(0xAA, 3),
+                node(0xAA, 4),
+                node(0xAA, 5),
+                node(0xBB, 1),
+                node(0xBB, 3),
+            ]
+        );
     }
 
     /// A full window is followed by another, which ends the listing when empty.
@@ -3201,14 +3253,17 @@ mod browse_tests {
 
         let found = browse(
             MdnsBrowseQuery::Operational {
-                compressed_fabric_id: 0xAA,
+                compressed_fabric_id: Some(0xAA),
             },
             &instances,
             &[],
             2,
         );
 
-        assert_eq!(found.as_slice(), &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            found.as_slice(),
+            &[1, 2, 3, 4, 5, 6].map(|node_id| node(0xAA, node_id))
+        );
     }
 
     /// Commissionable nodes are listed only if they match the filter.
@@ -3228,7 +3283,10 @@ mod browse_tests {
             &[("D", "2650"), ("VP", "65521+42"), ("CM", "1")],
             1,
         );
-        assert_eq!(matching.as_slice(), &[0x1111, 0x2222]);
+        assert_eq!(
+            matching.as_slice(),
+            &[commissionable(0x1111), commissionable(0x2222)]
+        );
 
         let other_vendor = browse(
             query,

@@ -876,8 +876,8 @@ pub(crate) enum MdnsResolveState {
 /// fixed (no heap): more nodes just take more windows.
 pub(crate) const MAX_BROWSE_IDS: usize = 6;
 
-/// The ids an mDNS browse request holds (see [`MAX_BROWSE_IDS`]).
-pub(crate) type BrowseIds = Vec<u64, MAX_BROWSE_IDS>;
+/// The nodes an mDNS browse request holds (see [`MAX_BROWSE_IDS`]).
+pub(crate) type BrowseIds = Vec<MdnsBrowseMatch, MAX_BROWSE_IDS>;
 
 /// What an mDNS browse looks for.
 ///
@@ -890,8 +890,9 @@ pub(crate) type BrowseIds = Vec<u64, MAX_BROWSE_IDS>;
 pub enum MdnsBrowseQuery {
     /// Commissionable nodes matching the filter.
     Commissionable(CommissionableFilter),
-    /// The operational nodes of the fabric with this compressed fabric ID.
-    Operational { compressed_fabric_id: u64 },
+    /// The operational nodes of the fabric with this compressed fabric ID, or
+    /// of every fabric if `None`.
+    Operational { compressed_fabric_id: Option<u64> },
 }
 
 impl MdnsBrowseQuery {
@@ -935,49 +936,72 @@ impl MdnsBrowseQuery {
 
     /// The most selective browse subtype label, written into `buf`: that of the
     /// [`CommissionableFilter`], or `_I<compressed fabric id>` for an operational
-    /// browse. `None` for an unfiltered commissionable browse.
+    /// browse of one fabric. `None` for an unfiltered browse.
     pub(crate) fn subtype<'b>(&self, buf: &'b mut heapless::String<24>) -> Option<&'b str> {
         match self {
             Self::Commissionable(filter) => filter.subtype(buf),
             Self::Operational {
-                compressed_fabric_id,
+                compressed_fabric_id: Some(compressed_fabric_id),
             } => {
                 buf.clear();
                 write_unwrap!(buf, "_I{:016X}", compressed_fabric_id);
 
                 Some(buf.as_str())
             }
+            Self::Operational {
+                compressed_fabric_id: None,
+            } => None,
         }
     }
 
-    /// The id of a discovered service if it matches this query: its
-    /// commissionable instance id, or its operational node ID.
-    pub(crate) fn matching_id<'a, I, A, T>(
+    /// A discovered service, if it matches this query.
+    pub(crate) fn matching<'a, I, A, T>(
         &self,
         service: &MdnsRemoteService<I, A, T>,
-    ) -> Option<u64>
+    ) -> Option<MdnsBrowseMatch>
     where
         I: ToLabelIter,
         T: Iterator<Item = (&'a str, &'a str)> + Clone,
     {
         match self {
             Self::Commissionable(filter) => commissionable_instance_id(&service.instance_name)
-                .filter(|_| filter.matches(service)),
+                .filter(|_| filter.matches(service))
+                .map(|id| MdnsBrowseMatch::Commissionable { id }),
             Self::Operational {
-                compressed_fabric_id,
+                compressed_fabric_id: wanted,
             } => operational_instance_ids(&service.instance_name)
-                .filter(|(fabric, _)| fabric == compressed_fabric_id)
-                .map(|(_, node_id)| node_id),
+                .filter(|(fabric, _)| wanted.is_none_or(|wanted| *fabric == wanted))
+                .map(
+                    |(compressed_fabric_id, node_id)| MdnsBrowseMatch::Operational {
+                        compressed_fabric_id,
+                        node_id,
+                    },
+                ),
         }
     }
 }
 
-/// A browse request: what to look for, and the smallest matching ids above
-/// `after` found so far.
+/// A node an mDNS browse found, as its instance name identifies it. Ordered
+/// as [`Transport::browse`](crate::transport::Transport::browse) reports them.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MdnsBrowseMatch {
+    /// A commissionable node, by its instance id.
+    Commissionable { id: u64 },
+    /// An operational node: the compressed fabric ID of its fabric, and its
+    /// node ID on it.
+    Operational {
+        compressed_fabric_id: u64,
+        node_id: u64,
+    },
+}
+
+/// A browse request: what to look for, and the smallest matches above `after`
+/// found so far.
 #[derive(Debug, Clone)]
 pub(crate) struct MdnsBrowse {
     pub query: MdnsBrowseQuery,
-    pub after: u64,
+    pub after: Option<MdnsBrowseMatch>,
     pub ids: BrowseIds,
 }
 
@@ -1427,13 +1451,24 @@ mod tests {
     #[test]
     fn operational_browse_query_uses_the_fabric_subtype() {
         let query = MdnsBrowseQuery::Operational {
-            compressed_fabric_id: 0xEADD_BAEB_88C4_1C26,
+            compressed_fabric_id: Some(0xEADD_BAEB_88C4_1C26),
         };
 
         let mut buf = heapless::String::new();
         query.service_type(&mut buf, true);
         assert_eq!(buf.as_str(), "_IEADDBAEB88C41C26._sub._matter._tcp.local");
         assert_eq!(query.base_service_type(), "_matter._tcp");
+    }
+
+    #[test]
+    fn operational_browse_of_every_fabric_uses_no_subtype() {
+        let query = MdnsBrowseQuery::Operational {
+            compressed_fabric_id: None,
+        };
+
+        let mut buf = heapless::String::new();
+        query.service_type(&mut buf, true);
+        assert_eq!(buf.as_str(), "_matter._tcp.local");
     }
 
     #[test]
