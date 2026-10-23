@@ -23,7 +23,9 @@
 //! [Trusted Time Source](crate::Matter::trusted_time_source) (set via
 //! the `SetTrustedTimeSource` command, Matter Core spec),
 //! reading its `UTCTime` attribute, and calling
-//! [`Matter::set_utc_time`] with the result.
+//! [`Matter::set_utc_time`] with the result. An update getting no time
+//! emits the `TimeFailure` event, and one without a reachable source the
+//! `MissingTrustedTimeSource` event, each at most once an hour.
 //!
 //! Drive it from your application's async runtime:
 //!
@@ -40,10 +42,11 @@ use embassy_time::{Duration, Timer};
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::decl::time_synchronization::{
-    GranularityEnum, TimeSourceEnum, TimeSynchronizationAttrReads as _,
-    TimeSynchronizationAttrResponses as _,
+    GranularityEnum, MissingTrustedTimeSource, TimeFailure, TimeSourceEnum,
+    TimeSynchronizationAttrReads as _, TimeSynchronizationAttrResponses as _,
 };
-use crate::dm::AttrChangeNotifier;
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+use crate::dm::{AttrChangeNotifier, EventEmitter};
 use crate::error::Error;
 use crate::im::client::ImClient as _;
 use crate::persist::{KvBlobStoreAccess, Persist};
@@ -56,8 +59,9 @@ use crate::Matter;
 ///
 /// Holds a borrow of the [`Matter`] instance for its lifetime; the
 /// `run` / `refresh_once` methods take the KV-store handle and the
-/// attribute-change notifier (typically your `InteractionModel`) by reference
-/// so the same client struct can be re-used across refresh cycles.
+/// attribute-change notifier and event emitter (typically your
+/// `InteractionModel`) by reference so the same client struct can be re-used
+/// across refresh cycles.
 pub struct TimeSyncClient<'a, C> {
     matter: &'a Matter<'a>,
     crypto: C,
@@ -80,7 +84,7 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
     pub async fn run<S, N>(&self, period: Duration, kv: S, notify: &N) -> Result<(), Error>
     where
         S: KvBlobStoreAccess,
-        N: AttrChangeNotifier,
+        N: AttrChangeNotifier + EventEmitter,
     {
         loop {
             let period = if let Err(e) = self.refresh_once(&kv, notify).await {
@@ -100,8 +104,8 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
 
     /// Perform a single refresh cycle.
     ///
-    /// - If no Trusted Time Source is configured, returns `Ok(())` with
-    ///   no action.
+    /// - If no Trusted Time Source is configured, returns `Ok(())` having
+    ///   got no time.
     /// - Otherwise opens a CASE-secured initiator exchange to the
     ///   configured `(fab_idx, node_id)`, reads the `UTCTime` and
     ///   `Granularity` attributes on the configured `endpoint`, and on a
@@ -112,7 +116,39 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
     ///   that this device used to sync its time was another node's
     ///   TimeSync cluster). The RTC steps the granularity down by one:
     ///   minutes for a source within minutes or seconds, seconds for a finer one.
+    ///
+    /// Having got no time, it emits `TimeFailure`; with no source configured,
+    /// or one that does not answer, also `MissingTrustedTimeSource`; each at
+    /// most once an hour.
     pub async fn refresh_once<S, N>(&self, kv: S, notify: &N) -> Result<(), Error>
+    where
+        S: KvBlobStoreAccess,
+        N: AttrChangeNotifier + EventEmitter,
+    {
+        let refreshed = self.refresh(kv, notify).await;
+
+        let (failed, no_source) = match &refreshed {
+            Ok(Refresh::Applied) => (false, false),
+            Ok(Refresh::NoTime) => (true, false),
+            Ok(Refresh::NoSource) | Err(_) => (true, true),
+        };
+        if no_source
+            && self
+                .matter
+                .with_state(|state| state.rtc.missing_source_due())
+        {
+            MissingTrustedTimeSource::emit_for(notify, ROOT_ENDPOINT_ID, |event| event.end())?;
+        }
+        if failed && self.matter.with_state(|state| state.rtc.time_failure_due()) {
+            TimeFailure::emit_for(notify, ROOT_ENDPOINT_ID, |event| event.end())?;
+        }
+
+        refreshed.map(|_| ())
+    }
+
+    /// Get the time from the Trusted Time Source; an error if it could not
+    /// be reached.
+    async fn refresh<S, N>(&self, kv: S, notify: &N) -> Result<Refresh, Error>
     where
         S: KvBlobStoreAccess,
         N: AttrChangeNotifier,
@@ -121,8 +157,7 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
             .matter
             .with_state(|state| state.rtc.trusted_time_source())
         else {
-            // No trusted source configured — nothing to do.
-            return Ok(());
+            return Ok(Refresh::NoSource);
         };
 
         info!(
@@ -170,7 +205,7 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
         let granularity = match granularity.unwrap_or(GranularityEnum::SecondsGranularity) {
             GranularityEnum::NoTimeGranularity => {
                 warn!("TimeSync client: trusted source has no time");
-                return Ok(());
+                return Ok(Refresh::NoTime);
             }
             GranularityEnum::MicrosecondsGranularity => GranularityEnum::MillisecondsGranularity,
             granularity => granularity,
@@ -195,10 +230,22 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
                 "TimeSync client: applied UTCTime = {} \u{00b5}s from trusted source",
                 utc_us
             );
+
+            Ok(Refresh::Applied)
         } else {
             warn!("TimeSync client: trusted source returned null UTCTime");
-        }
 
-        Ok(())
+            Ok(Refresh::NoTime)
+        }
     }
+}
+
+/// What a refresh got.
+enum Refresh {
+    /// The time, applied.
+    Applied,
+    /// No time: the source has none.
+    NoTime,
+    /// No time: no source is configured.
+    NoSource,
 }

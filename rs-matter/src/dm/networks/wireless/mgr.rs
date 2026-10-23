@@ -42,6 +42,8 @@ pub struct WirelessMgr<'a, W, T> {
     networks: W,
     net_ctl: T,
     buf: &'a mut [u8; MAX_CREDS_SIZE],
+    /// Told each time the node connects (`true`) or loses its connection.
+    on_connection: Option<&'a dyn Fn(bool)>,
 }
 
 impl<'a, W, T> WirelessMgr<'a, W, T>
@@ -60,7 +62,15 @@ where
             networks,
             net_ctl,
             buf,
+            on_connection: None,
         }
+    }
+
+    /// Tell `on_connection` each time the manager sees the node connect
+    /// (`true`) to a stored network, or lose its connection.
+    pub const fn with_connection_hook(mut self, on_connection: &'a dyn Fn(bool)) -> Self {
+        self.on_connection = Some(on_connection);
+        self
     }
 
     /// Runs the wireless manager.
@@ -80,7 +90,12 @@ where
             // The store became managed (commit or revert), so start trying to
             // connect to the networks. Do it while the networks don't change.
             let mut changed = pin!(Self::wait_while_not_changed(&self.networks));
-            let mut connect = pin!(Self::run_connect(&self.networks, &self.net_ctl, self.buf));
+            let mut connect = pin!(Self::run_connect(
+                &self.networks,
+                &self.net_ctl,
+                self.buf,
+                self.on_connection
+            ));
 
             select(&mut changed, &mut connect).coalesce().await?;
         }
@@ -121,7 +136,18 @@ where
         }
     }
 
-    async fn run_connect(networks: &W, net_ctl: &T, buf: &mut [u8]) -> Result<(), Error> {
+    async fn run_connect(
+        networks: &W,
+        net_ctl: &T,
+        buf: &mut [u8],
+        on_connection: Option<&dyn Fn(bool)>,
+    ) -> Result<(), Error> {
+        let report = |connected| {
+            if let Some(on_connection) = on_connection {
+                on_connection(connected);
+            }
+        };
+
         // Try to connect to the networks in a round-robin fashion until we succeed or the commissioning status changes.
 
         // A "connected" device parks the manager here - but only while the
@@ -142,7 +168,9 @@ where
         // for the remainder of such a window [`WirelessMgr::run`] holds the
         // manager in `wait_while_not_managed` instead of here.
         if Self::connected_network_stored(networks, net_ctl)? {
+            report(true);
             Self::wait_while_connected_status(net_ctl, true).await?;
+            report(false);
         }
 
         let mut network_id = OwnedWirelessNetworkId::new();
@@ -177,7 +205,9 @@ where
                         break;
                     }
 
+                    report(true);
                     Self::wait_while_connected_status(net_ctl, true).await?;
+                    report(false);
                 }
             } else {
                 // No networks to connect to, wait for a change in the networks state before trying again
@@ -704,9 +734,16 @@ mod tests {
         let networks = make_networks(&[(b"Stored", b"Pass")], true);
         let net_ctl = FakeNetCtl::with_connected_to(b"Gone");
         let mut buf = [0u8; MAX_CREDS_SIZE];
+        let reported = Cell::new(None);
+        let on_connection = |connected| reported.set(Some(connected));
 
         embassy_futures::block_on(async {
-            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf));
+            let connect = pin!(TestMgr::run_connect(
+                &networks,
+                &net_ctl,
+                &mut buf,
+                Some(&on_connection)
+            ));
 
             drive_until(connect, || {
                 net_ctl
@@ -717,6 +754,8 @@ mod tests {
         });
 
         assert_eq!(net_ctl.connect_calls.get(), 1);
+        // Connected to the stored network, as it is told.
+        assert_eq!(reported.get(), Some(true));
     }
 
     #[test]
@@ -728,7 +767,7 @@ mod tests {
         let mut buf = [0u8; MAX_CREDS_SIZE];
 
         embassy_futures::block_on(async {
-            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf));
+            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf, None));
 
             // Give the manager a bounded number of polls to (wrongly) act.
             let polls = Cell::new(0u32);

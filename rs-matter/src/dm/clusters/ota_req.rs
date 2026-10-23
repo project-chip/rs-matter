@@ -27,7 +27,9 @@
 //!   via `AnnounceOTAProvider`; [`Providers::wait_changed`] lets the app react.
 //! - [`Provider::query`] asks one provider whether a newer image is available.
 //! - [`OtaState`] holds the reported update state; [`OtaState::initiate_update`]
-//!   is an RAII session the app uses to report progress.
+//!   is an RAII session the app uses to report progress, which emits the
+//!   `StateTransition` and `DownloadError` events. The `VersionApplied` event
+//!   comes at startup, when the node runs another version than at its last.
 //! - [`parse_bdx_url`] turns a `bdx://` image URI into a `(node, file-designator)`
 //!   pair for a BDX download via [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download).
 //! - [`OtaImageHeader::load`](crate::ota::OtaImageHeader::load) reads the
@@ -37,13 +39,15 @@ use core::num::NonZeroU8;
 
 use crate::crypto::Crypto;
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, AttrChangeNotifier, Cluster, Dataver, HandlerContext,
-    InvokeContext, LifecycleOp, ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, AttrChangeNotifier, Cluster, Dataver, EventEmitter,
+    HandlerContext, InvokeContext, LifecycleOp, ReadContext, WriteContext,
 };
 use crate::dm::{AttrId, EndptId, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, OTA_PROVIDERS_KEY};
+use crate::persist::{
+    KvBlobStore, KvBlobStoreAccess, Persist, OTA_PROVIDERS_KEY, RUNNING_VERSION_KEY,
+};
 use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
@@ -549,6 +553,8 @@ struct Reported {
     update_state: UpdateStateEnum,
     progress: Option<u8>,
     update_possible: bool,
+    /// The version the update under way installs, once known.
+    target_version: Option<u32>,
 }
 
 impl OtaState {
@@ -562,6 +568,7 @@ impl OtaState {
                 update_state: UpdateStateEnum::Idle,
                 progress: None,
                 update_possible: true,
+                target_version: None,
             })),
         }
     }
@@ -587,23 +594,89 @@ impl OtaState {
         self.reported.lock(|cell| cell.borrow().update_possible)
     }
 
-    /// Update the reported `UpdateState`/`UpdateStateProgress` and notify.
-    fn report(
+    /// Update the reported `UpdateState`/`UpdateStateProgress` and notify; a
+    /// change of state emits the `StateTransition` event, for `reason`.
+    fn report<E>(
         &self,
-        notifier: &dyn AttrChangeNotifier,
+        ctx: &E,
         state: UpdateStateEnum,
         progress: Option<u8>,
-    ) {
-        self.reported.lock(|cell| {
+        reason: ChangeReasonEnum,
+    ) where
+        E: AttrChangeNotifier + EventEmitter,
+    {
+        let (previous, target) = self.reported.lock(|cell| {
             let mut reported = cell.borrow_mut();
+            let previous = reported.update_state;
             reported.update_state = state;
             reported.progress = progress;
+            let target = reported.target_version;
+            if state == UpdateStateEnum::Idle {
+                reported.target_version = None;
+            }
+
+            (previous, target)
         });
 
         // Both `UpdateState` and `UpdateStateProgress` changed; a single
         // cluster-level notification bumps the data version once and re-reports
         // any subscriber interested in either attribute.
-        notifier.notify_cluster_changed(self.endpoint_id, FULL_CLUSTER.id);
+        ctx.notify_cluster_changed(self.endpoint_id, FULL_CLUSTER.id);
+
+        if previous != state {
+            // The version is that of the operation under way, if any.
+            let target = target.filter(|_| {
+                matches!(
+                    state,
+                    UpdateStateEnum::Downloading
+                        | UpdateStateEnum::Applying
+                        | UpdateStateEnum::RollingBack
+                )
+            });
+
+            let emitted = StateTransition::emit_for(ctx, self.endpoint_id, |event| {
+                event
+                    .previous_state(previous)?
+                    .new_state(state)?
+                    .reason(reason)?
+                    .target_software_version(Nullable::new(target))?
+                    .end()
+            });
+
+            if let Err(e) = emitted {
+                warn!("Failed to emit StateTransition: {:?}", e);
+            }
+        }
+    }
+
+    fn set_target_version(&self, version: u32) {
+        self.reported
+            .lock(|cell| cell.borrow_mut().target_version = Some(version));
+    }
+
+    fn download_failed<E: EventEmitter>(
+        &self,
+        ctx: &E,
+        bytes_downloaded: u64,
+        platform_code: Option<i64>,
+    ) {
+        let (version, progress) = self.reported.lock(|cell| {
+            let reported = cell.borrow();
+            (reported.target_version, reported.progress)
+        });
+
+        let emitted = DownloadError::emit_for(ctx, self.endpoint_id, |event| {
+            event
+                .software_version(version.unwrap_or(0))?
+                .bytes_downloaded(bytes_downloaded)?
+                .progress_percent(Nullable::new(progress))?
+                .platform_code(Nullable::new(platform_code))?
+                .end()
+        });
+
+        if let Err(e) = emitted {
+            warn!("Failed to emit DownloadError: {:?}", e);
+        }
     }
 
     /// Notify the data model that `attr_id` of this cluster instance changed.
@@ -611,14 +684,18 @@ impl OtaState {
         notifier.notify_attr_changed(self.endpoint_id, FULL_CLUSTER.id, attr_id);
     }
 
-    /// Begin an update session, reporting changes through `notifier`. The returned
-    /// [`OtaUpdate`] reports progress; on [`complete`](OtaUpdate::complete) - or if
-    /// dropped without it - the reported state returns to `Idle` (`UpdateStateEnum`
-    /// has no dedicated failure value).
-    pub fn initiate_update<'a>(&'a self, notifier: &'a dyn AttrChangeNotifier) -> OtaUpdate<'a> {
+    /// Begin an update session, reporting changes and emitting events through
+    /// `ctx` (typically the `InteractionModel`). The returned [`OtaUpdate`]
+    /// reports progress; on [`complete`](OtaUpdate::complete) - or if dropped
+    /// without it, a failure - the reported state returns to `Idle`
+    /// (`UpdateStateEnum` has no dedicated failure value).
+    pub fn initiate_update<'a, E>(&'a self, ctx: &'a E) -> OtaUpdate<'a, E>
+    where
+        E: AttrChangeNotifier + EventEmitter,
+    {
         OtaUpdate {
             state: self,
-            notifier,
+            ctx,
             done: false,
         }
     }
@@ -630,50 +707,88 @@ impl OtaState {
 /// [`complete`](Self::complete) when done. Dropping it without `complete` reverts
 /// the reported state to `Idle`, so an aborted update never leaves the cluster
 /// stuck mid-transfer.
-pub struct OtaUpdate<'a> {
+///
+/// Each change of state emits the `StateTransition` event; name the version
+/// being installed with [`set_target_version`](Self::set_target_version) once
+/// a provider offers it.
+pub struct OtaUpdate<'a, E>
+where
+    E: AttrChangeNotifier + EventEmitter,
+{
     state: &'a OtaState,
-    notifier: &'a dyn AttrChangeNotifier,
+    ctx: &'a E,
     done: bool,
 }
 
-impl OtaUpdate<'_> {
+impl<E> OtaUpdate<'_, E>
+where
+    E: AttrChangeNotifier + EventEmitter,
+{
     /// Report `Querying`.
     pub fn querying(&self) {
-        self.state
-            .report(self.notifier, UpdateStateEnum::Querying, None);
+        self.report(UpdateStateEnum::Querying, None);
+    }
+
+    /// Note the software version this update installs, as the provider
+    /// offered it.
+    pub fn set_target_version(&self, version: u32) {
+        self.state.set_target_version(version);
     }
 
     /// Report `Downloading` at the given percent (`None` if unknown).
     pub fn downloading(&self, percent: Option<u8>) {
+        self.report(UpdateStateEnum::Downloading, percent);
+    }
+
+    /// Report that the download failed after `bytes_downloaded` bytes, why as
+    /// the platform has it in `platform_code`: the `DownloadError` event.
+    pub fn download_failed(&self, bytes_downloaded: u64, platform_code: Option<i64>) {
         self.state
-            .report(self.notifier, UpdateStateEnum::Downloading, percent);
+            .download_failed(self.ctx, bytes_downloaded, platform_code);
     }
 
     /// Report `Applying`.
     pub fn applying(&self) {
-        self.state
-            .report(self.notifier, UpdateStateEnum::Applying, None);
+        self.report(UpdateStateEnum::Applying, None);
     }
 
     /// Report an arbitrary `state` and `progress`.
     pub fn report(&self, state: UpdateStateEnum, progress: Option<u8>) {
-        self.state.report(self.notifier, state, progress);
+        let reason = match state {
+            UpdateStateEnum::DelayedOnQuery | UpdateStateEnum::DelayedOnApply => {
+                ChangeReasonEnum::DelayByProvider
+            }
+            _ => ChangeReasonEnum::Success,
+        };
+
+        self.state.report(self.ctx, state, progress, reason);
     }
 
     /// Finish the session, returning the reported state to `Idle`.
     pub fn complete(mut self) {
-        self.state
-            .report(self.notifier, UpdateStateEnum::Idle, None);
+        self.state.report(
+            self.ctx,
+            UpdateStateEnum::Idle,
+            None,
+            ChangeReasonEnum::Success,
+        );
         self.done = true;
     }
 }
 
-impl Drop for OtaUpdate<'_> {
+impl<E> Drop for OtaUpdate<'_, E>
+where
+    E: AttrChangeNotifier + EventEmitter,
+{
     fn drop(&mut self) {
         if !self.done {
             // Abandoned mid-update: revert to Idle.
-            self.state
-                .report(self.notifier, UpdateStateEnum::Idle, None);
+            self.state.report(
+                self.ctx,
+                UpdateStateEnum::Idle,
+                None,
+                ChangeReasonEnum::Failure,
+            );
         }
     }
 }
@@ -696,6 +811,42 @@ impl<'a> OtaRequestorHandler<'a> {
         }
     }
 
+    /// Emit the `VersionApplied` event if the node runs another software
+    /// version than at its last boot - however it got it - and note the one
+    /// it runs.
+    fn note_running_version(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
+        let dev = ctx.matter().dev_det();
+
+        let last = ctx.kv().access(|store, buf| {
+            store
+                .load(RUNNING_VERSION_KEY, buf)?
+                .map(|data| u32::from_tlv(&TLVElement::new(data)))
+                .transpose()
+        })?;
+
+        if last == Some(dev.sw_ver) {
+            return Ok(());
+        }
+
+        // Not on a first boot: there is no version it was updated from.
+        if last.is_some() {
+            let emitted = VersionApplied::emit_for(ctx, self.state.endpoint_id, |event| {
+                event
+                    .software_version(dev.sw_ver)?
+                    .product_id(dev.pid)?
+                    .end()
+            });
+
+            if let Err(e) = emitted {
+                warn!("Failed to emit VersionApplied: {:?}", e);
+            }
+        }
+
+        let mut persist = Persist::new(ctx.kv());
+        persist.store_tlv(RUNNING_VERSION_KEY, dev.sw_ver)?;
+        persist.run()
+    }
+
     /// Adapt this handler to the generic `rs-matter` `Handler` trait.
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
         HandlerAdaptor(self)
@@ -715,12 +866,16 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            LifecycleOp::Startup => ctx
-                .kv()
-                .access(|store, buf| self.providers.load_persist(store, buf)),
-            LifecycleOp::FactoryReset => ctx
-                .kv()
-                .access(|store, buf| self.providers.reset_persist(store, buf)),
+            LifecycleOp::Startup => {
+                ctx.kv()
+                    .access(|store, buf| self.providers.load_persist(store, buf))?;
+
+                self.note_running_version(&ctx)
+            }
+            LifecycleOp::FactoryReset => ctx.kv().access(|mut store, buf| {
+                self.providers.reset_persist(&mut store, buf)?;
+                store.remove(RUNNING_VERSION_KEY, buf)
+            }),
             LifecycleOp::FabricRemoval { fab_idx } => {
                 if self.providers.remove_for_fabric(fab_idx) {
                     self.providers.store_persist(&ctx)?;
@@ -851,7 +1006,101 @@ pub fn parse_bdx_url(url: &str) -> Result<(NodeId, &str), Error> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use crate::dm::clusters::app::test_util::RecordingEvents;
+    use crate::im::EventData;
+
     use super::*;
+
+    /// Field `tag` of `event`, unless null.
+    fn field(event: &EventData<'_>, tag: u8) -> Option<i64> {
+        let field = event.data.structure().unwrap().ctx(tag).unwrap();
+        field.null().is_err().then(|| {
+            field
+                .u64()
+                .map(|v| v as i64)
+                .or_else(|_| field.i64())
+                .unwrap()
+        })
+    }
+
+    /// The event ID of `event`, and its fields `0..fields`.
+    fn event(event: &EventData<'_>, fields: u8) -> (u32, heapless::Vec<Option<i64>, 4>) {
+        (
+            event.path.event.unwrap(),
+            (0..fields).map(|tag| field(event, tag)).collect(),
+        )
+    }
+
+    const IDLE: i64 = UpdateStateEnum::Idle as i64;
+    const QUERYING: i64 = UpdateStateEnum::Querying as i64;
+    const DOWNLOADING: i64 = UpdateStateEnum::Downloading as i64;
+    const SUCCESS: i64 = ChangeReasonEnum::Success as i64;
+    const FAILURE: i64 = ChangeReasonEnum::Failure as i64;
+
+    #[test]
+    fn an_update_reports_its_transitions_and_download_error() {
+        let events = RecordingEvents::default();
+        let state = OtaState::new(1);
+
+        {
+            let update = state.initiate_update(&events);
+            update.querying();
+            update.set_target_version(7);
+            update.downloading(Some(0));
+            // Progress alone is no transition.
+            update.downloading(Some(50));
+            update.download_failed(1024, Some(-3));
+            // Dropped: a failure.
+        }
+
+        events.with_events(|emitted| {
+            let transition = EventId::StateTransition as u32;
+            let error = EventId::DownloadError as u32;
+
+            assert_eq!(emitted.len(), 4);
+            assert_eq!(
+                event(&emitted[0], 4),
+                (
+                    transition,
+                    [Some(IDLE), Some(QUERYING), Some(SUCCESS), None].into()
+                )
+            );
+            assert_eq!(
+                event(&emitted[1], 4),
+                (
+                    transition,
+                    [Some(QUERYING), Some(DOWNLOADING), Some(SUCCESS), Some(7)].into()
+                )
+            );
+            assert_eq!(
+                event(&emitted[2], 4),
+                (error, [Some(7), Some(1024), Some(50), Some(-3)].into())
+            );
+            assert_eq!(
+                event(&emitted[3], 4),
+                (
+                    transition,
+                    [Some(DOWNLOADING), Some(IDLE), Some(FAILURE), None].into()
+                )
+            );
+        });
+    }
+
+    #[test]
+    fn a_completed_update_ends_in_success() {
+        let events = RecordingEvents::default();
+        let state = OtaState::new(1);
+
+        let update = state.initiate_update(&events);
+        update.querying();
+        update.complete();
+
+        events.with_events(|emitted| {
+            assert_eq!(emitted.len(), 2);
+            assert_eq!(field(&emitted[1], 1), Some(IDLE));
+            assert_eq!(field(&emitted[1], 2), Some(SUCCESS));
+        });
+    }
 
     #[test]
     fn parse_bdx_url_extracts_node_and_fd() {

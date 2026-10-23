@@ -83,6 +83,10 @@ pub use crate::dm::clusters::decl::time_synchronization::*;
 
 pub mod client;
 
+/// How often a failing time update emits `TimeFailure` and
+/// `MissingTrustedTimeSource`, at most.
+const TIME_EVENTS_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(60 * 60);
+
 /// An enum describing the current UTC timestamp the real-time clock is aware of.
 ///
 /// The timestamp is expressed as Matter-epoch microseconds.
@@ -168,6 +172,10 @@ pub struct Rtc {
     /// installed it owns it and is cleared on fabric removal.
     /// Persisted under [`crate::persist::TRUSTED_TIME_SOURCE_KEY`].
     trusted_time_source: Option<TrustedTimeSource>,
+    /// When the `TimeFailure` and `MissingTrustedTimeSource` events were last
+    /// emitted: each at most once an hour on a failed time update.
+    time_failure_at: Option<embassy_time::Instant>,
+    missing_source_at: Option<embassy_time::Instant>,
 }
 
 impl Rtc {
@@ -180,6 +188,8 @@ impl Rtc {
             source: TimeSourceEnum::None,
             anchor: None,
             trusted_time_source: None,
+            time_failure_at: None,
+            missing_source_at: None,
         }
     }
 
@@ -192,6 +202,8 @@ impl Rtc {
             source: TimeSourceEnum::None,
             anchor: None,
             trusted_time_source: None,
+            time_failure_at: None,
+            missing_source_at: None,
         })
     }
 
@@ -202,6 +214,8 @@ impl Rtc {
         self.source = TimeSourceEnum::None;
         self.anchor = None;
         self.trusted_time_source = None;
+        self.time_failure_at = None;
+        self.missing_source_at = None;
     }
 
     pub(crate) fn reset_persist<S: KvBlobStore>(
@@ -275,6 +289,7 @@ impl Rtc {
             // request payload, transitioning from `Some(..)` → `None`).
             if self.trusted_time_source.is_none() && previous.is_some() {
                 MissingTrustedTimeSource::emit_for(event_emitter, ROOT_ENDPOINT_ID, |b| b.end())?;
+                self.missing_source_at = Some(embassy_time::Instant::now());
             }
         }
 
@@ -310,6 +325,29 @@ impl Rtc {
         }
 
         Ok(())
+    }
+
+    /// Whether a failed time update is to emit `TimeFailure`: if none was
+    /// in the last hour. Notes it as emitted now if so.
+    pub(crate) fn time_failure_due(&mut self) -> bool {
+        Self::hourly(&mut self.time_failure_at)
+    }
+
+    /// Whether a time update failed for want of a (reachable) Trusted Time
+    /// Source is to emit `MissingTrustedTimeSource`: if none was in the last
+    /// hour. Notes it as emitted now if so.
+    pub(crate) fn missing_source_due(&mut self) -> bool {
+        Self::hourly(&mut self.missing_source_at)
+    }
+
+    fn hourly(at: &mut Option<embassy_time::Instant>) -> bool {
+        let now = embassy_time::Instant::now();
+        let due = at.is_none_or(|at| now.duration_since(at) >= TIME_EVENTS_INTERVAL);
+        if due {
+            *at = Some(now);
+        }
+
+        due
     }
 
     /// Return the current UTC time if available, or the persisted Last-Known-Good UTC Time otherwise.
@@ -2017,5 +2055,22 @@ impl core::fmt::Debug for TimeSyncHandler<'_> {
 impl defmt::Format for TimeSyncHandler<'_> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "TimeSyncHandler {{ dataver: {} }}", self.dataver.get());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::Rtc;
+
+    #[test]
+    fn time_failures_are_reported_hourly_at_most() {
+        let mut rtc = Rtc::new();
+
+        assert!(rtc.time_failure_due());
+        assert!(!rtc.time_failure_due());
+        // The other event counts apart.
+        assert!(rtc.missing_source_due());
+        assert!(!rtc.missing_source_due());
     }
 }

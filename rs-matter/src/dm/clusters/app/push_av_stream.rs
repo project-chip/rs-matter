@@ -58,6 +58,13 @@
 //! * Round-trip of `TransportOptionsStruct` is byte-for-byte (raw
 //!   TLV pass-through) on `CurrentConnections` reads and
 //!   `FindTransport` responses.
+//! * The `PushTransportBegin` / `PushTransportEnd` events the commands
+//!   call for: on `ManuallyTriggerTransport`, and on `SetTransportStatus`
+//!   to `Inactive`. The application reports the others - a recording
+//!   starting or finishing its upload, a transmission starting on
+//!   `SetTransportStatus` to `Active`, a manually triggered one ending -
+//!   with [`PushAvStreamHandler::transport_started`] and
+//!   [`PushAvStreamHandler::transport_stopped`].
 //! * NOT in scope (left to the application via hooks):
 //!   `PerZoneSensitivity` / `Metadata` features beyond echoing the
 //!   client-supplied bits in stored options. The cluster declares
@@ -68,8 +75,8 @@ use core::cell::{Cell, RefCell};
 
 use crate::dm::FabricIndex;
 use crate::dm::{
-    ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, LifecycleOp,
-    ReadContext,
+    ArrayAttributeRead, Cluster, Dataver, EndptId, EventEmitter, HandlerContext, InvokeContext,
+    LifecycleOp, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, TLVElement, TLVTag, ToTLV};
@@ -205,7 +212,10 @@ pub trait PushAvStreamHooks {
 
     /// Called on `SetTransportStatus`. `connection_id == None` means
     /// "all connections of the accessing fabric" per spec. Status is
-    /// applied to the cluster table on `Ok`.
+    /// applied to the cluster table on `Ok`. The handler emits
+    /// `PushTransportEnd` for the connections made `Inactive`; report the
+    /// transmissions that begin on `Active` with
+    /// [`PushAvStreamHandler::transport_started`].
     fn on_set_status(
         &self,
         _connection_id: Option<u16>,
@@ -218,6 +228,8 @@ pub trait PushAvStreamHooks {
     /// pipeline to begin (or extend) a push. `time_control` carries
     /// the optional motion-trigger envelope; `user_defined` carries
     /// the optional opaque blob from the spec's `userDefined` field.
+    /// On `Ok` the handler emits `PushTransportBegin`; report the push
+    /// ending with [`PushAvStreamHandler::transport_stopped`].
     fn on_manually_trigger(
         &self,
         _connection_id: u16,
@@ -226,6 +238,12 @@ pub trait PushAvStreamHooks {
         _user_defined: Option<&[u8]>,
     ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
         async { Ok(()) }
+    }
+
+    /// The number of the CMAF session connection `connection_id` uploads,
+    /// for its `PushTransportBegin` / `PushTransportEnd` events.
+    fn cmaf_session_number(&self, _connection_id: u16) -> Option<u64> {
+        None
     }
 }
 
@@ -273,6 +291,10 @@ where
         user_defined: Option<&[u8]>,
     ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
         (*self).on_manually_trigger(connection_id, activation_reason, time_control, user_defined)
+    }
+
+    fn cmaf_session_number(&self, connection_id: u16) -> Option<u64> {
+        (*self).cmaf_session_number(connection_id)
     }
 }
 
@@ -361,6 +383,74 @@ where
     /// Snapshot the current connections. Useful for diagnostics.
     pub fn connections(&self) -> Vec<PushConnection, NC> {
         self.state.lock(|cell| cell.borrow().connections.clone())
+    }
+
+    /// Report that connection `connection_id` began pushing a recording or
+    /// a transmission, as triggered by `trigger_type` (`activation_reason`:
+    /// why, if by `Command`): the `PushTransportBegin` event, through
+    /// `emitter` (typically the `InteractionModel`). `cmaf_session_number`
+    /// is that of the CMAF session uploaded.
+    pub fn transport_started(
+        &self,
+        emitter: impl EventEmitter,
+        connection_id: u16,
+        trigger_type: TransportTriggerTypeEnum,
+        activation_reason: Option<TriggerActivationReasonEnum>,
+        cmaf_session_number: Option<u64>,
+    ) -> Result<(), Error> {
+        let container = self.container_type(connection_id)?;
+
+        PushTransportBegin::emit_for(emitter, self.endpoint_id, |event| {
+            event
+                .connection_id(connection_id)?
+                .trigger_type(trigger_type)?
+                .activation_reason(activation_reason)?
+                .container_type(Some(container))?
+                .cmaf_session_number(cmaf_session_number)?
+                .end()
+        })?;
+
+        Ok(())
+    }
+
+    /// Report that connection `connection_id` finished pushing a recording
+    /// or a transmission: the `PushTransportEnd` event, through `emitter`
+    /// (typically the `InteractionModel`). `cmaf_session_number` is that of
+    /// the CMAF session uploaded.
+    pub fn transport_stopped(
+        &self,
+        emitter: impl EventEmitter,
+        connection_id: u16,
+        cmaf_session_number: Option<u64>,
+    ) -> Result<(), Error> {
+        let container = self.container_type(connection_id)?;
+
+        PushTransportEnd::emit_for(emitter, self.endpoint_id, |event| {
+            event
+                .connection_id(connection_id)?
+                .container_type(Some(container))?
+                .cmaf_session_number(cmaf_session_number)?
+                .end()
+        })?;
+
+        Ok(())
+    }
+
+    /// The container connection `connection_id` pushes, as its transport
+    /// options say.
+    fn container_type(&self, connection_id: u16) -> Result<ContainerFormatEnum, Error> {
+        self.state.lock(|cell| {
+            let state = cell.borrow();
+            let connection = state
+                .connections
+                .iter()
+                .find(|c| c.connection_id == connection_id)
+                .ok_or(ErrorCode::NotFound)?;
+
+            TransportOptionsStruct::new(TLVElement::new(&connection.transport_options))
+                .container_options()?
+                .container_type()
+        })
     }
 
     /// Drop the connections owned by `fab_idx` and queue them for
@@ -703,8 +793,9 @@ where
 
         self.hooks.on_set_status(connection_id, status).await?;
 
-        self.state.lock(|cell| {
+        let changed = self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
+            let mut changed: Vec<u16, NC> = Vec::new();
             for c in state.connections.iter_mut() {
                 if c.fabric_index != fab_idx {
                     continue;
@@ -714,9 +805,23 @@ where
                     _ => {}
                 }
                 c.status = status;
+                let _ = changed.push(c.connection_id);
             }
+
+            changed
         });
         ctx.notify_own_attr_changed(AttributeId::CurrentConnections as _);
+
+        // Made inactive, their pushes end.
+        if status == TransportStatusEnum::Inactive {
+            for id in changed {
+                let cmaf_session = self.hooks.cmaf_session_number(id);
+                if let Err(e) = self.transport_stopped(&ctx, id, cmaf_session) {
+                    warn!("Failed to emit PushTransportEnd: {:?}", e);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -750,6 +855,19 @@ where
                 user_defined.map(|s| s.0),
             )
             .await?;
+
+        let cmaf_session = self.hooks.cmaf_session_number(connection_id);
+        let started = self.transport_started(
+            &ctx,
+            connection_id,
+            TransportTriggerTypeEnum::Command,
+            Some(reason),
+            cmaf_session,
+        );
+        if let Err(e) = started {
+            warn!("Failed to emit PushTransportBegin: {:?}", e);
+        }
+
         Ok(())
     }
 
@@ -901,5 +1019,76 @@ mod tests {
         let mut deallocated = handler.hooks.deallocated.borrow().clone();
         deallocated.sort_unstable();
         assert_eq!(deallocated.as_slice(), [1, 3]);
+    }
+
+    #[test]
+    fn reported_pushes_are_events_of_their_container() {
+        use crate::dm::clusters::app::test_util::RecordingEvents;
+        use crate::tlv::TLVWrite;
+
+        let handler = PushAvStreamHandler::<_, 4>::new(
+            Dataver::new(1),
+            1,
+            PushAvStreamConfig {
+                supported_formats: &[],
+            },
+            RecordingHooks {
+                deallocated: RefCell::new(Vec::new()),
+            },
+        );
+
+        // Transport options with a CMAF container.
+        let mut buf = [0; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+        unwrap!(wb.start_struct(&TLVTag::Anonymous));
+        unwrap!(wb.start_struct(&TLVTag::Context(7)));
+        unwrap!(wb.u8(&TLVTag::Context(0), ContainerFormatEnum::CMAF as u8));
+        unwrap!(wb.end_container());
+        unwrap!(wb.end_container());
+        let mut c = connection(1, 1);
+        unwrap!(c.transport_options.extend_from_slice(wb.as_slice()));
+        handler
+            .state
+            .lock(|cell| unwrap!(cell.borrow_mut().connections.push(c)));
+
+        let events = RecordingEvents::default();
+        unwrap!(handler.transport_started(
+            &events,
+            1,
+            TransportTriggerTypeEnum::Motion,
+            None,
+            Some(42)
+        ));
+        unwrap!(handler.transport_stopped(&events, 1, Some(42)));
+        assert!(handler.transport_stopped(&events, 2, None).is_err());
+
+        events.with_events(|emitted| {
+            assert_eq!(emitted.len(), 2);
+
+            let begin = unwrap!(emitted[0].data.structure());
+            assert_eq!(
+                emitted[0].path.event,
+                Some(EventId::PushTransportBegin as u32)
+            );
+            assert_eq!(unwrap!(unwrap!(begin.ctx(0)).u16()), 1);
+            assert_eq!(
+                unwrap!(unwrap!(begin.ctx(1)).u8()),
+                TransportTriggerTypeEnum::Motion as u8
+            );
+            assert!(begin.ctx(2).is_err());
+            assert_eq!(
+                unwrap!(unwrap!(begin.ctx(3)).u8()),
+                ContainerFormatEnum::CMAF as u8
+            );
+            assert_eq!(unwrap!(unwrap!(begin.ctx(4)).u64()), 42);
+
+            let end = unwrap!(emitted[1].data.structure());
+            assert_eq!(
+                emitted[1].path.event,
+                Some(EventId::PushTransportEnd as u32)
+            );
+            assert_eq!(unwrap!(unwrap!(end.ctx(0)).u16()), 1);
+            assert_eq!(unwrap!(unwrap!(end.ctx(2)).u64()), 42);
+        });
     }
 }

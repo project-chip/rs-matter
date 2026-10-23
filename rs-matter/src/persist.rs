@@ -151,13 +151,17 @@ pub const REBOOT_COUNT_KEY: u16 = GROUP_DATA_COUNTER_KEY + 1;
 /// `GeneralDiagnostics::TotalOperationalHours`.
 pub const OPERATIONAL_HOURS_KEY: u16 = REBOOT_COUNT_KEY + 1;
 
+/// The software version the node ran at its last boot, so that the OTA
+/// Requestor can tell a new one started: its `VersionApplied` event.
+pub const RUNNING_VERSION_KEY: u16 = OPERATIONAL_HOURS_KEY + 1;
+
 /// The first key past the singleton keys above - i.e. the next free slot for
 /// a *new* singleton key.
 ///
 /// Only used by [`SINGLETON_KEYS_FIT`] to prove that the singleton block has
 /// not grown into [`PERSISTENT_SUBSCRIPTIONS_START`]; bump the key it is
 /// derived from whenever a singleton is added.
-const SINGLETON_KEYS_END: u16 = OPERATIONAL_HOURS_KEY + 1;
+const SINGLETON_KEYS_END: u16 = RUNNING_VERSION_KEY + 1;
 
 /// The first key of the range reserved for persisted subscriptions.
 ///

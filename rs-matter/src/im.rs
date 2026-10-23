@@ -176,7 +176,7 @@ pub struct InteractionModelState<
     subscriptions: Subscriptions<NS>,
     events: Events<NE>,
     networks: SharedNetworks<N>,
-    start_up_emitted: Mutex<Cell<bool>>,
+    boot_emitted: Mutex<Cell<bool>>,
 }
 
 impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
@@ -186,7 +186,7 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             subscriptions: Subscriptions::new(),
             events: Events::new(),
             networks: SharedNetworks::new(networks),
-            start_up_emitted: Mutex::new(Cell::new(false)),
+            boot_emitted: Mutex::new(Cell::new(false)),
         }
     }
 
@@ -197,18 +197,19 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             subscriptions <- Subscriptions::init(),
             events <- Events::init(),
             networks <- SharedNetworks::init(networks),
-            start_up_emitted: Mutex::new(Cell::new(false)),
+            boot_emitted: Mutex::new(Cell::new(false)),
         })
     }
 
-    /// Suppress the `BasicInformation::StartUp` event that
-    /// [`InteractionModel::run`] would otherwise emit when it first starts.
+    /// Suppress the boot events - `GeneralDiagnostics::BootReason` and
+    /// `BasicInformation::StartUp` - that [`InteractionModel::run`] would
+    /// otherwise emit when it first starts.
     ///
     /// Call before `run` when starting the stack does *not* correspond to a
     /// device boot - e.g. a warm restart of the Matter stack within a running
     /// process, or a test fixture that needs a deterministic events queue.
     pub fn suppress_start_up_event(&self) {
-        self.start_up_emitted.lock(|flag| flag.set(true));
+        self.boot_emitted.lock(|flag| flag.set(true));
     }
 
     /// Reset this state's persisted contents to factory defaults - the
@@ -628,22 +629,34 @@ where
     /// job, the subscriptions reporting loop, and - for wireless devices - the
     /// operational connection manager (inert for Ethernet, where `net_ctl` is a
     /// [`NoopWirelessNetCtl`]).
-    /// Emit the `BasicInformation::StartUp` event, once per process lifetime.
+    /// Emit the boot events, once per process lifetime: the
+    /// `GeneralDiagnostics::BootReason` event, with the reason set by
+    /// [`Matter::set_boot_reason`], then the `BasicInformation::StartUp` event.
     ///
     /// Matter Core spec: the node emits `StartUp` "upon completion of a boot
     /// or reboot process"; the closest stack-observable moment is the start of
     /// [`Self::run`], i.e. when the node becomes operational. The stack owns
-    /// this (rather than a public emit API the application must remember to
+    /// these (rather than a public emit API the application must remember to
     /// call) so every device is conformant by default. Event numbers stay
     /// monotonic across reboots via the events store's epoch persistence, so
-    /// each boot's `StartUp` is a fresh, correctly-numbered event.
+    /// each boot's events are fresh, correctly-numbered ones.
     ///
     /// Failure to emit (e.g. events buffer exhaustion) is logged, not fatal:
     /// a missing diagnostic event must not take the node down.
-    fn emit_start_up_once(&self) {
-        let emit = self.state.start_up_emitted.lock(|flag| !flag.replace(true));
+    fn emit_boot_events_once(&self) {
+        let emit = self.state.boot_emitted.lock(|flag| !flag.replace(true));
 
         if emit {
+            let result = crate::dm::clusters::decl::general_diagnostics::BootReason::emit_for(
+                self,
+                crate::dm::endpoints::ROOT_ENDPOINT_ID,
+                |event| event.boot_reason(self.matter.boot_reason())?.end(),
+            );
+
+            if let Err(e) = result {
+                warn!("Failed to emit the BootReason event: {:?}", e);
+            }
+
             let result = crate::dm::clusters::decl::basic_information::StartUp::emit_for(
                 self,
                 crate::dm::endpoints::ROOT_ENDPOINT_ID,
@@ -656,11 +669,27 @@ where
         }
     }
 
+    /// Emit the `BasicInformation::ShutDown` event.
+    ///
+    /// Call right before an orderly shutdown or reboot of the node (applying
+    /// a software update, a factory reset, a user-requested restart), then
+    /// keep [`Self::run`] going briefly so that subscribers get it: it is the
+    /// last event the node should record.
+    pub fn emit_shut_down(&self) -> Result<(), Error> {
+        crate::dm::clusters::decl::basic_information::ShutDown::emit_for(
+            self,
+            crate::dm::endpoints::ROOT_ENDPOINT_ID,
+            |event| event.end(),
+        )?;
+
+        Ok(())
+    }
+
     pub async fn run(&self) -> Result<(), Error>
     where
         NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
     {
-        self.emit_start_up_once();
+        self.emit_boot_events_once();
 
         let mut timeouts = pin!(self.run_timeout_checks());
         let mut handler = pin!(self.handler.run(self));
@@ -687,10 +716,72 @@ where
             return core::future::pending().await;
         }
 
+        // The node starts out not connected.
+        let connected = Cell::new(false);
+        let on_connection = |now: bool| {
+            if connected.replace(now) != now {
+                self.emit_connection_status(now);
+            }
+        };
+
         let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf);
+        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf)
+            .with_connection_hook(&on_connection);
 
         mgr.run().await
+    }
+
+    /// Emit the `ConnectionStatus` event of the Wi-Fi or Thread Network
+    /// Diagnostics cluster, as the node connected (`true`) to its network or
+    /// lost it, if an endpoint serves that cluster.
+    fn emit_connection_status(&self, connected: bool)
+    where
+        NC: NetCtl,
+    {
+        let net_type = self.net_ctl.net_type();
+        let cluster = match net_type {
+            NetworkType::Wifi => crate::dm::clusters::wifi_diag::FULL_CLUSTER.id,
+            NetworkType::Thread => crate::dm::clusters::thread_diag::FULL_CLUSTER.id,
+            NetworkType::Ethernet => return,
+        };
+
+        let endpoint = self.handler.access(|node| {
+            node.endpoints
+                .iter()
+                .find(|e| e.clusters.iter().any(|c| c.id == cluster))
+                .map(|e| e.id)
+        });
+        let Some(endpoint) = endpoint else {
+            return;
+        };
+
+        let emitted = if net_type == NetworkType::Wifi {
+            use crate::dm::clusters::wifi_diag::{ConnectionStatus, ConnectionStatusEnum};
+
+            let status = if connected {
+                ConnectionStatusEnum::Connected
+            } else {
+                ConnectionStatusEnum::NotConnected
+            };
+            ConnectionStatus::emit_for(self, endpoint, |event| {
+                event.connection_status(status)?.end()
+            })
+        } else {
+            use crate::dm::clusters::thread_diag::{ConnectionStatus, ConnectionStatusEnum};
+
+            let status = if connected {
+                ConnectionStatusEnum::Connected
+            } else {
+                ConnectionStatusEnum::NotConnected
+            };
+            ConnectionStatus::emit_for(self, endpoint, |event| {
+                event.connection_status(status)?.end()
+            })
+        };
+
+        if let Err(e) = emitted {
+            warn!("Failed to emit ConnectionStatus: {:?}", e);
+        }
     }
 
     /// Perform a single, one-shot connect to the wireless network with the given
