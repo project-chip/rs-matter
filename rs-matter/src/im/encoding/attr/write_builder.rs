@@ -37,7 +37,7 @@
 //! | Tag | Field             | Type                |
 //! |-----|-------------------|---------------------|
 //! | 0   | SuppressResponse  | bool? (omit = false)|
-//! | 1   | TimedRequest      | bool? (omit = false)|
+//! | 1   | TimedRequest      | bool                |
 //! | 2   | WriteRequests     | array[AttrData]     |
 //! | 3   | MoreChunkedMessages | bool?             |
 //!
@@ -60,14 +60,16 @@
 //! # Usage
 //!
 //! Optional fields are **implicitly skipped** — just don't call their
-//! setter. Later-field methods are available on earlier states, so a
-//! minimal call writes only the mandatory `WriteRequests` array:
+//! setter. `TimedRequest` is mandatory on the wire: skipped, it is written
+//! as `false`. Later-field methods are available on earlier states, so a
+//! minimal call writes only `TimedRequest(false)` and the `WriteRequests`
+//! array:
 //!
 //! ```ignore
 //! exchange.send_with(|_, wb| {
 //!     let parent = TLVWriteParent::new("WriteRequest", wb);
 //!     WriteReqBuilder::new(parent)?
-//!         // SuppressResponse + TimedRequest implicitly skipped:
+//!         // SuppressResponse skipped, TimedRequest(false) written:
 //!         .write_requests()?
 //!             .push()?
 //!                 // DataVersion implicitly skipped:
@@ -125,7 +127,7 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 /// In practice almost every call is `WriteReqBuilder::new(p)?
 /// .write_requests()? … .end()?` — `SuppressResponse` and
 /// `MoreChunkedMessages` default to absent (= false on the wire),
-/// `TimedRequest` is only set when issuing a timed write.
+/// `TimedRequest` to `false`; a timed write sets it to `true`.
 pub struct WriteReqBuilder<P, const F: usize = 0> {
     p: P,
 }
@@ -180,8 +182,8 @@ impl<P> WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    /// Write the optional `TimedRequest` field. Calling this from
-    /// state 0 implicitly skips `SuppressResponse`.
+    /// Write the `TimedRequest` field. Calling this from state 0
+    /// implicitly skips `SuppressResponse`.
     pub fn timed_request(self, value: bool) -> Result<WriteReqBuilder<P, 2>, Error> {
         WriteReqBuilder::<P, 1> { p: self.p }.timed_request(value)
     }
@@ -191,7 +193,8 @@ impl<P> WriteReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
-    /// Write the optional `TimedRequest` field.
+    /// Write the `TimedRequest` field: `true` for a write following a
+    /// `TimedRequest` action.
     pub fn timed_request(mut self, value: bool) -> Result<WriteReqBuilder<P, 2>, Error> {
         self.p
             .writer()
@@ -207,10 +210,10 @@ impl<P> WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    /// Open the `WriteRequests` array. Calling from state 0
-    /// implicitly skips both `SuppressResponse` and `TimedRequest`.
+    /// Open the `WriteRequests` array. Calling from state 0 implicitly
+    /// skips `SuppressResponse` and writes `TimedRequest(false)`.
     pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
-        WriteReqBuilder::<P, 2> { p: self.p }.write_requests()
+        self.timed_request(false)?.write_requests()
     }
 }
 
@@ -218,9 +221,10 @@ impl<P> WriteReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
-    /// Open the `WriteRequests` array, implicitly skipping `TimedRequest`.
+    /// Open the `WriteRequests` array, implicitly writing
+    /// `TimedRequest(false)`.
     pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
-        WriteReqBuilder::<P, 2> { p: self.p }.write_requests()
+        self.timed_request(false)?.write_requests()
     }
 }
 
@@ -730,6 +734,8 @@ mod tests {
             wb.as_slice(),
             &[
                 0x15, // WriteRequestMessage
+                0x28,
+                1, // TimedRequest = false
                 0x36,
                 2,    // WriteRequests[]
                 0x15, // AttrData
@@ -894,7 +900,8 @@ mod tests {
         let req = WriteReq::new(TLVElement::new(wb.as_slice()));
         assert!(!req.supress_response().unwrap());
         assert!(!req.timed_request().unwrap());
-        assert!(TLVElement::new(wb.as_slice())
+        // On the wire, though skipped.
+        assert!(!TLVElement::new(wb.as_slice())
             .structure()
             .unwrap()
             .find_ctx(1)

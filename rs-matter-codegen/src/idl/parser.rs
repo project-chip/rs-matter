@@ -35,7 +35,7 @@ use nom_supreme::ParserExt;
 use thiserror::Error;
 use tracing::warn;
 
-use endpoint_composition::{
+pub use endpoint_composition::{
     AttributeHandlingType, AttributeInstantiation, ClusterInstantiation, DefaultAttributeValue,
     DeviceType, Endpoint,
 };

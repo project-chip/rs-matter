@@ -31,7 +31,12 @@ mod idl;
 
 /// The syntax tree of the Matter IDL (see [`parse_idl`]).
 pub mod ast {
-    pub use crate::idl::parser::*;
+    pub use crate::idl::parser::{
+        AccessPrivilege, ApiMaturity, Attribute, AttributeHandlingType, AttributeInstantiation,
+        Bitmap, Cluster, ClusterInstantiation, Command, ConstantAnnotation, ConstantEntry,
+        DataType, DefaultAttributeValue, DeviceType, Endpoint, Entities, Enum, Event,
+        EventPriority, Field, Idl, Struct, StructField, StructType,
+    };
 }
 
 /// Render a generated token stream as Rust source.
