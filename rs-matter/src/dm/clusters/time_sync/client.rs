@@ -40,10 +40,12 @@ use embassy_time::{Duration, Timer};
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::decl::time_synchronization::{
-    GranularityEnum, TimeSourceEnum, TimeSynchronizationClient as _,
+    GranularityEnum, TimeSourceEnum, TimeSynchronizationAttrReads as _,
+    TimeSynchronizationAttrResponses as _,
 };
 use crate::dm::AttrChangeNotifier;
 use crate::error::Error;
+use crate::im::client::ImClient as _;
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::transport::exchange::Exchange;
 use crate::Matter;
@@ -101,13 +103,15 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
     /// - If no Trusted Time Source is configured, returns `Ok(())` with
     ///   no action.
     /// - Otherwise opens a CASE-secured initiator exchange to the
-    ///   configured `(fab_idx, node_id)`, reads the `UTCTime` attribute
-    ///   on the configured `endpoint`, and on a non-null result calls
-    ///   [`Matter::set_utc_time`] with
-    ///   `Granularity = SecondsGranularity` and
+    ///   configured `(fab_idx, node_id)`, reads the `UTCTime` and
+    ///   `Granularity` attributes on the configured `endpoint`, and on a
+    ///   non-null time from a source that has one calls
+    ///   [`Matter::set_utc_time`] with the source's granularity (at most
+    ///   milliseconds: the read itself takes a round trip) and
     ///   `TimeSource = NodeTimeCluster` (per spec — the source
     ///   that this device used to sync its time was another node's
-    ///   TimeSync cluster).
+    ///   TimeSync cluster). The RTC steps the granularity down by one:
+    ///   minutes for a source within minutes or seconds, seconds for a finer one.
     pub async fn refresh_once<S, N>(&self, kv: S, notify: &N) -> Result<(), Error>
     where
         S: KvBlobStoreAccess,
@@ -129,18 +133,56 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
         let exchange =
             Exchange::initiate(self.matter, &self.crypto, tts.fab_idx, tts.node_id).await?;
 
-        let result = exchange
-            .time_synchronization()
-            .utc_time_read(tts.endpoint)
+        let mut chunk = exchange
+            .read_with(|msg| {
+                msg.attr_requests()?
+                    .time_synchronization_read()
+                    .utc_time(tts.endpoint)?
+                    .granularity(tts.endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
             .await?;
 
-        if let Some(utc_us) = result.into_option() {
+        let (mut utc_time, mut granularity) = (None, None);
+
+        loop {
+            {
+                let resp = chunk.response()?;
+                let attrs = resp.time_synchronization_read_resp();
+
+                if let Some((_, value)) = attrs.utc_time().next() {
+                    utc_time = Some(value?.into_option());
+                }
+                if let Some((_, Ok(value))) = attrs.granularity().next() {
+                    granularity = Some(value);
+                };
+            }
+
+            match chunk.complete().await? {
+                Some(next) => chunk = next,
+                None => break,
+            }
+        }
+
+        // Mandatory on the source; what we assumed of it without.
+        let granularity = match granularity.unwrap_or(GranularityEnum::SecondsGranularity) {
+            GranularityEnum::NoTimeGranularity => {
+                warn!("TimeSync client: trusted source has no time");
+                return Ok(());
+            }
+            GranularityEnum::MicrosecondsGranularity => GranularityEnum::MillisecondsGranularity,
+            granularity => granularity,
+        };
+
+        if let Some(utc_us) = utc_time.flatten() {
             let mut persist = Persist::new(kv);
 
             self.matter.with_state(|state| {
                 state.rtc.set_utc_time_persist(
                     utc_us,
-                    GranularityEnum::SecondsGranularity,
+                    granularity,
                     TimeSourceEnum::NodeTimeCluster,
                     &mut persist,
                     notify,
