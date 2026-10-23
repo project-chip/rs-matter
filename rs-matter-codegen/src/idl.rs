@@ -31,7 +31,7 @@ mod id;
 //
 //        As a workaround, until a fix is published, unused assignments are allowed here.
 #[allow(unused_assignments)]
-mod parser;
+pub mod parser;
 mod struct_in;
 mod struct_out;
 
