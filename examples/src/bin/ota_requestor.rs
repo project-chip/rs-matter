@@ -51,7 +51,7 @@ use rs_matter::dm::devices::DEV_TYPE_OTA_REQUESTOR;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, Node};
+use rs_matter::dm::{Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, EventEmitter, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
@@ -202,7 +202,7 @@ async fn run_ota(
     crypto: impl Crypto,
     providers: &Providers,
     ota_state: &OtaState,
-    notifier: &dyn AttrChangeNotifier,
+    notifier: impl AttrChangeNotifier + EventEmitter,
 ) -> Result<(), Error> {
     loop {
         // React to provider-set changes (a `DefaultOTAProviders` write or an
@@ -218,7 +218,7 @@ async fn run_ota(
 
         let defaults = (0..n_default).filter_map(|i| providers.get(i));
         for provider in defaults.chain(announced.iter().copied()) {
-            match try_update(matter, &crypto, &provider, ota_state, notifier).await {
+            match try_update(matter, &crypto, &provider, ota_state, &notifier).await {
                 Ok(true) => info!("OTA: update applied"),
                 Ok(false) => {}
                 Err(e) => warn!("OTA: provider 0x{:016x} failed: {e:?}", provider.node_id),
@@ -234,11 +234,11 @@ async fn try_update(
     crypto: &impl Crypto,
     provider: &Provider,
     ota_state: &OtaState,
-    notifier: &dyn AttrChangeNotifier,
+    notifier: impl AttrChangeNotifier + EventEmitter,
 ) -> Result<bool, Error> {
     // Report progress for the duration of this attempt; if we bail out (or error)
     // the session reverts the reported state to `Idle` on drop.
-    let update = ota_state.initiate_update(notifier);
+    let update = ota_state.initiate_update(&notifier);
     update.querying();
 
     // Ask the provider. The closure inspects the response off the RX buffer and
@@ -285,6 +285,7 @@ async fn try_update(
     let Some((version, uri_len, token_len)) = found else {
         return Ok(false);
     };
+    update.set_target_version(version);
     let update_token = &token_buf[..token_len];
 
     let uri = core::str::from_utf8(&uri_buf[..uri_len]).map_err(|_| ErrorCode::InvalidData)?;

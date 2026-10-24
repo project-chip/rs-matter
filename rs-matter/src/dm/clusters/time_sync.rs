@@ -1947,6 +1947,8 @@ impl ClusterHandler for TimeSyncHandler<'_> {
 
         persist.run()?;
 
+        ctx.matter().notify_trusted_time_source_changed();
+
         Ok(())
     }
 

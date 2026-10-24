@@ -30,7 +30,9 @@
 //! table, global sensitivity) and performs all spec validation. The
 //! application provides a [`ZoneMgmtHooks`] implementation that hears
 //! about lifecycle changes and feeds them into the camera's actual
-//! motion-detection pipeline.
+//! motion-detection pipeline, which reports what it detects with
+//! [`ZoneMgmtHandler::zone_activity`]. The handler turns those reports into
+//! `ZoneTriggered` / `ZoneStopped` events, as the zone's trigger says.
 //!
 //! # Const generics
 //!
@@ -49,15 +51,20 @@
 use core::cell::{Cell, RefCell};
 use core::future::Future;
 
+use embassy_futures::select::select;
+use embassy_time::{Duration, Instant, Timer};
+
 use heapless::String as HString;
 
 use crate::dm::{
-    ArrayAttributeRead, Cluster, Dataver, EndptId, InvokeContext, ReadContext, WriteContext,
+    ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::Notification;
 use crate::with;
 
 #[allow(unused_imports)]
@@ -188,11 +195,38 @@ pub struct ZoneMgmtConfig {
     pub two_d_cartesian_max: (u16, u16),
 }
 
+/// Where a zone with a trigger is in its triggering.
+#[derive(Debug, Clone, Copy)]
+enum Activity {
+    /// Triggered at `since`, until `detected` seconds later at most - or its
+    /// trigger's `MaxDuration` - extended from `prev` last; `count` detections.
+    Triggered {
+        since: Instant,
+        detected: u32,
+        prev: u32,
+        count: u32,
+    },
+    /// Stopped; it ignores what is detected until `until`.
+    Blind { until: Instant },
+}
+
+/// The zones that stopped and triggered as time went by, in that order.
+struct Changes<const NT: usize> {
+    stopped: Vec<(u16, ZoneEventStoppedReasonEnum), NT>,
+    triggered: Vec<(u16, ZoneEventTriggeredReasonEnum), NT>,
+    /// When the next zone may stop, or end its blind period.
+    next: Option<Instant>,
+}
+
 struct State<const NZ: usize, const NV: usize, const NT: usize> {
     zones: Vec<Zone<NV>, NZ>,
     triggers: Vec<Trigger, NT>,
     sensitivity: u8,
     seeded: bool,
+    /// The triggering of the zones being triggered, or blind.
+    activity: Vec<(u16, Activity), NT>,
+    /// The zones with activity detected, not yet taken in.
+    detected: Vec<(u16, ZoneEventTriggeredReasonEnum), NT>,
 }
 
 impl<const NZ: usize, const NV: usize, const NT: usize> State<NZ, NV, NT> {
@@ -202,7 +236,107 @@ impl<const NZ: usize, const NV: usize, const NT: usize> State<NZ, NV, NT> {
             triggers: Vec::new(),
             sensitivity: 0,
             seeded: false,
+            activity: Vec::new(),
+            detected: Vec::new(),
         }
+    }
+
+    /// Move the zones' triggering on to `now`: stop those whose time is up,
+    /// end blind periods, and take in what was detected - triggering a zone,
+    /// or extending its triggering as its trigger says.
+    fn advance(&mut self, now: Instant) -> Changes<NT> {
+        let Self {
+            triggers,
+            activity,
+            detected,
+            ..
+        } = self;
+        let trigger = |zone: u16| triggers.iter().find(|t| t.zone_id == zone).copied();
+        let mut changes = Changes {
+            stopped: Vec::new(),
+            triggered: Vec::new(),
+            next: None,
+        };
+
+        activity.retain_mut(|(zone, state)| match *state {
+            Activity::Blind { until } => until > now,
+            Activity::Triggered {
+                since, detected, ..
+            } => {
+                let Some(trigger) = trigger(*zone) else {
+                    return false;
+                };
+                let stop_at = since + secs(detected.min(trigger.max_duration));
+                if now < stop_at {
+                    return true;
+                }
+
+                // Detected for its whole duration first, else timed out.
+                let reason = if detected <= trigger.max_duration {
+                    ZoneEventStoppedReasonEnum::ActionStopped
+                } else {
+                    ZoneEventStoppedReasonEnum::Timeout
+                };
+                let _ = changes.stopped.push((*zone, reason));
+
+                let until = stop_at + secs(trigger.blind_duration);
+                *state = Activity::Blind { until };
+                until > now
+            }
+        });
+
+        for (zone, reason) in detected.iter().copied() {
+            let Some(trigger) = trigger(zone) else {
+                continue;
+            };
+
+            match activity.iter_mut().find(|(z, _)| *z == zone) {
+                None => {
+                    let triggered = Activity::Triggered {
+                        since: now,
+                        detected: trigger.initial_duration,
+                        prev: trigger.initial_duration,
+                        count: 1,
+                    };
+                    if activity.push((zone, triggered)).is_ok() {
+                        let _ = changes.triggered.push((zone, reason));
+                    }
+                }
+                Some((_, Activity::Blind { .. })) => (),
+                Some((
+                    _,
+                    Activity::Triggered {
+                        since,
+                        detected,
+                        prev,
+                        count,
+                    },
+                )) => {
+                    // Extended on the first detection after the one that
+                    // triggered it, then only once it ran past the duration
+                    // it had before the last extension.
+                    *count += 1;
+                    let elapsed = now.duration_since(*since).as_secs();
+                    if *count <= 2 || elapsed > u64::from(*prev) {
+                        *prev = *detected;
+                        *detected = detected.saturating_add(trigger.augmentation_duration);
+                    }
+                }
+            }
+        }
+        detected.clear();
+
+        changes.next = activity
+            .iter()
+            .filter_map(|(zone, state)| match *state {
+                Activity::Blind { until } => Some(until),
+                Activity::Triggered {
+                    since, detected, ..
+                } => trigger(*zone).map(|t| since + secs(detected.min(t.max_duration))),
+            })
+            .min();
+
+        changes
     }
 }
 
@@ -218,6 +352,8 @@ where
     hooks: H,
     state: Mutex<RefCell<State<NZ, NV, NT>>>,
     next_id: Mutex<Cell<u16>>,
+    /// Fires when activity is detected, or triggers change.
+    activity_changed: Notification,
 }
 
 impl<H, const NZ: usize, const NV: usize, const NT: usize> ZoneMgmtHandler<H, NZ, NV, NT>
@@ -265,6 +401,7 @@ where
             hooks,
             state: Mutex::new(RefCell::new(State::new())),
             next_id: Mutex::new(Cell::new(1)),
+            activity_changed: Notification::new(),
         }
     }
 
@@ -274,6 +411,33 @@ where
 
     pub const fn endpoint_id(&self) -> EndptId {
         self.endpoint_id
+    }
+
+    /// Report triggering activity detected in zone `zone_id`, e.g. by the
+    /// camera's motion detection. The first detection triggers the zone
+    /// (the `ZoneTriggered` event); later ones extend its triggering as its
+    /// trigger says, until it stops (`ZoneStopped`) and stays blind for a
+    /// while. A zone without a trigger ignores it.
+    pub fn zone_activity(&self, zone_id: u16, reason: ZoneEventTriggeredReasonEnum) {
+        self.state.lock(|cell| {
+            let mut s = cell.borrow_mut();
+            if !s.detected.iter().any(|(zone, _)| *zone == zone_id) {
+                let _ = s.detected.push((zone_id, reason));
+            }
+        });
+
+        self.activity_changed.notify();
+    }
+
+    /// Forget how zone `zone_id` triggers, as its trigger is gone.
+    fn forget_activity(&self, zone_id: u16) {
+        self.state.lock(|cell| {
+            let mut s = cell.borrow_mut();
+            s.activity.retain(|(zone, _)| *zone != zone_id);
+            s.detected.retain(|(zone, _)| *zone != zone_id);
+        });
+
+        self.activity_changed.notify();
     }
 
     /// Pre-seed a manufacturer zone at boot. The supplied zone gets a
@@ -397,6 +561,37 @@ where
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        loop {
+            let changes = self
+                .state
+                .lock(|cell| cell.borrow_mut().advance(Instant::now()));
+
+            for (zone, reason) in changes.stopped {
+                let emitted = ZoneStopped::emit_for(&ctx, self.endpoint_id, |event| {
+                    event.zone(zone)?.reason(reason)?.end()
+                });
+                if let Err(e) = emitted {
+                    warn!("Failed to emit ZoneStopped: {:?}", e);
+                }
+            }
+            for (zone, reason) in changes.triggered {
+                let emitted = ZoneTriggered::emit_for(&ctx, self.endpoint_id, |event| {
+                    event.zone(zone)?.reason(reason)?.end()
+                });
+                if let Err(e) = emitted {
+                    warn!("Failed to emit ZoneTriggered: {:?}", e);
+                }
+            }
+
+            select(
+                self.activity_changed.wait(),
+                Timer::at(changes.next.unwrap_or(Instant::MAX)),
+            )
+            .await;
+        }
     }
 
     async fn max_user_defined_zones(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
@@ -636,6 +831,7 @@ where
         });
         ctx.notify_own_attr_changed(AttributeId::Zones as _);
         if triggers_changed {
+            self.forget_activity(id);
             ctx.notify_own_attr_changed(AttributeId::Triggers as _);
         }
         Ok(())
@@ -722,6 +918,7 @@ where
             let mut s = cell.borrow_mut();
             s.triggers.retain(|t| t.zone_id != zone_id);
         });
+        self.forget_activity(zone_id);
         ctx.notify_own_attr_changed(AttributeId::Triggers as _);
         Ok(())
     }
@@ -730,6 +927,10 @@ where
 // -----------------------------------------------------------------------
 // Local helpers
 // -----------------------------------------------------------------------
+
+fn secs(secs: u32) -> Duration {
+    Duration::from_secs(u64::from(secs))
+}
 
 fn write_zone_info<P: TLVBuilderParent, const NV: usize>(
     builder: ZoneInformationStructBuilder<P>,
@@ -766,4 +967,121 @@ fn write_trigger<P: TLVBuilderParent>(
         .blind_duration(t.blind_duration)?
         .sensitivity(t.sensitivity)?
         .end()
+}
+
+#[cfg(test)]
+mod tests {
+    use embassy_time::Instant;
+
+    use super::{State, Trigger, ZoneEventStoppedReasonEnum, ZoneEventTriggeredReasonEnum};
+
+    const ZONE: u16 = 7;
+    const MOTION: ZoneEventTriggeredReasonEnum = ZoneEventTriggeredReasonEnum::Motion;
+
+    fn state(initial: u32, augmentation: u32, max: u32, blind: u32) -> State<1, 3, 1> {
+        let mut state = State::new();
+        state
+            .triggers
+            .push(Trigger {
+                zone_id: ZONE,
+                initial_duration: initial,
+                augmentation_duration: augmentation,
+                max_duration: max,
+                blind_duration: blind,
+                sensitivity: None,
+            })
+            .unwrap();
+        state
+    }
+
+    fn at(secs: u64) -> Instant {
+        Instant::from_secs(1000 + secs)
+    }
+
+    fn detect(state: &mut State<1, 3, 1>) {
+        state.detected.push((ZONE, MOTION)).unwrap();
+    }
+
+    #[test]
+    fn a_detection_triggers_then_stops_and_blinds() {
+        let mut state = state(5, 2, 20, 10);
+
+        detect(&mut state);
+        let changes = state.advance(at(0));
+        assert_eq!(changes.triggered.as_slice(), &[(ZONE, MOTION)]);
+        assert_eq!(changes.next, Some(at(5)));
+
+        assert!(state.advance(at(4)).stopped.is_empty());
+
+        let changes = state.advance(at(5));
+        assert_eq!(
+            changes.stopped.as_slice(),
+            &[(ZONE, ZoneEventStoppedReasonEnum::ActionStopped)]
+        );
+        assert_eq!(changes.next, Some(at(15)));
+
+        // Blind: nothing triggers it.
+        detect(&mut state);
+        assert!(state.advance(at(10)).triggered.is_empty());
+
+        // Seeing again.
+        detect(&mut state);
+        assert_eq!(
+            state.advance(at(15)).triggered.as_slice(),
+            &[(ZONE, MOTION)]
+        );
+    }
+
+    #[test]
+    fn detections_extend_the_triggering_as_the_spec_says() {
+        let mut state = state(5, 3, 30, 0);
+
+        detect(&mut state);
+        state.advance(at(0));
+
+        // The first further detection extends it, to 8 s.
+        detect(&mut state);
+        assert_eq!(state.advance(at(1)).next, Some(at(8)));
+
+        // Not again before the 5 s it had before.
+        detect(&mut state);
+        assert_eq!(state.advance(at(4)).next, Some(at(8)));
+
+        // Past them, it does: to 11 s.
+        detect(&mut state);
+        assert_eq!(state.advance(at(6)).next, Some(at(11)));
+
+        let changes = state.advance(at(11));
+        assert_eq!(
+            changes.stopped.as_slice(),
+            &[(ZONE, ZoneEventStoppedReasonEnum::ActionStopped)]
+        );
+        // No blind period: it is done with.
+        assert_eq!(changes.next, None);
+    }
+
+    #[test]
+    fn a_triggering_extended_past_its_maximum_times_out() {
+        let mut state = state(5, 10, 8, 0);
+
+        detect(&mut state);
+        state.advance(at(0));
+        detect(&mut state);
+        assert_eq!(state.advance(at(1)).next, Some(at(8)));
+
+        assert_eq!(
+            state.advance(at(8)).stopped.as_slice(),
+            &[(ZONE, ZoneEventStoppedReasonEnum::Timeout)]
+        );
+    }
+
+    #[test]
+    fn a_zone_without_a_trigger_ignores_activity() {
+        let mut state = State::<1, 3, 1>::new();
+
+        detect(&mut state);
+        let changes = state.advance(at(0));
+        assert!(changes.triggered.is_empty());
+        assert_eq!(changes.next, None);
+    }
 }

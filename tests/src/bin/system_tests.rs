@@ -104,7 +104,8 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, DeviceType, Endpoint, Node, SemanticTag,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, DeviceType, Endpoint, EventEmitter,
+    Node, SemanticTag,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -1582,7 +1583,7 @@ async fn run_ota_requestor(
     crypto: impl Crypto,
     providers: &Providers,
     ota_state: &OtaState,
-    notifier: &dyn AttrChangeNotifier,
+    notifier: impl AttrChangeNotifier + EventEmitter,
     download_path: Option<String>,
 ) -> Result<(), Error> {
     let Some(download_path) = download_path else {
@@ -1603,7 +1604,7 @@ async fn run_ota_requestor(
                 &crypto,
                 &provider,
                 ota_state,
-                notifier,
+                &notifier,
                 &download_path,
             )
             .await
@@ -1624,12 +1625,12 @@ async fn download_image(
     crypto: &impl Crypto,
     provider: &Provider,
     ota_state: &OtaState,
-    notifier: &dyn AttrChangeNotifier,
+    notifier: impl AttrChangeNotifier + EventEmitter,
     download_path: &str,
 ) -> Result<(), Error> {
     use std::io::Write;
 
-    let update = ota_state.initiate_update(notifier);
+    let update = ota_state.initiate_update(&notifier);
     update.querying();
 
     // Copy out the `bdx://` image URI before the response buffer is released.
@@ -1645,13 +1646,16 @@ async fn download_image(
                 .ok_or(ErrorCode::NoSpace)?
                 .copy_from_slice(uri);
 
-            Ok(Some(uri.len()))
+            Ok(Some((uri.len(), resp.software_version()?)))
         })
         .await?;
 
-    let Some(uri_len) = found else {
+    let Some((uri_len, version)) = found else {
         return Ok(());
     };
+    if let Some(version) = version {
+        update.set_target_version(version);
+    }
     let uri = core::str::from_utf8(&uri_buf[..uri_len]).map_err(|_| ErrorCode::InvalidData)?;
     let (node_id, fd) = parse_bdx_url(uri)?;
 

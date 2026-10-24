@@ -73,6 +73,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::Notification;
 
 use rand_core::Rng;
 
@@ -180,6 +181,8 @@ pub struct Matter<'a> {
     /// cluster handler. See `dm::clusters::groupcast::TestingBridge`.
     #[cfg(feature = "groups")]
     groupcast_testing: crate::dm::clusters::groupcast::TestingBridge,
+    /// Fires when the Trusted Time Source is set, changed or cleared.
+    time_source_changed: Notification,
 }
 
 impl<'a> Matter<'a> {
@@ -210,6 +213,7 @@ impl<'a> Matter<'a> {
             #[cfg(feature = "groups")]
             groupcast_testing: crate::dm::clusters::groupcast::TestingBridge::new(),
             kv_buf: Mutex::new(RefCell::new([0; crate::persist::KV_BUF_SIZE])),
+            time_source_changed: Notification::new(),
         }
     }
 
@@ -243,6 +247,7 @@ impl<'a> Matter<'a> {
                     port,
                     groupcast_testing <- crate::dm::clusters::groupcast::TestingBridge::init(),
                     kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
+                    time_source_changed <- Notification::init(),
                 }
             )
         }
@@ -258,6 +263,7 @@ impl<'a> Matter<'a> {
                     dev_att,
                     port,
                     kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
+                    time_source_changed <- Notification::init(),
                 }
             )
         }
@@ -389,6 +395,15 @@ impl<'a> Matter<'a> {
     /// Set the reason for the node's latest boot. Call once at startup.
     pub fn set_boot_reason(&self, reason: BootReasonEnum) {
         self.with_state(|state| state.boot_reason = reason);
+    }
+
+    /// Wait until the Trusted Time Source is set, changed or cleared.
+    pub async fn wait_trusted_time_source_changed(&self) {
+        self.time_source_changed.wait().await
+    }
+
+    pub(crate) fn notify_trusted_time_source_changed(&self) {
+        self.time_source_changed.notify();
     }
 
     /// What the device advertises as an ICD - its `SAT`, and for a

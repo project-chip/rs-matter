@@ -753,6 +753,8 @@ impl ClusterHandler for NocHandler {
                         &ctx,
                         &ctx,
                     )?;
+
+                    ctx.exchange().matter().notify_trusted_time_source_changed();
                 }
 
                 info!("Removed operational fabric with local index {}", fab_idx);
