@@ -45,7 +45,7 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus};
 use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
@@ -133,9 +133,6 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     // Create the data model state (subscriptions, events).
     let state: InteractionModelState = InteractionModelState::new();
 
-    // The networks store of the Wifi interface.
-    let networks = SharedNetworks::new(WifiNetworks::<3>::new());
-
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
@@ -167,7 +164,13 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &on_off_handler, &networks, &net_ctl, &net_ctl),
+        data_model(
+            rand,
+            &on_off_handler,
+            WifiNetworks::new(),
+            &net_ctl,
+            &net_ctl,
+        ),
         &kv,
         &state,
     );
@@ -277,7 +280,7 @@ const NODE: Node<'static> = Node {
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-    networks: &'a SharedNetworks<WifiNetworks<3>>,
+    networks: WifiNetworks<3>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a

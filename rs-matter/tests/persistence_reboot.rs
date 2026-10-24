@@ -124,7 +124,7 @@ fn device_data_model<'a>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(common::eth_networks())
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(

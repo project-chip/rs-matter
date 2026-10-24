@@ -41,7 +41,7 @@ use crate::dm::clusters::basic_info::{
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::clusters::gen_diag::BootReasonEnum;
 use crate::dm::clusters::icd_mgmt::IcdAdvertisement;
-use crate::dm::clusters::net_comm::{self, Networks, SharedNetworks};
+use crate::dm::clusters::net_comm::{self, Networks};
 use crate::dm::clusters::time_sync::Rtc;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::AttrChangeNotifier;
@@ -813,10 +813,8 @@ impl<'a> Matter<'a> {
     ///
     /// Requires an armed fail-safe with a processed `AddNOC`. The envelope
     /// borrows the node state and lives only for the duration of `f`, which
-    /// runs with the state and the networks store locked (state first, like
-    /// the fail-safe and Network Commissioning code) and so must not call back
-    /// into `Matter` or the store. Serializing and transporting the envelope
-    /// is up to `f`.
+    /// runs with the state locked and so must not call back into `Matter`.
+    /// Serializing and transporting the envelope is up to `f`.
     ///
     /// If `f` succeeds, the node is rolled back as on fail-safe expiry: the
     /// pending fabric and `networks` are restored from `kv` (the latter from
@@ -826,7 +824,7 @@ impl<'a> Matter<'a> {
     /// Returns what `f` returned.
     pub fn suspend_commissioning<N, K, F, R>(
         &self,
-        networks: &SharedNetworks<N>,
+        mut networks: N,
         networks_key: u16,
         kv: K,
         f: F,
@@ -858,7 +856,7 @@ impl<'a> Matter<'a> {
 
             let result = CommissioningHandover::with_pending(
                 fabric,
-                networks,
+                &mut networks,
                 regulatory,
                 remaining_secs,
                 state.failsafe.breadcrumb(),
@@ -877,7 +875,7 @@ impl<'a> Matter<'a> {
                 |_, _| {},
             )?;
 
-            net_comm::load_networks(networks, networks_key, &kv)?;
+            net_comm::load_networks(&mut networks, networks_key, &kv)?;
 
             Ok(result)
         })
@@ -894,8 +892,8 @@ impl<'a> Matter<'a> {
     /// `kv`. Only the regulatory config is persisted right away.
     ///
     /// `networks` must be the store of the Network Commissioning handler
-    /// persisting under `networks_key`, so that it commits or rolls back the
-    /// staged networks.
+    /// persisting under `networks_key` (typically a `&mut` to it), so that the
+    /// handler commits or rolls back the staged networks.
     ///
     /// Call at startup, before serving traffic: no attribute-change
     /// notifications are emitted. Fails with `Busy` if the fail-safe is armed
@@ -906,7 +904,7 @@ impl<'a> Matter<'a> {
     pub fn resume_commissioning<C, N, K>(
         &self,
         crypto: C,
-        networks: &SharedNetworks<N>,
+        mut networks: N,
         networks_key: u16,
         kv: K,
         handover: &CommissioningHandover<'_>,
@@ -968,7 +966,7 @@ impl<'a> Matter<'a> {
                     state.fabrics.update_label(fab_idx, handover.label)?;
                 }
 
-                handover::stage_networks(handover, networks)?;
+                handover::stage_networks(handover, &mut networks)?;
 
                 if let Some(regulatory) = &handover.regulatory {
                     state
@@ -990,7 +988,7 @@ impl<'a> Matter<'a> {
                     |_, _| {},
                 );
 
-                let _ = net_comm::load_networks(networks, networks_key, &kv);
+                let _ = net_comm::load_networks(&mut networks, networks_key, &kv);
 
                 return Err(err);
             }

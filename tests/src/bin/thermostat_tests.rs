@@ -63,11 +63,9 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::GenDiag;
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ELECTRICAL_SENSOR, DEV_TYPE_THERMOSTAT};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
@@ -106,7 +104,6 @@ const THERMOSTAT_ENDPOINT: u16 = 1;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<InteractionModelState> = StaticCell::new();
-static NETWORKS: StaticCell<SharedNetworks<EthNetwork<'static>>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     logging::init();
@@ -129,9 +126,8 @@ fn main() -> Result<(), Error> {
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store).
+    // Create the data model state (subscriptions, events).
     let state = STATE.init(InteractionModelState::new());
-    let networks = NETWORKS.init(SharedNetworks::new(EthNetwork::new_default()));
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -180,7 +176,6 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
-            networks,
             rand,
             &thermostat_handler,
             &power_handler,
@@ -278,7 +273,6 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the thermostat endpoint's clusters.
 fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHooks>(
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     thermostat: &'a thermostat::ThermostatHandler<H>,
     power: &'a elec_pwr_meas::ElecPwrMeasHandler<P>,
@@ -287,7 +281,7 @@ fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHook
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(networks)
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
             .gen_diag(triggers)
             .build(rand)

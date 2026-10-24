@@ -188,7 +188,7 @@ fn switch_data_model<'a>(
 ) -> impl DataModel + 'a {
     (
         SWITCH_NODE,
-        endpoints::EthSysHandlerBuilder::new(common::eth_networks())
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(
@@ -230,7 +230,7 @@ fn light_data_model<'a, OH: OnOffHooks>(
 ) -> impl DataModel + 'a {
     (
         LIGHT_NODE,
-        endpoints::EthSysHandlerBuilder::new(common::eth_networks())
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(

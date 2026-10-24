@@ -290,7 +290,7 @@ where
     /// - `handler` - an instance of type `T` which implements the `DataModel` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods.
-    ///   The Network Commissioning cluster handlers among them own the network stores, and drive
+    ///   The Network Commissioning cluster handlers among them own the networks stores, and drive
     ///   the operational wireless connections from their `run`.
     /// - `kv` - an instance of type `K` which implements the `KvBlobStoreAccess` trait
     ///   (obtain one via [`Matter::kv`]). This instance is used for interacting with the key-value blob store.

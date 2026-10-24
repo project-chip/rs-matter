@@ -62,13 +62,11 @@ use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::mode_select::{
     self, Mode, ModeId, ModeSelectHandler, ModeSelectHooks, SemanticTag,
 };
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{
     DEV_TYPE_EXTENDED_COLOR_LIGHT, DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH,
 };
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
     Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EventEmitter, Node,
@@ -120,7 +118,6 @@ const MAX_BINDINGS: usize = 8;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<InteractionModelState> = StaticCell::new();
-static NETWORKS: StaticCell<SharedNetworks<EthNetwork<'static>>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     logging::init();
@@ -141,9 +138,8 @@ fn main() -> Result<(), Error> {
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store).
+    // Create the data model state (subscriptions, events).
     let state = STATE.init(InteractionModelState::new());
-    let networks = NETWORKS.init(SharedNetworks::new(EthNetwork::new_default()));
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -209,7 +205,6 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
-            networks,
             rand,
             &on_off_handler,
             &level_control_handler,
@@ -470,7 +465,6 @@ fn data_model<
     CH: ColorControlHooks,
     MH: ModeSelectHooks,
 >(
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
@@ -481,7 +475,7 @@ fn data_model<
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(networks)
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

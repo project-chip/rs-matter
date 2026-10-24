@@ -34,11 +34,9 @@ use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
@@ -70,11 +68,8 @@ fn main() -> Result<(), Error> {
     // Create the transport buffers
     let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the data model state (subscriptions, events, network store).
+    // Create the data model state (subscriptions, events).
     let state: InteractionModelState = InteractionModelState::new();
-
-    // The networks store of the Ethernet interface.
-    let networks = SharedNetworks::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -112,7 +107,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(&networks, rand, &on_off_handler, &level_control_handler),
+        data_model(rand, &on_off_handler, &level_control_handler),
         &kv,
         &state,
     );
@@ -175,14 +170,13 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Speaker handler.
 fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     on_off: &'a OnOffHandler<'a, OH, LH>,
     level_control: &'a LevelControlHandler<'a, LH, OH>,
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(networks)
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

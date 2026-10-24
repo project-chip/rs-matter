@@ -28,9 +28,7 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::TEST_DEV_DET;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::error::Error;
 use rs_matter::persist::KvBlobStore;
 use rs_matter::transport::session::SessionMode;
@@ -193,12 +191,4 @@ pub fn init_env_logger() {
             env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
         );
     }
-}
-
-/// A networks store for the Ethernet interface of a test device.
-#[allow(unused)]
-pub fn eth_networks() -> &'static SharedNetworks<EthNetwork<'static>> {
-    std::boxed::Box::leak(std::boxed::Box::new(SharedNetworks::new(
-        EthNetwork::new_default(),
-    )))
 }

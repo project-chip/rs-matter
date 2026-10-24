@@ -1094,7 +1094,8 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::dm::clusters::net_comm::{NetworksError, SharedNetworks, WirelessCreds};
+    use crate::dm::clusters::net_comm::{NetworksCell, NetworksError, WirelessCreds};
+    use crate::dm::networks::NetChangeNotif;
 
     use super::wifi::{Wifi, WifiNetworks};
     use super::WirelessNetwork;
@@ -1384,11 +1385,11 @@ mod tests {
         assert!(!nets.managed());
     }
 
-    // ── SharedNetworks: delegates to inner WifiNetworks correctly ──
+    // ── NetworksCell: delegates to inner WifiNetworks correctly ──
 
     #[test]
-    fn shared_networks_access_add_and_read() {
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+    fn networks_cell_access_add_and_read() {
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         shared.access(|networks| {
             networks
@@ -1415,8 +1416,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_networks_commissioned_via_access() {
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+    fn networks_cell_commissioned_via_access() {
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         let managed = shared.access(|networks| networks.managed().unwrap());
         assert!(!managed);
@@ -1428,8 +1429,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_networks_next_creds_round_robin() {
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+    fn networks_cell_next_creds_round_robin() {
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         shared.access(|networks| {
             for (ssid, pass) in [(b"A", b"pA"), (b"B", b"pB"), (b"C", b"pC")] {
@@ -1507,17 +1508,17 @@ mod tests {
     // ── Regression: save() must not trigger a change notification ──
 
     #[test]
-    fn shared_networks_save_does_not_trigger_change() {
+    fn networks_cell_save_does_not_trigger_change() {
         use core::pin::pin;
         use embassy_futures::select::{select, Either};
 
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         // Add a network → triggers notification
         shared.access(|n| n.add_or_update(&wifi_creds(b"A", b"p")).unwrap());
 
         // Consume the notification
-        embassy_futures::block_on(shared.wait_state_changed());
+        embassy_futures::block_on(shared.wait_changed());
 
         // Save (should NOT trigger notification)
         shared.access(|n| {
@@ -1530,12 +1531,7 @@ mod tests {
         // triggered, it would resolve first. `ready(())` resolves immediately so
         // if the notification was NOT triggered, the second branch wins.
         let notified = embassy_futures::block_on(async {
-            match select(
-                pin!(shared.wait_state_changed()),
-                pin!(core::future::ready(())),
-            )
-            .await
-            {
+            match select(pin!(shared.wait_changed()), pin!(core::future::ready(()))).await {
                 Either::First(_) => true,
                 Either::Second(_) => false,
             }

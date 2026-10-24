@@ -38,9 +38,8 @@ use crate::tlv::{
     ToTLVArrayBuilder, ToTLVBuilder,
 };
 use crate::utils::cell::RefCell;
-use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, Notification};
+use crate::utils::sync::Notification;
 use crate::with;
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
@@ -849,43 +848,23 @@ where
     }
 }
 
-/// A type providing shared access to a `Networks` implementation with change notification capabilities.
-pub struct SharedNetworks<N> {
+/// A `Networks` store behind a lock, notifying its waiters of every change.
+pub(crate) struct NetworksCell<N> {
     state: Mutex<RefCell<N>>,
-    state_changed: Notification,
+    changed: Notification,
 }
 
-impl<N> SharedNetworks<N> {
+impl<N> NetworksCell<N> {
     /// Create a new instance.
-    pub const fn new(networks: N) -> Self {
+    pub(crate) const fn new(networks: N) -> Self {
         Self {
             state: Mutex::new(RefCell::new(networks)),
-            state_changed: Notification::new(),
+            changed: Notification::new(),
         }
-    }
-
-    /// Return an in-place initializer for the struct.
-    pub fn init(networks: impl Init<N>) -> impl Init<Self> {
-        init!(Self {
-            state <- Mutex::init(RefCell::init(networks)),
-            state_changed <- Notification::init(),
-        })
-    }
-
-    /// Get a mutable reference to the inner `Networks` implementation.
-    pub fn get_mut(&mut self) -> &mut RefCell<N> {
-        self.state.get_mut()
-    }
-
-    /// Wait for the state to change.
-    pub fn wait_state_changed(&self) -> impl Future<Output = ()> + '_ {
-        self.state_changed.wait()
     }
 }
 
-impl<N> DynBase for SharedNetworks<N> where N: Send {}
-
-impl<N> SharedNetworks<N>
+impl<N> NetworksCell<N>
 where
     N: Networks,
 {
@@ -893,33 +872,33 @@ where
     ///
     /// Every change done through it is notified to the waiters of
     /// [`NetChangeNotif::wait_changed`].
-    pub fn access<F: FnOnce(&mut dyn Networks) -> R, R>(&self, f: F) -> R {
+    pub(crate) fn access<F: FnOnce(&mut dyn Networks) -> R, R>(&self, f: F) -> R {
         self.state.lock(|state| {
             let mut networks = state.borrow_mut();
 
-            let mut instance = SharedNetworksInstance {
+            let mut networks = NotifyingNetworks {
                 networks: &mut *networks,
-                changed: &self.state_changed,
+                changed: &self.changed,
             };
 
-            f(&mut instance)
+            f(&mut networks)
         })
     }
 }
 
-impl<N> NetChangeNotif for SharedNetworks<N> {
+impl<N> NetChangeNotif for NetworksCell<N> {
     fn wait_changed(&self) -> impl Future<Output = ()> {
-        self.state_changed.wait()
+        self.changed.wait()
     }
 }
 
 /// A wrapper around a `Networks` implementation that notifies on changes to the networks state.
-pub struct SharedNetworksInstance<'a> {
+struct NotifyingNetworks<'a> {
     networks: &'a mut dyn Networks,
     changed: &'a Notification,
 }
 
-impl Networks for SharedNetworksInstance<'_> {
+impl Networks for NotifyingNetworks<'_> {
     fn max_networks(&self) -> Result<u8, Error> {
         self.networks.max_networks()
     }
@@ -1025,14 +1004,14 @@ impl Networks for SharedNetworksInstance<'_> {
 ///
 /// One instance per network interface: the primary interface on the root
 /// endpoint, and each secondary interface on an endpoint of its own. An
-/// instance persists its networks store under its own KV key, and - for a
-/// wireless interface - its `run` keeps the interface connected to one of the
-/// stored networks once they are committed.
-#[derive(Clone)]
+/// instance owns the networks store of its interface - by value, or as a
+/// `&mut` to a store living elsewhere - and persists it under its own KV key.
+/// For a wireless interface, its `run` keeps the interface connected to one of
+/// the stored networks once they are committed.
 pub struct NetCommHandler<'a, N, T> {
     dataver: Dataver,
     endpoint_id: EndptId,
-    networks: &'a SharedNetworks<N>,
+    networks: NetworksCell<N>,
     networks_key: u16,
     net_ctl: T,
     /// Tells whether the node currently has a network up. Combined with the
@@ -1048,14 +1027,15 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
     /// # Arguments
     /// - `dataver`: The data version of the cluster instance.
     /// - `endpoint_id`: The endpoint of the cluster instance.
-    /// - `networks`: The networks store of the network interface.
+    /// - `networks`: The networks store of the network interface; a `&mut` to a
+    ///   store living elsewhere works too.
     /// - `networks_key`: The KV key the networks store persists under; unique per instance.
     /// - `net_ctl`: The network controller of the network interface.
     /// - `wireless_diag`: Tells whether the network interface is connected.
     pub const fn new(
         dataver: Dataver,
         endpoint_id: EndptId,
-        networks: &'a SharedNetworks<N>,
+        networks: N,
         networks_key: u16,
         net_ctl: T,
         wireless_diag: &'a dyn WirelessDiag,
@@ -1063,7 +1043,7 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
         Self {
             dataver,
             endpoint_id,
-            networks,
+            networks: NetworksCell::new(networks),
             networks_key,
             net_ctl,
             wireless_diag,
@@ -1190,18 +1170,20 @@ where
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            LifecycleOp::Startup => load_networks(self.networks, self.networks_key, ctx.kv()),
-            LifecycleOp::FactoryReset => {
-                remove_networks(self.networks, self.networks_key, ctx.kv())
-            }
-            LifecycleOp::FailSafeCommit => {
-                self.networks
-                    .access(|networks| networks.set_managed(true))?;
+            LifecycleOp::Startup => self
+                .networks
+                .access(|networks| load_networks(networks, self.networks_key, ctx.kv())),
+            LifecycleOp::FactoryReset => self
+                .networks
+                .access(|networks| remove_networks(networks, self.networks_key, ctx.kv())),
+            LifecycleOp::FailSafeCommit => self.networks.access(|networks| {
+                networks.set_managed(true)?;
 
-                store_networks(self.networks, self.networks_key, ctx.kv())
-            }
+                store_networks(networks, self.networks_key, ctx.kv())
+            }),
             LifecycleOp::FailSafeExpiry => {
-                load_networks(self.networks, self.networks_key, ctx.kv())?;
+                self.networks
+                    .access(|networks| load_networks(networks, self.networks_key, ctx.kv()))?;
 
                 ctx.notify_cluster_changed(self.endpoint_id, FULL_CLUSTER.id);
 
@@ -1228,7 +1210,7 @@ where
 
         let mut buf = [0u8; MAX_CREDS_SIZE];
 
-        WirelessMgr::new(self.networks, &self.net_ctl, &mut buf, on_connection)
+        WirelessMgr::new(&self.networks, &self.net_ctl, &mut buf, on_connection)
             .run()
             .await
     }
@@ -1838,39 +1820,37 @@ impl<N, T> defmt::Format for NetCommHandler<'_, N, T> {
 
 /// Reload the committed networks of `networks` from `kv`, where they are
 /// persisted under `key`; reset the store if nothing is persisted.
-pub fn load_networks<N, K>(networks: &SharedNetworks<N>, key: u16, kv: K) -> Result<(), Error>
+pub fn load_networks<N, K>(mut networks: N, key: u16, kv: K) -> Result<(), Error>
 where
     N: Networks,
     K: KvBlobStoreAccess,
 {
-    kv.access(|kv, buf| {
-        networks.access(|networks| match kv.load(key, buf)? {
-            Some(data) => networks.load(data),
-            None => networks.reset(),
-        })
+    kv.access(|kv, buf| match kv.load(key, buf)? {
+        Some(data) => networks.load(data),
+        None => networks.reset(),
     })
 }
 
 /// Persist `networks` into `kv`, under `key`.
-pub fn store_networks<N, K>(networks: &SharedNetworks<N>, key: u16, kv: K) -> Result<(), Error>
+pub fn store_networks<N, K>(networks: N, key: u16, kv: K) -> Result<(), Error>
 where
     N: Networks,
     K: KvBlobStoreAccess,
 {
     let mut persist = Persist::new(kv);
 
-    persist.store(key, |buf| networks.access(|networks| networks.save(buf)))?;
+    persist.store(key, |buf| networks.save(buf))?;
 
     persist.run()
 }
 
 /// Reset `networks` and remove what is persisted for it in `kv`, under `key`.
-pub fn remove_networks<N, K>(networks: &SharedNetworks<N>, key: u16, kv: K) -> Result<(), Error>
+pub fn remove_networks<N, K>(mut networks: N, key: u16, kv: K) -> Result<(), Error>
 where
     N: Networks,
     K: KvBlobStoreAccess,
 {
-    networks.access(|networks| networks.reset())?;
+    networks.reset()?;
 
     let mut persist = Persist::new(kv);
 

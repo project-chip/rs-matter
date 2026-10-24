@@ -1120,8 +1120,8 @@ pub(crate) const BLE_TESTS: &[&str] = &[
     // (`otbr-agent` joins the mock-Bluetooth bus, radio simulated as in the
     // `thread` suite). This is the only e2e of the **non-concurrent**
     // provisioning contract: the DUT answers `ConnectNetwork` over BTP
-    // without touching the radio, then replays the attach via
-    // `InteractionModel::connect_once` once BTP is torn down, and the
+    // without touching the radio, then replays the attach off the dataset
+    // it remembered once BTP is torn down, and the
     // commissioner completes commissioning over the operational (UDP)
     // network. `TC_CNET_4_2` then reads back the genuinely-attached network.
     "TC_CNET_4_2",

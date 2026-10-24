@@ -57,7 +57,7 @@ use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHa
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
-    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, Networks, SharedNetworks,
+    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, Networks,
 };
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::sw_diag::{self, ClusterHandler as _, SwDiag, SwDiagHandler};
@@ -241,8 +241,6 @@ pub fn root_handler<'a, R: Rng>(sw_diag: &'a dyn SwDiag, rand: R) -> RootHandler
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `eth_diag`: The `EthDiag` implementation (pass `&()` if it has nothing to report).
-/// - `networks`: The networks store of the Ethernet interface, with the default
-///   network ID (`EthNetwork::new_default()`).
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
 pub fn eth_net_handler<'a, R: Rng, H>(
@@ -250,7 +248,6 @@ pub fn eth_net_handler<'a, R: Rng, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     eth_diag: &'a dyn EthDiag,
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     next: H,
     mut rand: R,
 ) -> EthNetHandler<'a, H> {
@@ -258,7 +255,7 @@ pub fn eth_net_handler<'a, R: Rng, H>(
         comm_policy,
         gen_diag,
         netif_diag,
-        networks,
+        EthNetwork::new_default(),
         EthNetCtl::new_default(),
         &AlwaysConnected,
         |e, c| {
@@ -282,7 +279,8 @@ pub fn eth_net_handler<'a, R: Rng, H>(
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `wifi_diag`: The `WifiDiag` implementation.
-/// - `networks`: The networks store of the Wifi interface.
+/// - `networks`: The networks store of the Wifi interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
@@ -292,7 +290,7 @@ pub fn wifi_net_handler<'a, R: Rng, S, T, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
     next: H,
     mut rand: R,
@@ -329,7 +327,8 @@ where
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `thread_diag`: The `ThreadDiag` implementation.
-/// - `networks`: The networks store of the Thread interface.
+/// - `networks`: The networks store of the Thread interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
@@ -339,7 +338,7 @@ pub fn thread_net_handler<'a, R: Rng, S, T, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
     next: H,
     mut rand: R,
@@ -377,8 +376,6 @@ where
 /// - `eth_diag`: The `EthDiag` implementation (pass `&()` if it has nothing to report).
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the
 ///   no-op default: heap counters report `0`).
-/// - `networks`: The networks store of the Ethernet interface, with the default
-///   network ID (`EthNetwork::new_default()`).
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
 pub fn eth_sys_handler<'a, R: Rng>(
@@ -387,7 +384,6 @@ pub fn eth_sys_handler<'a, R: Rng>(
     netif_diag: &'a dyn NetifDiag,
     eth_diag: &'a dyn EthDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: R,
 ) -> EthSysHandler<'a> {
     sys_handler(
@@ -395,7 +391,7 @@ pub fn eth_sys_handler<'a, R: Rng>(
         gen_diag,
         netif_diag,
         sw_diag,
-        networks,
+        EthNetwork::new_default(),
         EthNetCtl::new_default(),
         &AlwaysConnected,
         |e, c| e == ROOT_ENDPOINT_ID && c == EthDiagHandler::CLUSTER.id,
@@ -413,7 +409,8 @@ pub fn eth_sys_handler<'a, R: Rng>(
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `wifi_diag`: The `WifiDiag` implementation.
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
-/// - `networks`: The networks store of the Wifi interface.
+/// - `networks`: The networks store of the Wifi interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
@@ -423,7 +420,7 @@ pub fn wifi_sys_handler<'a, R: Rng, S, T>(
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
     mut rand: R,
 ) -> WifiSysHandler<'a, S, T>
@@ -454,7 +451,8 @@ where
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `thread_diag`: The `ThreadDiag` implementation.
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
-/// - `networks`: The networks store of the Thread interface.
+/// - `networks`: The networks store of the Thread interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
@@ -464,7 +462,7 @@ pub fn thread_sys_handler<'a, R: Rng, S, T>(
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
     mut rand: R,
 ) -> ThreadSysHandler<'a, S, T>
@@ -568,7 +566,7 @@ fn net_handler<'a, R: Rng, S, T, N, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
     wireless_diag: &'a dyn WirelessDiag,
     net_matcher: FnMatcher,
@@ -617,7 +615,7 @@ fn sys_handler<'a, R: Rng, S, T, N>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
     wireless_diag: &'a dyn WirelessDiag,
     netw_diag_matcher: FnMatcher,
@@ -668,9 +666,7 @@ where
 /// (reports nothing / no-op).
 ///
 /// ```ignore
-/// let networks = SharedNetworks::new(EthNetwork::new_default());
-///
-/// let h = EthSysHandlerBuilder::new(&networks)
+/// let h = EthSysHandlerBuilder::new()
 ///     .gen_diag(&my_gen_diag)
 ///     .netif_diag(&SysNetifs)
 ///     .build(rand);
@@ -681,20 +677,23 @@ pub struct EthSysHandlerBuilder<'a> {
     netif_diag: &'a dyn NetifDiag,
     eth_diag: &'a dyn EthDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
+}
+
+impl Default for EthSysHandlerBuilder<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<'a> EthSysHandlerBuilder<'a> {
-    /// Create a builder. `networks` is required (see [`eth_sys_handler`]);
-    /// every hook defaults to a no-op provider.
-    pub const fn new(networks: &'a SharedNetworks<EthNetwork<'static>>) -> Self {
+    /// Create a builder. Every hook defaults to a no-op provider.
+    pub const fn new() -> Self {
         Self {
             comm_policy: &true,
             gen_diag: &(),
             netif_diag: &(),
             eth_diag: &(),
             sw_diag: &(),
-            networks,
         }
     }
 
@@ -736,7 +735,6 @@ impl<'a> EthSysHandlerBuilder<'a> {
             self.netif_diag,
             self.eth_diag,
             self.sw_diag,
-            self.networks,
             rand,
         )
     }
@@ -752,7 +750,7 @@ pub struct WifiSysHandlerBuilder<'a, S, T> {
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
 }
 
@@ -763,11 +761,7 @@ where
 {
     /// Create a builder. `networks`, `net_ctl` and `wifi_diag` are required;
     /// every other hook defaults to a no-op provider.
-    pub const fn new(
-        networks: &'a SharedNetworks<S>,
-        net_ctl: T,
-        wifi_diag: &'a dyn WifiDiag,
-    ) -> Self {
+    pub const fn new(networks: S, net_ctl: T, wifi_diag: &'a dyn WifiDiag) -> Self {
         Self {
             comm_policy: &true,
             gen_diag: &(),
@@ -828,7 +822,7 @@ pub struct ThreadSysHandlerBuilder<'a, S, T> {
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
     sw_diag: &'a dyn SwDiag,
-    networks: &'a SharedNetworks<S>,
+    networks: S,
     net_ctl: T,
 }
 
@@ -839,11 +833,7 @@ where
 {
     /// Create a builder. `networks`, `net_ctl` and `thread_diag` are required;
     /// every other hook defaults to a no-op provider.
-    pub const fn new(
-        networks: &'a SharedNetworks<S>,
-        net_ctl: T,
-        thread_diag: &'a dyn ThreadDiag,
-    ) -> Self {
+    pub const fn new(networks: S, net_ctl: T, thread_diag: &'a dyn ThreadDiag) -> Self {
         Self {
             comm_policy: &true,
             gen_diag: &(),

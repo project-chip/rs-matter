@@ -41,7 +41,7 @@ use rs_matter::crypto::{
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{DummyNetworks, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -108,7 +108,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(common::eth_networks())
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(
@@ -125,7 +125,6 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 /// What the controller flow needs from a device.
 struct DeviceHandles<'a, K> {
     matter: &'a Matter<'a>,
-    networks: &'a SharedNetworks<DummyNetworks>,
     kv: K,
     store: MemKvBlobStore,
 }
@@ -241,10 +240,6 @@ async fn run() -> Result<(), Error> {
         .await
     };
 
-    // The (empty) wireless networks the handover carries
-    let networks_a = SharedNetworks::new(DummyNetworks);
-    let networks_b = SharedNetworks::new(DummyNetworks);
-
     let controller_fut = run_with_transport(
         ctrl_matter.run(&crypto, &ctrl_net, &ctrl_net, NoNetwork),
         run_controller_flow(
@@ -252,13 +247,11 @@ async fn run() -> Result<(), Error> {
             &crypto,
             DeviceHandles {
                 matter: device_a,
-                networks: &networks_a,
                 kv: &kv_a,
                 store: store_a.clone(),
             },
             DeviceHandles {
                 matter: device_b,
-                networks: &networks_b,
                 kv: &kv_b,
                 store: store_b.clone(),
             },
@@ -389,16 +382,13 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
     // Nothing to export without a pending AddNOC
     assert!(device_b
         .matter
-        .suspend_commissioning(device_b.networks, NETWORKS_KEY, &device_b.kv, serialize)
+        .suspend_commissioning(DummyNetworks, NETWORKS_KEY, &device_b.kv, serialize)
         .is_err());
 
     // A failing closure leaves A untouched
     assert!(device_a
         .matter
-        .suspend_commissioning(device_a.networks, NETWORKS_KEY, &device_a.kv, |_| Err::<
-            (),
-            _,
-        >(
+        .suspend_commissioning(DummyNetworks, NETWORKS_KEY, &device_a.kv, |_| Err::<(), _>(
             rs_matter::error::ErrorCode::Invalid.into()
         ))
         .is_err());
@@ -408,7 +398,7 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
     );
 
     let envelope = device_a.matter.suspend_commissioning(
-        device_a.networks,
+        DummyNetworks,
         NETWORKS_KEY,
         &device_a.kv,
         serialize,
@@ -439,7 +429,7 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
 
     let fab_idx = device_b.matter.resume_commissioning(
         crypto,
-        device_b.networks,
+        DummyNetworks,
         NETWORKS_KEY,
         &device_b.kv,
         &handover,
@@ -452,13 +442,7 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
     assert!(
         device_b
             .matter
-            .resume_commissioning(
-                crypto,
-                device_b.networks,
-                NETWORKS_KEY,
-                &device_b.kv,
-                &handover
-            )
+            .resume_commissioning(crypto, DummyNetworks, NETWORKS_KEY, &device_b.kv, &handover)
             .is_err(),
         "a second resume while the fail-safe is armed must fail"
     );

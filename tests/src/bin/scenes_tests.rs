@@ -44,7 +44,6 @@ use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::decl::scenes_management::FULL_CLUSTER as SCENES_FULL_CLUSTER;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
@@ -52,7 +51,6 @@ use rs_matter::dm::clusters::unit_testing::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
@@ -84,7 +82,6 @@ mod mdns;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<InteractionModelState> = StaticCell::new();
-static NETWORKS: StaticCell<SharedNetworks<EthNetwork<'static>>> = StaticCell::new();
 
 const SCENES_CAPACITY: usize = 16;
 static SCENES_STATE: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new();
@@ -114,9 +111,8 @@ fn main() -> Result<(), Error> {
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store).
+    // Create the data model state (subscriptions, events).
     let state = STATE.init(InteractionModelState::new());
-    let networks = NETWORKS.init(SharedNetworks::new(EthNetwork::new_default()));
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -186,7 +182,6 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
-            networks,
             rand,
             &on_off_handler,
             &level_control_handler,
@@ -199,7 +194,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state (events epoch, network store) and deliver the `Startup` lifecycle op
+    // state (events epoch) and deliver the `Startup` lifecycle op
     // to all cluster handlers (here notably: the Scenes state).
     futures_lite::future::block_on(im.startup())?;
 
@@ -293,7 +288,6 @@ pub use rs_matter::dm::clusters::app::color_control::test::TestColorControlDevic
 /// The handler is the root endpoint 0 handler plus the OnOff /
 /// LevelControl / Scenes handlers wired onto EP1.
 fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks, R>(
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
@@ -306,7 +300,7 @@ where
 {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(networks)
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

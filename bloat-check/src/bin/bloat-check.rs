@@ -78,7 +78,7 @@ use rs_matter::dm::networks::wireless::{
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{Async, Dataver, Endpoint, FnMatcher, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
@@ -158,9 +158,11 @@ macro_rules! unwrap {
 struct MatterStack<'a> {
     matter: Matter<'a>,
     buffers: MatterBuffers,
-    // The data model's consolidated state: subscriptions table, events queue and
-    // the (Wifi) network store, all behind `InteractionModelState`.
-    state: WirelessInteractionModelState<WifiNetworks<3>>,
+    // The data model's consolidated state: subscriptions table and events queue.
+    state: InteractionModelState,
+    // The networks store of the Wifi interface, lent (`&mut`) to its Network
+    // Commissioning handler.
+    networks: WifiNetworks<3>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
 }
@@ -176,7 +178,8 @@ impl<'a> MatterStack<'a> {
                 MATTER_PORT,
             ),
             buffers <- MatterBuffers::init(),
-            state <- WirelessInteractionModelState::init(WifiNetworks::init()),
+            state <- InteractionModelState::init(),
+            networks <- WifiNetworks::init(),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
         })
@@ -191,7 +194,7 @@ type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppDmHandler<'a> = handler_chain_type!(
     FnMatcher => Async<on_off::HandlerAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>>,
     FnMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
-    | WifiSysHandler<'a, &'a AppNetCtl<'a>>
+    | WifiSysHandler<'a, &'a mut WifiNetworks<3>, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
 // A nameable no-op `KvBlobStoreAccess` for the static `#[task]` aliases below: a
@@ -206,8 +209,6 @@ type AppInteractionModel<'a> = InteractionModel<
     MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
     &'static AppKv,
-    WifiNetworks<3>,
-    &'a AppNetCtl<'a>,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
@@ -216,8 +217,6 @@ type AppResponder<'d, 'a> = DefaultResponder<
     MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
     &'static AppKv,
-    WifiNetworks<3>,
-    &'a AppNetCtl<'a>,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -280,7 +279,7 @@ fn main() -> ! {
     );
     report_size(
         "Networks",
-        size_of_val(stack.state.networks()),
+        size_of_val(&stack.networks),
         &mut stack_total,
     );
     report_size(
@@ -337,6 +336,7 @@ fn main() -> ! {
                 rs_matter::persist::VENDOR_KEYS_START + 0x10,
                 TestOnOffDeviceLogic::new(true),
             ),
+            &mut stack.networks,
             net_ctl,
             net_ctl,
         )
@@ -344,17 +344,16 @@ fn main() -> ! {
 
     report_size("DM Handler size", size_of_val(&*handler), &mut aux_total);
 
-    // Data Model. `net_ctl` is wired in so the data model's `run` drives the
-    // operational Wifi connection manager itself (no separate manager task).
+    // Data Model. Its `run` drives the operational Wifi connection manager of
+    // the Network Commissioning handler (no separate manager task).
     let im = &*mk_static!(
         AppInteractionModel,
-        InteractionModel::new_with_net_ctl(
+        InteractionModel::new(
             &stack.matter,
             crypto,
             &stack.buffers,
             (NODE, handler),
             kv,
-            net_ctl,
             &stack.state,
         )
     );
@@ -628,10 +627,11 @@ const NODE: Node<'static> = Node {
 fn data_model<'a>(
     mut rand: impl Rng + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
+    networks: &'a mut WifiNetworks<3>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: &'a AppNetCtl,
 ) -> AppDmHandler<'a> {
-    endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
+    endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
         .build(rand)
         .chain(
             |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,

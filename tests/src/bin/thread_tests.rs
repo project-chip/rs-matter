@@ -45,7 +45,7 @@ use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnO
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlStatus, NetworkType, Networks, SharedNetworks, WirelessCreds,
+    NetCtl, NetCtlStatus, NetworkType, Networks, WirelessCreds,
 };
 use rs_matter::dm::clusters::thread_diag::{self, ThreadDiag};
 use rs_matter::dm::clusters::wifi_diag::WirelessDiag;
@@ -92,8 +92,7 @@ const MAX_NETWORKS: usize = 3;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static THREAD_STATE: StaticCell<InteractionModelState> = StaticCell::new();
-static THREAD_NETWORKS: StaticCell<SharedNetworks<ThreadNetworks<MAX_NETWORKS>>> =
-    StaticCell::new();
+static THREAD_NETWORKS: StaticCell<ThreadNetworks<MAX_NETWORKS>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -172,7 +171,7 @@ fn run() -> Result<(), Error> {
 
     let seed = networks;
     let state = THREAD_STATE.init(InteractionModelState::new());
-    let networks = THREAD_NETWORKS.init(SharedNetworks::new(ThreadNetworks::<MAX_NETWORKS>::new()));
+    let networks = THREAD_NETWORKS.init(ThreadNetworks::new());
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
     let kv = matter.kv(args::file_kv_store());
@@ -330,7 +329,7 @@ const NODE_THREAD: Node<'static> = Node {
 fn data_model_thread<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-    networks: &'a SharedNetworks<ThreadNetworks<MAX_NETWORKS>>,
+    networks: &'a mut ThreadNetworks<MAX_NETWORKS>,
     thread_diag: &'a dyn ThreadDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a

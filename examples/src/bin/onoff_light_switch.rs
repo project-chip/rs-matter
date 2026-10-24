@@ -54,11 +54,9 @@ use rs_matter::dm::clusters::decl::switch::{
     self, ClusterHandler as _, Feature as SwitchFeature, InitialPress, ShortRelease,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EventEmitter, Node};
 use rs_matter::error::Error;
@@ -109,9 +107,6 @@ fn main() -> Result<(), Error> {
     // subscribers read them.
     let state: InteractionModelState = InteractionModelState::new();
 
-    // The networks store of the Ethernet interface.
-    let networks = SharedNetworks::new(EthNetwork::new_default());
-
     // The Binding registry (the switch's address book), loaded from persistence.
     let bindings = Bindings::<MAX_BINDINGS>::new();
 
@@ -128,13 +123,13 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(&networks, rand, &bindings),
+        data_model(rand, &bindings),
         &kv,
         &state,
     );
 
     // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state (events epoch, network store) and deliver the `Startup` lifecycle op
+    // state (events epoch) and deliver the `Startup` lifecycle op
     // to all cluster handlers (here notably: the Binding registry).
     futures_lite::future::block_on(im.startup())?;
 
@@ -405,13 +400,12 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
 /// on the switch endpoint.
 fn data_model<'a, const N: usize>(
-    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     bindings: &'a Bindings<N>,
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new(networks)
+        endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
