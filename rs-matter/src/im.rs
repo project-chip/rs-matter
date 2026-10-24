@@ -47,7 +47,9 @@ use crate::dm::{
     HandlerContext, LifecycleOp, MatchContextInstance, Metadata, ReportDataHandler,
 };
 use crate::error::{Error, ErrorCode};
-use crate::im::events::{EventReader, EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
+use crate::im::events::{
+    EventReader, EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE, EVENT_DATA_TAG,
+};
 use crate::im::invoker::HandlerInvoker;
 use crate::im::subscriptions::{
     icd_max_int_secs, KeepAlive, ReportContext, Subscriptions, SubscriptionsBuffers,
@@ -647,25 +649,50 @@ where
         let emit = self.state.boot_emitted.lock(|flag| !flag.replace(true));
 
         if emit {
-            let result = crate::dm::clusters::decl::general_diagnostics::BootReason::emit_for(
-                self,
-                crate::dm::endpoints::ROOT_ENDPOINT_ID,
-                |event| event.boot_reason(self.matter.boot_reason())?.end(),
+            use crate::dm::clusters::decl::{basic_information, general_diagnostics};
+            use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+
+            self.emit_one_field_event(
+                ROOT_ENDPOINT_ID,
+                general_diagnostics::FULL_CLUSTER.id,
+                general_diagnostics::EventId::BootReason as _,
+                EventPriority::Critical,
+                self.matter.boot_reason() as _,
             );
-
-            if let Err(e) = result {
-                warn!("Failed to emit the BootReason event: {:?}", e);
-            }
-
-            let result = crate::dm::clusters::decl::basic_information::StartUp::emit_for(
-                self,
-                crate::dm::endpoints::ROOT_ENDPOINT_ID,
-                |event| event.software_version(self.matter.dev_det().sw_ver)?.end(),
+            self.emit_one_field_event(
+                ROOT_ENDPOINT_ID,
+                basic_information::FULL_CLUSTER.id,
+                basic_information::EventId::StartUp as _,
+                EventPriority::Critical,
+                self.matter.dev_det().sw_ver,
             );
+        }
+    }
 
-            if let Err(e) = result {
-                warn!("Failed to emit the StartUp event: {:?}", e);
-            }
+    /// Emit an event whose data is one unsigned field, with context tag 0.
+    ///
+    /// The stack's own such events go through here, sharing one copy of the
+    /// events queue code. Failure to emit is logged, not fatal.
+    #[inline(never)]
+    fn emit_one_field_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) {
+        let result = self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
+            tw.start_struct(&EVENT_DATA_TAG)?;
+            tw.u32(&TLVTag::Context(0), value)?;
+            tw.end_container()
+        });
+
+        if let Err(e) = result {
+            warn!(
+                "Failed to emit event {}/{}/{}: {:?}",
+                endpoint_id, cluster_id, event_id, e
+            );
         }
     }
 
@@ -718,7 +745,7 @@ where
 
         // The node starts out not connected.
         let mut connected = false;
-        let on_connection = |now: bool| {
+        let on_connection = move |now: bool| {
             if connected != now {
                 connected = now;
                 self.emit_connection_status(now);
@@ -743,11 +770,24 @@ where
     where
         NC: NetCtl,
     {
-        let net_type = self.net_ctl.net_type();
-        let cluster = match net_type {
-            NetworkType::Wifi => crate::dm::clusters::wifi_diag::FULL_CLUSTER.id,
-            NetworkType::Thread => crate::dm::clusters::thread_diag::FULL_CLUSTER.id,
+        use crate::dm::clusters::{thread_diag, wifi_diag};
+
+        // Same data in both: the status, with the same values.
+        let (cluster, event) = match self.net_ctl.net_type() {
+            NetworkType::Wifi => (
+                wifi_diag::FULL_CLUSTER.id,
+                wifi_diag::EventId::ConnectionStatus as _,
+            ),
+            NetworkType::Thread => (
+                thread_diag::FULL_CLUSTER.id,
+                thread_diag::EventId::ConnectionStatus as _,
+            ),
             NetworkType::Ethernet => return,
+        };
+        let status = if connected {
+            wifi_diag::ConnectionStatusEnum::Connected
+        } else {
+            wifi_diag::ConnectionStatusEnum::NotConnected
         };
 
         let endpoint = self.handler.access(|node| {
@@ -756,36 +796,9 @@ where
                 .find(|e| e.clusters.iter().any(|c| c.id == cluster))
                 .map(|e| e.id)
         });
-        let Some(endpoint) = endpoint else {
-            return;
-        };
 
-        let emitted = if net_type == NetworkType::Wifi {
-            use crate::dm::clusters::wifi_diag::{ConnectionStatus, ConnectionStatusEnum};
-
-            let status = if connected {
-                ConnectionStatusEnum::Connected
-            } else {
-                ConnectionStatusEnum::NotConnected
-            };
-            ConnectionStatus::emit_for(self, endpoint, |event| {
-                event.connection_status(status)?.end()
-            })
-        } else {
-            use crate::dm::clusters::thread_diag::{ConnectionStatus, ConnectionStatusEnum};
-
-            let status = if connected {
-                ConnectionStatusEnum::Connected
-            } else {
-                ConnectionStatusEnum::NotConnected
-            };
-            ConnectionStatus::emit_for(self, endpoint, |event| {
-                event.connection_status(status)?.end()
-            })
-        };
-
-        if let Err(e) = emitted {
-            warn!("Failed to emit ConnectionStatus: {:?}", e);
+        if let Some(endpoint) = endpoint {
+            self.emit_one_field_event(endpoint, cluster, event, EventPriority::Info, status as _);
         }
     }
 
