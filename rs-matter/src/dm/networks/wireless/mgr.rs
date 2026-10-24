@@ -38,18 +38,18 @@ pub const MAX_CREDS_SIZE: usize = 256;
 /// It does so by by connecting to the networks in a round-robin fashion
 /// and retrying multiple times the current network in case of a failure,
 /// prior to moving to the next network.
-pub struct WirelessMgr<'a, W, T> {
+pub struct WirelessMgr<'a, W, T, F> {
     networks: W,
     net_ctl: T,
     buf: &'a mut [u8; MAX_CREDS_SIZE],
-    /// Told each time the node connects (`true`) or loses its connection.
-    on_connection: Option<&'a dyn Fn(bool)>,
+    on_connection: F,
 }
 
-impl<'a, W, T> WirelessMgr<'a, W, T>
+impl<'a, W, T, F> WirelessMgr<'a, W, T, F>
 where
     W: net_comm::NetworksAccess + NetChangeNotif,
     T: net_comm::NetCtl + net_comm::NetCtlStatus + wifi_diag::WirelessDiag + NetChangeNotif,
+    F: FnMut(bool),
 {
     /// Creates a new `WirelessMgr` instance.
     ///
@@ -57,20 +57,20 @@ where
     /// - `networks`: A reference to the networks storage.
     /// - `net_ctl`: A reference to the network controller.
     /// - `buf`: A mutable buffer used as temp credentials storage.
-    pub const fn new(networks: W, net_ctl: T, buf: &'a mut [u8; MAX_CREDS_SIZE]) -> Self {
+    /// - `on_connection`: Told each time the manager sees the node connect
+    ///   (`true`) to a stored network, or lose its connection.
+    pub const fn new(
+        networks: W,
+        net_ctl: T,
+        buf: &'a mut [u8; MAX_CREDS_SIZE],
+        on_connection: F,
+    ) -> Self {
         Self {
             networks,
             net_ctl,
             buf,
-            on_connection: None,
+            on_connection,
         }
-    }
-
-    /// Tell `on_connection` each time the manager sees the node connect
-    /// (`true`) to a stored network, or lose its connection.
-    pub const fn with_connection_hook(mut self, on_connection: &'a dyn Fn(bool)) -> Self {
-        self.on_connection = Some(on_connection);
-        self
     }
 
     /// Runs the wireless manager.
@@ -94,7 +94,7 @@ where
                 &self.networks,
                 &self.net_ctl,
                 self.buf,
-                self.on_connection
+                &mut self.on_connection
             ));
 
             select(&mut changed, &mut connect).coalesce().await?;
@@ -140,14 +140,8 @@ where
         networks: &W,
         net_ctl: &T,
         buf: &mut [u8],
-        on_connection: Option<&dyn Fn(bool)>,
+        mut on_connection: impl FnMut(bool),
     ) -> Result<(), Error> {
-        let report = |connected| {
-            if let Some(on_connection) = on_connection {
-                on_connection(connected);
-            }
-        };
-
         // Try to connect to the networks in a round-robin fashion until we succeed or the commissioning status changes.
 
         // A "connected" device parks the manager here - but only while the
@@ -168,9 +162,9 @@ where
         // for the remainder of such a window [`WirelessMgr::run`] holds the
         // manager in `wait_while_not_managed` instead of here.
         if Self::connected_network_stored(networks, net_ctl)? {
-            report(true);
+            on_connection(true);
             Self::wait_while_connected_status(net_ctl, true).await?;
-            report(false);
+            on_connection(false);
         }
 
         let mut network_id = OwnedWirelessNetworkId::new();
@@ -205,9 +199,9 @@ where
                         break;
                     }
 
-                    report(true);
+                    on_connection(true);
                     Self::wait_while_connected_status(net_ctl, true).await?;
-                    report(false);
+                    on_connection(false);
                 }
             } else {
                 // No networks to connect to, wait for a change in the networks state before trying again
@@ -551,7 +545,7 @@ mod tests {
     }
 
     // Type alias for the test WirelessMgr
-    type TestMgr<'a> = WirelessMgr<'a, TestNetworks, FakeNetCtl>;
+    type TestMgr<'a> = WirelessMgr<'a, TestNetworks, FakeNetCtl, fn(bool)>;
 
     // ── next_creds tests ──
 
@@ -735,14 +729,13 @@ mod tests {
         let net_ctl = FakeNetCtl::with_connected_to(b"Gone");
         let mut buf = [0u8; MAX_CREDS_SIZE];
         let reported = Cell::new(None);
-        let on_connection = |connected| reported.set(Some(connected));
 
         embassy_futures::block_on(async {
             let connect = pin!(TestMgr::run_connect(
                 &networks,
                 &net_ctl,
                 &mut buf,
-                Some(&on_connection)
+                |connected| reported.set(Some(connected))
             ));
 
             drive_until(connect, || {
@@ -767,7 +760,7 @@ mod tests {
         let mut buf = [0u8; MAX_CREDS_SIZE];
 
         embassy_futures::block_on(async {
-            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf, None));
+            let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf, |_| ()));
 
             // Give the manager a bounded number of polls to (wrongly) act.
             let polls = Cell::new(0u32);
@@ -817,7 +810,7 @@ mod tests {
         // `new` takes the networks/net_ctl by value, so the manager owns them;
         // `Ok` already implies `FakeNetCtl::connect` ran (its only `Ok` path
         // sets `connected = true`), so there's no need to inspect it afterwards.
-        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf);
+        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf, |_| ());
 
         embassy_futures::block_on(async {
             assert!(mgr.connect_once(b"MySSID").await.is_ok());
@@ -829,7 +822,7 @@ mod tests {
         let networks = make_networks(&[], false);
         let net_ctl = FakeNetCtl::new();
         let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf);
+        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf, |_| ());
 
         embassy_futures::block_on(async {
             // No matching network -> a deferred connect can't proceed.

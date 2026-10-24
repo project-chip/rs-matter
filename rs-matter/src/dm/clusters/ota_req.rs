@@ -596,15 +596,13 @@ impl OtaState {
 
     /// Update the reported `UpdateState`/`UpdateStateProgress` and notify; a
     /// change of state emits the `StateTransition` event, for `reason`.
-    fn report<E>(
+    fn report(
         &self,
-        ctx: &E,
+        ctx: impl AttrChangeNotifier + EventEmitter,
         state: UpdateStateEnum,
         progress: Option<u8>,
         reason: ChangeReasonEnum,
-    ) where
-        E: AttrChangeNotifier + EventEmitter,
-    {
+    ) {
         let (previous, target) = self.reported.lock(|cell| {
             let mut reported = cell.borrow_mut();
             let previous = reported.update_state;
@@ -654,9 +652,9 @@ impl OtaState {
             .lock(|cell| cell.borrow_mut().target_version = Some(version));
     }
 
-    fn download_failed<E: EventEmitter>(
+    fn download_failed(
         &self,
-        ctx: &E,
+        ctx: impl EventEmitter,
         bytes_downloaded: u64,
         platform_code: Option<i64>,
     ) {
@@ -689,7 +687,7 @@ impl OtaState {
     /// reports progress; on [`complete`](OtaUpdate::complete) - or if dropped
     /// without it, a failure - the reported state returns to `Idle`
     /// (`UpdateStateEnum` has no dedicated failure value).
-    pub fn initiate_update<'a, E>(&'a self, ctx: &'a E) -> OtaUpdate<'a, E>
+    pub fn initiate_update<E>(&self, ctx: E) -> OtaUpdate<'_, E>
     where
         E: AttrChangeNotifier + EventEmitter,
     {
@@ -716,7 +714,7 @@ where
     E: AttrChangeNotifier + EventEmitter,
 {
     state: &'a OtaState,
-    ctx: &'a E,
+    ctx: E,
     done: bool,
 }
 
@@ -744,7 +742,7 @@ where
     /// the platform has it in `platform_code`: the `DownloadError` event.
     pub fn download_failed(&self, bytes_downloaded: u64, platform_code: Option<i64>) {
         self.state
-            .download_failed(self.ctx, bytes_downloaded, platform_code);
+            .download_failed(&self.ctx, bytes_downloaded, platform_code);
     }
 
     /// Report `Applying`.
@@ -761,13 +759,13 @@ where
             _ => ChangeReasonEnum::Success,
         };
 
-        self.state.report(self.ctx, state, progress, reason);
+        self.state.report(&self.ctx, state, progress, reason);
     }
 
     /// Finish the session, returning the reported state to `Idle`.
     pub fn complete(mut self) {
         self.state.report(
-            self.ctx,
+            &self.ctx,
             UpdateStateEnum::Idle,
             None,
             ChangeReasonEnum::Success,
@@ -784,7 +782,7 @@ where
         if !self.done {
             // Abandoned mid-update: revert to Idle.
             self.state.report(
-                self.ctx,
+                &self.ctx,
                 UpdateStateEnum::Idle,
                 None,
                 ChangeReasonEnum::Failure,

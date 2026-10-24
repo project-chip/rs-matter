@@ -717,16 +717,21 @@ where
         }
 
         // The node starts out not connected.
-        let connected = Cell::new(false);
+        let mut connected = false;
         let on_connection = |now: bool| {
-            if connected.replace(now) != now {
+            if connected != now {
+                connected = now;
                 self.emit_connection_status(now);
             }
         };
 
         let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf)
-            .with_connection_hook(&on_connection);
+        let mut mgr = WirelessMgr::new(
+            self.state.networks(),
+            &self.net_ctl,
+            &mut buf,
+            on_connection,
+        );
 
         mgr.run().await
     }
@@ -799,7 +804,7 @@ where
         NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
     {
         let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf);
+        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf, |_| ());
 
         mgr.connect_once(network_id).await
     }
