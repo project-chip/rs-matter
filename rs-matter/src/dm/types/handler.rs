@@ -23,7 +23,6 @@ use embassy_futures::select::select;
 
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::{EventId, EventNumber, Metadata};
 use crate::error::{Error, ErrorCode};
 use crate::im::encoding::{EventPriority, IMBuffer, NodeId};
@@ -264,9 +263,6 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// Return a blob store that can be used to persist data across reboots.
     fn kv(&self) -> impl KvBlobStoreAccess + '_;
 
-    /// Return the networks access object.
-    fn networks(&self) -> impl NetworksAccess + '_;
-
     /// Return the metadata of the node that is associated with this handler.
     fn metadata(&self) -> impl Metadata + '_;
 
@@ -316,10 +312,6 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         (**self).kv()
-    }
-
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        (**self).networks()
     }
 
     fn metadata(&self) -> impl Metadata + '_ {
@@ -576,10 +568,6 @@ where
         self.context.kv()
     }
 
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
-    }
-
     fn metadata(&self) -> impl Metadata + '_ {
         self.context.metadata()
     }
@@ -756,10 +744,6 @@ where
         self.context.kv()
     }
 
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
-    }
-
     fn metadata(&self) -> impl Metadata + '_ {
         self.context.metadata()
     }
@@ -880,10 +864,6 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         self.context.kv()
-    }
-
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
     }
 
     fn metadata(&self) -> impl Metadata + '_ {
@@ -1068,10 +1048,6 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         self.context.kv()
-    }
-
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
     }
 
     fn metadata(&self) -> impl Metadata + '_ {
@@ -1288,6 +1264,19 @@ pub enum LifecycleOp {
         /// The local index the removed fabric had
         fab_idx: NonZeroU8,
     },
+    /// The armed fail-safe has been committed by a successful
+    /// `CommissioningComplete`, whatever the fail-safe was armed for.
+    ///
+    /// The typical reaction is to persist the state the handler staged while
+    /// the fail-safe was armed. Delivered before the command responds.
+    FailSafeCommit,
+    /// The armed fail-safe has expired: it timed out, or `ArmFailSafe(0)` or
+    /// `RevokeCommissioning` force-expired it.
+    ///
+    /// The typical reaction is to drop the state the handler staged while the
+    /// fail-safe was armed, reloading the committed one from
+    /// [`HandlerContext::kv`].
+    FailSafeExpiry,
 }
 
 /// A version of the `AsyncHandler` trait that never awaits any operation.

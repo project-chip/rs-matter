@@ -24,11 +24,13 @@ use either::Either;
 use rand_core::Rng;
 
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::NetworksAccess;
-use crate::dm::{Cluster, Dataver, InvokeContext, OperationContext, ReadContext, WriteContext};
+use crate::dm::{
+    AsyncHandler, Cluster, Dataver, InvokeContext, LifecycleOp, OperationContext, ReadContext,
+    WriteContext,
+};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
-use crate::persist::{Persist, NETWORKS_KEY};
+use crate::persist::Persist;
 use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::{Nullable, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::transport::session::SessionMode;
@@ -373,7 +375,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         // in-flight `AddNOC` / `SetRegulatoryConfig` changes are reverted —
         // the bare `failsafe.arm(0, ...)` path only flips the state to
         // `Idle` and would leave the staged fabric committed.
-        let mut removed_fabric = None;
+        let mut expiry = None;
 
         let status = if expiry_length_seconds == 0 {
             let notify_mdns = || {
@@ -389,11 +391,10 @@ impl ClusterHandler for GenCommHandler<'_> {
                 let pase_sess_id =
                     matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
 
-                removed_fabric = state.failsafe.expire(
+                expiry = state.failsafe.expire(
                     &mut state.fabrics,
                     &mut state.sessions,
                     pase_sess_id,
-                    ctx.networks(),
                     ctx.kv(),
                     notify_mdns,
                     notify_change,
@@ -419,12 +420,9 @@ impl ClusterHandler for GenCommHandler<'_> {
             .transport()
             .notify_timeouts_changed();
 
-        // Broadcast for a fabric the expiry dropped (a not-yet-committed
-        // `AddNOC` one; an `UpdateNOC`-mutated fabric is resurrected instead
-        // and not reported). Outside `with_state`, since the broadcast runs
-        // the handlers inline.
-        if let Some(fab_idx) = removed_fabric {
-            ctx.notify_fabric_removed(fab_idx);
+        // Outside `with_state`, since the broadcasts run the handlers inline
+        if let Some(expiry) = expiry {
+            expiry.notify(&ctx);
         }
 
         // Breadcrumb (and possibly failsafe-arm state) may have changed
@@ -538,22 +536,22 @@ impl ClusterHandler for GenCommHandler<'_> {
                 state.sessions.remove_pase(pase_sess_id);
                 ctx.exchange().matter().transport().notify_session_removed();
 
-                // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
+                // Persist the fabric prior to sending the other party a "success" status
                 persist.store(fabric)?;
-                ctx.networks().access(|networks| {
-                    networks.set_managed(true)?;
-
-                    persist
-                        .persist_mut()
-                        .store(NETWORKS_KEY, |buf| networks.save(buf))
-                })?;
-
-                info!("Commissioning complete, fabric and network settings persisted");
 
                 Ok(())
             }))?;
 
         persist.run()?;
+
+        if matches!(status, CommissioningErrorEnum::OK) {
+            // Let the handlers persist what they staged under the fail-safe
+            // (the network settings and the like), also prior to the response.
+            // Outside `with_state`, since the broadcast runs the handlers inline.
+            ctx.handler().lifecycle(&ctx, LifecycleOp::FailSafeCommit)?;
+
+            info!("Commissioning complete, fabric and network settings persisted");
+        }
 
         // Commissioning-complete mutates many clusters on the root endpoint:
         // breadcrumb (this cluster), fabrics (NOC), networks (NetCommissioning).

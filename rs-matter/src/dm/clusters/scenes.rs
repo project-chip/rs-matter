@@ -1657,6 +1657,7 @@ where
             LifecycleOp::FactoryReset => ctx
                 .kv()
                 .access(|store, buf| self.state.reset_persist(store, buf)),
+            LifecycleOp::FailSafeCommit | LifecycleOp::FailSafeExpiry => Ok(()),
             LifecycleOp::FabricRemoval { fab_idx } => {
                 if self.state.remove_for_fabric(fab_idx) {
                     self.state.store_persist(&ctx)

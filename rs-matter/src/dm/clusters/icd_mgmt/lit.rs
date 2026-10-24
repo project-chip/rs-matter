@@ -831,6 +831,7 @@ impl ClusterHandler for LitIcdMgmtHandler<'_> {
 
                 Ok(())
             }
+            LifecycleOp::FailSafeCommit | LifecycleOp::FailSafeExpiry => Ok(()),
             LifecycleOp::FabricRemoval { fab_idx } => {
                 // Dropping the last registration flips the operating mode to
                 // SIT, which `run` announces.

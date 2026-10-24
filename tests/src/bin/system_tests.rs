@@ -86,6 +86,7 @@ const POWER_SOURCE_EP1: PowerSourceConfig = PowerSourceConfig {
     ..PowerSourceConfig::MAINS
 };
 use core::cell::Cell;
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
 use rs_matter::dm::clusters::time_sync::{
@@ -109,7 +110,7 @@ use rs_matter::dm::{
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -212,7 +213,10 @@ fn main() -> Result<(), Error> {
     // Create the data model state (subscriptions, events, network store).
     // Persistent subscriptions are compiled in via the `persistent-subscriptions`
     // feature, so a subscriber keeps its subscription across a reboot.
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
+
+    // The networks store of the Ethernet interface.
+    let networks = SharedNetworks::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -381,6 +385,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
+            &networks,
             node,
             gen_diag,
             rand,
@@ -1022,6 +1027,7 @@ const NODE_BINFO_PROVISIONAL: Node<'static> = Node {
 // the parameter list. Suppressing here is cleaner than abstracting.
 #[allow(clippy::too_many_arguments)]
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    networks: &'a SharedNetworks<EthNetwork<'static>>,
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
     mut rand: impl Rng + Copy,
@@ -1045,7 +1051,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModel + 'a {
     (
         node,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(networks)
             .gen_diag(gen_diag)
             .netif_diag(&SysNetifs)
             .build(rand)

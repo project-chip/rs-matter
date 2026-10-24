@@ -42,6 +42,7 @@ use rand::Rng;
 use rs_matter::bdx::BdxDownloadInitiator;
 use rs_matter::crypto::{default_crypto, Crypto, CryptoSensitive, Digest};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::ota_prov::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
@@ -53,7 +54,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, EventEmitter, Node};
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -99,7 +100,10 @@ fn main() -> Result<(), Error> {
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, network store).
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
+
+    // The networks store of the Ethernet interface.
+    let networks = SharedNetworks::new(EthNetwork::new_default());
 
     // The OTA Requestor's persistent provider list, re-hydrated from storage.
     let providers = Providers::new();
@@ -118,7 +122,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &providers, &ota_state),
+        data_model(&networks, rand, &providers, &ota_state),
         &kv,
         &state,
     );
@@ -172,13 +176,14 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler: the root endpoint 0 handler plus the OTA Requestor
 /// cluster (and its descriptor) on endpoint 1.
 fn data_model<'a>(
+    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     providers: &'a Providers,
     ota_state: &'a OtaState,
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(networks)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

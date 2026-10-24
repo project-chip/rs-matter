@@ -69,6 +69,7 @@ use rs_matter::dm::clusters::decl::globals::ICECandidateStruct;
 use rs_matter::dm::clusters::decl::globals::WebRTCEndReasonEnum;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSourceHandler};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_POWER_SOURCE, DEV_TYPE_ROOT_NODE};
@@ -80,9 +81,9 @@ use rs_matter::dm::{
     ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::EthInteractionModelState;
 use rs_matter::im::FabricIndex;
 use rs_matter::im::InteractionModel;
+use rs_matter::im::InteractionModelState;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
@@ -412,7 +413,10 @@ fn main() -> Result<(), Error> {
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store).
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
+
+    // The networks store of the Ethernet interface.
+    let networks = SharedNetworks::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -568,6 +572,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
+            &networks,
             rand,
             webrtc,
             cam_av,
@@ -686,6 +691,7 @@ const NODE: Node<'static> = Node {
 // ---------------------------------------------------------------------------
 
 fn data_model<'a>(
+    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CamAv,
@@ -700,7 +706,7 @@ fn data_model<'a>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(networks)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

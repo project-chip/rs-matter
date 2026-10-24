@@ -27,7 +27,6 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
-use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::error::Error;
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::encoding::ReportDataResp;
@@ -164,8 +163,7 @@ fn session_cleanup(failure: Failure) {
     block_on(async {
         let test = async {
             let subscription_id = persist_subscription(&im, &kv).await;
-            let state: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE> =
-                InteractionModelState::new(DummyNetworks);
+            let state: InteractionModelState<3, E2E_EVENTS_BUF_SIZE> = InteractionModelState::new();
             run_device_controller(
                 im.run_with_setup(im.handler(), &state, kv.clone(), true, || match failure {
                     Failure::Resolve => im.matter.reset_transport(),

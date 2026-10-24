@@ -953,7 +953,9 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H
         match op {
             LifecycleOp::Startup => self.startup(&ctx),
             LifecycleOp::FactoryReset => self.factory_reset(&ctx),
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
+            LifecycleOp::FabricRemoval { .. }
+            | LifecycleOp::FailSafeCommit
+            | LifecycleOp::FailSafeExpiry => Ok(()),
         }
     }
 

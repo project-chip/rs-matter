@@ -1432,7 +1432,9 @@ where
                 Ok(())
             }
             LifecycleOp::FactoryReset => self.factory_reset(&ctx),
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
+            LifecycleOp::FabricRemoval { .. }
+            | LifecycleOp::FailSafeCommit
+            | LifecycleOp::FailSafeExpiry => Ok(()),
         }
     }
 

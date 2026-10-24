@@ -55,7 +55,6 @@ use rs_matter::dm::clusters::app::on_off::{
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_comm::{CommissioningErrorEnum, GeneralCommissioningClient};
-use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -104,7 +103,7 @@ const COMMISSION_TIMEOUT_SECS: u64 = 30;
 const IM_TIMEOUT_SECS: u64 = 15;
 const ROLLBACK_TIMEOUT_SECS: u64 = 20;
 
-type DeviceDmState = InteractionModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+type DeviceDmState = InteractionModelState<DEFAULT_MAX_SUBSCRIPTIONS, 0>;
 
 const NODE: Node<'static> = Node {
     endpoints: &[
@@ -123,7 +122,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(common::eth_networks())
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(
@@ -205,7 +204,7 @@ async fn run_scenario(scenario: Scenario) -> Result<(), Error> {
     let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
     let mut rand = crypto.rand()?;
     let buffers: MatterBuffers = MatterBuffers::new();
-    let state: DeviceDmState = InteractionModelState::new(DummyNetworks);
+    let state: DeviceDmState = InteractionModelState::new();
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,

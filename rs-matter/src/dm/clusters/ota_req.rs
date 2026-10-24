@@ -874,6 +874,7 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
                 self.providers.reset_persist(&mut store, buf)?;
                 store.remove(RUNNING_VERSION_KEY, buf)
             }),
+            LifecycleOp::FailSafeCommit | LifecycleOp::FailSafeExpiry => Ok(()),
             LifecycleOp::FabricRemoval { fab_idx } => {
                 if self.providers.remove_for_fabric(fab_idx) {
                     self.providers.store_persist(&ctx)?;

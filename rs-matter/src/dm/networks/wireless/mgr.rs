@@ -22,7 +22,9 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 
-use crate::dm::clusters::net_comm::{self, NetCtlError, NetworksError, WirelessCreds};
+use crate::dm::clusters::net_comm::{
+    self, NetCtlError, Networks, NetworksError, SharedNetworks, WirelessCreds,
+};
 use crate::dm::clusters::wifi_diag;
 use crate::error::{Error, ErrorCode};
 use crate::utils::select::Coalesce;
@@ -38,16 +40,16 @@ pub const MAX_CREDS_SIZE: usize = 256;
 /// It does so by by connecting to the networks in a round-robin fashion
 /// and retrying multiple times the current network in case of a failure,
 /// prior to moving to the next network.
-pub struct WirelessMgr<'a, W, T, F> {
-    networks: W,
+pub struct WirelessMgr<'a, N, T, F> {
+    networks: &'a SharedNetworks<N>,
     net_ctl: T,
     buf: &'a mut [u8; MAX_CREDS_SIZE],
     on_connection: F,
 }
 
-impl<'a, W, T, F> WirelessMgr<'a, W, T, F>
+impl<'a, N, T, F> WirelessMgr<'a, N, T, F>
 where
-    W: net_comm::NetworksAccess + NetChangeNotif,
+    N: Networks,
     T: net_comm::NetCtl + net_comm::NetCtlStatus + wifi_diag::WirelessDiag + NetChangeNotif,
     F: FnMut(bool),
 {
@@ -60,7 +62,7 @@ where
     /// - `on_connection`: Told each time the manager sees the node connect
     ///   (`true`) to a stored network, or lose its connection.
     pub const fn new(
-        networks: W,
+        networks: &'a SharedNetworks<N>,
         net_ctl: T,
         buf: &'a mut [u8; MAX_CREDS_SIZE],
         on_connection: F,
@@ -85,13 +87,13 @@ where
             // currently staged under an armed fail-safe - in both cases the
             // commissioner drives connectivity explicitly via
             // `ConnectNetwork`, and the manager must not race it.
-            Self::wait_while_not_managed(&self.networks).await?;
+            Self::wait_while_not_managed(self.networks).await?;
 
             // The store became managed (commit or revert), so start trying to
             // connect to the networks. Do it while the networks don't change.
-            let mut changed = pin!(Self::wait_while_not_changed(&self.networks));
+            let mut changed = pin!(Self::wait_while_not_changed(self.networks));
             let mut connect = pin!(Self::run_connect(
-                &self.networks,
+                self.networks,
                 &self.net_ctl,
                 self.buf,
                 &mut self.on_connection
@@ -120,7 +122,7 @@ where
     /// command). Returns `Ok(())` on a successful connect; the same retry/backoff
     /// as the operational loop is applied before giving up.
     pub async fn connect_once(&mut self, network_id: &[u8]) -> Result<(), Error> {
-        let creds = Self::creds(&self.networks, network_id, self.buf)?;
+        let creds = Self::creds(self.networks, network_id, self.buf)?;
 
         let Some(creds) = creds else {
             warn!("No network with the requested ID found; cannot perform the deferred connect");
@@ -137,7 +139,7 @@ where
     }
 
     async fn run_connect(
-        networks: &W,
+        networks: &SharedNetworks<N>,
         net_ctl: &T,
         buf: &mut [u8],
         mut on_connection: impl FnMut(bool),
@@ -215,7 +217,7 @@ where
     /// such network is recorded). Mirrors [`WirelessMgr::next_creds`] but selects
     /// a network by ID rather than by round-robin position.
     fn creds<'d>(
-        networks: &W,
+        networks: &SharedNetworks<N>,
         network_id: &[u8],
         buf: &'d mut [u8],
     ) -> Result<Option<WirelessCreds<'d>>, Error> {
@@ -243,7 +245,7 @@ where
     }
 
     fn next_creds<'d>(
-        networks: &W,
+        networks: &SharedNetworks<N>,
         last_network_id: Option<&[u8]>,
         buf: &'d mut [u8],
     ) -> Result<Option<WirelessCreds<'d>>, Error> {
@@ -350,7 +352,7 @@ where
     /// so a scan of a foreign network while connected can make this
     /// spuriously return `false` once - the resulting reconnect to the
     /// current network is benign.
-    fn connected_network_stored(networks: &W, net_ctl: &T) -> Result<bool, Error> {
+    fn connected_network_stored(networks: &SharedNetworks<N>, net_ctl: &T) -> Result<bool, Error> {
         net_ctl.last_network_id(|id| {
             let Some(id) = id else {
                 return Ok(false);
@@ -384,7 +386,7 @@ where
         }
     }
 
-    async fn wait_while_not_managed(networks: &W) -> Result<(), Error> {
+    async fn wait_while_not_managed(networks: &SharedNetworks<N>) -> Result<(), Error> {
         loop {
             let managed = networks.access(|networks| networks.managed())?;
             if managed {
@@ -395,7 +397,7 @@ where
         }
     }
 
-    async fn wait_while_not_changed(networks: &W) -> Result<(), Error> {
+    async fn wait_while_not_changed(networks: &SharedNetworks<N>) -> Result<(), Error> {
         networks.wait_changed().await;
 
         Ok(())
@@ -410,8 +412,8 @@ mod tests {
     use core::cell::Cell;
 
     use crate::dm::clusters::net_comm::{
-        self, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, NetworksAccess,
-        SharedNetworks, WirelessCreds,
+        self, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks,
+        WirelessCreds,
     };
     use crate::dm::clusters::wifi_diag;
     use crate::dm::networks::wireless::wifi::WifiNetworks;
@@ -545,7 +547,7 @@ mod tests {
     }
 
     // Type alias for the test WirelessMgr
-    type TestMgr<'a> = WirelessMgr<'a, TestNetworks, FakeNetCtl, fn(bool)>;
+    type TestMgr<'a> = WirelessMgr<'a, WifiNetworks<4>, FakeNetCtl, fn(bool)>;
 
     // ── next_creds tests ──
 
@@ -807,10 +809,10 @@ mod tests {
         let networks = make_networks(&[(b"MySSID", b"MyPass")], false);
         let net_ctl = FakeNetCtl::new();
         let mut buf = [0u8; MAX_CREDS_SIZE];
-        // `new` takes the networks/net_ctl by value, so the manager owns them;
+        // `new` takes the net_ctl by value, so the manager owns it;
         // `Ok` already implies `FakeNetCtl::connect` ran (its only `Ok` path
         // sets `connected = true`), so there's no need to inspect it afterwards.
-        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf, |_| ());
+        let mut mgr = TestMgr::new(&networks, net_ctl, &mut buf, |_| ());
 
         embassy_futures::block_on(async {
             assert!(mgr.connect_once(b"MySSID").await.is_ok());
@@ -822,7 +824,7 @@ mod tests {
         let networks = make_networks(&[], false);
         let net_ctl = FakeNetCtl::new();
         let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf, |_| ());
+        let mut mgr = TestMgr::new(&networks, net_ctl, &mut buf, |_| ());
 
         embassy_futures::block_on(async {
             // No matching network -> a deferred connect can't proceed.

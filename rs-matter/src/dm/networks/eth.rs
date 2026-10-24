@@ -17,16 +17,23 @@
 
 //! This module contains the `Networks` trait implementation and the `NetCtl` trait implementation for Ethernet.
 
+use core::future::pending;
+
 use crate::dm::clusters::net_comm::{
     self, NetCtl, NetCtlError, NetCtlStatus, NetworkCommissioningStatusEnum, NetworkScanInfo,
     NetworkType, NetworksError, WirelessCreds,
 };
+use crate::dm::clusters::wifi_diag::WirelessDiag;
+use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
+use crate::utils::sync::DynBase;
 
 /// A fixed `Networks` trait implementation for Ethernet.
 ///
 /// Ethernet does not need to manage networks, so it always reports 1 network
 /// and returns an error when trying to add or update networks.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EthNetwork<'a> {
     network_id: &'a str,
 }
@@ -167,5 +174,20 @@ impl NetCtlStatus for EthNetCtl<'_> {
 
     fn last_connect_error_value(&self) -> Result<Option<i32>, Error> {
         Ok(None)
+    }
+}
+
+impl DynBase for EthNetCtl<'_> {}
+
+impl WirelessDiag for EthNetCtl<'_> {
+    fn connected(&self) -> Result<bool, Error> {
+        // The wired interface is up whenever this can be asked at all
+        Ok(true)
+    }
+}
+
+impl NetChangeNotif for EthNetCtl<'_> {
+    async fn wait_changed(&self) {
+        pending().await
     }
 }

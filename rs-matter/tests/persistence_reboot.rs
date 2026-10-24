@@ -55,7 +55,6 @@ use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, OnOffClient as _, OnOffHooks as _,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -104,7 +103,7 @@ const GROUP_EPOCH_KEY: [u8; 16] = [
 ];
 
 /// The device's data model state on boot 2.
-type DeviceDmState = InteractionModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+type DeviceDmState = InteractionModelState<DEFAULT_MAX_SUBSCRIPTIONS, 0>;
 
 /// The device data model served on boot 2: the standard Ethernet root endpoint
 /// plus a single OnOff light on [`ENDPOINT`].
@@ -125,7 +124,7 @@ fn device_data_model<'a>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(common::eth_networks())
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(
@@ -427,7 +426,7 @@ async fn run_fabric_survives_reboot() {
     let mut rand = device_crypto.rand().unwrap();
 
     let buffers: MatterBuffers = MatterBuffers::new();
-    let state: DeviceDmState = InteractionModelState::new(DummyNetworks);
+    let state: DeviceDmState = InteractionModelState::new();
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         ENDPOINT,

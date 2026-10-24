@@ -66,7 +66,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     };
 
     pub fn new(mut rand: impl Rng + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
-        let handler = EthSysHandlerBuilder::new()
+        let handler = EthSysHandlerBuilder::new(crate::common::eth_networks())
             .build(rand)
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == echo_cluster::ID,

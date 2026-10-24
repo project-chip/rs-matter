@@ -24,14 +24,13 @@ use crate::crypto::{
     CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, SecretKey,
     SigningSecretKey, PKC_SECRET_KEY_ZEROED,
 };
-use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::clusters::time_sync::UtcTime;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{ClusterId, EndptId};
+use crate::dm::{AsyncHandler, ClusterId, EndptId, HandlerContext, LifecycleOp};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, Fabrics};
 use crate::im::IMStatusCode;
-use crate::persist::{KvBlobStoreAccess, NETWORKS_KEY};
+use crate::persist::KvBlobStoreAccess;
 use crate::sc::pase::Pase;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
@@ -88,6 +87,31 @@ impl From<IMStatusCode> for IMError {
 /// `CHIP_DEVICE_CONFIG_FAILSAFE_EXPIRY_LENGTH_SEC` from the reference SDK.
 pub const DEFAULT_FAILSAFE_EXPIRY_SECS: u16 = 60;
 
+/// The outcome of a fail-safe expiry.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Expiry {
+    /// The fabric the rollback removed, if any.
+    pub removed_fabric: Option<NonZeroU8>,
+}
+
+impl Expiry {
+    /// Broadcast the expiry to the handlers of `ctx`: `LifecycleOp::FailSafeExpiry`,
+    /// then the removal of the fabric the rollback dropped, if any.
+    ///
+    /// The broadcasts run the handlers inline, so this must NOT be called
+    /// while holding the Matter state lock.
+    pub fn notify(&self, ctx: impl HandlerContext) {
+        if let Err(e) = ctx.handler().lifecycle(&ctx, LifecycleOp::FailSafeExpiry) {
+            warn!("Failed to broadcast the fail-safe expiry: {:?}", e);
+        }
+
+        if let Some(fab_idx) = self.removed_fabric {
+            ctx.notify_fabric_removed(fab_idx);
+        }
+    }
+}
+
 pub struct FailSafe {
     state: State,
     secret_key: CanonPkcSecretKey,
@@ -121,24 +145,19 @@ impl FailSafe {
     /// This should be called periodically to ensure that the fail-safe state is updated in a timely manner.
     /// Ideally, it should also be called at the beginning of any API that requires the fail-safe to be armed to ensure that the state is up to date.
     ///
-    /// Returns the local index of the fabric that ended up removed by the
-    /// rollback (see [`Failsafe::expire`]), if any - the caller must follow
-    /// up with a `HandlerContext::notify_fabric_removed` broadcast once the
-    /// Matter state lock is released.
-    #[allow(clippy::too_many_arguments)]
-    pub fn check_failsafe_timeout<S, N>(
+    /// Returns the outcome of the expiry, if the fail-safe did expire (see
+    /// [`FailSafe::expire`]).
+    pub fn check_failsafe_timeout<S>(
         &mut self,
         fabrics: &mut Fabrics,
         sessions: &mut crate::transport::session::Sessions,
-        networks: N,
         kv: S,
         expire_sess_id: Option<u32>,
         mdns_notif: impl FnMut(),
         notify_change: impl FnMut(EndptId, ClusterId),
-    ) -> Result<Option<NonZeroU8>, Error>
+    ) -> Result<Option<Expiry>, Error>
     where
         S: KvBlobStoreAccess,
-        N: NetworksAccess,
     {
         if let State::Armed(ctx) = &self.state {
             let now = Instant::now();
@@ -148,13 +167,11 @@ impl FailSafe {
                     .saturating_add(Duration::from_secs(ctx.timeout_secs as u64))
             {
                 // Timeout path: no caller exchange to preserve, so wipe
-                // every PASE session along with the fabric / networks
-                // rollback.
+                // every PASE session along with the fabric rollback.
                 return self.expire(
                     fabrics,
                     sessions,
                     expire_sess_id,
-                    networks,
                     kv,
                     mdns_notif,
                     notify_change,
@@ -166,8 +183,8 @@ impl FailSafe {
     }
 
     /// Force the fail-safe context to expire immediately, rolling back any
-    /// fabric / network changes that the in-flight commissioning had staged
-    /// and resetting the breadcrumb to 0.
+    /// fabric changes that the in-flight commissioning had staged and
+    /// resetting the breadcrumb to 0.
     ///
     /// `expire_sess_id` is the optional session ID of the exchange that
     /// triggered the expiry — typically passed when the trigger arrived
@@ -175,27 +192,24 @@ impl FailSafe {
     /// reclaimed. `None` for the timeout-driven path or when the trigger
     /// arrived over CASE.
     ///
-    /// Returns the local index of the fabric the rollback ended up removing,
-    /// if any: a fabric added by the in-flight `AddNOC` has no persisted copy
-    /// yet and is simply dropped, whereas a pre-existing fabric mutated by
-    /// `UpdateNOC` is resurrected from its persisted copy (and is thus NOT
-    /// reported as removed). The caller must follow up with a
-    /// `HandlerContext::notify_fabric_removed` broadcast for a reported
-    /// removal, once the Matter state lock is released.
-    #[allow(clippy::too_many_arguments)]
-    pub fn expire<S, N>(
+    /// Returns `None` if the fail-safe was not armed. Otherwise, the caller
+    /// must broadcast `LifecycleOp::FailSafeExpiry` once the Matter state lock
+    /// is released, so that the handlers drop what they staged (networks and
+    /// the like), and `HandlerContext::notify_fabric_removed` for the
+    /// returned removed fabric. That is a fabric added by the in-flight
+    /// `AddNOC`, which has no persisted copy yet; a pre-existing fabric
+    /// mutated by `UpdateNOC` is resurrected from its persisted copy instead.
+    pub fn expire<S>(
         &mut self,
         fabrics: &mut Fabrics,
         sessions: &mut crate::transport::session::Sessions,
         expire_sess_id: Option<u32>,
-        networks: N,
         kv: S,
         mut mdns_notif: impl FnMut(),
         mut notify_change: impl FnMut(EndptId, ClusterId),
-    ) -> Result<Option<NonZeroU8>, Error>
+    ) -> Result<Option<Expiry>, Error>
     where
         S: KvBlobStoreAccess,
-        N: NetworksAccess,
     {
         let State::Armed(ctx) = &self.state else {
             return Ok(None);
@@ -217,15 +231,7 @@ impl FailSafe {
                 removed_fabric = fabrics.get(fab_idx).is_none().then_some(fab_idx);
             }
 
-            networks.access(|networks| {
-                let data = kv.load(NETWORKS_KEY, buf)?;
-
-                if let Some(data) = data {
-                    networks.load(data)
-                } else {
-                    networks.reset()
-                }
-            })
+            Ok::<_, Error>(())
         })?;
 
         // Any PASE session that was in flight under this fail-safe is
@@ -245,9 +251,8 @@ impl FailSafe {
         // The rollback above restores attributes visible to subscribers —
         // `OperationalCredentials::NOCs` / `Fabrics` (including `vvsc`,
         // `VIDVerificationStatement`, `vendorID` mutated in-failsafe by
-        // `SetVIDVerificationStatement`) and `NetworkCommissioning::Networks`
-        // — to their persisted values. Notify so any active subscriptions
-        // re-report.
+        // `SetVIDVerificationStatement`) — to their persisted values. Notify
+        // so any active subscriptions re-report.
         //
         // TODO: this only flags subscriptions for re-reporting; it does
         // *not* bump the affected clusters' data versions. `Failsafe`
@@ -257,12 +262,8 @@ impl FailSafe {
             ROOT_ENDPOINT_ID,
             crate::dm::clusters::decl::operational_credentials::FULL_CLUSTER.id,
         );
-        notify_change(
-            ROOT_ENDPOINT_ID,
-            crate::dm::clusters::decl::network_commissioning::FULL_CLUSTER.id,
-        );
 
-        Ok(removed_fabric)
+        Ok(Some(Expiry { removed_fabric }))
     }
 
     pub fn arm(
@@ -936,7 +937,6 @@ mod tests {
 
     use crate::cert::gen::VALID_FOREVER;
     use crate::crypto::{test_only_crypto, CanonPkcSecretKey, Crypto, PKC_CANON_SECRET_KEY_LEN};
-    use crate::dm::clusters::net_comm::DummyNetworkAccess;
     use crate::dm::clusters::time_sync::UtcTime;
     use crate::dm::devices::test::TEST_DEV_COMM;
     use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -950,7 +950,7 @@ mod tests {
     use crate::sc::pase::Pase;
     use crate::transport::session::{SessionMode, Sessions};
 
-    use super::{FailSafe, DEFAULT_FAILSAFE_EXPIRY_SECS};
+    use super::{Expiry, FailSafe, DEFAULT_FAILSAFE_EXPIRY_SECS};
 
     fn pase(fab_idx: u8) -> SessionMode {
         SessionMode::Pase { fab_idx }
@@ -1258,16 +1258,10 @@ mod tests {
 
     /// The `(endpoint, cluster)` notifications an expiry emits.
     fn expected_expiry_changes() -> std::vec::Vec<(EndptId, ClusterId)> {
-        std::vec![
-            (
-                ROOT_ENDPOINT_ID,
-                crate::dm::clusters::decl::operational_credentials::FULL_CLUSTER.id,
-            ),
-            (
-                ROOT_ENDPOINT_ID,
-                crate::dm::clusters::decl::network_commissioning::FULL_CLUSTER.id,
-            ),
-        ]
+        std::vec![(
+            ROOT_ENDPOINT_ID,
+            crate::dm::clusters::decl::operational_credentials::FULL_CLUSTER.id,
+        )]
     }
 
     #[test]
@@ -1282,7 +1276,6 @@ mod tests {
             .check_failsafe_timeout(
                 &mut fabrics,
                 &mut sessions,
-                DummyNetworkAccess,
                 &kv,
                 None,
                 || mdns += 1,
@@ -1300,7 +1293,6 @@ mod tests {
             .check_failsafe_timeout(
                 &mut fabrics,
                 &mut sessions,
-                DummyNetworkAccess,
                 &kv,
                 None,
                 || mdns += 1,
@@ -2073,7 +2065,6 @@ mod tests {
                 &mut Fabrics::new(),
                 &mut Sessions::new(),
                 None,
-                DummyNetworkAccess,
                 MemKv::new(MemKvBlobStore::default()),
                 || panic!("no mdns notification expected"),
                 |_, _| panic!("no change expected"),
@@ -2102,14 +2093,18 @@ mod tests {
                 &mut fabrics,
                 &mut Sessions::new(),
                 None,
-                DummyNetworkAccess,
                 MemKv::new(MemKvBlobStore::default()),
                 || mdns += 1,
                 |ep, cl| changes.push((ep, cl)),
             )
             .unwrap();
 
-        assert_eq!(removed, Some(idx(1)));
+        assert_eq!(
+            removed,
+            Some(Expiry {
+                removed_fabric: Some(idx(1))
+            })
+        );
         assert!(fabrics.get(idx(1)).is_none());
         assert_eq!(fabrics.iter().count(), 0);
         assert!(!fs.is_armed());
@@ -2173,7 +2168,6 @@ mod tests {
                 &mut fabrics,
                 &mut Sessions::new(),
                 None,
-                DummyNetworkAccess,
                 &kv,
                 || {},
                 |_, _| {},
@@ -2181,7 +2175,12 @@ mod tests {
             .unwrap();
 
         // The fabric is resurrected from storage rather than removed
-        assert_eq!(removed, None);
+        assert_eq!(
+            removed,
+            Some(Expiry {
+                removed_fabric: None
+            })
+        );
         let fabric = fabrics.get(idx(1)).unwrap();
         assert_eq!(fabric.node_id(), 0x1111);
         assert_eq!(fabric.noc(), original.cert.as_slice());
@@ -2209,13 +2208,17 @@ mod tests {
                 &mut fabrics,
                 &mut Sessions::new(),
                 None,
-                DummyNetworkAccess,
                 &kv,
                 || {},
                 |_, _| {},
             )
             .unwrap();
-        assert_eq!(removed, None);
+        assert_eq!(
+            removed,
+            Some(Expiry {
+                removed_fabric: None
+            })
+        );
         assert_eq!(fabrics.get(idx(1)).unwrap().node_id(), 0x1a);
 
         // Armed over PASE with no fabric involved: nothing to roll back
@@ -2225,13 +2228,17 @@ mod tests {
                 &mut fabrics,
                 &mut Sessions::new(),
                 None,
-                DummyNetworkAccess,
                 &kv,
                 || {},
                 |_, _| {},
             )
             .unwrap();
-        assert_eq!(removed, None);
+        assert_eq!(
+            removed,
+            Some(Expiry {
+                removed_fabric: None
+            })
+        );
         assert_eq!(fabrics.iter().count(), 1);
     }
 
@@ -2254,7 +2261,6 @@ mod tests {
             &mut Fabrics::new(),
             &mut sessions,
             Some(ids[1]),
-            DummyNetworkAccess,
             MemKv::new(MemKvBlobStore::default()),
             || {},
             |_, _| {},
@@ -2274,7 +2280,6 @@ mod tests {
             &mut Fabrics::new(),
             &mut sessions,
             None,
-            DummyNetworkAccess,
             MemKv::new(MemKvBlobStore::default()),
             || {},
             |_, _| {},

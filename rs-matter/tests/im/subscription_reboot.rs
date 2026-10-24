@@ -122,8 +122,7 @@ fn test_subscription_survives_reboot() {
     );
 
     // ---- Boot 2: a fresh subscription table, the same store. ----
-    let state2: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE> =
-        InteractionModelState::new(DummyNetworks);
+    let state2: InteractionModelState<3, E2E_EVENTS_BUF_SIZE> = InteractionModelState::new();
 
     // The resumed subscription is primed, so the server initiates a `ReportData`
     // to the client on its own. We accept that server-initiated exchange and
@@ -270,16 +269,14 @@ fn test_report_data_handler_catches_server_report() {
 
     // ---- Boot 2: server resumes + pushes a report; the controller catches it
     // via its own InteractionModel + ReportDataHandler. ----
-    let state2: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE> =
-        InteractionModelState::new(DummyNetworks);
+    let state2: InteractionModelState<3, E2E_EVENTS_BUF_SIZE> = InteractionModelState::new();
 
     // The controller's own data model: no clusters served (empty node), it only
     // consumes reports.
     let ctrl_node = Node::new(&[]);
     let ctrl_handler = (ctrl_node, EmptyHandler);
     let ctrl_buffers: MatterBuffers = MatterBuffers::new();
-    let ctrl_state: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE> =
-        InteractionModelState::new(DummyNetworks);
+    let ctrl_state: InteractionModelState<3, E2E_EVENTS_BUF_SIZE> = InteractionModelState::new();
     let reports = CapturingReports::default();
 
     let ctrl_kv = im.matter_client().kv(DummyKvBlobStore);

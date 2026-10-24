@@ -24,7 +24,7 @@ use core::marker::PhantomData;
 use crate::acl::AclEntry;
 use crate::crypto::{CanonAeadKey, CanonPkcSecretKey};
 use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationTypeEnum;
-use crate::dm::clusters::net_comm::{Networks, NetworksAccess, NetworksError, WirelessCreds};
+use crate::dm::clusters::net_comm::{Networks, NetworksError, SharedNetworks, WirelessCreds};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;
 use crate::tlv::{
@@ -337,17 +337,17 @@ impl CommissioningHandover<'_> {
     /// Build the envelope for the pending `fabric` and hand it to `f`.
     ///
     /// A callback rather than a constructor because the envelope borrows the
-    /// networks store, reachable only inside [`NetworksAccess::access`].
+    /// networks store, reachable only inside [`SharedNetworks::access`].
     pub(crate) fn with_pending<N, F, R>(
         fabric: &Fabric,
-        networks: N,
+        networks: &SharedNetworks<N>,
         regulatory: Option<HandoverRegulatory<'_>>,
         fail_safe_remaining_secs: u16,
         breadcrumb: u64,
         f: F,
     ) -> Result<R, Error>
     where
-        N: NetworksAccess,
+        N: Networks,
         F: FnOnce(&CommissioningHandover<'_>) -> Result<R, Error>,
     {
         networks.access(|networks| {
@@ -379,10 +379,10 @@ impl CommissioningHandover<'_> {
 /// would.
 pub(crate) fn stage_networks<N>(
     handover: &CommissioningHandover<'_>,
-    networks: N,
+    networks: &SharedNetworks<N>,
 ) -> Result<(), Error>
 where
-    N: NetworksAccess,
+    N: Networks,
 {
     networks.access(|networks| {
         let mut staged = false;

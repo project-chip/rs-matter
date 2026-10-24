@@ -104,6 +104,7 @@ use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::decl::globals::{ICECandidateStruct, WebRTCEndReasonEnum};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
@@ -111,7 +112,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::{DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
@@ -1100,7 +1101,8 @@ impl WebRtcHooks for Str0mHooks {
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
+static STATE: StaticCell<InteractionModelState> = StaticCell::new();
+static NETWORKS: StaticCell<SharedNetworks<EthNetwork<'static>>> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
     StaticCell::new();
@@ -1161,7 +1163,8 @@ fn main() -> Result<(), Error> {
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store).
-    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
+    let state = STATE.init(InteractionModelState::new());
+    let networks = NETWORKS.init(SharedNetworks::new(EthNetwork::new_default()));
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -1297,7 +1300,7 @@ fn main() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        data_model(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
+        data_model(networks, rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
         &kv,
         state,
     );
@@ -1379,6 +1382,7 @@ const NODE: Node<'static> = Node {
 };
 
 fn data_model<'a>(
+    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>,
@@ -1391,7 +1395,7 @@ fn data_model<'a>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(networks)
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(

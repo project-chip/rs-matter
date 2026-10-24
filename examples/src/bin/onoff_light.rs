@@ -48,6 +48,7 @@ use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::mode_select::{
     self, Mode, ModeId, ModeSelectHandler, ModeSelectHooks, SemanticTag,
 };
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
@@ -55,7 +56,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
@@ -173,7 +174,10 @@ fn main() -> Result<(), Error> {
 
     // Create the data model state (subscriptions table, events queue, network
     // store).
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
+
+    // The networks store of the Ethernet interface.
+    let networks = SharedNetworks::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -212,7 +216,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &on_off_handler, &mode_select_handler),
+        data_model(&networks, rand, &on_off_handler, &mode_select_handler),
         &kv,
         &state,
     );
@@ -276,13 +280,14 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, MH: ModeSelectHooks>(
+    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     mode_select: &'a ModeSelectHandler<MH>,
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(networks)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

@@ -30,18 +30,11 @@ use core::num::NonZeroU8;
 use crate::utils::sync::blocking::Mutex;
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3, select4};
+use embassy_futures::select::{select, select3};
 use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::{
-    NetCtl, NetCtlStatus, NetworkType, Networks, NetworksAccess, SharedNetworks,
-};
-use crate::dm::clusters::wifi_diag::WirelessDiag;
-use crate::dm::networks::eth::EthNetwork;
-use crate::dm::networks::wireless::{NoopWirelessNetCtl, WirelessMgr, MAX_CREDS_SIZE};
-use crate::dm::networks::NetChangeNotif;
 use crate::dm::{
     AsyncHandler, AttrChangeNotifier, AttrDetails, Attribute, DataModel, EventEmitter,
     HandlerContext, LifecycleOp, MatchContextInstance, Metadata, ReportDataHandler,
@@ -55,7 +48,7 @@ use crate::im::subscriptions::{
     icd_max_int_secs, KeepAlive, ReportContext, Subscriptions, SubscriptionsBuffers,
     DEFAULT_MAX_SUBSCRIPTIONS,
 };
-use crate::persist::{KvBlobStoreAccess, NETWORKS_KEY};
+use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
@@ -155,50 +148,47 @@ where
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The mutable, owned-together state a [`InteractionModel`] operates on: the
-/// subscriptions table, the events queue and the network store.
+/// subscriptions table and the events queue.
 ///
-/// Allocating these as a single value (rather than three separate locals wired
+/// Allocating these as a single value (rather than separate locals wired
 /// up by hand at every call site) is the whole point: construct one
 /// `InteractionModelState`, then hand a reference to it to [`InteractionModel::new`]. Each of
-/// the three pieces keeps its own lock internally (the proven multi-lock model);
+/// the pieces keeps its own lock internally (the proven multi-lock model);
 /// folding them behind a single mutex is a possible later refinement.
 ///
-/// `N` is the (raw) [`Networks`] implementation — e.g.
-/// [`EthNetwork`](crate::dm::networks::eth::EthNetwork) or
-/// [`WirelessNetworks`](crate::dm::networks::wireless::WirelessNetworks); it is
-/// wrapped internally in a [`SharedNetworks`] so the data model and (later) the
-/// wireless manager can share it. `NS`/`NE` bound the subscription table and the
-/// event-buffer size and default to [`DEFAULT_MAX_SUBSCRIPTIONS`] /
-/// [`DEFAULT_MAX_EVENTS_BUF_SIZE`].
+/// `NS`/`NE` bound the subscription table and the event-buffer size and default
+/// to [`DEFAULT_MAX_SUBSCRIPTIONS`] / [`DEFAULT_MAX_EVENTS_BUF_SIZE`].
 pub struct InteractionModelState<
-    N,
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > {
     subscriptions: Subscriptions<NS>,
     events: Events<NE>,
-    networks: SharedNetworks<N>,
     boot_emitted: Mutex<Cell<bool>>,
 }
 
-impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
-    /// Create a new state instance backed by the given (raw) [`Networks`] store.
-    pub const fn new(networks: N) -> Self {
+impl<const NS: usize, const NE: usize> Default for InteractionModelState<NS, NE> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const NS: usize, const NE: usize> InteractionModelState<NS, NE> {
+    /// Create a new state instance.
+    pub const fn new() -> Self {
         Self {
             subscriptions: Subscriptions::new(),
             events: Events::new(),
-            networks: SharedNetworks::new(networks),
             boot_emitted: Mutex::new(Cell::new(false)),
         }
     }
 
     /// Return an in-place initializer for the state (for large `NE`, to
     /// avoid a big temporary on the stack).
-    pub fn init(networks: impl Init<N>) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         init!(Self {
             subscriptions <- Subscriptions::init(),
             events <- Events::init(),
-            networks <- SharedNetworks::init(networks),
             boot_emitted: Mutex::new(Cell::new(false)),
         })
     }
@@ -215,24 +205,18 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
     }
 
     /// Reset this state's persisted contents to factory defaults - the
-    /// events-queue epoch, the network store and (if compiled in) the persisted
-    /// subscriptions - removing them from `kv` using the scratch buffer
-    /// provided by `kv`.
+    /// events-queue epoch and (if compiled in) the persisted subscriptions -
+    /// removing them from `kv` using the scratch buffer provided by `kv`.
     ///
     /// Driven by [`InteractionModel::factory_reset`].
     fn reset_persist<K>(&self, kv: K) -> Result<(), Error>
     where
         K: KvBlobStoreAccess,
-        N: Networks,
     {
         // The KV ops are sync, so do them all inside a single `access` closure.
         kv.access(|store, buf| {
             // The event-number epoch.
             self.events.reset_persist(&mut *store, buf)?;
-
-            // The network store.
-            self.networks.with_raw(|networks| networks.reset())?;
-            store.remove(NETWORKS_KEY, buf)?;
 
             // Every persisted subscription record.
             #[cfg(feature = "persistent-subscriptions")]
@@ -242,31 +226,16 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
         })
     }
 
-    /// Re-hydrate this state's persisted contents - the events-queue epoch (so
-    /// event numbers are not reused across reboots) and the network store - using
-    /// the scratch buffer provided by `kv`.
+    /// Re-hydrate this state's persisted contents - the events-queue epoch, so
+    /// event numbers are not reused across reboots - using the scratch buffer
+    /// provided by `kv`.
     ///
     /// Driven by [`InteractionModel::startup`].
     fn load_persist<K>(&self, kv: K) -> Result<(), Error>
     where
         K: KvBlobStoreAccess,
-        N: Networks,
     {
-        // The KV ops are sync, so do them all inside a single `access` closure.
-        kv.access(|store, buf| {
-            // The event-number epoch.
-            self.events.load_persist(&mut *store, buf)?;
-
-            // The network store.
-            self.networks.with_raw(|networks| {
-                networks.reset()?;
-                if let Some(data) = store.load(NETWORKS_KEY, buf)? {
-                    networks.load(data)?;
-                }
-
-                Ok(())
-            })
-        })
+        kv.access(|store, buf| self.events.load_persist(store, buf))
     }
 
     /// The subscriptions table.
@@ -278,28 +247,15 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
     pub const fn events(&self) -> &Events<NE> {
         &self.events
     }
-
-    /// The network store (wrapped for shared, change-notifying access).
-    pub const fn networks(&self) -> &SharedNetworks<N> {
-        &self.networks
-    }
 }
 
 /// The implementation needs a `DataModel` instance to interact with the underlying clusters of the data model.
-///
-/// `NC` is the network controller type driving the (optional) wireless connection
-/// manager from [`InteractionModel::run`]. It defaults to [`NoopWirelessNetCtl`], which is
-/// the right choice for Ethernet (and what the convenience [`InteractionModel::new`]
-/// constructor wires up); wireless devices pass a real controller via
-/// [`InteractionModel::new_with_net_ctl`].
 pub struct InteractionModel<
     'a,
     C,
     B,
     T,
     K,
-    N,
-    NC = NoopWirelessNetCtl,
     R = (),
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
@@ -310,9 +266,8 @@ pub struct InteractionModel<
     crypto: C,
     buffers: &'a B,
     kv: K,
-    net_ctl: NC,
     subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
-    state: &'a InteractionModelState<N, NS, NE>,
+    state: &'a InteractionModelState<NS, NE>,
     handler: T,
     /// The controller-side `ReportData` consumer. Defaults to `()`, which
     /// disowns every inbound report (the accessory role). A controller injects a
@@ -320,79 +275,27 @@ pub struct InteractionModel<
     report_handler: R,
 }
 
-/// A [`InteractionModelState`] for an Ethernet device: its network store is a fixed
-/// [`EthNetwork`], so call sites need only the (defaulted) subscription/event
-/// sizes. Pairs with [`EthInteractionModel`].
-pub type EthInteractionModelState<
-    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
-    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = InteractionModelState<EthNetwork<'static>, NS, NE>;
-
-/// A [`InteractionModel`] for an Ethernet device (network store fixed to [`EthNetwork`]),
-/// so the `N` generic disappears from call sites. Pairs with [`EthInteractionModelState`].
-pub type EthInteractionModel<
-    'a,
-    C,
-    B,
-    T,
-    K,
-    NC = NoopWirelessNetCtl,
-    R = (),
-    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
-    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = InteractionModel<'a, C, B, T, K, EthNetwork<'static>, NC, R, NS, NE>;
-
-/// A [`InteractionModelState`] for a wireless device, parameterized by the concrete
-/// wireless network store `N` (e.g. `WifiNetworks<3>` or a Thread store). Pairs
-/// with [`WirelessInteractionModel`].
-pub type WirelessInteractionModelState<
-    N,
-    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
-    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = InteractionModelState<N, NS, NE>;
-
-/// A [`InteractionModel`] for a wireless device (network store `N`, network controller
-/// `NC`). Pairs with [`WirelessInteractionModelState`].
-pub type WirelessInteractionModel<
-    'a,
-    C,
-    B,
-    T,
-    K,
-    N,
-    NC,
-    R = (),
-    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
-    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>;
-
-impl<'a, C, B, T, K, N, const NS: usize, const NE: usize>
-    InteractionModel<'a, C, B, T, K, N, NoopWirelessNetCtl, (), NS, NE>
+impl<'a, C, B, T, K, const NS: usize, const NE: usize> InteractionModel<'a, C, B, T, K, (), NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
 {
-    /// Create the data model for a device that does not need an operational
-    /// wireless connection manager (typically an Ethernet device).
-    ///
-    /// This is a convenience wrapper around [`InteractionModel::new_with_net_ctl`] that
-    /// fixes the network controller to an inert [`NoopWirelessNetCtl`], so
-    /// [`InteractionModel::run`]'s connection-management branch stays dormant.
+    /// Create the data model.
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
     /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
     /// - `handler` - an instance of type `T` which implements the `DataModel` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
-    ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
+    ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods.
+    ///   The Network Commissioning cluster handlers among them own the network stores, and drive
+    ///   the operational wireless connections from their `run`.
     /// - `kv` - an instance of type `K` which implements the `KvBlobStoreAccess` trait
     ///   (obtain one via [`Matter::kv`]). This instance is used for interacting with the key-value blob store.
-    /// - `state` - a reference to the [`InteractionModelState`] holding the subscriptions table, the
-    ///   events queue and the network store (the latter parameterized by the `Networks`
-    ///   implementation `N`).
+    /// - `state` - a reference to the [`InteractionModelState`] holding the subscriptions table and the
+    ///   events queue.
     #[inline(always)]
     pub fn new(
         matter: &'a Matter<'a>,
@@ -400,110 +303,44 @@ where
         buffers: &'a B,
         handler: T,
         kv: K,
-        state: &'a InteractionModelState<N, NS, NE>,
+        state: &'a InteractionModelState<NS, NE>,
     ) -> Self {
-        Self::new_with_net_ctl(
-            matter,
-            crypto,
-            buffers,
-            handler,
-            kv,
-            NoopWirelessNetCtl::new(NetworkType::Ethernet),
-            state,
-        )
+        Self::new_with_reports(matter, crypto, buffers, handler, kv, (), state)
     }
 }
 
-impl<'a, C, B, T, K, N, NC, const NS: usize, const NE: usize>
-    InteractionModel<'a, C, B, T, K, N, NC, (), NS, NE>
+impl<'a, C, B, T, K, R, const NS: usize, const NE: usize>
+    InteractionModel<'a, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
-{
-    /// Create the data model with an explicit network controller `net_ctl`.
-    ///
-    /// Use this for wireless devices: `net_ctl` drives the operational connection
-    /// manager run from [`InteractionModel::run`] (and is typically the same controller
-    /// instance also wired into the `NetworkCommissioning` cluster handler). For
-    /// Ethernet devices prefer the [`InteractionModel::new`] convenience constructor.
-    ///
-    /// # Arguments
-    /// - `matter` - a reference to the `Matter` instance
-    /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
-    /// - `handler` - an instance of type `T` which implements the `DataModel` trait. This instance is used for interacting with the underlying
-    ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
-    ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
-    /// - `kv` - an instance of type `K` which implements the `KvBlobStoreAccess` trait
-    ///   (obtain one via [`Matter::kv`]). This instance is used for interacting with the key-value blob store.
-    /// - `net_ctl` - the network controller (`NetCtl` + `WirelessDiag` + `NetChangeNotif`) used by
-    ///   the operational wireless connection manager driven from [`InteractionModel::run`].
-    /// - `state` - a reference to the [`InteractionModelState`] holding the subscriptions table, the
-    ///   events queue and the network store (the latter parameterized by the `Networks`
-    ///   implementation `N`).
-    #[inline(always)]
-    pub fn new_with_net_ctl(
-        matter: &'a Matter<'a>,
-        crypto: C,
-        buffers: &'a B,
-        handler: T,
-        kv: K,
-        net_ctl: NC,
-        state: &'a InteractionModelState<N, NS, NE>,
-    ) -> Self {
-        state.subscriptions.clear();
-
-        Self {
-            matter,
-            crypto,
-            buffers,
-            kv,
-            net_ctl,
-            subscriptions_buffers: SubscriptionsBuffers::new(),
-            state,
-            handler,
-            report_handler: (),
-        }
-    }
-}
-
-impl<'a, C, B, T, K, N, NC, R, const NS: usize, const NE: usize>
-    InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>
-where
-    C: Crypto,
-    B: Buffers<IMBuffer>,
-    T: DataModel,
-    K: KvBlobStoreAccess,
-    N: Networks,
     R: ReportDataHandler,
 {
-    /// Create the data model with an explicit network controller `net_ctl` and a
-    /// [`ReportDataHandler`] `report_handler` — the controller / subscriber role.
+    /// Create the data model with a [`ReportDataHandler`] `report_handler` —
+    /// the controller / subscriber role.
     ///
-    /// This is [`InteractionModel::new_with_net_ctl`] plus a report consumer:
+    /// This is [`InteractionModel::new`] plus a report consumer:
     /// after this node establishes subscriptions (via the IM client), the
     /// publishers push `ReportData` on fresh inbound exchanges, which the
     /// `InteractionModel` routes to `report_handler`. The default
-    /// (`new`/`new_with_net_ctl`) constructors leave the report handler as `()`,
+    /// (`new`) constructor leaves the report handler as `()`,
     /// which disowns every report — correct for a pure accessory.
     ///
     /// # Arguments
-    /// Same as [`InteractionModel::new_with_net_ctl`], plus:
+    /// Same as [`InteractionModel::new`], plus:
     /// - `report_handler` - an instance of type `R` implementing
     ///   [`ReportDataHandler`], invoked once per received `ReportData` chunk.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_reports(
         matter: &'a Matter<'a>,
         crypto: C,
         buffers: &'a B,
         handler: T,
         kv: K,
-        net_ctl: NC,
         report_handler: R,
-        state: &'a InteractionModelState<N, NS, NE>,
+        state: &'a InteractionModelState<NS, NE>,
     ) -> Self {
         state.subscriptions.clear();
 
@@ -512,7 +349,6 @@ where
             crypto,
             buffers,
             kv,
-            net_ctl,
             subscriptions_buffers: SubscriptionsBuffers::new(),
             state,
             handler,
@@ -585,15 +421,16 @@ where
     ///
     /// Call once, after constructing the `InteractionModel` and before running
     /// it or serving exchanges. In order:
-    /// - Re-hydrates the [`InteractionModelState`] - the events-queue epoch (so
-    ///   event numbers are not reused across reboots) and the network store;
+    /// - Re-hydrates the [`InteractionModelState`] - the events-queue epoch, so
+    ///   event numbers are not reused across reboots;
     /// - Replays any persisted subscriptions into the reporter's table (if the
     ///   `persistent-subscriptions` feature is enabled), so a subscriber that
     ///   had a subscription before this reboot keeps receiving reports instead
     ///   of having to notice the loss and re-subscribe;
     /// - Broadcasts [`LifecycleOp::Startup`] to every cluster handler in the
     ///   data model, so handlers with a persistence story of their own (which
-    ///   the Interaction Model otherwise treats as opaque) can re-hydrate their
+    ///   the Interaction Model otherwise treats as opaque) - like the network
+    ///   stores of the Network Commissioning handlers - can re-hydrate their
     ///   state from [`HandlerContext::kv`].
     ///
     /// The `Matter`-level counterpart is [`Matter::startup`] - call that one
@@ -611,8 +448,8 @@ where
     ///
     /// The counterpart of [`InteractionModel::startup`]. In order:
     /// - Resets the [`InteractionModelState`] persisted contents to factory
-    ///   defaults - the events-queue epoch, the network store and (if compiled
-    ///   in) the persisted subscriptions - removing them from the KV store;
+    ///   defaults - the events-queue epoch and (if compiled in) the persisted
+    ///   subscriptions - removing them from the KV store;
     /// - Broadcasts [`LifecycleOp::FactoryReset`] to every cluster handler in
     ///   the data model, so handlers can reset their own state and remove their
     ///   persisted data from [`HandlerContext::kv`].
@@ -625,12 +462,6 @@ where
         self.handler.lifecycle(self, LifecycleOp::FactoryReset)
     }
 
-    /// Run the Data Model instance.
-    ///
-    /// This drives the IM timeout checks, the data-model handler's own background
-    /// job, the subscriptions reporting loop, and - for wireless devices - the
-    /// operational connection manager (inert for Ethernet, where `net_ctl` is a
-    /// [`NoopWirelessNetCtl`]).
     /// Emit the boot events, once per process lifetime: the
     /// `GeneralDiagnostics::BootReason` event, with the reason set by
     /// [`Matter::set_boot_reason`], then the `BasicInformation::StartUp` event.
@@ -712,114 +543,21 @@ where
         Ok(())
     }
 
-    pub async fn run(&self) -> Result<(), Error>
-    where
-        NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
-    {
+    /// Run the Data Model instance.
+    ///
+    /// This drives the IM timeout checks, the data-model handler's own background
+    /// job - which includes the operational connection managers of the Network
+    /// Commissioning handlers - and the subscriptions reporting loop.
+    pub async fn run(&self) -> Result<(), Error> {
         self.emit_boot_events_once();
 
         let mut timeouts = pin!(self.run_timeout_checks());
         let mut handler = pin!(self.handler.run(self));
         let mut subs = pin!(self.process_subscriptions(self.matter));
-        let mut net = pin!(self.run_net_mgr());
 
-        select4(&mut timeouts, &mut handler, &mut subs, &mut net)
+        select3(&mut timeouts, &mut handler, &mut subs)
             .coalesce()
             .await
-    }
-
-    /// Drive the operational wireless connection manager.
-    ///
-    /// For Ethernet devices (`net_ctl.net_type() == NetworkType::Ethernet`) there
-    /// is nothing to manage, so this future simply pends forever. For wireless
-    /// devices it runs a [`WirelessMgr`] over the network store, cycling through
-    /// the registered networks and (re)connecting as needed once commissioned.
-    async fn run_net_mgr(&self) -> Result<(), Error>
-    where
-        NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
-    {
-        if self.net_ctl.net_type() == NetworkType::Ethernet {
-            // Nothing to manage for a wired device - just pend forever.
-            return core::future::pending().await;
-        }
-
-        // The node starts out not connected.
-        let mut connected = false;
-        let on_connection = move |now: bool| {
-            if connected != now {
-                connected = now;
-                self.emit_connection_status(now);
-            }
-        };
-
-        let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = WirelessMgr::new(
-            self.state.networks(),
-            &self.net_ctl,
-            &mut buf,
-            on_connection,
-        );
-
-        mgr.run().await
-    }
-
-    /// Emit the `ConnectionStatus` event of the Wi-Fi or Thread Network
-    /// Diagnostics cluster, as the node connected (`true`) to its network or
-    /// lost it, if an endpoint serves that cluster.
-    fn emit_connection_status(&self, connected: bool)
-    where
-        NC: NetCtl,
-    {
-        use crate::dm::clusters::{thread_diag, wifi_diag};
-
-        // Same data in both: the status, with the same values.
-        let (cluster, event) = match self.net_ctl.net_type() {
-            NetworkType::Wifi => (
-                wifi_diag::FULL_CLUSTER.id,
-                wifi_diag::EventId::ConnectionStatus as _,
-            ),
-            NetworkType::Thread => (
-                thread_diag::FULL_CLUSTER.id,
-                thread_diag::EventId::ConnectionStatus as _,
-            ),
-            NetworkType::Ethernet => return,
-        };
-        let status = if connected {
-            wifi_diag::ConnectionStatusEnum::Connected
-        } else {
-            wifi_diag::ConnectionStatusEnum::NotConnected
-        };
-
-        let endpoint = self.handler.access(|node| {
-            node.endpoints
-                .iter()
-                .find(|e| e.clusters.iter().any(|c| c.id == cluster))
-                .map(|e| e.id)
-        });
-
-        if let Some(endpoint) = endpoint {
-            self.emit_one_field_event(endpoint, cluster, event, EventPriority::Info, status as _);
-        }
-    }
-
-    /// Perform a single, one-shot connect to the wireless network with the given
-    /// ID, immediately and regardless of the commissioning status.
-    ///
-    /// This drives the same [`WirelessMgr`] used by [`InteractionModel::run`]
-    /// (over this model's network controller and the network store owned by its
-    /// [`InteractionModelState`]), but calls [`WirelessMgr::connect_once`] rather
-    /// than the operational loop. It exists so a stack performing **non-concurrent**
-    /// (BLE-only) commissioning can replay the deferred `ConnectNetwork` once the
-    /// operational radio is up but before commissioning completes - without having
-    /// to own a `WirelessMgr` (or the networks) itself.
-    pub async fn connect_once(&self, network_id: &[u8]) -> Result<(), Error>
-    where
-        NC: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
-    {
-        let mut buf = [0u8; MAX_CREDS_SIZE];
-        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf, |_| ());
-
-        mgr.connect_once(network_id).await
     }
 
     async fn run_timeout_checks(&self) -> Result<(), Error> {
@@ -851,7 +589,7 @@ where
         let mut notify_change =
             |endpt_id, clust_id| self.notify_cluster_changed(endpt_id, clust_id);
 
-        let removed_fabric = self.matter.with_state(|state| {
+        let expiry = self.matter.with_state(|state| {
             let expire_sess_id = exch_id.and_then(|exch_id| {
                 state
                     .sessions
@@ -860,10 +598,9 @@ where
             });
 
             // Disarm the failsafe on timeout
-            let removed_fabric = state.failsafe.check_failsafe_timeout(
+            let expiry = state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
                 &mut state.sessions,
-                &self.state.networks,
                 &self.kv,
                 expire_sess_id,
                 &mut notify_mdns,
@@ -875,13 +612,13 @@ where
                 .pase
                 .check_comm_window_timeout(&mut notify_mdns, &mut notify_change)?;
 
-            Ok::<_, Error>(removed_fabric)
+            Ok::<_, Error>(expiry)
         })?;
 
-        // Outside `with_state`, since the broadcast runs the handlers inline
+        // Outside `with_state`, since the broadcasts run the handlers inline
         // and they are free to access the Matter state themselves
-        if let Some(fab_idx) = removed_fabric {
-            self.notify_fabric_removed(fab_idx);
+        if let Some(expiry) = expiry {
+            expiry.notify(self);
         }
 
         Ok(())
@@ -1864,14 +1601,13 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> ExchangeHandler
-    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+impl<C, B, T, K, R, const NS: usize, const NE: usize> ExchangeHandler
+    for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
     R: ReportDataHandler,
 {
     async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
@@ -1879,14 +1615,12 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize>
-    InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+impl<C, B, T, K, R, const NS: usize, const NE: usize> InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
 {
     /// The node's resource-utilisation metrics, for the `GeneralDiagnostics`
     /// cluster's `DeviceLoadStatus` attribute.
@@ -1912,14 +1646,13 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> ImStats
-    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+impl<C, B, T, K, R, const NS: usize, const NE: usize> ImStats
+    for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
 {
     fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
         self.load_stats(fab_idx)
@@ -1940,14 +1673,13 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> HandlerContext
-    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+impl<C, B, T, K, R, const NS: usize, const NE: usize> HandlerContext
+    for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
 {
     fn matter(&self) -> &Matter<'_> {
         self.matter
@@ -1959,10 +1691,6 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         &self.kv
-    }
-
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        &self.state.networks
     }
 
     fn metadata(&self) -> impl Metadata + '_ {
@@ -1997,14 +1725,13 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> AttrChangeNotifier
-    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+impl<C, B, T, K, R, const NS: usize, const NE: usize> AttrChangeNotifier
+    for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
 {
     fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.handler.bump_dataver(MatchContextInstance::new(
@@ -2040,14 +1767,13 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> EventEmitter
-    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+impl<C, B, T, K, R, const NS: usize, const NE: usize> EventEmitter
+    for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    N: Networks,
 {
     fn emit_event<F>(
         &self,

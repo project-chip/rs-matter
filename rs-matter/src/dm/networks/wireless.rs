@@ -26,7 +26,7 @@ use crate::dm::clusters::net_comm::{
 use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
-use crate::persist::{KvBlobStore, NETWORKS_KEY};
+use crate::persist::KvBlobStore;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
@@ -147,15 +147,17 @@ where
     ///
     /// # Arguments
     /// - `store`: the BLOB store to remove the networks from
+    /// - `key`: the key the networks are persisted under
     /// - `buf`: a temporary buffer to use for removing the networks
     pub async fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut kv: S,
+        key: u16,
         buf: &mut [u8],
     ) -> Result<(), Error> {
         self.reset();
 
-        kv.remove(NETWORKS_KEY, buf)?;
+        kv.remove(key, buf)?;
 
         info!("Removed all wireless networks from storage");
 
@@ -166,15 +168,17 @@ where
     ///
     /// # Arguments
     /// - `store`: the BLOB store to load the networks from
+    /// - `key`: the key the networks are persisted under
     /// - `buf`: a temporary buffer to use for loading the networks
     pub async fn load_persist<S: KvBlobStore>(
         &mut self,
         mut kv: S,
+        key: u16,
         buf: &mut [u8],
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(data) = kv.load(NETWORKS_KEY, buf)? {
+        if let Some(data) = kv.load(key, buf)? {
             self.load(data)?;
 
             info!(
@@ -1090,9 +1094,7 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::dm::clusters::net_comm::{
-        NetworksAccess, NetworksError, SharedNetworks, WirelessCreds,
-    };
+    use crate::dm::clusters::net_comm::{NetworksError, SharedNetworks, WirelessCreds};
 
     use super::wifi::{Wifi, WifiNetworks};
     use super::WirelessNetwork;

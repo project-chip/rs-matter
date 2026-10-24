@@ -54,6 +54,7 @@ use rs_matter::dm::clusters::decl::switch::{
     self, ClusterHandler as _, Feature as SwitchFeature, InitialPress, ShortRelease,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
 use rs_matter::dm::endpoints;
@@ -61,7 +62,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EventEmitter, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
@@ -106,7 +107,10 @@ fn main() -> Result<(), Error> {
     // press events), so - unlike the examples that use `NoEvents` - the default
     // state carries a real (non-zero) event queue that holds them until
     // subscribers read them.
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
+
+    // The networks store of the Ethernet interface.
+    let networks = SharedNetworks::new(EthNetwork::new_default());
 
     // The Binding registry (the switch's address book), loaded from persistence.
     let bindings = Bindings::<MAX_BINDINGS>::new();
@@ -124,7 +128,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &bindings),
+        data_model(&networks, rand, &bindings),
         &kv,
         &state,
     );
@@ -401,12 +405,13 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
 /// on the switch endpoint.
 fn data_model<'a, const N: usize>(
+    networks: &'a SharedNetworks<EthNetwork<'static>>,
     mut rand: impl Rng + Copy,
     bindings: &'a Bindings<N>,
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
+        endpoints::EthSysHandlerBuilder::new(networks)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

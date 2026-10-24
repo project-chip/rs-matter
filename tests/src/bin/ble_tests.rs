@@ -31,7 +31,7 @@
 //!   [`OtbrCtl`] against an `otbr-agent` living on the same D-Bus bus as the
 //!   (mock) BlueZ. The commissioner's `ConnectNetwork` arrives over BTP and is
 //!   *deferred* per the non-concurrent contract ([`DeferredNetCtl`]); once BTP
-//!   is torn down the driver replays it via [`InteractionModel::connect_once`],
+//!   is torn down the driver replays it via [`WirelessMgr::connect_once`],
 //!   genuinely attaching to the provisioned PAN before coming up operationally.
 //!
 //! The Bluetooth adapter is real as far as `rs-matter` is concerned, but it can
@@ -69,7 +69,7 @@ use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnO
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, WirelessCreds,
+    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
 };
 use rs_matter::dm::clusters::thread_diag::ThreadDiag;
 use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
@@ -77,12 +77,12 @@ use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TES
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::wireless::{
-    NetCtlState, NetCtlWithStatusImpl, ThreadNetworks, WifiNetworks,
+    NetCtlState, NetCtlWithStatusImpl, ThreadNetworks, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
 };
 use rs_matter::dm::networks::{NetChangeNotif, SysNetifs};
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
@@ -118,9 +118,10 @@ const MAX_NETWORKS: usize = 3;
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static STATE: StaticCell<WirelessInteractionModelState<WifiNetworks<MAX_NETWORKS>>> =
-    StaticCell::new();
-static THREAD_STATE: StaticCell<WirelessInteractionModelState<ThreadNetworks<MAX_NETWORKS>>> =
+static STATE: StaticCell<InteractionModelState> = StaticCell::new();
+static NETWORKS: StaticCell<SharedNetworks<WifiNetworks<MAX_NETWORKS>>> = StaticCell::new();
+static THREAD_STATE: StaticCell<InteractionModelState> = StaticCell::new();
+static THREAD_NETWORKS: StaticCell<SharedNetworks<ThreadNetworks<MAX_NETWORKS>>> =
     StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -170,9 +171,8 @@ fn run_wifi(connection: Connection, adapter: Option<String>) -> Result<(), Error
     // Unlike `wireless_tests`, nothing is seeded here: the commissioner is
     // expected to provision the network itself over BTP, which is the whole
     // point of this driver.
-    let state = STATE.init(WirelessInteractionModelState::new(WifiNetworks::<
-        MAX_NETWORKS,
-    >::new()));
+    let state = STATE.init(InteractionModelState::new());
+    let networks = NETWORKS.init(SharedNetworks::new(WifiNetworks::<MAX_NETWORKS>::new()));
 
     let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
@@ -187,13 +187,12 @@ fn run_wifi(connection: Connection, adapter: Option<String>) -> Result<(), Error
     let net_ctl_state = NetCtlState::new_with_mutex();
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, MockNetCtl::new(NetworkType::Wifi));
 
-    let im = InteractionModel::new_with_net_ctl(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        data_model(rand, &on_off, &net_ctl, &net_ctl),
+        data_model(rand, &on_off, networks, &net_ctl, &net_ctl),
         &kv,
-        &net_ctl,
         state,
     );
 
@@ -308,9 +307,8 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
     // Unlike `thread_tests`, there is no startup attach and no seeded network:
     // the commissioner provisions the (real) PAN itself over BTP, which is the
     // whole point of this flavour.
-    let state = THREAD_STATE.init(WirelessInteractionModelState::new(ThreadNetworks::<
-        MAX_NETWORKS,
-    >::new()));
+    let state = THREAD_STATE.init(InteractionModelState::new());
+    let networks = THREAD_NETWORKS.init(SharedNetworks::new(ThreadNetworks::<MAX_NETWORKS>::new()));
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
@@ -338,13 +336,12 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
     let deferred_ctl = DeferredNetCtl::new(&otbr_ctl);
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, &deferred_ctl);
 
-    let im = InteractionModel::new_with_net_ctl(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        data_model_thread(rand, &on_off, &otbr_ctl, &net_ctl),
+        data_model_thread(rand, &on_off, networks, &otbr_ctl, &net_ctl),
         &kv,
-        &net_ctl,
         state,
     );
 
@@ -407,7 +404,11 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
                 .ok_or_else(|| Error::from(ErrorCode::InvalidState))
         })?;
 
-        futures_lite::future::block_on(im.connect_once(&network_id))?;
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+
+        futures_lite::future::block_on(
+            WirelessMgr::new(networks, &net_ctl, &mut buf, |_| ()).connect_once(&network_id),
+        )?;
     } else {
         // Operational restart: no BTP phase; the connection manager re-attaches
         // by itself, so all the controller needs is to be live.
@@ -446,7 +447,7 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
 /// over the BLE link, which on a radio-constrained device could not survive
 /// the operational network coming up. The driver later flips the wrapper
 /// [`live`](Self::set_live) once BTP is torn down and replays the attach via
-/// [`InteractionModel::connect_once`], off the credentials the commissioner
+/// [`WirelessMgr::connect_once`], off the credentials the commissioner
 /// stored; from that point every `connect` (including the connection
 /// manager's reconnects) goes straight through.
 struct DeferredNetCtl<'a> {
@@ -566,15 +567,16 @@ const NODE_THREAD: Node<'static> = Node {
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    networks: &'a SharedNetworks<WifiNetworks<MAX_NETWORKS>>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a
 where
-    T: NetCtl + NetCtlStatus + 'a,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif + 'a,
 {
     (
         NODE,
-        endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
+        endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
@@ -595,15 +597,16 @@ where
 fn data_model_thread<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    networks: &'a SharedNetworks<ThreadNetworks<MAX_NETWORKS>>,
     thread_diag: &'a dyn ThreadDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a
 where
-    T: NetCtl + NetCtlStatus + 'a,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif + 'a,
 {
     (
         NODE_THREAD,
-        endpoints::ThreadSysHandlerBuilder::new(net_ctl, thread_diag)
+        endpoints::ThreadSysHandlerBuilder::new(networks, net_ctl, thread_diag)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
