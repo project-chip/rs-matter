@@ -195,11 +195,21 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
             Ok(Refresh::NoTime) => (true, false),
             Ok(Refresh::NoSource) | Err(_) => (true, true),
         };
+        // A missing diagnostic event must not fail the refresh.
         if no_source && hourly(&self.missing_source_at) {
-            MissingTrustedTimeSource::emit_for(notify, ROOT_ENDPOINT_ID, |event| event.end())?;
+            let emitted =
+                MissingTrustedTimeSource::emit_for(notify, ROOT_ENDPOINT_ID, |event| event.end());
+            if let Err(e) = emitted {
+                warn!(
+                    "TimeSync client: failed to emit MissingTrustedTimeSource: {}",
+                    e
+                );
+            }
         }
         if failed && hourly(&self.time_failure_at) {
-            TimeFailure::emit_for(notify, ROOT_ENDPOINT_ID, |event| event.end())?;
+            if let Err(e) = TimeFailure::emit_for(notify, ROOT_ENDPOINT_ID, |event| event.end()) {
+                warn!("TimeSync client: failed to emit TimeFailure: {}", e);
+            }
         }
 
         refreshed

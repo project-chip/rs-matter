@@ -488,6 +488,30 @@ where
         removed
     }
 
+    /// Set the status of the `fab_idx` connections - all, or the one with
+    /// `connection_id`; the ones it changed.
+    fn set_status(
+        &self,
+        fab_idx: FabricIndex,
+        connection_id: Option<u16>,
+        status: TransportStatusEnum,
+    ) -> Vec<u16, NC> {
+        self.state.lock(|cell| {
+            let mut changed = Vec::new();
+
+            for c in cell.borrow_mut().connections.iter_mut().filter(|c| {
+                c.fabric_index == fab_idx
+                    && connection_id.is_none_or(|id| id == c.connection_id)
+                    && c.status != status
+            }) {
+                c.status = status;
+                let _ = changed.push(c.connection_id);
+            }
+
+            changed
+        })
+    }
+
     /// Call [`PushAvStreamHooks::on_deallocate`] for the connections dropped
     /// on fabric removal.
     async fn deallocate_removed_connections(&self) {
@@ -793,23 +817,7 @@ where
 
         self.hooks.on_set_status(connection_id, status).await?;
 
-        let changed = self.state.lock(|cell| {
-            let mut state = cell.borrow_mut();
-            let mut changed: Vec<u16, NC> = Vec::new();
-            for c in state.connections.iter_mut() {
-                if c.fabric_index != fab_idx {
-                    continue;
-                }
-                match connection_id {
-                    Some(id) if c.connection_id != id => continue,
-                    _ => {}
-                }
-                c.status = status;
-                let _ = changed.push(c.connection_id);
-            }
-
-            changed
-        });
+        let changed = self.set_status(fab_idx, connection_id, status);
         ctx.notify_own_attr_changed(AttributeId::CurrentConnections as _);
 
         // Made inactive, their pushes end.
@@ -1019,6 +1027,39 @@ mod tests {
         let mut deallocated = handler.hooks.deallocated.borrow().clone();
         deallocated.sort_unstable();
         assert_eq!(deallocated.as_slice(), [1, 3]);
+    }
+
+    #[test]
+    fn only_status_changes_are_reported() {
+        let handler = PushAvStreamHandler::<_, 4>::new(
+            Dataver::new(1),
+            1,
+            PushAvStreamConfig {
+                supported_formats: &[],
+            },
+            RecordingHooks {
+                deallocated: RefCell::new(Vec::new()),
+            },
+        );
+
+        handler.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            for c in [connection(1, 1), connection(2, 2), connection(3, 1)] {
+                unwrap!(state.connections.push(c));
+            }
+        });
+
+        let inactive = TransportStatusEnum::Inactive;
+        assert_eq!(handler.set_status(1, Some(3), inactive).as_slice(), [3]);
+        // Already inactive: not again.
+        assert_eq!(handler.set_status(1, None, inactive).as_slice(), [1]);
+        assert!(handler.set_status(1, None, inactive).is_empty());
+        assert_eq!(
+            handler
+                .set_status(1, Some(1), TransportStatusEnum::Active)
+                .as_slice(),
+            [1]
+        );
     }
 
     #[test]
