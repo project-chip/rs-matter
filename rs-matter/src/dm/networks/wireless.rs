@@ -108,6 +108,7 @@ pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
 pub struct WirelessNetworks<const N: usize, T> {
     networks: crate::utils::storage::Vec<T, N>,
     managed: bool,
+    enabled: bool,
 }
 
 impl<const N: usize, T> Default for WirelessNetworks<N, T>
@@ -127,6 +128,7 @@ where
         Self {
             networks: crate::utils::storage::Vec::new(),
             managed: false,
+            enabled: true,
         }
     }
 
@@ -134,6 +136,7 @@ where
         init!(Self {
             networks <- crate::utils::storage::Vec::init(),
             managed: false,
+            enabled: true,
         })
     }
 
@@ -141,6 +144,7 @@ where
     pub fn reset(&mut self) {
         self.networks.clear();
         self.managed = false;
+        self.enabled = true;
     }
 
     /// Remove all networks from the provided BLOB store and from memory
@@ -199,7 +203,8 @@ where
 
         self.networks.clear();
 
-        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool }
+        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool, ctx(2): enabled bool }
+        // (`enabled` defaulting to true when absent)
         // Fall back to old format: bare TLV array (with managed defaulting to false)
         if let Ok(structure) = root.structure() {
             for network in structure.ctx(0)?.array()?.iter() {
@@ -211,6 +216,12 @@ where
             }
 
             self.managed = structure.ctx(1)?.bool()?;
+            self.enabled = structure
+                .find_ctx(2)?
+                .non_empty()
+                .map(|enabled| enabled.bool())
+                .transpose()?
+                .unwrap_or(true);
         } else {
             for network in root.array()?.iter() {
                 let network = network?;
@@ -221,6 +232,7 @@ where
             }
 
             self.managed = false;
+            self.enabled = true;
         }
 
         Ok(())
@@ -239,6 +251,7 @@ where
 
         self.networks.to_tlv(&TLVTag::Context(0), &mut wb)?;
         self.managed.to_tlv(&TLVTag::Context(1), &mut wb)?;
+        self.enabled.to_tlv(&TLVTag::Context(2), &mut wb)?;
 
         wb.end_container()?;
 
@@ -477,6 +490,14 @@ where
     pub fn set_managed(&mut self, managed: bool) {
         self.managed = managed;
     }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
 }
 
 impl<const N: usize, T> Networks for WirelessNetworks<N, T>
@@ -508,10 +529,12 @@ where
     }
 
     fn enabled(&self) -> Result<bool, Error> {
-        Ok(true)
+        Ok(WirelessNetworks::enabled(self))
     }
 
-    fn set_enabled(&mut self, _enabled: bool) -> Result<(), Error> {
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        WirelessNetworks::set_enabled(self, enabled);
+
         Ok(())
     }
 
@@ -616,6 +639,10 @@ impl NoopWirelessNetCtl {
 impl net_comm::NetCtl for NoopWirelessNetCtl {
     fn net_type(&self) -> NetworkType {
         self.0
+    }
+
+    fn set_enabled(&self, _enabled: bool) -> Result<(), Error> {
+        Ok(())
     }
 
     async fn scan<F>(&self, _network: Option<&[u8]>, _f: F) -> Result<(), NetCtlError>
@@ -824,6 +851,10 @@ where
 
     fn thread_version(&self) -> u16 {
         self.net_ctl.thread_version()
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
+        self.net_ctl.set_enabled(enabled)
     }
 
     async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
@@ -1383,6 +1414,54 @@ mod tests {
         nets.reset();
         assert!(collect_ssids(&nets).is_empty());
         assert!(!nets.managed());
+    }
+
+    // ── WirelessNetworks: enabled state ──
+
+    #[test]
+    fn enabled_default_true() {
+        let nets = WifiNetworks::<4>::new();
+        assert!(nets.enabled());
+    }
+
+    #[test]
+    fn enabled_store_load_round_trip() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.set_enabled(false);
+
+        let mut buf = [0u8; 512];
+        let len = nets.store(&mut buf).unwrap();
+
+        let mut loaded = WifiNetworks::<4>::new();
+        loaded.load(&buf[..len]).unwrap();
+        assert!(!loaded.enabled());
+
+        loaded.reset();
+        assert!(loaded.enabled());
+    }
+
+    #[test]
+    fn load_format_without_enabled() {
+        use crate::tlv::{TLVTag, TLVWrite};
+        use crate::utils::storage::WriteBuf;
+
+        // The struct format before the `enabled` field was added
+        let mut buf = [0u8; 512];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.start_array(&TLVTag::Context(0)).unwrap();
+        wb.end_container().unwrap();
+        wb.bool(&TLVTag::Context(1), true).unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        let mut nets = WifiNetworks::<4>::new();
+        nets.set_enabled(false);
+        nets.load(&buf[..len]).unwrap();
+
+        assert!(nets.managed());
+        assert!(nets.enabled());
     }
 
     // ── NetworksCell: delegates to inner WifiNetworks correctly ──

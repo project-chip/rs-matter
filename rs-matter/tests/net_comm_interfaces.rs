@@ -20,15 +20,20 @@
 //! Commissioning instance owns its networks store and loads, reverts and
 //! persists it under its own KV key.
 
+use std::sync::Mutex;
+
 use rand_core::Rng;
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::net_comm::{
-    self, NetCommHandler, NetworkType, Networks, WirelessCreds,
+    self, NetCommHandler, NetCtl, NetCtlError, NetCtlStatus, NetworkCommissioningStatusEnum,
+    NetworkScanInfo, NetworkType, Networks, WirelessCreds,
 };
+use rs_matter::dm::clusters::wifi_diag::WirelessDiag;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ROOT_NODE, DEV_TYPE_SECONDARY_NETWORK_INTERFACE};
 use rs_matter::dm::networks::wireless::{NoopWirelessNetCtl, ThreadNetworks, WifiNetworks};
+use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
     AsyncHandler, ChainedHandler, DataModel, Dataver, EmptyHandler, Endpoint, HandlerContext,
     LifecycleOp, Node,
@@ -38,6 +43,7 @@ use rs_matter::im::InteractionModel;
 use rs_matter::im::InteractionModelState;
 use rs_matter::persist::{NETWORKS_KEY, VENDOR_KEYS_START};
 use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::utils::sync::DynBase;
 use rs_matter::{Matter, MATTER_PORT};
 
 use crate::common::{init_env_logger, MemKvBlobStore};
@@ -71,6 +77,7 @@ fn network_interfaces_own_their_stores() -> Result<(), Error> {
     let buffers: MatterBuffers = MatterBuffers::new();
     let state = InteractionModelState::<3, 0>::new();
     let kv = matter.kv(MemKvBlobStore::default());
+    let wifi_ctl = EnabledRecorder::new();
 
     // What the node committed earlier, each interface under its own key
     let mut wifi = WifiNetworks::<2>::new();
@@ -94,7 +101,7 @@ fn network_interfaces_own_their_stores() -> Result<(), Error> {
     let mut thread = ThreadNetworks::<2>::new();
 
     {
-        let dm = data_model(&mut rand, &mut wifi, &mut thread);
+        let dm = data_model(&mut rand, &mut wifi, &wifi_ctl, &mut thread);
         let im = InteractionModel::new(&matter, &crypto, &buffers, &dm, &kv, &state);
 
         futures_lite::future::block_on(im.startup())?;
@@ -116,6 +123,7 @@ fn network_interfaces_own_their_stores() -> Result<(), Error> {
         &state,
         &mut rand,
         &mut wifi,
+        &wifi_ctl,
         &mut thread,
         LifecycleOp::FailSafeExpiry,
     )?;
@@ -136,6 +144,7 @@ fn network_interfaces_own_their_stores() -> Result<(), Error> {
         &state,
         &mut rand,
         &mut wifi,
+        &wifi_ctl,
         &mut thread,
         LifecycleOp::FailSafeCommit,
     )?;
@@ -158,10 +167,87 @@ fn network_interfaces_own_their_stores() -> Result<(), Error> {
     Ok(())
 }
 
+#[test]
+fn interface_enabled_follows_the_fail_safe() -> Result<(), Error> {
+    init_env_logger();
+
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let crypto = test_only_crypto();
+    let mut rand = crypto.rand()?;
+    let buffers: MatterBuffers = MatterBuffers::new();
+    let state = InteractionModelState::<3, 0>::new();
+    let kv = matter.kv(MemKvBlobStore::default());
+    let wifi_ctl = EnabledRecorder::new();
+
+    // An administrator disabled the Wi-Fi interface earlier
+    let mut wifi = WifiNetworks::<2>::new();
+    add_wifi(&mut wifi, b"Home")?;
+    wifi.set_managed(true);
+    wifi.set_enabled(false);
+    net_comm::store_networks(&mut wifi, NETWORKS_KEY, &kv)?;
+
+    // On (re)boot, the controller learns that the interface stays down
+    let mut wifi = WifiNetworks::<2>::new();
+    let mut thread = ThreadNetworks::<2>::new();
+
+    let mut run = |wifi: &mut WifiNetworks<2>, op| {
+        lifecycle(
+            &matter,
+            &crypto,
+            &buffers,
+            &kv,
+            &state,
+            &mut rand,
+            wifi,
+            &wifi_ctl,
+            &mut thread,
+            op,
+        )
+    };
+
+    run(&mut wifi, LifecycleOp::Startup)?;
+
+    assert!(!wifi.enabled());
+    assert_eq!(wifi_ctl.take(), [false]);
+
+    // `ConnectNetwork` under the fail-safe re-enabled it, and the expiry reverts that
+    wifi.set_managed(false);
+    wifi.set_enabled(true);
+
+    run(&mut wifi, LifecycleOp::FailSafeExpiry)?;
+
+    assert!(!wifi.enabled());
+    assert_eq!(wifi_ctl.take(), [false]);
+
+    // ... while the commit persists it
+    wifi.set_managed(false);
+    wifi.set_enabled(true);
+
+    run(&mut wifi, LifecycleOp::FailSafeCommit)?;
+
+    assert!(wifi_ctl.take().is_empty());
+
+    let mut committed_wifi = WifiNetworks::<2>::new();
+    net_comm::load_networks(&mut committed_wifi, NETWORKS_KEY, &kv)?;
+    assert!(committed_wifi.enabled());
+
+    // A factory reset enables a disabled interface
+    wifi.set_enabled(false);
+    net_comm::store_networks(&mut wifi, NETWORKS_KEY, &kv)?;
+
+    run(&mut wifi, LifecycleOp::FactoryReset)?;
+
+    assert!(wifi.enabled());
+    assert_eq!(wifi_ctl.take(), [true]);
+
+    Ok(())
+}
+
 /// The data model of the node: one Network Commissioning instance per interface.
 fn data_model<'a>(
     rand: &mut impl Rng,
     wifi: &'a mut WifiNetworks<2>,
+    wifi_ctl: &'a EnabledRecorder,
     thread: &'a mut ThreadNetworks<2>,
 ) -> impl DataModel + 'a {
     let handler = ChainedHandler::new(
@@ -171,7 +257,7 @@ fn data_model<'a>(
             0,
             wifi,
             NETWORKS_KEY,
-            NoopWirelessNetCtl::new(NetworkType::Wifi),
+            wifi_ctl,
             &(),
         )
         .adapt(),
@@ -203,10 +289,11 @@ fn lifecycle(
     state: &InteractionModelState<3, 0>,
     rand: &mut impl Rng,
     wifi: &mut WifiNetworks<2>,
+    wifi_ctl: &EnabledRecorder,
     thread: &mut ThreadNetworks<2>,
     op: LifecycleOp,
 ) -> Result<(), Error> {
-    let dm = data_model(rand, wifi, thread);
+    let dm = data_model(rand, wifi, wifi_ctl, thread);
     let im = InteractionModel::new(matter, crypto, buffers, &dm, kv, state);
 
     let result = im.handler().lifecycle(&im, op);
@@ -238,3 +325,72 @@ fn network_ids(networks: &impl Networks) -> Result<Vec<Vec<u8>>, Error> {
 
     Ok(ids)
 }
+
+/// A Wi-Fi controller recording what it is told about `InterfaceEnabled`.
+struct EnabledRecorder {
+    net_ctl: NoopWirelessNetCtl,
+    enabled: Mutex<Vec<bool>>,
+}
+
+impl EnabledRecorder {
+    fn new() -> Self {
+        Self {
+            net_ctl: NoopWirelessNetCtl::new(NetworkType::Wifi),
+            enabled: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn take(&self) -> Vec<bool> {
+        core::mem::take(&mut *self.enabled.lock().unwrap())
+    }
+}
+
+impl NetCtl for EnabledRecorder {
+    fn net_type(&self) -> NetworkType {
+        self.net_ctl.net_type()
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
+        self.enabled.lock().unwrap().push(enabled);
+
+        Ok(())
+    }
+
+    async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
+    where
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+    {
+        self.net_ctl.scan(network, f).await
+    }
+
+    async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
+        self.net_ctl.connect(creds).await
+    }
+}
+
+impl NetCtlStatus for EnabledRecorder {
+    fn last_networking_status(&self) -> Result<Option<NetworkCommissioningStatusEnum>, Error> {
+        self.net_ctl.last_networking_status()
+    }
+
+    fn last_network_id<F, R>(&self, f: F) -> Result<R, Error>
+    where
+        F: FnOnce(Option<&[u8]>) -> Result<R, Error>,
+    {
+        self.net_ctl.last_network_id(f)
+    }
+
+    fn last_connect_error_value(&self) -> Result<Option<i32>, Error> {
+        self.net_ctl.last_connect_error_value()
+    }
+}
+
+impl NetChangeNotif for EnabledRecorder {
+    async fn wait_changed(&self) {
+        self.net_ctl.wait_changed().await
+    }
+}
+
+impl DynBase for EnabledRecorder {}
+
+impl WirelessDiag for EnabledRecorder {}

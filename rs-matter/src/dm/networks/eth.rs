@@ -82,8 +82,12 @@ impl net_comm::Networks for EthNetwork<'_> {
         Ok(true)
     }
 
-    fn set_enabled(&mut self, _enabled: bool) -> Result<(), Error> {
-        Ok(())
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        if enabled {
+            Ok(())
+        } else {
+            Err(ErrorCode::InvalidAction.into())
+        }
     }
 
     fn add_or_update(&mut self, _creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {

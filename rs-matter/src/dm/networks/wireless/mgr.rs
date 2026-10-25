@@ -89,7 +89,8 @@ where
             // currently staged under an armed fail-safe - in both cases the
             // commissioner drives connectivity explicitly via
             // `ConnectNetwork`, and the manager must not race it.
-            Self::wait_while_not_managed(self.networks).await?;
+            // Also stay hands-off while the interface is disabled.
+            Self::wait_while_inactive(self.networks).await?;
 
             // The store became managed (commit or revert), so start trying to
             // connect to the networks. Do it while the networks don't change.
@@ -129,7 +130,7 @@ where
         // (fail-safe-gated) network mutation - `AddOrUpdate*` / `Remove` /
         // `Reorder` / `ConnectNetwork` - flips the store to unmanaged, so
         // for the remainder of such a window [`WirelessMgr::run`] holds the
-        // manager in `wait_while_not_managed` instead of here.
+        // manager in `wait_while_inactive` instead of here.
         if Self::connected_network_stored(networks, net_ctl)? {
             on_connection(true);
             Self::wait_while_connected_status(net_ctl, true).await?;
@@ -258,10 +259,11 @@ where
         }
     }
 
-    async fn wait_while_not_managed(networks: &NetworksCell<N>) -> Result<(), Error> {
+    async fn wait_while_inactive(networks: &NetworksCell<N>) -> Result<(), Error> {
         loop {
-            let managed = networks.access(|networks| networks.managed())?;
-            if managed {
+            let active = networks
+                .access(|networks| Ok::<_, Error>(networks.managed()? && networks.enabled()?))?;
+            if active {
                 break Ok(());
             }
 
@@ -697,11 +699,11 @@ mod tests {
     // ── commissioned tests ──
 
     #[test]
-    fn wait_while_not_managed_returns_when_managed() {
+    fn wait_while_inactive_returns_when_managed() {
         let networks = make_networks(&[], true);
 
         embassy_futures::block_on(async {
-            let result = TestMgr::wait_while_not_managed(&networks).await;
+            let result = TestMgr::wait_while_inactive(&networks).await;
             assert!(result.is_ok());
         });
     }

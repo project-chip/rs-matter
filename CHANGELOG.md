@@ -6,10 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* New: a node can have several network interfaces: one `NetCommHandler` each, owning its networks store (by value or `&mut`) under its own KV key and running its connection manager; `DEV_TYPE_SECONDARY_NETWORK_INTERFACE`
+* New: a node can have several network interfaces: one `NetCommHandler` each, owning its networks store (by value or `&mut`) under its own KV key and running its connection manager; `DEV_TYPE_SECONDARY_NETWORK_INTERFACE` (#615)
   * Breaking: `NetCommHandler::new` and the Wi-Fi/Thread root endpoint builders take the networks store; `InteractionModelState` and `InteractionModel` lose it, the network controller and `connect_once` (now `wireless::connect_once`)
   * Breaking: `SharedNetworks`, `NetworksAccess`, `HandlerContext::networks` and the `Eth`/`Wireless` IM aliases are gone; `LifecycleOp` gains `FailSafeCommit` and `FailSafeExpiry`
   * Breaking: `Matter::suspend_commissioning` / `resume_commissioning` take the networks store and its key
+* New: `InterfaceEnabled` is persisted with the Wi-Fi/Thread networks and passed to the new `NetCtl::set_enabled`, which refuses `false` by default; `ConnectNetwork` re-enables the interface, and a disabled interface isn't connected (#615)
 * Fix: emit the mandatory `BootReason`, `TimeFailure`, OTA Requestor (`StateTransition`, `DownloadError`, `VersionApplied`), Zone Management and Push AV Stream Transport events; Wi-Fi/Thread `ConnectionStatus` too, and `InteractionModel::emit_shut_down` (#614)
   * Breaking: `OtaState::initiate_update` and `TimeSyncClient` take an `AttrChangeNotifier + EventEmitter`
 * Fix: the IM client always sends a write request's `TimedRequest` field, which the spec makes mandatory and CHIP devices require (#613)

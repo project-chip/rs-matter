@@ -752,6 +752,21 @@ pub trait NetCtl {
         4
     }
 
+    /// Enable or disable the network interface (the `InterfaceEnabled` attribute)
+    ///
+    /// `true` asks the owner of the radio to bring the interface up now, if it is not up yet.
+    /// `false` tells it that the interface is no longer used, so it may bring the radio down.
+    ///
+    /// Default implementation accepts `true` and refuses `false` with `ErrorCode::InvalidAction`,
+    /// i.e. the interface cannot be disabled.
+    fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
+        if enabled {
+            Ok(())
+        } else {
+            Err(ErrorCode::InvalidAction.into())
+        }
+    }
+
     /// Scan for networks and call the provided function for each network found
     ///
     /// For `NetworkType::Ethernet` this method should always fail with an error.
@@ -794,6 +809,10 @@ where
 
     fn thread_version(&self) -> u16 {
         (*self).thread_version()
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
+        (*self).set_enabled(enabled)
     }
 
     fn scan<F>(&self, network: Option<&[u8]>, f: F) -> impl Future<Output = Result<(), NetCtlError>>
@@ -1097,6 +1116,24 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
         })
     }
 
+    /// Tell the controller whether the interface is enabled, as recorded in the store.
+    fn apply_enabled(&self) -> Result<(), Error>
+    where
+        N: Networks,
+        T: NetCtl,
+    {
+        let enabled = self.networks.access(|networks| networks.enabled())?;
+
+        if let Err(e) = self.net_ctl.set_enabled(enabled) {
+            warn!(
+                "Failed to set the interface enabled to {}: {:?}",
+                enabled, e
+            );
+        }
+
+        Ok(())
+    }
+
     /// Emit the `ConnectionStatus` event of the Wi-Fi or Thread Network
     /// Diagnostics cluster as the interface connected or lost its network, if
     /// the endpoint of this instance serves that cluster.
@@ -1170,12 +1207,18 @@ where
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            LifecycleOp::Startup => self
-                .networks
-                .access(|networks| load_networks(networks, self.networks_key, ctx.kv())),
-            LifecycleOp::FactoryReset => self
-                .networks
-                .access(|networks| remove_networks(networks, self.networks_key, ctx.kv())),
+            LifecycleOp::Startup => {
+                self.networks
+                    .access(|networks| load_networks(networks, self.networks_key, ctx.kv()))?;
+
+                self.apply_enabled()
+            }
+            LifecycleOp::FactoryReset => {
+                self.networks
+                    .access(|networks| remove_networks(networks, self.networks_key, ctx.kv()))?;
+
+                self.apply_enabled()
+            }
             LifecycleOp::FailSafeCommit => self.networks.access(|networks| {
                 networks.set_managed(true)?;
 
@@ -1184,6 +1227,8 @@ where
             LifecycleOp::FailSafeExpiry => {
                 self.networks
                     .access(|networks| load_networks(networks, self.networks_key, ctx.kv()))?;
+
+                self.apply_enabled()?;
 
                 ctx.notify_cluster_changed(self.endpoint_id, FULL_CLUSTER.id);
 
@@ -1414,15 +1459,18 @@ where
         ctx: impl WriteContext,
         value: bool,
     ) -> Result<(), Error> {
+        // Refused here if the interface cannot be disabled
+        self.net_ctl.set_enabled(value)?;
+
         let mut persist = Persist::new(ctx.kv());
 
         ctx.exchange().with_state(|state| {
             self.networks.access(|networks| {
                 networks.set_enabled(value)?;
 
-                // NOTE: Not sure this is a spec-compliant behavor:
-                // If the failsafe is armed for _any_ fabric, we'll NOT persist the network changes until commissioning is complete.
-                // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+                // Under an armed fail-safe the change is staged: `FailSafeCommit`
+                // persists it and `FailSafeExpiry` reverts it, which recovers an
+                // interface disabled by the administrator talking over it
                 if !state.failsafe.is_armed() {
                     persist.store(self.networks_key, |buf| networks.save(buf))?;
                 }
@@ -1664,12 +1712,17 @@ where
                             // the connect we are about to perform.
                             networks.set_managed(false)?;
 
+                            // Connecting re-enables a disabled interface
+                            networks.set_enabled(true)?;
+
                             Ok(index)
                         })
                     }),
                 )?;
 
                 if matches!(status, NetworkCommissioningStatusEnum::Success) {
+                    self.apply_enabled()?;
+
                     (status, err_code, _) = NetworkCommissioningStatusEnum::map_ctl(
                         self.net_ctl
                             .connect(&WirelessCreds::Thread {
@@ -1717,6 +1770,7 @@ where
                             // As for the Thread branch: `ConnectNetwork` is a
                             // staged, fail-safe-gated change.
                             networks.set_managed(false)?;
+                            networks.set_enabled(true)?;
 
                             Ok(index)
                         })
@@ -1724,6 +1778,8 @@ where
                 )?;
 
                 if matches!(status, NetworkCommissioningStatusEnum::Success) {
+                    self.apply_enabled()?;
+
                     (status, err_code, _) = NetworkCommissioningStatusEnum::map_ctl(
                         self.net_ctl
                             .connect(&WirelessCreds::Wifi {
