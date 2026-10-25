@@ -60,6 +60,9 @@ pub type OwnedWirelessNetworkId = Vec<u8, MAX_WIRELESS_NETWORK_ID_LEN>;
 ///
 /// The trait has only two implementations: `Wifi` and `Thread`.
 pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
+    /// The network type (Wifi or Thread)
+    const NET_TYPE: NetworkType;
+
     /// Return the network ID
     ///
     /// For Wifi networks, this is the SSID
@@ -203,10 +206,21 @@ where
 
         self.networks.clear();
 
-        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool, ctx(2): enabled bool }
-        // (`enabled` defaulting to true when absent)
+        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool, ctx(2): enabled bool,
+        // ctx(3): network type } (`enabled` defaulting to true and the network type to `T`'s when absent)
         // Fall back to old format: bare TLV array (with managed defaulting to false)
         if let Ok(structure) = root.structure() {
+            if let Some(net_type) = structure.find_ctx(3)?.non_empty() {
+                if net_type.u32()? != Self::stored_net_type() {
+                    // E.g. Thread networks read by a Wifi build: none of them is a network of `T`
+                    warn!("Ignoring stored networks of another network type");
+
+                    self.reset();
+
+                    return Ok(());
+                }
+            }
+
             for network in structure.ctx(0)?.array()?.iter() {
                 let network = network?;
 
@@ -252,6 +266,7 @@ where
         self.networks.to_tlv(&TLVTag::Context(0), &mut wb)?;
         self.managed.to_tlv(&TLVTag::Context(1), &mut wb)?;
         self.enabled.to_tlv(&TLVTag::Context(2), &mut wb)?;
+        Self::stored_net_type().to_tlv(&TLVTag::Context(3), &mut wb)?;
 
         wb.end_container()?;
 
@@ -497,6 +512,15 @@ where
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    /// The network type of `T` as stored: its Network Commissioning feature bit
+    fn stored_net_type() -> u32 {
+        match T::NET_TYPE {
+            NetworkType::Ethernet => net_comm::Feature::ETHERNET_NETWORK_INTERFACE.bits(),
+            NetworkType::Wifi => net_comm::Feature::WI_FI_NETWORK_INTERFACE.bits(),
+            NetworkType::Thread => net_comm::Feature::THREAD_NETWORK_INTERFACE.bits(),
+        }
     }
 }
 
@@ -1582,6 +1606,52 @@ mod tests {
             !nets.managed(),
             "Old format should default managed to false"
         );
+    }
+
+    #[test]
+    fn load_ignores_another_network_type() {
+        use super::thread::{Thread, ThreadNetworks};
+
+        // A Thread dataset with just the Extended PAN ID TLV
+        const DATASET: &[u8] = &[0x02, 0x08, 1, 2, 3, 4, 5, 6, 7, 8];
+
+        let mut buf = [0u8; 512];
+
+        let mut thread = ThreadNetworks::<4>::new();
+        thread
+            .add_or_update(
+                &DATASET[2..],
+                Thread::init_from(&WirelessCreds::Thread {
+                    dataset_tlv: DATASET,
+                }),
+                |_| Ok(()),
+            )
+            .unwrap();
+        thread.set_managed(true);
+        let len = thread.store(&mut buf).unwrap();
+
+        let mut wifi = WifiNetworks::<4>::new();
+        wifi.load(&buf[..len]).unwrap();
+        assert!(collect_ssids(&wifi).is_empty());
+        assert!(!wifi.managed());
+
+        let mut wifi = WifiNetworks::<4>::new();
+        wifi.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+        wifi.set_managed(true);
+        let len = wifi.store(&mut buf).unwrap();
+
+        let mut thread = ThreadNetworks::<4>::new();
+        thread.load(&buf[..len]).unwrap();
+        let mut count = 0;
+        thread
+            .networks(|_| {
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!thread.managed());
     }
 
     // ── Regression: save() must not trigger a change notification ──

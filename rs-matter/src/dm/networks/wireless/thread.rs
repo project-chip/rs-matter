@@ -19,7 +19,7 @@
 
 use core::fmt::{Debug, Display};
 
-use crate::dm::clusters::net_comm::WirelessCreds;
+use crate::dm::clusters::net_comm::{NetworkType, WirelessCreds};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetsOwned, ToTLV};
 use crate::utils::init::{init, Init, IntoFallibleInit};
@@ -73,6 +73,8 @@ impl Thread {
 }
 
 impl WirelessNetwork for Thread {
+    const NET_TYPE: NetworkType = NetworkType::Thread;
+
     fn id(&self) -> &[u8] {
         self.ext_pan_id()
     }
