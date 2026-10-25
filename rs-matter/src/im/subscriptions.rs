@@ -794,12 +794,14 @@ impl<const N: usize> Subscriptions<N> {
         // Force the slot-range assertion to be evaluated.
         let () = Self::SLOTS_FIT;
 
+        let mut result = Ok(());
+
         for slot in 0..N {
             let key = PERSISTENT_SUBSCRIPTIONS_START + slot as u16;
-            kv.remove(key, buf)?;
+            result = result.and(kv.remove(key, buf));
         }
 
-        Ok(())
+        result
     }
 }
 

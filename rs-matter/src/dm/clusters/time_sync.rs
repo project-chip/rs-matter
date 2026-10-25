@@ -212,9 +212,9 @@ impl Rtc {
     ) -> Result<(), Error> {
         self.reset();
 
-        store.remove(LKG_UTC_KEY, buf)?;
-        store.remove(TRUSTED_TIME_SOURCE_KEY, buf)?;
-        Ok(())
+        let result = store.remove(LKG_UTC_KEY, buf);
+
+        result.and(store.remove(TRUSTED_TIME_SOURCE_KEY, buf))
     }
 
     pub(crate) fn load_persist<S: KvBlobStore>(
@@ -437,7 +437,7 @@ impl Rtc {
 
             info!("TimeSync: UTC time changed by more than a day, persisting");
 
-            persist.store_tlv(LKG_UTC_KEY, utc_us.to_le_bytes())?;
+            persist.store_tlv(LKG_UTC_KEY, utc_us)?;
             self.utc_us_persisted = utc_us;
         }
 
@@ -2025,5 +2025,34 @@ impl core::fmt::Debug for TimeSyncHandler<'_> {
 impl defmt::Format for TimeSyncHandler<'_> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "TimeSyncHandler {{ dataver: {} }}", self.dataver.get());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::fabric::tests::{MemKv, MemKvBlobStore};
+
+    use super::*;
+
+    #[test]
+    fn persisted_utc_time_loads_back() {
+        let kv = MemKv::new(MemKvBlobStore::default());
+        let utc_us = FIRMWARE_BUILD_MATTER_US + 7 * 24 * 60 * 60 * 1_000_000;
+
+        let mut rtc = Rtc::new();
+        rtc.set_utc_time_persist(
+            utc_us,
+            GranularityEnum::SecondsGranularity,
+            TimeSourceEnum::Admin,
+            &mut Persist::new(&kv),
+            &(),
+        )
+        .unwrap();
+
+        let mut rtc = Rtc::new();
+        kv.access(|kv, buf| rtc.load_persist(kv, buf)).unwrap();
+
+        assert_eq!(rtc.utc_time(), UtcTime::LastKnown(utc_us));
     }
 }

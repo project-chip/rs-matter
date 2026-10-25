@@ -1173,13 +1173,17 @@ impl Fabrics {
     ) -> Result<(), Error> {
         self.reset();
 
+        let mut result = Ok(());
+
         for idx in 1..=255u8 {
-            store.remove(FABRIC_KEYS_START + idx as u16, buf)?;
+            result = result.and(store.remove(FABRIC_KEYS_START + idx as u16, buf));
         }
 
-        info!("Removed all fabrics from storage");
+        if result.is_ok() {
+            info!("Removed all fabrics from storage");
+        }
 
-        Ok(())
+        result
     }
 
     /// Load all fabrics from the provided BLOB store
@@ -1489,6 +1493,9 @@ impl Fabrics {
 }
 
 /// A utility for persisting a fabric in a `KvBlobStore` instance.
+///
+/// Like [`Persist`], it logs and ignores what it cannot persist, unless created
+/// with [`FabricPersist::strict`].
 pub struct FabricPersist<S>(Persist<S>);
 
 impl<S> FabricPersist<S>
@@ -1498,6 +1505,12 @@ where
     /// Create a new `FabricPersist` with the given key-value store instance.
     pub const fn new(kvb: S) -> Self {
         Self(Persist::new(kvb))
+    }
+
+    /// Create a new `FabricPersist` with the given key-value store instance,
+    /// which returns the errors of what it cannot persist.
+    pub const fn strict(kvb: S) -> Self {
+        Self(Persist::strict(kvb))
     }
 
     /// Return a reference to the underlying `Persist` instance.

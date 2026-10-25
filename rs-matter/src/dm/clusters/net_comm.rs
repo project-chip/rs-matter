@@ -1908,7 +1908,8 @@ where
 {
     networks.reset()?;
 
-    let mut persist = Persist::new(kv);
+    // Strict, as credentials surviving a factory reset must not go unreported
+    let mut persist = Persist::strict(kv);
 
     persist.remove(key)?;
 

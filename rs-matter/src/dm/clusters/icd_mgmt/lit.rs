@@ -112,6 +112,13 @@ struct LitState {
     clients: Vec<MonitoringRegistration, MAX_REGISTERED_CLIENTS>,
     /// The Check-In counter.
     counter: CheckInCounter,
+    /// Whether the counter's boundary is persisted. Check-Ins wait for it, as
+    /// the values past an unpersisted boundary could repeat after a reboot.
+    counter_persisted: bool,
+    /// Whether the persisted registrations are of keys that may have been used
+    /// with any counter value, so that they have to go before the counter is
+    /// persisted.
+    stale_registrations: bool,
     /// Whether the application requires SIT operation even with registered
     /// clients (the Dynamic SIT/LIT feature).
     sit_required: bool,
@@ -122,6 +129,8 @@ impl LitState {
         Self {
             clients: Vec::new(),
             counter,
+            counter_persisted: false,
+            stale_registrations: false,
             sit_required: false,
         }
     }
@@ -130,6 +139,8 @@ impl LitState {
         init!(Self {
             clients <- Vec::init(),
             counter: counter,
+            counter_persisted: false,
+            stale_registrations: false,
             sit_required: false,
         })
     }
@@ -248,16 +259,14 @@ impl LitIcd {
     }
 
     /// Re-seed the Check-In counter from `start`, keeping the epoch this
-    /// `LitIcd` was constructed with, and return the boundary that must be
-    /// persisted.
-    fn reseed_counter(&self, start: u32) -> u32 {
+    /// `LitIcd` was constructed with. The new boundary is not persisted yet.
+    fn reseed_counter(&self, start: u32) {
         self.state.lock(|s| {
             let mut s = s.borrow_mut();
 
             let epoch = s.counter.epoch();
             s.counter = CheckInCounter::new(start, epoch);
-
-            s.counter.persist_value()
+            s.counter_persisted = false;
         })
     }
 
@@ -391,11 +400,21 @@ impl LitIcd {
     }
 
     /// Persist the current registrations to `ctx.kv()`.
+    ///
+    /// Strict, as the stale registrations they replace must not outlive them.
     fn store_registrations<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
-        let mut persist = Persist::new(ctx.kv());
+        let mut persist = Persist::strict(ctx.kv());
 
-        self.state
-            .lock(|s| persist.store_tlv(ICD_REGISTERED_CLIENTS_KEY, &s.borrow().clients))?;
+        self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            persist.store_tlv(ICD_REGISTERED_CLIENTS_KEY, &s.clients)?;
+
+            // The current registrations replaced the stale ones
+            s.stale_registrations = false;
+
+            Ok::<_, Error>(())
+        })?;
 
         persist.run()
     }
@@ -412,11 +431,21 @@ impl LitIcd {
     ///
     /// Call once per Check-In *batch* (all messages in the batch used the same
     /// [`next_counter`](Self::next_counter) value).
-    fn advance_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
-        let to_persist = self.state.lock(|s| s.borrow_mut().counter.advance());
+    fn advance_counter<S: KvBlobStore>(&self, kv: S, buf: &mut [u8]) -> Result<(), Error> {
+        let crossed = self.state.lock(|s| {
+            let mut s = s.borrow_mut();
 
-        if let Some(value) = to_persist {
-            kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)?;
+            let crossed = s.counter.advance().is_some();
+            s.counter_persisted &= !crossed;
+
+            crossed
+        });
+
+        // Not an error: the next Check-Ins wait for the boundary instead
+        if crossed {
+            if let Err(e) = self.persist_counter(kv, buf) {
+                warn!("ICD: Failed to persist the Check-In counter: {:?}", e);
+            }
         }
 
         Ok(())
@@ -431,15 +460,30 @@ impl LitIcd {
     /// restarts (defer it if the caller has no storage access here).
     #[must_use = "a moved boundary must be persisted via persist_counter"]
     pub fn invalidate_counter(&self, delta: u32) -> bool {
-        self.state
-            .lock(|s| s.borrow_mut().counter.advance_by(delta))
-            .is_some()
+        self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+
+            let moved = s.counter.advance_by(delta).is_some();
+            s.counter_persisted &= !moved;
+
+            moved
+        })
     }
 
     /// Persist the current Check-In counter boundary to `kv`.
     pub fn persist_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+        if self.state.lock(|s| s.borrow().stale_registrations) {
+            kv.remove(ICD_REGISTERED_CLIENTS_KEY, buf)?;
+            self.state
+                .lock(|s| s.borrow_mut().stale_registrations = false);
+        }
+
         let value = self.state.lock(|s| s.borrow().counter.persist_value());
-        kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)
+        kv.store(ICD_CHECK_IN_COUNTER_KEY, &value.to_le_bytes(), buf)?;
+
+        self.state.lock(|s| s.borrow_mut().counter_persisted = true);
+
+        Ok(())
     }
 
     /// Re-hydrate the LIT state from `kv` - the registrations and the Check-In
@@ -486,16 +530,23 @@ impl LitIcd {
                 // The clients' keys may have been used with any counter value,
                 // which a fresh counter could repeat: drop them, from `kv` too so
                 // that the next boot does not restore them; the clients re-register
-                self.update(|s| s.clients.clear());
-                kv.remove(ICD_REGISTERED_CLIENTS_KEY, buf)?;
+                self.update(|s| {
+                    s.clients.clear();
+                    s.stale_registrations = true;
+                });
 
                 Self::random_counter_start(crypto)?
             }
         };
 
-        let boundary = self.reseed_counter(start);
+        self.reseed_counter(start);
 
-        kv.store(ICD_CHECK_IN_COUNTER_KEY, &boundary.to_le_bytes(), buf)
+        // Not an error: Check-Ins wait for the counter instead
+        if let Err(e) = self.persist_counter(&mut kv, buf) {
+            warn!("ICD: Failed to persist the Check-In counter: {:?}", e);
+        }
+
+        Ok(())
     }
 
     /// Reset the LIT state to factory defaults and remove both persisted blobs
@@ -506,8 +557,7 @@ impl LitIcd {
     /// The counter is re-seeded from a fresh random value, the same way a first
     /// boot seeds it - the device is starting a new life, and every key the old
     /// counter was used with is gone along with the registrations. The new
-    /// value is left unpersisted: whichever comes first, the next boundary
-    /// crossing or the next startup, writes one.
+    /// value is left unpersisted until the next Check-In or startup.
     fn reset_persist<S: KvBlobStore, C: Crypto>(
         &self,
         crypto: C,
@@ -516,12 +566,13 @@ impl LitIcd {
     ) -> Result<(), Error> {
         self.update(|s| s.clients.clear());
 
-        kv.remove(ICD_REGISTERED_CLIENTS_KEY, buf)?;
-        kv.remove(ICD_CHECK_IN_COUNTER_KEY, buf)?;
+        let result = kv
+            .remove(ICD_REGISTERED_CLIENTS_KEY, buf)
+            .and(kv.remove(ICD_CHECK_IN_COUNTER_KEY, buf));
 
         self.reseed_counter(Self::random_counter_start(crypto)?);
 
-        Ok(())
+        result
     }
 
     // --- Sending Check-In messages ---
@@ -573,8 +624,8 @@ impl CheckIns for LitIcd {
     /// the Check-In counter.
     ///
     /// Best-effort per client, with a timeout per send so that an unresolvable
-    /// client cannot keep the device awake; only a counter persistence failure
-    /// is an error.
+    /// client cannot keep the device awake. Withheld while the counter cannot
+    /// be persisted.
     async fn send_check_ins(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let stats = ctx.im_stats();
 
@@ -596,6 +647,20 @@ impl CheckIns for LitIcd {
 
         if targets.is_empty() {
             return Ok(());
+        }
+
+        if !self.state.lock(|s| s.borrow().counter_persisted) {
+            if let Err(e) = ctx
+                .kv()
+                .access(|store, kv_buf| self.persist_counter(store, kv_buf))
+            {
+                warn!(
+                    "ICD: Check-Ins withheld, cannot persist the Check-In counter: {:?}",
+                    e
+                );
+
+                return Ok(());
+            }
         }
 
         let matter = ctx.matter();

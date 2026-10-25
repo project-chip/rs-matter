@@ -16,7 +16,8 @@
  */
 
 //! A node boots over a store whose every value cannot be decoded - e.g. one
-//! written in the formats of another firmware - starting with defaults instead.
+//! written in the formats of another firmware - starting with defaults instead,
+//! and over a store that cannot be written to.
 
 #![cfg(all(feature = "std", feature = "async-io"))]
 
@@ -57,9 +58,9 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::WifiNetworks;
 use rs_matter::dm::{Async, Cluster, Dataver, Endpoint, Node};
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{InteractionModel, InteractionModelState};
-use rs_matter::persist::{KvBlobStore, NETWORKS_KEY, VENDOR_KEYS_START};
+use rs_matter::persist::{KvBlobStore, KvBlobStoreAccess, NETWORKS_KEY, VENDOR_KEYS_START};
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::{clusters, devices, Matter};
 
@@ -173,6 +174,23 @@ impl ModeSelectHooks for Patterns {
     }
 }
 
+/// A store whose every write and removal fails.
+struct ReadOnlyStore(MemKvBlobStore);
+
+impl KvBlobStore for ReadOnlyStore {
+    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        self.0.load(key, buf)
+    }
+
+    fn store(&mut self, _key: u16, _data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+        Err(ErrorCode::StdIoError.into())
+    }
+
+    fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        Err(ErrorCode::StdIoError.into())
+    }
+}
+
 /// A store with an undecodable value under every key rs-matter and the
 /// clusters of [`NODE`] use.
 fn unreadable_store() -> MemKvBlobStore {
@@ -214,6 +232,59 @@ async fn run_unreadable_persistence_boots() {
     assert_eq!(matter.reboot_count(), 1);
     assert_eq!(matter.total_operational_hours(), 0);
 
+    startup_data_model(&matter, &kv).await;
+
+    // The networks of a Wi-Fi or Thread node, whose handler needs a network
+    // controller and is therefore not part of `NODE`.
+    let mut networks = WifiNetworks::<2>::new();
+    net_comm::load_networks(&mut networks, NETWORKS_KEY, &kv).unwrap();
+
+    let mut count = 0;
+    networks
+        .networks(|_| {
+            count += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // The unreadable record does not stick: the next boot counts from this one.
+    matter.persist_reboot_count(&kv).unwrap();
+
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+    matter.startup(matter.kv(store)).unwrap();
+
+    assert_eq!(matter.reboot_count(), 2);
+}
+
+/// `Matter::startup` and `InteractionModel::startup` succeed over a store none
+/// of whose values decode and that refuses every write and removal.
+#[test]
+fn test_failing_writes_boot() {
+    // See `test_unreadable_persistence_boots`
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            init_env_logger();
+            futures_lite::future::block_on(run_failing_writes_boot());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+async fn run_failing_writes_boot() {
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+    let kv = matter.kv(ReadOnlyStore(unreadable_store()));
+
+    matter.startup(&kv).unwrap();
+
+    startup_data_model(&matter, &kv).await;
+}
+
+/// Run `InteractionModel::startup` over the clusters of [`NODE`], asserting it
+/// succeeds.
+async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
     let crypto = test_only_crypto();
     let mut rand = crypto.rand().unwrap();
 
@@ -353,29 +424,7 @@ async fn run_unreadable_persistence_boots() {
     let buffers: MatterBuffers = MatterBuffers::new();
     let state: InteractionModelState = InteractionModelState::new();
 
-    let im = InteractionModel::new(&matter, &crypto, &buffers, dm, &kv, &state);
+    let im = InteractionModel::new(matter, &crypto, &buffers, dm, kv, &state);
 
     im.startup().await.unwrap();
-
-    // The networks of a Wi-Fi or Thread node, whose handler needs a network
-    // controller and is therefore not part of `NODE`.
-    let mut networks = WifiNetworks::<2>::new();
-    net_comm::load_networks(&mut networks, NETWORKS_KEY, &kv).unwrap();
-
-    let mut count = 0;
-    networks
-        .networks(|_| {
-            count += 1;
-            Ok(())
-        })
-        .unwrap();
-    assert_eq!(count, 0);
-
-    // The unreadable record does not stick: the next boot counts from this one.
-    matter.persist_reboot_count(&kv).unwrap();
-
-    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
-    matter.startup(matter.kv(store)).unwrap();
-
-    assert_eq!(matter.reboot_count(), 2);
 }

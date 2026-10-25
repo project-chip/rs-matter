@@ -409,11 +409,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
     /// Restore the attributes persisted under the handler's KV key, if any.
     fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
-        if let Some(persisted) = Persist::new(kv)
-            .load_tlv_logged::<PersistedAttrs>(self.kv_key)
-            .ok()
-            .flatten()
-        {
+        if let Some(persisted) = Persist::new(kv).load_tlv::<PersistedAttrs>(self.kv_key)? {
             self.current_level
                 .lock(|level| level.set(persisted.current_level.clone().into_option()));
             self.with_state(|state| state.set_persisted(persisted));

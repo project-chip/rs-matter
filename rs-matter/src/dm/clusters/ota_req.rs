@@ -876,8 +876,9 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
                 self.note_running_version(&ctx)
             }
             LifecycleOp::FactoryReset => ctx.kv().access(|mut store, buf| {
-                self.providers.reset_persist(&mut store, buf)?;
-                store.remove(RUNNING_VERSION_KEY, buf)
+                let result = self.providers.reset_persist(&mut store, buf);
+
+                result.and(store.remove(RUNNING_VERSION_KEY, buf))
             }),
             LifecycleOp::FailSafeCommit | LifecycleOp::FailSafeExpiry => Ok(()),
             LifecycleOp::FabricRemoval { fab_idx } => {

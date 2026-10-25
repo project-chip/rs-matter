@@ -386,8 +386,13 @@ where
 }
 
 /// A utility for persisting a value in a `KvBlobStore` instance.
+///
+/// Unless created with [`Persist::strict`], it logs and ignores the values it
+/// cannot store, remove or load (the latter reading as absent), so that the
+/// operation persisting them carries on.
 pub struct Persist<S> {
     kvb: S,
+    strict: bool,
 }
 
 impl<S> Persist<S>
@@ -396,7 +401,13 @@ where
 {
     /// Create a new `Persist` instance with the given key-value store instance.
     pub const fn new(kvb: S) -> Self {
-        Self { kvb }
+        Self { kvb, strict: false }
+    }
+
+    /// Create a new `Persist` instance with the given key-value store instance,
+    /// which returns the errors of the values it cannot store, remove or load.
+    pub const fn strict(kvb: S) -> Self {
+        Self { kvb, strict: true }
     }
 
     /// Save a value in the storage with the specified key by calling the provided closure to serialize the value into a buffer.
@@ -405,7 +416,7 @@ where
         key: u16,
         f: F,
     ) -> Result<(), Error> {
-        self.kvb.access(|kvb, buf| {
+        let result = self.kvb.access(|kvb, buf| {
             if !buf.is_empty() {
                 // A no-op access (e.g. a dummy store with an empty buffer) skips persistence
                 if let Some(len) = f(buf)? {
@@ -415,7 +426,9 @@ where
             }
 
             Ok(())
-        })
+        });
+
+        self.check(key, result)
     }
 
     /// Save a value that implements the `ToTLV` trait in the storage with the specified key.
@@ -435,44 +448,40 @@ where
     where
         T: for<'a> FromTLV<'a>,
     {
+        let strict = self.strict;
+
         self.kvb.access(|kvb, buf| {
             if buf.is_empty() {
                 // A no-op access (e.g. a dummy store with an empty buffer) has nothing persisted
                 return Ok(None);
             }
 
-            kvb.load(key, buf)?
-                .map(|data| T::from_tlv(&TLVElement::new(data)))
-                .transpose()
-        })
-    }
-
-    /// Like [`Self::load_tlv`], but logs a value that cannot be loaded or
-    /// decoded (see [`load_logged`]).
-    pub fn load_tlv_logged<T>(&mut self, key: u16) -> Result<Option<T>, Error>
-    where
-        T: for<'a> FromTLV<'a>,
-    {
-        self.kvb.access(|kvb, buf| {
-            if buf.is_empty() {
-                // A no-op access (e.g. a dummy store with an empty buffer) has nothing persisted
-                return Ok(None);
+            if strict {
+                kvb.load(key, buf)?
+                    .map(|data| T::from_tlv(&TLVElement::new(data)))
+                    .transpose()
+            } else {
+                Ok(
+                    load_logged(kvb, key, buf, |data| T::from_tlv(&TLVElement::new(data)))
+                        .ok()
+                        .flatten(),
+                )
             }
-
-            load_logged(kvb, key, buf, |data| T::from_tlv(&TLVElement::new(data)))
         })
     }
 
     /// Remove the value with the specified key from the storage.
     pub fn remove(&mut self, key: u16) -> Result<(), Error> {
-        self.kvb.access(|kvb, buf| {
+        let result = self.kvb.access(|kvb, buf| {
             if !buf.is_empty() {
                 // A no-op access (e.g. a dummy store with an empty buffer) skips persistence
                 kvb.remove(key, buf)?;
             }
 
             Ok(())
-        })
+        });
+
+        self.check(key, result)
     }
 
     /// Call at the end when finished with everything else
@@ -481,6 +490,17 @@ where
         // No-op for now
 
         Ok(())
+    }
+
+    /// Return `result` if strict, or log and ignore its error otherwise.
+    fn check(&self, key: u16, result: Result<(), Error>) -> Result<(), Error> {
+        match result {
+            Err(e) if !self.strict => {
+                log_unwritable(key, &e);
+                Ok(())
+            }
+            result => result,
+        }
     }
 }
 
@@ -510,6 +530,15 @@ where
     }
 
     result
+}
+
+#[cold]
+#[inline(never)]
+fn log_unwritable(key: u16, e: &Error) {
+    error!(
+        "Ignoring a failure to persist the value under key 0x{:x}: {:?}",
+        key, e
+    );
 }
 
 #[cold]
@@ -975,11 +1004,11 @@ mod tests {
     }
 
     #[test]
-    fn persist_store_propagates_errors() {
+    fn persist_store_propagates_errors_if_strict() {
         let mem = MemKvBlobStore::default();
         let buf = Mutex::new(RefCell::new([0u8; 32]));
         let shared = SharedKvBlobStore::new(mem.clone(), &buf);
-        let mut persist = Persist::new(&shared);
+        let mut persist = Persist::strict(&shared);
 
         // Serializer error
         let err = persist
@@ -988,15 +1017,24 @@ mod tests {
         assert_eq!(err.code(), ErrorCode::NoSpace);
         assert_eq!(mem.len(), 0);
 
+        // ... ignored unless strict
+        Persist::new(&shared)
+            .store(1, |_| Err::<Option<usize>, _>(ErrorCode::NoSpace.into()))
+            .unwrap();
+        assert_eq!(mem.len(), 0);
+
         // Backend error
         let failing = MemKvBlobStore {
             fail_store: true,
             ..Default::default()
         };
         let shared = SharedKvBlobStore::new(failing, &buf);
-        let mut persist = Persist::new(&shared);
+        let mut persist = Persist::strict(&shared);
         let err = persist.store(1, |_| Ok(Some(1))).unwrap_err();
         assert_eq!(err.code(), ErrorCode::NoSpace);
+
+        // ... ignored unless strict
+        Persist::new(&shared).store(1, |_| Ok(Some(1))).unwrap();
     }
 
     #[test]
@@ -1055,7 +1093,7 @@ mod tests {
 
         // A value that does not fit the scratch buffer is an error, not a truncation
         let big = [0u8; 100];
-        let err = persist
+        let err = Persist::strict(&shared)
             .store(0x1003, |buf| {
                 let mut wb = crate::utils::storage::WriteBuf::new(buf);
                 big.to_tlv(&TLVTag::Anonymous, &mut wb)?;

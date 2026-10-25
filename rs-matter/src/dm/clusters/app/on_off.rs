@@ -304,11 +304,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// Restore the persisted attributes, apply the `StartUpOnOff` attribute and
     /// switch the device to the resulting state.
     fn startup(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        if let Some(persisted) = Persist::new(ctx.kv())
-            .load_tlv_logged::<PersistedAttrs>(self.kv_key)
-            .ok()
-            .flatten()
-        {
+        if let Some(persisted) = Persist::new(ctx.kv()).load_tlv::<PersistedAttrs>(self.kv_key)? {
             self.on_off.lock(|on_off| on_off.set(persisted.on_off));
             self.with_state(|state| state.start_up_on_off = persisted.start_up_on_off);
         }

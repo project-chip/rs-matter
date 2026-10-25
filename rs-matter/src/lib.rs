@@ -1023,31 +1023,35 @@ impl<'a> Matter<'a> {
     /// factory-reset, alongside
     /// [`InteractionModel::factory_reset`](crate::im::InteractionModel::factory_reset).
     ///
+    /// Everything is removed even if removing some of it fails, the first failure
+    /// being returned.
+    ///
     /// Arguments:
     /// - `kv`: The key-value store access (obtained via [`Matter::kv`]) to remove the fabrics
     ///   and basic info settings from. Provides both the store and the scratch buffer.
     pub fn factory_reset<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
-        self.with_state(|state| {
+        let result = self.with_state(|state| {
             // The KV ops are sync, so do them all inside a single `access` closure.
             kv.access(|mut store, buf| {
-                state.fabrics.reset_persist(&mut store, buf)?;
-                state.basic_info_settings.reset_persist(&mut store, buf)?;
-                state.rtc.reset_persist(&mut store, buf)?;
+                let result = state
+                    .fabrics
+                    .reset_persist(&mut store, buf)
+                    .and(state.basic_info_settings.reset_persist(&mut store, buf))
+                    .and(state.rtc.reset_persist(&mut store, buf));
                 #[cfg(feature = "case-resumption")]
-                state.resumption.reset_persist(&mut store, buf)?;
+                let result = result.and(state.resumption.reset_persist(&mut store, buf));
                 #[cfg(feature = "groups")]
-                state.sessions.reset_persist(&mut store, buf)?;
+                let result = result.and(state.sessions.reset_persist(&mut store, buf));
 
                 state.operational_hours = 0;
-                store.remove(OPERATIONAL_HOURS_KEY, buf)?;
 
-                Ok::<_, Error>(())
+                result.and(store.remove(OPERATIONAL_HOURS_KEY, buf))
             })
-        })?;
+        });
 
         self.transport().notify_mdns_changed();
 
-        Ok(())
+        result
     }
 
     /// Re-hydrate the `Matter` persistable state - the fabrics, the basic info
@@ -1161,11 +1165,18 @@ impl<'a> Matter<'a> {
             self.transport().wait_resumption_dirty().await;
             embassy_time::Timer::after(min_interval).await;
 
-            self.with_state(|state| {
+            // A cache that is not persisted only costs full CASE handshakes after a reboot
+            let persisted = self.with_state(|state| {
                 kv.access(|mut store, buf| state.resumption.store_persist(&mut store, buf))
-            })?;
+            });
 
-            debug!("CASE session resumption cache persisted");
+            match persisted {
+                Ok(()) => debug!("CASE session resumption cache persisted"),
+                Err(e) => warn!(
+                    "Failed to persist the CASE session resumption cache: {:?}",
+                    e
+                ),
+            }
         }
     }
 

@@ -216,13 +216,15 @@ impl<const NS: usize, const NE: usize> InteractionModelState<NS, NE> {
         // The KV ops are sync, so do them all inside a single `access` closure.
         kv.access(|store, buf| {
             // The event-number epoch.
-            self.events.reset_persist(&mut *store, buf)?;
+            let events = self.events.reset_persist(&mut *store, buf);
 
             // Every persisted subscription record.
             #[cfg(feature = "persistent-subscriptions")]
-            self.subscriptions.reset_persist(&mut *store, buf)?;
+            let subscriptions = self.subscriptions.reset_persist(&mut *store, buf);
+            #[cfg(not(feature = "persistent-subscriptions"))]
+            let subscriptions = Ok(());
 
-            Ok(())
+            events.and(subscriptions)
         })
     }
 
@@ -456,12 +458,14 @@ where
     ///   the data model, so handlers can reset their own state and remove their
     ///   persisted data from [`HandlerContext::kv`].
     ///
+    /// Both steps run even if one fails, the first failure being returned.
+    ///
     /// Call when the node is factory-reset, alongside the `Matter`-level
     /// counterpart, [`Matter::factory_reset`].
     pub async fn factory_reset(&self) -> Result<(), Error> {
-        self.state.reset_persist(&self.kv)?;
+        let result = self.state.reset_persist(&self.kv);
 
-        self.broadcast_lifecycle(LifecycleOp::FactoryReset)
+        result.and(self.broadcast_lifecycle(LifecycleOp::FactoryReset))
     }
 
     /// Emit the boot events, once per process lifetime: the

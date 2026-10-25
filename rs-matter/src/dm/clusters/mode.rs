@@ -587,11 +587,7 @@ where
 
     /// Restore the persisted `CurrentMode`, if any.
     fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
-        if let Some(mode) = Persist::new(kv)
-            .load_tlv_logged::<ModeId>(self.kv_key)
-            .ok()
-            .flatten()
-        {
+        if let Some(mode) = Persist::new(kv).load_tlv::<ModeId>(self.kv_key)? {
             self.current_mode.lock(|current| current.set(mode));
         }
 

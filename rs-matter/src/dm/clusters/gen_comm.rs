@@ -500,7 +500,8 @@ impl ClusterHandler for GenCommHandler<'_> {
 
         let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
-        let mut persist = FabricPersist::new(ctx.kv());
+        // The commissioning fails rather than succeeding without the fabric
+        let mut persist = FabricPersist::strict(ctx.kv());
 
         let status =
             CommissioningErrorEnum::map(Self::with_armed_failsafe(&ctx, |state, notify_mdns| {
@@ -527,16 +528,18 @@ impl ClusterHandler for GenCommHandler<'_> {
                 let pase_sess_id =
                     matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
 
-                let fabric = state
-                    .failsafe
-                    .disarm(sess.get_session_mode(), &mut state.fabrics)?;
+                // Persist the fabric prior to sending the other party a "success" status,
+                // and to disarming: a fabric that cannot be persisted stays under the
+                // fail-safe, whose expiry reverts it
+                state.failsafe.disarm_with(
+                    sess.get_session_mode(),
+                    &mut state.fabrics,
+                    |fabric| persist.store(fabric),
+                )?;
 
                 state.pase.close_comm_window(notify_mdns, notify_change)?;
                 state.sessions.remove_pase(pase_sess_id);
                 ctx.exchange().matter().transport().notify_session_removed();
-
-                // Persist the fabric prior to sending the other party a "success" status
-                persist.store(fabric)?;
 
                 Ok(())
             }))?;
