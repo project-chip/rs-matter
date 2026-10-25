@@ -26,7 +26,7 @@ use crate::crypto::{
 };
 use crate::dm::clusters::time_sync::UtcTime;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{AsyncHandler, ClusterId, EndptId, HandlerContext, LifecycleOp};
+use crate::dm::{ClusterId, EndptId, HandlerContext, LifecycleOp};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, Fabrics};
 use crate::im::IMStatusCode;
@@ -102,7 +102,7 @@ impl Expiry {
     /// The broadcasts run the handlers inline, so this must NOT be called
     /// while holding the Matter state lock.
     pub fn notify(&self, ctx: impl HandlerContext) {
-        if let Err(e) = ctx.handler().lifecycle(&ctx, LifecycleOp::FailSafeExpiry) {
+        if let Err(e) = ctx.broadcast_lifecycle(LifecycleOp::FailSafeExpiry) {
             warn!("Failed to broadcast the fail-safe expiry: {:?}", e);
         }
 

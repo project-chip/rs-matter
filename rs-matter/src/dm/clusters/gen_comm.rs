@@ -25,8 +25,7 @@ use rand_core::Rng;
 
 use crate::crypto::Crypto;
 use crate::dm::{
-    AsyncHandler, Cluster, Dataver, InvokeContext, LifecycleOp, OperationContext, ReadContext,
-    WriteContext,
+    Cluster, Dataver, InvokeContext, LifecycleOp, OperationContext, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
@@ -548,7 +547,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             // Let the handlers persist what they staged under the fail-safe
             // (the network settings and the like), also prior to the response.
             // Outside `with_state`, since the broadcast runs the handlers inline.
-            ctx.handler().lifecycle(&ctx, LifecycleOp::FailSafeCommit)?;
+            ctx.broadcast_lifecycle(LifecycleOp::FailSafeCommit)?;
 
             info!("Commissioning complete, fabric and network settings persisted");
         }

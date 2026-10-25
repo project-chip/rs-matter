@@ -441,7 +441,7 @@ where
         // Needs the events watermark loaded just above.
         self.resume_subscriptions()?;
 
-        self.handler.lifecycle(self, LifecycleOp::Startup)
+        self.broadcast_lifecycle(LifecycleOp::Startup)
     }
 
     /// Factory-reset the Data Model persistable state.
@@ -459,7 +459,7 @@ where
     pub async fn factory_reset(&self) -> Result<(), Error> {
         self.state.reset_persist(&self.kv)?;
 
-        self.handler.lifecycle(self, LifecycleOp::FactoryReset)
+        self.broadcast_lifecycle(LifecycleOp::FactoryReset)
     }
 
     /// Emit the boot events, once per process lifetime: the
@@ -483,46 +483,20 @@ where
             use crate::dm::clusters::decl::{basic_information, general_diagnostics};
             use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 
-            self.emit_one_field_event(
+            // Failures are logged by `emit_u32_event`
+            let _ = self.emit_u32_event(
                 ROOT_ENDPOINT_ID,
                 general_diagnostics::FULL_CLUSTER.id,
                 general_diagnostics::EventId::BootReason as _,
                 EventPriority::Critical,
                 self.matter.boot_reason() as _,
             );
-            self.emit_one_field_event(
+            let _ = self.emit_u32_event(
                 ROOT_ENDPOINT_ID,
                 basic_information::FULL_CLUSTER.id,
                 basic_information::EventId::StartUp as _,
                 EventPriority::Critical,
                 self.matter.dev_det().sw_ver,
-            );
-        }
-    }
-
-    /// Emit an event whose data is one unsigned field, with context tag 0.
-    ///
-    /// The stack's own such events go through here, sharing one copy of the
-    /// events queue code. Failure to emit is logged, not fatal.
-    #[inline(never)]
-    fn emit_one_field_event(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        event_id: EventId,
-        priority: EventPriority,
-        value: u32,
-    ) {
-        let result = self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
-            tw.start_struct(&EVENT_DATA_TAG)?;
-            tw.u32(&TLVTag::Context(0), value)?;
-            tw.end_container()
-        });
-
-        if let Err(e) = result {
-            warn!(
-                "Failed to emit event {}/{}/{}: {:?}",
-                endpoint_id, cluster_id, event_id, e
             );
         }
     }
@@ -1710,10 +1684,7 @@ where
     }
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
-        if let Err(e) = self
-            .handler
-            .lifecycle(self, LifecycleOp::FabricRemoval { fab_idx })
-        {
+        if let Err(e) = self.broadcast_lifecycle(LifecycleOp::FabricRemoval { fab_idx }) {
             warn!(
                 "Failed to broadcast the removal of fabric {}: {:?}",
                 fab_idx, e
@@ -1722,6 +1693,12 @@ where
 
         #[cfg(feature = "groups")]
         self.matter.transport().notify_groups_changed();
+    }
+
+    // All broadcasts share this copy of the handlers' `lifecycle` code
+    #[inline(never)]
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.handler.lifecycle(self, op)
     }
 }
 
@@ -1796,6 +1773,33 @@ where
             .notify_event_emitted(endpoint_id, cluster_id, event_id);
 
         Ok(event_number)
+    }
+
+    // The node's own one-field events (and the handlers' ones) share this copy
+    // of the events queue code. A failure to emit is also logged here.
+    #[inline(never)]
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<u64, Error> {
+        let result = self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
+            tw.start_struct(&EVENT_DATA_TAG)?;
+            tw.u32(&TLVTag::Context(0), value)?;
+            tw.end_container()
+        });
+
+        if let Err(e) = &result {
+            warn!(
+                "Failed to emit event {}/{}/{}: {:?}",
+                endpoint_id, cluster_id, event_id, e
+            );
+        }
+
+        result
     }
 }
 

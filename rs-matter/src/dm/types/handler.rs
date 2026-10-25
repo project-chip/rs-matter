@@ -26,10 +26,10 @@ use crate::crypto::Crypto;
 use crate::dm::{EventId, EventNumber, Metadata};
 use crate::error::{Error, ErrorCode};
 use crate::im::encoding::{EventPriority, IMBuffer, NodeId};
-use crate::im::events::EventTLVWrite;
+use crate::im::events::{EventTLVWrite, EVENT_DATA_TAG};
 use crate::im::ImStats;
 use crate::persist::KvBlobStoreAccess;
-use crate::tlv::TLVElement;
+use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
@@ -187,6 +187,25 @@ pub trait EventEmitter {
     ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>;
+
+    /// Emit an event whose data is a single unsigned integer field, with context tag 0.
+    ///
+    /// Same as `emit_event` with such data, but not generic, so that an implementation
+    /// can share one copy of its events queue code among all such events.
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
+            tw.start_struct(&EVENT_DATA_TAG)?;
+            tw.u32(&TLVTag::Context(0), value)?;
+            tw.end_container()
+        })
+    }
 }
 
 impl<T> EventEmitter for &T
@@ -205,6 +224,17 @@ where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
         (**self).emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        (**self).emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -296,6 +326,11 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// - For the same reason, a handler must not call this from its own
     ///   `lifecycle` implementation (infinite recursion).
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8);
+
+    /// Broadcast a lifecycle operation to every handler in the data model.
+    ///
+    /// The same caveats as for `notify_fabric_removed` apply.
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error>;
 }
 
 impl<T> HandlerContext for &T
@@ -332,6 +367,10 @@ where
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         (**self).notify_fabric_removed(fab_idx);
+    }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (**self).broadcast_lifecycle(op)
     }
 }
 
@@ -587,6 +626,10 @@ where
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
     }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
+    }
 }
 
 impl<C> AttrChangeNotifier for ReadContextInstance<'_, C>
@@ -628,6 +671,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -763,6 +818,10 @@ where
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
     }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
+    }
 }
 
 impl<C> AttrChangeNotifier for ReportContextInstance<'_, C>
@@ -804,6 +863,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -885,6 +956,10 @@ where
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
     }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
+    }
 }
 
 impl<C> AttrChangeNotifier for WriteContextInstance<'_, C>
@@ -926,6 +1001,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -1069,6 +1156,10 @@ where
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
     }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
+    }
 }
 
 impl<C> AttrChangeNotifier for InvokeContextInstance<'_, C>
@@ -1110,6 +1201,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 

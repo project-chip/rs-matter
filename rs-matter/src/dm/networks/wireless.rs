@@ -200,7 +200,9 @@ where
     /// Return the network type of the networks persisted in the provided BLOB store
     ///
     /// Does not depend on `T`, so it tells whether the persisted networks are of another
-    /// network type than the one about to be run (see `stored_net_type`).
+    /// network type than the one about to be run (see `stored_net_type`). `load` ignores
+    /// such networks only if they record their type, so check with this one before
+    /// running a different network type.
     ///
     /// # Arguments
     /// - `kv`: the BLOB store the networks are persisted in
@@ -259,23 +261,25 @@ where
     /// # Arguments
     /// - `data`: The byte slice to load the state from
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        if Self::stored_net_type(data)?.is_some_and(|net_type| net_type != T::NET_TYPE) {
-            // E.g. Thread networks read by a Wifi build: none of them is a network of `T`
-            warn!("Ignoring stored networks of another network type");
-
-            self.reset();
-
-            return Ok(());
-        }
-
         let root = TLVElement::new(data);
 
         self.networks.clear();
 
         // Try new format: struct { ctx(0): networks array, ctx(1): managed bool, ctx(2): enabled bool,
-        // ctx(3): network type } (`enabled` defaulting to true when absent)
+        // ctx(3): network type } (`enabled` defaulting to true and the network type to `T`'s when absent)
         // Fall back to old format: bare TLV array (with managed defaulting to false)
         if let Ok(structure) = root.structure() {
+            if let Some(tag) = structure.find_ctx(3)?.non_empty() {
+                if tag.u32()? != Self::net_type_tag(T::NET_TYPE) {
+                    // E.g. Thread networks read by a Wifi build: none of them is a network of `T`
+                    warn!("Ignoring stored networks of another network type");
+
+                    self.reset();
+
+                    return Ok(());
+                }
+            }
+
             for network in structure.ctx(0)?.array()?.iter() {
                 let network = network?;
 
@@ -1763,11 +1767,6 @@ mod tests {
             WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
             Some(NetworkType::Thread)
         );
-
-        // ... which a Wifi store ignores instead of failing to load
-        let mut wifi = WifiNetworks::<4>::new();
-        wifi.load(&buf[..len]).unwrap();
-        assert!(collect_ssids(&wifi).is_empty());
 
         // Older bare array format
         let mut wb = WriteBuf::new(&mut buf);

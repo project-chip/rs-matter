@@ -32,6 +32,7 @@ use crate::dm::{
     Metadata, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
+use crate::im::EventPriority;
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,
@@ -1141,9 +1142,16 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
     where
         T: NetCtl,
     {
-        let cluster_id = match self.net_ctl.net_type() {
-            NetworkType::Wifi => wifi_diag::FULL_CLUSTER.id,
-            NetworkType::Thread => thread_diag::FULL_CLUSTER.id,
+        // Same event data in both clusters: the status, with the same values
+        let (cluster_id, event_id) = match self.net_ctl.net_type() {
+            NetworkType::Wifi => (
+                wifi_diag::FULL_CLUSTER.id,
+                wifi_diag::EventId::ConnectionStatus as _,
+            ),
+            NetworkType::Thread => (
+                thread_diag::FULL_CLUSTER.id,
+                thread_diag::EventId::ConnectionStatus as _,
+            ),
             NetworkType::Ethernet => return,
         };
 
@@ -1157,31 +1165,20 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
             return;
         }
 
-        let result = if cluster_id == wifi_diag::FULL_CLUSTER.id {
-            let status = if connected {
-                wifi_diag::ConnectionStatusEnum::Connected
-            } else {
-                wifi_diag::ConnectionStatusEnum::NotConnected
-            };
-
-            wifi_diag::ConnectionStatus::emit_for(&ctx, self.endpoint_id, |event| {
-                event.connection_status(status)?.end()
-            })
+        let status = if connected {
+            wifi_diag::ConnectionStatusEnum::Connected
         } else {
-            let status = if connected {
-                thread_diag::ConnectionStatusEnum::Connected
-            } else {
-                thread_diag::ConnectionStatusEnum::NotConnected
-            };
-
-            thread_diag::ConnectionStatus::emit_for(&ctx, self.endpoint_id, |event| {
-                event.connection_status(status)?.end()
-            })
+            wifi_diag::ConnectionStatusEnum::NotConnected
         };
 
-        if let Err(e) = result {
-            warn!("Failed to emit the ConnectionStatus event: {:?}", e);
-        }
+        // Not fatal; the Interaction Model logs a failure
+        let _ = ctx.emit_u32_event(
+            self.endpoint_id,
+            cluster_id,
+            event_id,
+            EventPriority::Info,
+            status as _,
+        );
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
