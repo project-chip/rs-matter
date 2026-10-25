@@ -30,8 +30,6 @@ use core::cell::Cell;
 use embassy_futures::block_on;
 use embassy_futures::select::{select, Either};
 
-use rs_matter::dm::clusters::net_comm::{DummyNetworks, NetworkType};
-use rs_matter::dm::networks::wireless::NoopWirelessNetCtl;
 use rs_matter::dm::{EmptyHandler, Node, ReportContext, ReportDataHandler, SubscriptionCtx};
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::encoding::ReportDataResp;
@@ -286,7 +284,6 @@ fn test_report_data_handler_catches_server_report() {
         &ctrl_buffers,
         ctrl_handler,
         &ctrl_kv,
-        NoopWirelessNetCtl::new(NetworkType::Ethernet),
         &reports,
         &ctrl_state,
     );

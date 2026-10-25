@@ -197,30 +197,85 @@ where
         Ok(())
     }
 
+    /// Return the network type of the networks persisted in the provided BLOB store
+    ///
+    /// Does not depend on `T`, so it tells whether the persisted networks are of another
+    /// network type than the one about to be run (see `stored_net_type`).
+    ///
+    /// # Arguments
+    /// - `kv`: the BLOB store the networks are persisted in
+    /// - `key`: the key the networks are persisted under
+    /// - `buf`: a temporary buffer to use for loading the networks
+    ///
+    /// Returns `None` if nothing is persisted.
+    pub async fn persisted_net_type<S: KvBlobStore>(
+        mut kv: S,
+        key: u16,
+        buf: &mut [u8],
+    ) -> Result<Option<NetworkType>, Error> {
+        match kv.load(key, buf)? {
+            Some(data) => Self::stored_net_type(data),
+            None => Ok(None),
+        }
+    }
+
+    /// Return the network type of the state stored in a byte slice (see `store`).
+    ///
+    /// Does not depend on `T`. A state stored before the network type was recorded
+    /// tells it by its first network: a Wifi one has a password.
+    ///
+    /// # Arguments
+    /// - `data`: The byte slice the state is stored in
+    ///
+    /// Returns `None` for such an older state without networks.
+    pub fn stored_net_type(data: &[u8]) -> Result<Option<NetworkType>, Error> {
+        let root = TLVElement::new(data);
+
+        let networks = if let Ok(structure) = root.structure() {
+            if let Some(tag) = structure.find_ctx(3)?.non_empty() {
+                return Self::net_type_of(tag.u32()?).map(Some);
+            }
+
+            structure.ctx(0)?.array()?
+        } else {
+            root.array()?
+        };
+
+        let Some(network) = networks.iter().next() else {
+            return Ok(None);
+        };
+
+        let wifi = network?.structure()?.find_ctx(1)?.non_empty().is_some();
+
+        Ok(Some(if wifi {
+            NetworkType::Wifi
+        } else {
+            NetworkType::Thread
+        }))
+    }
+
     /// Load the state from a byte slice.
     ///
     /// # Arguments
     /// - `data`: The byte slice to load the state from
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        if Self::stored_net_type(data)?.is_some_and(|net_type| net_type != T::NET_TYPE) {
+            // E.g. Thread networks read by a Wifi build: none of them is a network of `T`
+            warn!("Ignoring stored networks of another network type");
+
+            self.reset();
+
+            return Ok(());
+        }
+
         let root = TLVElement::new(data);
 
         self.networks.clear();
 
         // Try new format: struct { ctx(0): networks array, ctx(1): managed bool, ctx(2): enabled bool,
-        // ctx(3): network type } (`enabled` defaulting to true and the network type to `T`'s when absent)
+        // ctx(3): network type } (`enabled` defaulting to true when absent)
         // Fall back to old format: bare TLV array (with managed defaulting to false)
         if let Ok(structure) = root.structure() {
-            if let Some(net_type) = structure.find_ctx(3)?.non_empty() {
-                if net_type.u32()? != Self::stored_net_type() {
-                    // E.g. Thread networks read by a Wifi build: none of them is a network of `T`
-                    warn!("Ignoring stored networks of another network type");
-
-                    self.reset();
-
-                    return Ok(());
-                }
-            }
-
             for network in structure.ctx(0)?.array()?.iter() {
                 let network = network?;
 
@@ -266,7 +321,7 @@ where
         self.networks.to_tlv(&TLVTag::Context(0), &mut wb)?;
         self.managed.to_tlv(&TLVTag::Context(1), &mut wb)?;
         self.enabled.to_tlv(&TLVTag::Context(2), &mut wb)?;
-        Self::stored_net_type().to_tlv(&TLVTag::Context(3), &mut wb)?;
+        Self::net_type_tag(T::NET_TYPE).to_tlv(&TLVTag::Context(3), &mut wb)?;
 
         wb.end_container()?;
 
@@ -514,13 +569,25 @@ where
         self.enabled = enabled;
     }
 
-    /// The network type of `T` as stored: its Network Commissioning feature bit
-    fn stored_net_type() -> u32 {
-        match T::NET_TYPE {
+    /// A network type as stored: its Network Commissioning feature bit
+    fn net_type_tag(net_type: NetworkType) -> u32 {
+        match net_type {
             NetworkType::Ethernet => net_comm::Feature::ETHERNET_NETWORK_INTERFACE.bits(),
             NetworkType::Wifi => net_comm::Feature::WI_FI_NETWORK_INTERFACE.bits(),
             NetworkType::Thread => net_comm::Feature::THREAD_NETWORK_INTERFACE.bits(),
         }
+    }
+
+    /// The network type of a stored network type tag
+    fn net_type_of(tag: u32) -> Result<NetworkType, Error> {
+        [
+            NetworkType::Ethernet,
+            NetworkType::Wifi,
+            NetworkType::Thread,
+        ]
+        .into_iter()
+        .find(|net_type| Self::net_type_tag(*net_type) == tag)
+        .ok_or_else(|| ErrorCode::InvalidData.into())
     }
 }
 
@@ -1652,6 +1719,81 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         assert!(!thread.managed());
+    }
+
+    #[test]
+    fn stored_net_type_tagged_and_older() {
+        use crate::dm::clusters::net_comm::NetworkType;
+        use crate::tlv::{TLVTag, TLVWrite};
+        use crate::utils::storage::WriteBuf;
+
+        use super::thread::ThreadNetworks;
+
+        // A Thread dataset with just the Extended PAN ID TLV
+        const DATASET: &[u8] = &[0x02, 0x08, 1, 2, 3, 4, 5, 6, 7, 8];
+
+        let mut buf = [0u8; 512];
+
+        // Tagged, even without networks
+        let len = ThreadNetworks::<4>::new().store(&mut buf).unwrap();
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Thread)
+        );
+
+        let len = WifiNetworks::<4>::new().store(&mut buf).unwrap();
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Wifi)
+        );
+
+        // Older struct format: told by the first network
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.start_array(&TLVTag::Context(0)).unwrap();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.str(&TLVTag::Context(0), DATASET).unwrap();
+        wb.end_container().unwrap();
+        wb.end_container().unwrap();
+        wb.bool(&TLVTag::Context(1), true).unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Thread)
+        );
+
+        // ... which a Wifi store ignores instead of failing to load
+        let mut wifi = WifiNetworks::<4>::new();
+        wifi.load(&buf[..len]).unwrap();
+        assert!(collect_ssids(&wifi).is_empty());
+
+        // Older bare array format
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.str(&TLVTag::Context(0), b"A").unwrap();
+        wb.str(&TLVTag::Context(1), b"pA").unwrap();
+        wb.end_container().unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Wifi)
+        );
+
+        // Older format without networks
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            None
+        );
     }
 
     // ── Regression: save() must not trigger a change notification ──

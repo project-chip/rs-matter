@@ -296,6 +296,7 @@ fn lifecycle(
     let dm = data_model(rand, wifi, wifi_ctl, thread);
     let im = InteractionModel::new(matter, crypto, buffers, &dm, kv, state);
 
+    // Bound, so that the temporary handler is dropped before `im` and `dm`
     let result = im.handler().lifecycle(&im, op);
 
     result
