@@ -710,7 +710,9 @@ where
 
                 Persist::new(ctx.kv()).remove(self.kv_key)
             }
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
+            LifecycleOp::FabricRemoval { .. }
+            | LifecycleOp::FailSafeCommit
+            | LifecycleOp::FailSafeExpiry => Ok(()),
         }
     }
 

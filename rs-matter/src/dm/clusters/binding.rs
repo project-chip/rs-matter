@@ -450,6 +450,7 @@ impl<const N: usize> ClusterHandler for BindingHandler<'_, N> {
             LifecycleOp::FactoryReset => ctx
                 .kv()
                 .access(|store, buf| self.bindings.reset_persist(store, buf)),
+            LifecycleOp::FailSafeCommit | LifecycleOp::FailSafeExpiry => Ok(()),
             LifecycleOp::FabricRemoval { fab_idx } => {
                 if self.bindings.remove_for_fabric(fab_idx) {
                     self.bindings.store_persist(&ctx)?;

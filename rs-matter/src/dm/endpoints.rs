@@ -57,7 +57,7 @@ use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHa
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
-    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus,
+    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, Networks,
 };
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::sw_diag::{self, ClusterHandler as _, SwDiag, SwDiagHandler};
@@ -66,8 +66,10 @@ use super::clusters::time_sync::{self, ClusterHandler as _, TimeSyncHandler};
 use super::clusters::wifi_diag::{
     self, AlwaysConnected, ClusterHandler as _, WifiDiag, WifiDiagHandler, WirelessDiag,
 };
-use super::networks::eth::EthNetCtl;
+use super::networks::eth::{EthNetCtl, EthNetwork};
+use super::networks::NetChangeNotif;
 use super::types::{Async, ChainedHandler, Dataver, EndptId};
+use crate::persist::NETWORKS_KEY;
 
 /// A macro to generate the meta-data for the root endpoint (Endpoint 0).
 ///
@@ -161,41 +163,55 @@ pub type OperNetHandler<'a, N, T = EmptyHandler> = handler_chain_type!(
 );
 
 /// A type alias for the handler chain returned by `eth_net_handler()`.
-pub type EthNetHandler<'a, H> =
-    NetHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler<'a>>, H>;
+pub type EthNetHandler<'a, H> = NetHandler<
+    'a,
+    EthNetwork<'static>,
+    EthNetCtl<'a>,
+    eth_diag::HandlerAdaptor<EthDiagHandler<'a>>,
+    H,
+>;
 
 /// A type alias for the handler chain returned by `wifi_net_handler()`.
-pub type WifiNetHandler<'a, T, H> =
-    NetHandler<'a, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>, H>;
+pub type WifiNetHandler<'a, S, T, H> =
+    NetHandler<'a, S, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>, H>;
 
 /// A type alias for the handler chain returned by `thread_net_handler()`.
-pub type ThreadNetHandler<'a, T, H> =
-    NetHandler<'a, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>, H>;
+pub type ThreadNetHandler<'a, S, T, H> =
+    NetHandler<'a, S, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>, H>;
 
 /// A type alias for the handler chain returned by `net_handler()`:
 /// the operational network clusters of the root endpoint, on top of the handler `H`,
 /// which receives everything the network clusters do not match.
-pub type NetHandler<'a, T, N, H> = handler_chain_type!(
-    FnMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>,
+///
+/// `S` is the networks store of the primary network interface.
+pub type NetHandler<'a, S, T, N, H> = handler_chain_type!(
+    FnMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, S, T>>,
     FnMatcher => Async<OperNetHandler<'a, N>>
     | H
 );
 
 /// A type alias for the handler chain returned by `eth_sys_handler()`.
-pub type EthSysHandler<'a> =
-    SysHandler<'a, EthNetCtl<'a>, eth_diag::HandlerAdaptor<EthDiagHandler<'a>>>;
+pub type EthSysHandler<'a> = SysHandler<
+    'a,
+    EthNetwork<'static>,
+    EthNetCtl<'a>,
+    eth_diag::HandlerAdaptor<EthDiagHandler<'a>>,
+>;
 
 /// A type alias for the handler chain returned by `wifi_sys_handler()`.
-pub type WifiSysHandler<'a, T> = SysHandler<'a, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>;
+pub type WifiSysHandler<'a, S, T> =
+    SysHandler<'a, S, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>;
 
 /// A type alias for the handler chain returned by `thread_sys_handler()`.
-pub type ThreadSysHandler<'a, T> =
-    SysHandler<'a, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>;
+pub type ThreadSysHandler<'a, S, T> =
+    SysHandler<'a, S, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>;
 
 /// A type alias for the handler chain returned by `sys_handler()`:
 /// all system clusters of the root endpoint.
-pub type SysHandler<'a, T, N> = handler_chain_type!(
-    FnMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>
+///
+/// `S` is the networks store of the primary network interface.
+pub type SysHandler<'a, S, T, N> = handler_chain_type!(
+    FnMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, S, T>>
     | Async<OperNetHandler<'a, N, RootHandler<'a>>>
 );
 
@@ -239,6 +255,7 @@ pub fn eth_net_handler<'a, R: Rng, H>(
         comm_policy,
         gen_diag,
         netif_diag,
+        EthNetwork::new_default(),
         EthNetCtl::new_default(),
         &AlwaysConnected,
         |e, c| {
@@ -262,26 +279,31 @@ pub fn eth_net_handler<'a, R: Rng, H>(
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `wifi_diag`: The `WifiDiag` implementation.
+/// - `networks`: The networks store of the Wifi interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn wifi_net_handler<'a, R: Rng, T, H>(
+pub fn wifi_net_handler<'a, R: Rng, S, T, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
+    networks: S,
     net_ctl: T,
     next: H,
     mut rand: R,
-) -> WifiNetHandler<'a, T, H>
+) -> WifiNetHandler<'a, S, T, H>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
     net_handler(
         comm_policy,
         gen_diag,
         netif_diag,
+        networks,
         net_ctl,
         wifi_diag,
         |e, c| {
@@ -305,26 +327,31 @@ where
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `thread_diag`: The `ThreadDiag` implementation.
+/// - `networks`: The networks store of the Thread interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `next`: The handler to chain on top of; receives everything not matched here.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn thread_net_handler<'a, R: Rng, T, H>(
+pub fn thread_net_handler<'a, R: Rng, S, T, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
+    networks: S,
     net_ctl: T,
     next: H,
     mut rand: R,
-) -> ThreadNetHandler<'a, T, H>
+) -> ThreadNetHandler<'a, S, T, H>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
     net_handler(
         comm_policy,
         gen_diag,
         netif_diag,
+        networks,
         net_ctl,
         thread_diag,
         |e, c| {
@@ -364,6 +391,7 @@ pub fn eth_sys_handler<'a, R: Rng>(
         gen_diag,
         netif_diag,
         sw_diag,
+        EthNetwork::new_default(),
         EthNetCtl::new_default(),
         &AlwaysConnected,
         |e, c| e == ROOT_ENDPOINT_ID && c == EthDiagHandler::CLUSTER.id,
@@ -381,26 +409,31 @@ pub fn eth_sys_handler<'a, R: Rng>(
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `wifi_diag`: The `WifiDiag` implementation.
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
+/// - `networks`: The networks store of the Wifi interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn wifi_sys_handler<'a, R: Rng, T>(
+pub fn wifi_sys_handler<'a, R: Rng, S, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
     sw_diag: &'a dyn SwDiag,
+    networks: S,
     net_ctl: T,
     mut rand: R,
-) -> WifiSysHandler<'a, T>
+) -> WifiSysHandler<'a, S, T>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
     sys_handler(
         comm_policy,
         gen_diag,
         netif_diag,
         sw_diag,
+        networks,
         net_ctl,
         wifi_diag,
         |e, c| e == ROOT_ENDPOINT_ID && c == WifiDiagHandler::CLUSTER.id,
@@ -418,26 +451,31 @@ where
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `thread_diag`: The `ThreadDiag` implementation.
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
+/// - `networks`: The networks store of the Thread interface: by value, or a `&mut`
+///   to a store living elsewhere.
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn thread_sys_handler<'a, R: Rng, T>(
+pub fn thread_sys_handler<'a, R: Rng, S, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
     sw_diag: &'a dyn SwDiag,
+    networks: S,
     net_ctl: T,
     mut rand: R,
-) -> ThreadSysHandler<'a, T>
+) -> ThreadSysHandler<'a, S, T>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
     sys_handler(
         comm_policy,
         gen_diag,
         netif_diag,
         sw_diag,
+        networks,
         net_ctl,
         thread_diag,
         |e, c| e == ROOT_ENDPOINT_ID && c == ThreadDiagHandler::CLUSTER.id,
@@ -524,23 +562,33 @@ fn oper_net_handler<'a, R: Rng, N, T>(
 ///   and - as the network diagnostics link is at the bottom of that sub-chain - also serves
 ///   as the matcher of that link.
 #[allow(clippy::too_many_arguments)]
-fn net_handler<'a, R: Rng, T, N, H>(
+fn net_handler<'a, R: Rng, S, T, N, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
+    networks: S,
     net_ctl: T,
     wireless_diag: &'a dyn WirelessDiag,
     net_matcher: FnMatcher,
     netw_diag: N,
     next: H,
     mut rand: R,
-) -> NetHandler<'a, T, N, H>
+) -> NetHandler<'a, S, T, N, H>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
     ChainedHandler::new(
-        |e, c| e == ROOT_ENDPOINT_ID && c == NetCommHandler::<T>::CLUSTER.id,
-        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl, wireless_diag).adapt(),
+        |e, c| e == ROOT_ENDPOINT_ID && c == NetCommHandler::<S, T>::CLUSTER.id,
+        NetCommHandler::new(
+            Dataver::new_rand(&mut rand),
+            ROOT_ENDPOINT_ID,
+            networks,
+            NETWORKS_KEY,
+            net_ctl,
+            wireless_diag,
+        )
+        .adapt(),
         ChainedHandler::new(
             net_matcher,
             Async(oper_net_handler(
@@ -562,23 +610,33 @@ where
 /// Use `eth_sys_handler()`, `wifi_sys_handler()` or `thread_sys_handler()` instead to get the
 /// appropriate Network Diagnostic handler included in the handler.
 #[allow(clippy::too_many_arguments)]
-fn sys_handler<'a, R: Rng, T, N>(
+fn sys_handler<'a, R: Rng, S, T, N>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     sw_diag: &'a dyn SwDiag,
+    networks: S,
     net_ctl: T,
     wireless_diag: &'a dyn WirelessDiag,
     netw_diag_matcher: FnMatcher,
     netw_diag: N,
     mut rand: R,
-) -> SysHandler<'a, T, N>
+) -> SysHandler<'a, S, T, N>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
     ChainedHandler::new(
-        |e, c| e == ROOT_ENDPOINT_ID && c == NetCommHandler::<T>::CLUSTER.id,
-        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl, wireless_diag).adapt(),
+        |e, c| e == ROOT_ENDPOINT_ID && c == NetCommHandler::<S, T>::CLUSTER.id,
+        NetCommHandler::new(
+            Dataver::new_rand(&mut rand),
+            ROOT_ENDPOINT_ID,
+            networks,
+            NETWORKS_KEY,
+            net_ctl,
+            wireless_diag,
+        )
+        .adapt(),
         Async(oper_net_handler(
             comm_policy,
             gen_diag,
@@ -684,30 +742,33 @@ impl<'a> EthSysHandlerBuilder<'a> {
 
 /// Builder for a Wi-Fi root-endpoint system handler.
 ///
-/// `net_ctl` and `wifi_diag` are required (no sensible default) and supplied
-/// to [`Self::new`]; everything else falls back to no-op defaults.
-pub struct WifiSysHandlerBuilder<'a, T> {
+/// `networks`, `net_ctl` and `wifi_diag` are required (no sensible default) and
+/// supplied to [`Self::new`]; everything else falls back to no-op defaults.
+pub struct WifiSysHandlerBuilder<'a, S, T> {
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
     sw_diag: &'a dyn SwDiag,
+    networks: S,
     net_ctl: T,
 }
 
-impl<'a, T> WifiSysHandlerBuilder<'a, T>
+impl<'a, S, T> WifiSysHandlerBuilder<'a, S, T>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
-    /// Create a builder. `net_ctl` and `wifi_diag` are required;
+    /// Create a builder. `networks`, `net_ctl` and `wifi_diag` are required;
     /// every other hook defaults to a no-op provider.
-    pub const fn new(net_ctl: T, wifi_diag: &'a dyn WifiDiag) -> Self {
+    pub const fn new(networks: S, net_ctl: T, wifi_diag: &'a dyn WifiDiag) -> Self {
         Self {
             comm_policy: &true,
             gen_diag: &(),
             netif_diag: &(),
             wifi_diag,
             sw_diag: &(),
+            networks,
             net_ctl,
         }
     }
@@ -737,13 +798,14 @@ where
     }
 
     /// Build the Wi-Fi system handler.
-    pub fn build<R: Rng>(self, rand: R) -> WifiSysHandler<'a, T> {
+    pub fn build<R: Rng>(self, rand: R) -> WifiSysHandler<'a, S, T> {
         wifi_sys_handler(
             self.comm_policy,
             self.gen_diag,
             self.netif_diag,
             self.wifi_diag,
             self.sw_diag,
+            self.networks,
             self.net_ctl,
             rand,
         )
@@ -752,30 +814,33 @@ where
 
 /// Builder for a Thread root-endpoint system handler.
 ///
-/// `net_ctl` and `thread_diag` are required (no sensible default) and supplied
-/// to [`Self::new`]; everything else falls back to no-op defaults.
-pub struct ThreadSysHandlerBuilder<'a, T> {
+/// `networks`, `net_ctl` and `thread_diag` are required (no sensible default) and
+/// supplied to [`Self::new`]; everything else falls back to no-op defaults.
+pub struct ThreadSysHandlerBuilder<'a, S, T> {
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
     sw_diag: &'a dyn SwDiag,
+    networks: S,
     net_ctl: T,
 }
 
-impl<'a, T> ThreadSysHandlerBuilder<'a, T>
+impl<'a, S, T> ThreadSysHandlerBuilder<'a, S, T>
 where
-    T: NetCtl + NetCtlStatus,
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
-    /// Create a builder. `net_ctl` and `thread_diag` are required;
+    /// Create a builder. `networks`, `net_ctl` and `thread_diag` are required;
     /// every other hook defaults to a no-op provider.
-    pub const fn new(net_ctl: T, thread_diag: &'a dyn ThreadDiag) -> Self {
+    pub const fn new(networks: S, net_ctl: T, thread_diag: &'a dyn ThreadDiag) -> Self {
         Self {
             comm_policy: &true,
             gen_diag: &(),
             netif_diag: &(),
             thread_diag,
             sw_diag: &(),
+            networks,
             net_ctl,
         }
     }
@@ -805,13 +870,14 @@ where
     }
 
     /// Build the Thread system handler.
-    pub fn build<R: Rng>(self, rand: R) -> ThreadSysHandler<'a, T> {
+    pub fn build<R: Rng>(self, rand: R) -> ThreadSysHandler<'a, S, T> {
         thread_sys_handler(
             self.comm_policy,
             self.gen_diag,
             self.netif_diag,
             self.thread_diag,
             self.sw_diag,
+            self.networks,
             self.net_ctl,
             rand,
         )

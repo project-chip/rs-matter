@@ -406,7 +406,9 @@ impl<const E: usize, const N: usize> ClusterHandler for UserLabelHandler<'_, E, 
         ctx.kv().access(|store, buf| match op {
             LifecycleOp::Startup => self.labels.load_persist(store, buf),
             LifecycleOp::FactoryReset => self.labels.reset_persist(store, buf),
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
+            LifecycleOp::FabricRemoval { .. }
+            | LifecycleOp::FailSafeCommit
+            | LifecycleOp::FailSafeExpiry => Ok(()),
         })
     }
 

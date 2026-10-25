@@ -1535,7 +1535,9 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         match op {
             LifecycleOp::Startup => ctx.kv().access(|kv, buf| store.load_persist(kv, buf)),
             LifecycleOp::FactoryReset => ctx.kv().access(|kv, buf| store.reset_persist(kv, buf)),
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
+            LifecycleOp::FabricRemoval { .. }
+            | LifecycleOp::FailSafeCommit
+            | LifecycleOp::FailSafeExpiry => Ok(()),
         }
     }
 

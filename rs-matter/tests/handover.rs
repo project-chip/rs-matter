@@ -41,7 +41,7 @@ use rs_matter::crypto::{
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{DummyNetworks, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -53,7 +53,7 @@ use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
-use rs_matter::persist::{KvBlobStoreAccess, FABRIC_KEYS_START};
+use rs_matter::persist::{KvBlobStoreAccess, FABRIC_KEYS_START, NETWORKS_KEY};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
@@ -81,7 +81,7 @@ const DEVICE_B_PORT: u16 = 5561;
 
 const IM_TIMEOUT_SECS: u64 = 10;
 
-type DeviceDmState = InteractionModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+type DeviceDmState = InteractionModelState<DEFAULT_MAX_SUBSCRIPTIONS, 0>;
 
 static DEVICE_A_MATTER: StaticCell<Matter> = StaticCell::new();
 static DEVICE_A_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
@@ -125,7 +125,6 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 /// What the controller flow needs from a device.
 struct DeviceHandles<'a, K> {
     matter: &'a Matter<'a>,
-    networks: &'a SharedNetworks<DummyNetworks>,
     kv: K,
     store: MemKvBlobStore,
 }
@@ -158,7 +157,7 @@ async fn run() -> Result<(), Error> {
         DEVICE_A_PORT,
     ));
     let buffers_a = DEVICE_A_BUFFERS.uninit().init_with(MatterBuffers::init());
-    let state_a = DEVICE_A_STATE.init(InteractionModelState::new(DummyNetworks));
+    let state_a = DEVICE_A_STATE.init(InteractionModelState::new());
     let on_off_a = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut crypto.rand()?),
         1,
@@ -187,7 +186,7 @@ async fn run() -> Result<(), Error> {
         DEVICE_B_PORT,
     ));
     let buffers_b = DEVICE_B_BUFFERS.uninit().init_with(MatterBuffers::init());
-    let state_b = DEVICE_B_STATE.init(InteractionModelState::new(DummyNetworks));
+    let state_b = DEVICE_B_STATE.init(InteractionModelState::new());
     let on_off_b = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut crypto.rand()?),
         1,
@@ -248,13 +247,11 @@ async fn run() -> Result<(), Error> {
             &crypto,
             DeviceHandles {
                 matter: device_a,
-                networks: state_a.networks(),
                 kv: &kv_a,
                 store: store_a.clone(),
             },
             DeviceHandles {
                 matter: device_b,
-                networks: state_b.networks(),
                 kv: &kv_b,
                 store: store_b.clone(),
             },
@@ -385,13 +382,13 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
     // Nothing to export without a pending AddNOC
     assert!(device_b
         .matter
-        .suspend_commissioning(device_b.networks, &device_b.kv, serialize)
+        .suspend_commissioning(DummyNetworks, NETWORKS_KEY, &device_b.kv, serialize)
         .is_err());
 
     // A failing closure leaves A untouched
     assert!(device_a
         .matter
-        .suspend_commissioning(device_a.networks, &device_a.kv, |_| Err::<(), _>(
+        .suspend_commissioning(DummyNetworks, NETWORKS_KEY, &device_a.kv, |_| Err::<(), _>(
             rs_matter::error::ErrorCode::Invalid.into()
         ))
         .is_err());
@@ -400,10 +397,12 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
         "A should still hold the fabric"
     );
 
-    let envelope =
-        device_a
-            .matter
-            .suspend_commissioning(device_a.networks, &device_a.kv, serialize)?;
+    let envelope = device_a.matter.suspend_commissioning(
+        DummyNetworks,
+        NETWORKS_KEY,
+        &device_a.kv,
+        serialize,
+    )?;
 
     assert!(
         !device_a.matter.has_fabrics(),
@@ -428,10 +427,13 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
         "just the AddNOC admin entry"
     );
 
-    let fab_idx =
-        device_b
-            .matter
-            .resume_commissioning(crypto, device_b.networks, &device_b.kv, &handover)?;
+    let fab_idx = device_b.matter.resume_commissioning(
+        crypto,
+        DummyNetworks,
+        NETWORKS_KEY,
+        &device_b.kv,
+        &handover,
+    )?;
 
     assert!(
         device_b.matter.has_fabrics(),
@@ -440,7 +442,7 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
     assert!(
         device_b
             .matter
-            .resume_commissioning(crypto, device_b.networks, &device_b.kv, &handover)
+            .resume_commissioning(crypto, DummyNetworks, NETWORKS_KEY, &device_b.kv, &handover)
             .is_err(),
         "a second resume while the fail-safe is armed must fail"
     );

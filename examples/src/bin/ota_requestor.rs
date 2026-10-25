@@ -49,11 +49,10 @@ use rs_matter::dm::clusters::ota_req::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_OTA_REQUESTOR;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, EventEmitter, Node};
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -98,8 +97,8 @@ fn main() -> Result<(), Error> {
 
     let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the data model state (subscriptions, events, network store).
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    // Create the data model state (subscriptions, events).
+    let state: InteractionModelState = InteractionModelState::new();
 
     // The OTA Requestor's persistent provider list, re-hydrated from storage.
     let providers = Providers::new();
@@ -124,7 +123,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state (events epoch, network store) and deliver the `Startup` lifecycle op
+    // state (events epoch) and deliver the `Startup` lifecycle op
     // to all cluster handlers (here notably: the OTA provider list).
     futures_lite::future::block_on(im.startup())?;
 

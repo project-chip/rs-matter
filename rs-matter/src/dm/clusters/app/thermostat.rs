@@ -1879,7 +1879,9 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
                 Ok(())
             }
             LifecycleOp::FactoryReset => self.factory_reset(&ctx),
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
+            LifecycleOp::FabricRemoval { .. }
+            | LifecycleOp::FailSafeCommit
+            | LifecycleOp::FailSafeExpiry => Ok(()),
         }
     }
 

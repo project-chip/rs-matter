@@ -23,14 +23,13 @@ use embassy_futures::select::select;
 
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::{EventId, EventNumber, Metadata};
 use crate::error::{Error, ErrorCode};
 use crate::im::encoding::{EventPriority, IMBuffer, NodeId};
-use crate::im::events::EventTLVWrite;
+use crate::im::events::{EventTLVWrite, EVENT_DATA_TAG};
 use crate::im::ImStats;
 use crate::persist::KvBlobStoreAccess;
-use crate::tlv::TLVElement;
+use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
@@ -188,6 +187,25 @@ pub trait EventEmitter {
     ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>;
+
+    /// Emit an event whose data is a single unsigned integer field, with context tag 0.
+    ///
+    /// Same as `emit_event` with such data, but not generic, so that an implementation
+    /// can share one copy of its events queue code among all such events.
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
+            tw.start_struct(&EVENT_DATA_TAG)?;
+            tw.u32(&TLVTag::Context(0), value)?;
+            tw.end_container()
+        })
+    }
 }
 
 impl<T> EventEmitter for &T
@@ -206,6 +224,17 @@ where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
         (**self).emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        (**self).emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -264,9 +293,6 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// Return a blob store that can be used to persist data across reboots.
     fn kv(&self) -> impl KvBlobStoreAccess + '_;
 
-    /// Return the networks access object.
-    fn networks(&self) -> impl NetworksAccess + '_;
-
     /// Return the metadata of the node that is associated with this handler.
     fn metadata(&self) -> impl Metadata + '_;
 
@@ -300,6 +326,11 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// - For the same reason, a handler must not call this from its own
     ///   `lifecycle` implementation (infinite recursion).
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8);
+
+    /// Broadcast a lifecycle operation to every handler in the data model.
+    ///
+    /// The same caveats as for `notify_fabric_removed` apply.
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error>;
 }
 
 impl<T> HandlerContext for &T
@@ -316,10 +347,6 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         (**self).kv()
-    }
-
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        (**self).networks()
     }
 
     fn metadata(&self) -> impl Metadata + '_ {
@@ -340,6 +367,10 @@ where
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         (**self).notify_fabric_removed(fab_idx);
+    }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        (**self).broadcast_lifecycle(op)
     }
 }
 
@@ -576,10 +607,6 @@ where
         self.context.kv()
     }
 
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
-    }
-
     fn metadata(&self) -> impl Metadata + '_ {
         self.context.metadata()
     }
@@ -598,6 +625,10 @@ where
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
+    }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
     }
 }
 
@@ -640,6 +671,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -756,10 +799,6 @@ where
         self.context.kv()
     }
 
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
-    }
-
     fn metadata(&self) -> impl Metadata + '_ {
         self.context.metadata()
     }
@@ -778,6 +817,10 @@ where
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
+    }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
     }
 }
 
@@ -820,6 +863,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -882,10 +937,6 @@ where
         self.context.kv()
     }
 
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
-    }
-
     fn metadata(&self) -> impl Metadata + '_ {
         self.context.metadata()
     }
@@ -904,6 +955,10 @@ where
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
+    }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
     }
 }
 
@@ -946,6 +1001,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -1070,10 +1137,6 @@ where
         self.context.kv()
     }
 
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        self.context.networks()
-    }
-
     fn metadata(&self) -> impl Metadata + '_ {
         self.context.metadata()
     }
@@ -1092,6 +1155,10 @@ where
 
     fn notify_fabric_removed(&self, fab_idx: NonZeroU8) {
         self.context.notify_fabric_removed(fab_idx);
+    }
+
+    fn broadcast_lifecycle(&self, op: LifecycleOp) -> Result<(), Error> {
+        self.context.broadcast_lifecycle(op)
     }
 }
 
@@ -1134,6 +1201,18 @@ where
     {
         self.context
             .emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+
+    fn emit_u32_event(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        value: u32,
+    ) -> Result<EventNumber, Error> {
+        self.context
+            .emit_u32_event(endpoint_id, cluster_id, event_id, priority, value)
     }
 }
 
@@ -1288,6 +1367,19 @@ pub enum LifecycleOp {
         /// The local index the removed fabric had
         fab_idx: NonZeroU8,
     },
+    /// The armed fail-safe has been committed by a successful
+    /// `CommissioningComplete`, whatever the fail-safe was armed for.
+    ///
+    /// The typical reaction is to persist the state the handler staged while
+    /// the fail-safe was armed. Delivered before the command responds.
+    FailSafeCommit,
+    /// The armed fail-safe has expired: it timed out, or `ArmFailSafe(0)` or
+    /// `RevokeCommissioning` force-expired it.
+    ///
+    /// The typical reaction is to drop the state the handler staged while the
+    /// fail-safe was armed, reloading the committed one from
+    /// [`HandlerContext::kv`].
+    FailSafeExpiry,
 }
 
 /// A version of the `AsyncHandler` trait that never awaits any operation.

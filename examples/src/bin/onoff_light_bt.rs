@@ -46,7 +46,7 @@ use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnO
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus};
-use rs_matter::dm::clusters::wifi_diag::WifiDiag;
+use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
@@ -55,7 +55,7 @@ use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiN
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
@@ -130,9 +130,8 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     // Create the transport buffers
     let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the data model state (subscriptions, events, the Wifi network store).
-    let state: WirelessInteractionModelState<WifiNetworks<3>> =
-        WirelessInteractionModelState::new(WifiNetworks::new());
+    // Create the data model state (subscriptions, events).
+    let state: InteractionModelState = InteractionModelState::new();
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -158,16 +157,21 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
 
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
 
-    // Create the Data Model instance. The same `net_ctl` is wired both into the
-    // `NetworkCommissioning` handler (above) and into the data model, which drives
-    // the operational Wifi connection manager from `InteractionModel::run`.
-    let im = InteractionModel::new_with_net_ctl(
+    // Create the Data Model instance. The `NetworkCommissioning` handler in it
+    // drives the operational Wifi connection from its background job, run by
+    // `InteractionModel::run`.
+    let im = InteractionModel::new(
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &on_off_handler, &net_ctl, &net_ctl),
+        data_model(
+            rand,
+            &on_off_handler,
+            WifiNetworks::new(),
+            &net_ctl,
+            &net_ctl,
+        ),
         &kv,
-        &net_ctl,
         &state,
     );
 
@@ -276,15 +280,16 @@ const NODE: Node<'static> = Node {
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    networks: WifiNetworks<3>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a
 where
-    T: NetCtl + NetCtlStatus + 'a,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif + 'a,
 {
     (
         NODE,
-        endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
+        endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
             .netif_diag(&UnixNetifs)
             .build(rand)
             .chain(

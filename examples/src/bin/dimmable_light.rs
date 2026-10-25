@@ -42,11 +42,10 @@ use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
@@ -72,8 +71,8 @@ fn main() -> Result<(), Error> {
     // Create the transport buffers
     let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the data model state (subscriptions, events, network store).
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    // Create the data model state (subscriptions, events).
+    let state: InteractionModelState = InteractionModelState::new();
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);

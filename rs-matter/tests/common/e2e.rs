@@ -26,7 +26,6 @@ use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
-use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::{DataModel, Privilege};
 use rs_matter::error::Error;
@@ -93,7 +92,7 @@ pub struct E2eRunner<C> {
     matter_client: Matter<'static>,
     crypto: C,
     buffers: MatterBuffers,
-    pub state: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE>,
+    pub state: InteractionModelState<3, E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
     /// While set, every packet the remote (tested) instance sends is lost.
     lose_remote_tx: AtomicBool,
@@ -127,7 +126,7 @@ impl<C: Crypto> E2eRunner<C> {
             matter_client: Self::new_matter(&TEST_DEV_DET),
             crypto,
             buffers: MatterBuffers::new(),
-            state: InteractionModelState::new(DummyNetworks),
+            state: InteractionModelState::new(),
             cat_ids,
             lose_remote_tx: AtomicBool::new(false),
             lost_remote_tx: AtomicUsize::new(0),
@@ -229,16 +228,15 @@ impl<C: Crypto> E2eRunner<C> {
     /// subscription (into a retained `kv`), then run again with a *fresh* state
     /// and `resume = true` over the *same* `kv` to re-hydrate it — the moral
     /// equivalent of the device restarting with its storage intact.
-    pub async fn run_with<H, S, K, const NS: usize, const NE: usize>(
+    pub async fn run_with<H, K, const NS: usize, const NE: usize>(
         &self,
         handler: H,
-        state: &InteractionModelState<S, NS, NE>,
+        state: &InteractionModelState<NS, NE>,
         kv_store: K,
         resume: bool,
     ) -> Result<(), Error>
     where
         H: DataModel,
-        S: rs_matter::dm::clusters::net_comm::Networks,
         K: KvBlobStore,
     {
         self.run_with_setup(handler, state, kv_store, resume, || Ok(()))
@@ -248,17 +246,16 @@ impl<C: Crypto> E2eRunner<C> {
     /// Like [`run_with`](Self::run_with), with a setup hook after the default
     /// sessions are initialized and before the transports and data model run.
     /// This lets recovery tests start without an established peer session.
-    pub async fn run_with_setup<H, S, K, F, const NS: usize, const NE: usize>(
+    pub async fn run_with_setup<H, K, F, const NS: usize, const NE: usize>(
         &self,
         handler: H,
-        state: &InteractionModelState<S, NS, NE>,
+        state: &InteractionModelState<NS, NE>,
         kv_store: K,
         resume: bool,
         setup: F,
     ) -> Result<(), Error>
     where
         H: DataModel,
-        S: rs_matter::dm::clusters::net_comm::Networks,
         K: KvBlobStore,
         F: FnOnce() -> Result<(), Error>,
     {

@@ -46,6 +46,14 @@ pub const DEV_TYPE_POWER_SOURCE: DeviceType = DeviceType {
     drev: 1,
 };
 
+/// The Secondary Network Interface device type: an endpoint hosting the Network
+/// Commissioning cluster of an additional network interface of the node, next
+/// to the primary one on the root endpoint.
+pub const DEV_TYPE_SECONDARY_NETWORK_INTERFACE: DeviceType = DeviceType {
+    dtype: 0x0019,
+    drev: 1,
+};
+
 /// A constant representing the device type for a bridged device endpoint in the node.
 pub const DEV_TYPE_BRIDGED_NODE: DeviceType = DeviceType {
     dtype: 0x0013,

@@ -80,7 +80,6 @@ use rs_matter::dm::clusters::decl::group_key_management::{
 use rs_matter::dm::clusters::decl::groups::GroupsClient as _;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
-use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -157,7 +156,7 @@ const FLOW_TIMEOUT_SECS: u64 = 60;
 
 /// A device's data model state: a dummy (no-op) network store, default
 /// subscription count, no events.
-type DeviceDmState = InteractionModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+type DeviceDmState = InteractionModelState<DEFAULT_MAX_SUBSCRIPTIONS, 0>;
 
 static A_MATTER: StaticCell<Matter> = StaticCell::new();
 static A_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
@@ -281,7 +280,7 @@ async fn run_test() -> Result<(), Error> {
     let a_crypto = test_only_crypto();
     let a_rand = a_crypto.rand()?;
     let a_buffers = A_BUFFERS.uninit().init_with(MatterBuffers::init());
-    let a_state = A_STATE.init(InteractionModelState::new(DummyNetworks));
+    let a_state = A_STATE.init(InteractionModelState::new());
     let a_kv = a_matter.kv(DummyKvBlobStore);
 
     let bindings = Bindings::<MAX_BINDINGS>::new();
@@ -321,7 +320,7 @@ async fn run_test() -> Result<(), Error> {
     let b_crypto = test_only_crypto();
     let mut b_rand = b_crypto.rand()?;
     let b_buffers = B_BUFFERS.uninit().init_with(MatterBuffers::init());
-    let b_state = B_STATE.init(InteractionModelState::new(DummyNetworks));
+    let b_state = B_STATE.init(InteractionModelState::new());
     let b_kv = b_matter.kv(DummyKvBlobStore);
 
     let b_on_off = on_off::OnOffHandler::new_standalone(

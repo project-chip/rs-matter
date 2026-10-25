@@ -101,7 +101,6 @@ use rs_matter::dm::devices::{
     DEV_TYPE_ROOT_NODE,
 };
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
     Async, AttrChangeNotifier, Cluster, DataModel, Dataver, DeviceType, Endpoint, EventEmitter,
@@ -109,7 +108,7 @@ use rs_matter::dm::{
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::ota::{OtaImageHeader, OTA_IMAGE_DIGEST_SHA256};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -209,10 +208,10 @@ fn main() -> Result<(), Error> {
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store).
+    // Create the data model state (subscriptions, events).
     // Persistent subscriptions are compiled in via the `persistent-subscriptions`
     // feature, so a subscriber keeps its subscription across a reboot.
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
@@ -408,7 +407,7 @@ fn main() -> Result<(), Error> {
 
     // Bring the Data Model to its operational state - before the responder
     // starts accepting commissioner traffic. This re-hydrates the IM state
-    // (events epoch, network store), replays any persisted subscriptions into
+    // (events epoch), replays any persisted subscriptions into
     // the reporter's table (so a subscriber that had a subscription before this
     // reboot keeps receiving reports instead of having to notice the loss and
     // re-subscribe), and delivers the `Startup` lifecycle op to all cluster

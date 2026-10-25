@@ -19,7 +19,7 @@
 
 use core::fmt::{Debug, Display};
 
-use crate::dm::clusters::net_comm::WirelessCreds;
+use crate::dm::clusters::net_comm::{NetworkType, WirelessCreds};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetsOwned, ToTLV};
 use crate::utils::init::{init, Init, IntoFallibleInit};
@@ -64,6 +64,8 @@ impl Wifi {
 }
 
 impl WirelessNetwork for Wifi {
+    const NET_TYPE: NetworkType = NetworkType::Wifi;
+
     fn id(&self) -> &[u8] {
         &self.ssid
     }

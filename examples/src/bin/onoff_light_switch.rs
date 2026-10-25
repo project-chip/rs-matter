@@ -57,11 +57,10 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EventEmitter, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
@@ -106,7 +105,7 @@ fn main() -> Result<(), Error> {
     // press events), so - unlike the examples that use `NoEvents` - the default
     // state carries a real (non-zero) event queue that holds them until
     // subscribers read them.
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    let state: InteractionModelState = InteractionModelState::new();
 
     // The Binding registry (the switch's address book), loaded from persistence.
     let bindings = Bindings::<MAX_BINDINGS>::new();
@@ -130,7 +129,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state (events epoch, network store) and deliver the `Startup` lifecycle op
+    // state (events epoch) and deliver the `Startup` lifecycle op
     // to all cluster handlers (here notably: the Binding registry).
     futures_lite::future::block_on(im.startup())?;
 

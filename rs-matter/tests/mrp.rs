@@ -58,7 +58,6 @@ use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, CanonAeadKey, Crypto};
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic};
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
-use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::{Dataver, Privilege};
 use rs_matter::error::{Error, ErrorCode};
@@ -611,7 +610,7 @@ fn run_im_scenario(
 
     let crypto = test_only_crypto();
     let buffers: MatterBuffers = MatterBuffers::new();
-    let state = InteractionModelState::<DummyNetworks, 3, 0>::new(DummyNetworks);
+    let state = InteractionModelState::<3, 0>::new();
 
     let mut rand = crypto.rand().unwrap();
     let on_off_handler = on_off::OnOffHandler::new_standalone(

@@ -26,7 +26,7 @@ use crate::dm::clusters::net_comm::{
 use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
-use crate::persist::{KvBlobStore, NETWORKS_KEY};
+use crate::persist::KvBlobStore;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
@@ -60,6 +60,9 @@ pub type OwnedWirelessNetworkId = Vec<u8, MAX_WIRELESS_NETWORK_ID_LEN>;
 ///
 /// The trait has only two implementations: `Wifi` and `Thread`.
 pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
+    /// The network type (Wifi or Thread)
+    const NET_TYPE: NetworkType;
+
     /// Return the network ID
     ///
     /// For Wifi networks, this is the SSID
@@ -108,6 +111,7 @@ pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
 pub struct WirelessNetworks<const N: usize, T> {
     networks: crate::utils::storage::Vec<T, N>,
     managed: bool,
+    enabled: bool,
 }
 
 impl<const N: usize, T> Default for WirelessNetworks<N, T>
@@ -127,6 +131,7 @@ where
         Self {
             networks: crate::utils::storage::Vec::new(),
             managed: false,
+            enabled: true,
         }
     }
 
@@ -134,6 +139,7 @@ where
         init!(Self {
             networks <- crate::utils::storage::Vec::init(),
             managed: false,
+            enabled: true,
         })
     }
 
@@ -141,21 +147,24 @@ where
     pub fn reset(&mut self) {
         self.networks.clear();
         self.managed = false;
+        self.enabled = true;
     }
 
     /// Remove all networks from the provided BLOB store and from memory
     ///
     /// # Arguments
     /// - `store`: the BLOB store to remove the networks from
+    /// - `key`: the key the networks are persisted under
     /// - `buf`: a temporary buffer to use for removing the networks
     pub async fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut kv: S,
+        key: u16,
         buf: &mut [u8],
     ) -> Result<(), Error> {
         self.reset();
 
-        kv.remove(NETWORKS_KEY, buf)?;
+        kv.remove(key, buf)?;
 
         info!("Removed all wireless networks from storage");
 
@@ -166,15 +175,17 @@ where
     ///
     /// # Arguments
     /// - `store`: the BLOB store to load the networks from
+    /// - `key`: the key the networks are persisted under
     /// - `buf`: a temporary buffer to use for loading the networks
     pub async fn load_persist<S: KvBlobStore>(
         &mut self,
         mut kv: S,
+        key: u16,
         buf: &mut [u8],
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(data) = kv.load(NETWORKS_KEY, buf)? {
+        if let Some(data) = kv.load(key, buf)? {
             self.load(data)?;
 
             info!(
@@ -186,6 +197,65 @@ where
         Ok(())
     }
 
+    /// Return the network type of the networks persisted in the provided BLOB store
+    ///
+    /// Does not depend on `T`, so it tells whether the persisted networks are of another
+    /// network type than the one about to be run (see `stored_net_type`). `load` ignores
+    /// such networks only if they record their type, so check with this one before
+    /// running a different network type.
+    ///
+    /// # Arguments
+    /// - `kv`: the BLOB store the networks are persisted in
+    /// - `key`: the key the networks are persisted under
+    /// - `buf`: a temporary buffer to use for loading the networks
+    ///
+    /// Returns `None` if nothing is persisted.
+    pub async fn persisted_net_type<S: KvBlobStore>(
+        mut kv: S,
+        key: u16,
+        buf: &mut [u8],
+    ) -> Result<Option<NetworkType>, Error> {
+        match kv.load(key, buf)? {
+            Some(data) => Self::stored_net_type(data),
+            None => Ok(None),
+        }
+    }
+
+    /// Return the network type of the state stored in a byte slice (see `store`).
+    ///
+    /// Does not depend on `T`. A state stored before the network type was recorded
+    /// tells it by its first network: a Wifi one has a password.
+    ///
+    /// # Arguments
+    /// - `data`: The byte slice the state is stored in
+    ///
+    /// Returns `None` for such an older state without networks.
+    pub fn stored_net_type(data: &[u8]) -> Result<Option<NetworkType>, Error> {
+        let root = TLVElement::new(data);
+
+        let networks = if let Ok(structure) = root.structure() {
+            if let Some(tag) = structure.find_ctx(3)?.non_empty() {
+                return Self::net_type_of(tag.u32()?).map(Some);
+            }
+
+            structure.ctx(0)?.array()?
+        } else {
+            root.array()?
+        };
+
+        let Some(network) = networks.iter().next() else {
+            return Ok(None);
+        };
+
+        let wifi = network?.structure()?.find_ctx(1)?.non_empty().is_some();
+
+        Ok(Some(if wifi {
+            NetworkType::Wifi
+        } else {
+            NetworkType::Thread
+        }))
+    }
+
     /// Load the state from a byte slice.
     ///
     /// # Arguments
@@ -195,9 +265,21 @@ where
 
         self.networks.clear();
 
-        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool }
+        // Try new format: struct { ctx(0): networks array, ctx(1): managed bool, ctx(2): enabled bool,
+        // ctx(3): network type } (`enabled` defaulting to true and the network type to `T`'s when absent)
         // Fall back to old format: bare TLV array (with managed defaulting to false)
         if let Ok(structure) = root.structure() {
+            if let Some(tag) = structure.find_ctx(3)?.non_empty() {
+                if tag.u32()? != Self::net_type_tag(T::NET_TYPE) {
+                    // E.g. Thread networks read by a Wifi build: none of them is a network of `T`
+                    warn!("Ignoring stored networks of another network type");
+
+                    self.reset();
+
+                    return Ok(());
+                }
+            }
+
             for network in structure.ctx(0)?.array()?.iter() {
                 let network = network?;
 
@@ -207,6 +289,12 @@ where
             }
 
             self.managed = structure.ctx(1)?.bool()?;
+            self.enabled = structure
+                .find_ctx(2)?
+                .non_empty()
+                .map(|enabled| enabled.bool())
+                .transpose()?
+                .unwrap_or(true);
         } else {
             for network in root.array()?.iter() {
                 let network = network?;
@@ -217,6 +305,7 @@ where
             }
 
             self.managed = false;
+            self.enabled = true;
         }
 
         Ok(())
@@ -235,6 +324,8 @@ where
 
         self.networks.to_tlv(&TLVTag::Context(0), &mut wb)?;
         self.managed.to_tlv(&TLVTag::Context(1), &mut wb)?;
+        self.enabled.to_tlv(&TLVTag::Context(2), &mut wb)?;
+        Self::net_type_tag(T::NET_TYPE).to_tlv(&TLVTag::Context(3), &mut wb)?;
 
         wb.end_container()?;
 
@@ -473,6 +564,35 @@ where
     pub fn set_managed(&mut self, managed: bool) {
         self.managed = managed;
     }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// A network type as stored: its Network Commissioning feature bit
+    fn net_type_tag(net_type: NetworkType) -> u32 {
+        match net_type {
+            NetworkType::Ethernet => net_comm::Feature::ETHERNET_NETWORK_INTERFACE.bits(),
+            NetworkType::Wifi => net_comm::Feature::WI_FI_NETWORK_INTERFACE.bits(),
+            NetworkType::Thread => net_comm::Feature::THREAD_NETWORK_INTERFACE.bits(),
+        }
+    }
+
+    /// The network type of a stored network type tag
+    fn net_type_of(tag: u32) -> Result<NetworkType, Error> {
+        [
+            NetworkType::Ethernet,
+            NetworkType::Wifi,
+            NetworkType::Thread,
+        ]
+        .into_iter()
+        .find(|net_type| Self::net_type_tag(*net_type) == tag)
+        .ok_or_else(|| ErrorCode::InvalidData.into())
+    }
 }
 
 impl<const N: usize, T> Networks for WirelessNetworks<N, T>
@@ -504,10 +624,12 @@ where
     }
 
     fn enabled(&self) -> Result<bool, Error> {
-        Ok(true)
+        Ok(WirelessNetworks::enabled(self))
     }
 
-    fn set_enabled(&mut self, _enabled: bool) -> Result<(), Error> {
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        WirelessNetworks::set_enabled(self, enabled);
+
         Ok(())
     }
 
@@ -612,6 +734,10 @@ impl NoopWirelessNetCtl {
 impl net_comm::NetCtl for NoopWirelessNetCtl {
     fn net_type(&self) -> NetworkType {
         self.0
+    }
+
+    fn set_enabled(&self, _enabled: bool) -> Result<(), Error> {
+        Ok(())
     }
 
     async fn scan<F>(&self, _network: Option<&[u8]>, _f: F) -> Result<(), NetCtlError>
@@ -820,6 +946,10 @@ where
 
     fn thread_version(&self) -> u16 {
         self.net_ctl.thread_version()
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
+        self.net_ctl.set_enabled(enabled)
     }
 
     async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
@@ -1090,9 +1220,8 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::dm::clusters::net_comm::{
-        NetworksAccess, NetworksError, SharedNetworks, WirelessCreds,
-    };
+    use crate::dm::clusters::net_comm::{NetworksCell, NetworksError, WirelessCreds};
+    use crate::dm::networks::NetChangeNotif;
 
     use super::wifi::{Wifi, WifiNetworks};
     use super::WirelessNetwork;
@@ -1382,11 +1511,59 @@ mod tests {
         assert!(!nets.managed());
     }
 
-    // ── SharedNetworks: delegates to inner WifiNetworks correctly ──
+    // ── WirelessNetworks: enabled state ──
 
     #[test]
-    fn shared_networks_access_add_and_read() {
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+    fn enabled_default_true() {
+        let nets = WifiNetworks::<4>::new();
+        assert!(nets.enabled());
+    }
+
+    #[test]
+    fn enabled_store_load_round_trip() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.set_enabled(false);
+
+        let mut buf = [0u8; 512];
+        let len = nets.store(&mut buf).unwrap();
+
+        let mut loaded = WifiNetworks::<4>::new();
+        loaded.load(&buf[..len]).unwrap();
+        assert!(!loaded.enabled());
+
+        loaded.reset();
+        assert!(loaded.enabled());
+    }
+
+    #[test]
+    fn load_format_without_enabled() {
+        use crate::tlv::{TLVTag, TLVWrite};
+        use crate::utils::storage::WriteBuf;
+
+        // The struct format before the `enabled` field was added
+        let mut buf = [0u8; 512];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.start_array(&TLVTag::Context(0)).unwrap();
+        wb.end_container().unwrap();
+        wb.bool(&TLVTag::Context(1), true).unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        let mut nets = WifiNetworks::<4>::new();
+        nets.set_enabled(false);
+        nets.load(&buf[..len]).unwrap();
+
+        assert!(nets.managed());
+        assert!(nets.enabled());
+    }
+
+    // ── NetworksCell: delegates to inner WifiNetworks correctly ──
+
+    #[test]
+    fn networks_cell_access_add_and_read() {
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         shared.access(|networks| {
             networks
@@ -1413,8 +1590,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_networks_commissioned_via_access() {
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+    fn networks_cell_commissioned_via_access() {
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         let managed = shared.access(|networks| networks.managed().unwrap());
         assert!(!managed);
@@ -1426,8 +1603,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_networks_next_creds_round_robin() {
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+    fn networks_cell_next_creds_round_robin() {
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         shared.access(|networks| {
             for (ssid, pass) in [(b"A", b"pA"), (b"B", b"pB"), (b"C", b"pC")] {
@@ -1502,20 +1679,136 @@ mod tests {
         );
     }
 
+    #[test]
+    fn load_ignores_another_network_type() {
+        use super::thread::{Thread, ThreadNetworks};
+
+        // A Thread dataset with just the Extended PAN ID TLV
+        const DATASET: &[u8] = &[0x02, 0x08, 1, 2, 3, 4, 5, 6, 7, 8];
+
+        let mut buf = [0u8; 512];
+
+        let mut thread = ThreadNetworks::<4>::new();
+        thread
+            .add_or_update(
+                &DATASET[2..],
+                Thread::init_from(&WirelessCreds::Thread {
+                    dataset_tlv: DATASET,
+                }),
+                |_| Ok(()),
+            )
+            .unwrap();
+        thread.set_managed(true);
+        let len = thread.store(&mut buf).unwrap();
+
+        let mut wifi = WifiNetworks::<4>::new();
+        wifi.load(&buf[..len]).unwrap();
+        assert!(collect_ssids(&wifi).is_empty());
+        assert!(!wifi.managed());
+
+        let mut wifi = WifiNetworks::<4>::new();
+        wifi.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+        wifi.set_managed(true);
+        let len = wifi.store(&mut buf).unwrap();
+
+        let mut thread = ThreadNetworks::<4>::new();
+        thread.load(&buf[..len]).unwrap();
+        let mut count = 0;
+        thread
+            .networks(|_| {
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!thread.managed());
+    }
+
+    #[test]
+    fn stored_net_type_tagged_and_older() {
+        use crate::dm::clusters::net_comm::NetworkType;
+        use crate::tlv::{TLVTag, TLVWrite};
+        use crate::utils::storage::WriteBuf;
+
+        use super::thread::ThreadNetworks;
+
+        // A Thread dataset with just the Extended PAN ID TLV
+        const DATASET: &[u8] = &[0x02, 0x08, 1, 2, 3, 4, 5, 6, 7, 8];
+
+        let mut buf = [0u8; 512];
+
+        // Tagged, even without networks
+        let len = ThreadNetworks::<4>::new().store(&mut buf).unwrap();
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Thread)
+        );
+
+        let len = WifiNetworks::<4>::new().store(&mut buf).unwrap();
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Wifi)
+        );
+
+        // Older struct format: told by the first network
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.start_array(&TLVTag::Context(0)).unwrap();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.str(&TLVTag::Context(0), DATASET).unwrap();
+        wb.end_container().unwrap();
+        wb.end_container().unwrap();
+        wb.bool(&TLVTag::Context(1), true).unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Thread)
+        );
+
+        // Older bare array format
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.str(&TLVTag::Context(0), b"A").unwrap();
+        wb.str(&TLVTag::Context(1), b"pA").unwrap();
+        wb.end_container().unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            Some(NetworkType::Wifi)
+        );
+
+        // Older format without networks
+        let mut wb = WriteBuf::new(&mut buf);
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        assert_eq!(
+            WifiNetworks::<4>::stored_net_type(&buf[..len]).unwrap(),
+            None
+        );
+    }
+
     // ── Regression: save() must not trigger a change notification ──
 
     #[test]
-    fn shared_networks_save_does_not_trigger_change() {
+    fn networks_cell_save_does_not_trigger_change() {
         use core::pin::pin;
         use embassy_futures::select::{select, Either};
 
-        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+        let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
         // Add a network → triggers notification
         shared.access(|n| n.add_or_update(&wifi_creds(b"A", b"p")).unwrap());
 
         // Consume the notification
-        embassy_futures::block_on(shared.wait_state_changed());
+        embassy_futures::block_on(shared.wait_changed());
 
         // Save (should NOT trigger notification)
         shared.access(|n| {
@@ -1528,12 +1821,7 @@ mod tests {
         // triggered, it would resolve first. `ready(())` resolves immediately so
         // if the notification was NOT triggered, the second branch wins.
         let notified = embassy_futures::block_on(async {
-            match select(
-                pin!(shared.wait_state_changed()),
-                pin!(core::future::ready(())),
-            )
-            .await
-            {
+            match select(pin!(shared.wait_changed()), pin!(core::future::ready(()))).await {
                 Either::First(_) => true,
                 Either::Second(_) => false,
             }

@@ -73,16 +73,15 @@ use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSource
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_POWER_SOURCE, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
     ArrayAttributeRead, Async, DataModel, Dataver, DeviceType, Endpoint, InvokeContext, Node,
     ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::EthInteractionModelState;
 use rs_matter::im::FabricIndex;
 use rs_matter::im::InteractionModel;
+use rs_matter::im::InteractionModelState;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
@@ -411,8 +410,8 @@ fn main() -> Result<(), Error> {
 
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store).
-    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
+    // Create the data model state (subscriptions, events).
+    let state: InteractionModelState = InteractionModelState::new();
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);

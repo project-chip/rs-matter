@@ -24,7 +24,7 @@ use core::marker::PhantomData;
 use crate::acl::AclEntry;
 use crate::crypto::{CanonAeadKey, CanonPkcSecretKey};
 use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationTypeEnum;
-use crate::dm::clusters::net_comm::{Networks, NetworksAccess, NetworksError, WirelessCreds};
+use crate::dm::clusters::net_comm::{Networks, NetworksError, WirelessCreds};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;
 use crate::tlv::{
@@ -335,9 +335,6 @@ impl CommissioningHandover<'_> {
     }
 
     /// Build the envelope for the pending `fabric` and hand it to `f`.
-    ///
-    /// A callback rather than a constructor because the envelope borrows the
-    /// networks store, reachable only inside [`NetworksAccess::access`].
     pub(crate) fn with_pending<N, F, R>(
         fabric: &Fabric,
         networks: N,
@@ -347,31 +344,27 @@ impl CommissioningHandover<'_> {
         f: F,
     ) -> Result<R, Error>
     where
-        N: NetworksAccess,
+        N: Networks,
         F: FnOnce(&CommissioningHandover<'_>) -> Result<R, Error>,
     {
-        networks.access(|networks| {
-            let networks: &dyn Networks = networks;
+        let handover = CommissioningHandover {
+            version: HANDOVER_VERSION,
+            root_ca: Octets(fabric.root_ca()),
+            icac: (!fabric.icac().is_empty()).then(|| Octets(fabric.icac())),
+            noc: Octets(fabric.noc()),
+            secret_key: CanonPkcSecretKey::new_from_ref(fabric.secret_key()),
+            ipk: CanonAeadKey::new_from_ref(fabric.ipk().epoch_key()),
+            admin_vendor_id: fabric.vendor_id(),
+            label: fabric.label(),
+            acl: TLVArrayOrSlice::new_slice(fabric.acl()),
+            wifi_networks: HandoverNetworks::from_store(&networks),
+            thread_networks: HandoverNetworks::from_store(&networks),
+            regulatory,
+            fail_safe_remaining_secs,
+            breadcrumb,
+        };
 
-            let handover = CommissioningHandover {
-                version: HANDOVER_VERSION,
-                root_ca: Octets(fabric.root_ca()),
-                icac: (!fabric.icac().is_empty()).then(|| Octets(fabric.icac())),
-                noc: Octets(fabric.noc()),
-                secret_key: CanonPkcSecretKey::new_from_ref(fabric.secret_key()),
-                ipk: CanonAeadKey::new_from_ref(fabric.ipk().epoch_key()),
-                admin_vendor_id: fabric.vendor_id(),
-                label: fabric.label(),
-                acl: TLVArrayOrSlice::new_slice(fabric.acl()),
-                wifi_networks: HandoverNetworks::from_store(networks),
-                thread_networks: HandoverNetworks::from_store(networks),
-                regulatory,
-                fail_safe_remaining_secs,
-                breadcrumb,
-            };
-
-            f(&handover)
-        })
+        f(&handover)
     }
 }
 
@@ -379,32 +372,30 @@ impl CommissioningHandover<'_> {
 /// would.
 pub(crate) fn stage_networks<N>(
     handover: &CommissioningHandover<'_>,
-    networks: N,
+    mut networks: N,
 ) -> Result<(), Error>
 where
-    N: NetworksAccess,
+    N: Networks,
 {
-    networks.access(|networks| {
-        let mut staged = false;
+    let mut staged = false;
 
-        let mut stage = |creds: &WirelessCreds<'_>| {
-            networks.add_or_update(creds).map_err(networks_error)?;
-            staged = true;
-
-            Ok(())
-        };
-
-        handover.wifi_networks.for_each(&mut stage)?;
-        handover.thread_networks.for_each(&mut stage)?;
-
-        // No `ConnectNetwork` will follow: the node must connect by itself,
-        // so hand the store to the connectivity manager right away
-        if staged {
-            networks.set_managed(true)?;
-        }
+    let mut stage = |creds: &WirelessCreds<'_>| {
+        networks.add_or_update(creds).map_err(networks_error)?;
+        staged = true;
 
         Ok(())
-    })
+    };
+
+    handover.wifi_networks.for_each(&mut stage)?;
+    handover.thread_networks.for_each(&mut stage)?;
+
+    // No `ConnectNetwork` will follow: the node must connect by itself,
+    // so hand the store to the connectivity manager right away
+    if staged {
+        networks.set_managed(true)?;
+    }
+
+    Ok(())
 }
 
 fn networks_error(err: NetworksError) -> Error {

@@ -49,17 +49,17 @@ use rs_matter::dm::clusters::net_comm::{
     NetCtl, NetCtlStatus, NetworkType, Networks, WirelessCreds,
 };
 use rs_matter::dm::clusters::thread_diag::ThreadDiag;
-use rs_matter::dm::clusters::wifi_diag::WifiDiag;
+use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlWithStatusImpl, ThreadNetworks, WifiNetworks,
 };
-use rs_matter::dm::networks::SysNetifs;
+use rs_matter::dm::networks::{NetChangeNotif, SysNetifs};
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{KvBlobStoreAccess, NETWORKS_KEY};
@@ -93,10 +93,10 @@ const MAX_NETWORKS: usize = 3;
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static WIFI_STATE: StaticCell<WirelessInteractionModelState<WifiNetworks<MAX_NETWORKS>>> =
-    StaticCell::new();
-static THREAD_STATE: StaticCell<WirelessInteractionModelState<ThreadNetworks<MAX_NETWORKS>>> =
-    StaticCell::new();
+static WIFI_STATE: StaticCell<InteractionModelState> = StaticCell::new();
+static WIFI_NETWORKS: StaticCell<WifiNetworks<MAX_NETWORKS>> = StaticCell::new();
+static THREAD_STATE: StaticCell<InteractionModelState> = StaticCell::new();
+static THREAD_NETWORKS: StaticCell<ThreadNetworks<MAX_NETWORKS>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -139,9 +139,8 @@ fn run_wifi() -> Result<(), Error> {
     .map_err(|_| ErrorCode::InvalidData)?;
 
     let seed = networks;
-    let state = WIFI_STATE.init(WirelessInteractionModelState::new(WifiNetworks::<
-        MAX_NETWORKS,
-    >::new()));
+    let state = WIFI_STATE.init(InteractionModelState::new());
+    let networks = WIFI_NETWORKS.init(WifiNetworks::new());
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
@@ -186,13 +185,12 @@ fn run_wifi() -> Result<(), Error> {
     )
     .map_err(|_| ErrorCode::InvalidState)?;
 
-    let im = InteractionModel::new_with_net_ctl(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        data_model_wifi(rand, &on_off, &net_ctl, &net_ctl),
+        data_model_wifi(rand, &on_off, networks, &net_ctl, &net_ctl),
         &kv,
-        &net_ctl,
         state,
     );
 
@@ -246,9 +244,8 @@ fn run_thread() -> Result<(), Error> {
     .map_err(|_| ErrorCode::InvalidData)?;
 
     let seed = networks;
-    let state = THREAD_STATE.init(WirelessInteractionModelState::new(ThreadNetworks::<
-        MAX_NETWORKS,
-    >::new()));
+    let state = THREAD_STATE.init(InteractionModelState::new());
+    let networks = THREAD_NETWORKS.init(ThreadNetworks::new());
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
@@ -289,13 +286,12 @@ fn run_thread() -> Result<(), Error> {
     )
     .map_err(|_| ErrorCode::InvalidState)?;
 
-    let im = InteractionModel::new_with_net_ctl(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        data_model_thread(rand, &on_off, &net_ctl, &net_ctl),
+        data_model_thread(rand, &on_off, networks, &net_ctl, &net_ctl),
         &kv,
-        &net_ctl,
         state,
     );
 
@@ -371,15 +367,16 @@ const NODE_THREAD: Node<'static> = Node {
 fn data_model_wifi<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    networks: &'a mut WifiNetworks<MAX_NETWORKS>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a
 where
-    T: NetCtl + NetCtlStatus + 'a,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif + 'a,
 {
     (
         NODE_WIFI,
-        endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
+        endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(
@@ -400,15 +397,16 @@ where
 fn data_model_thread<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    networks: &'a mut ThreadNetworks<MAX_NETWORKS>,
     thread_diag: &'a dyn ThreadDiag,
     net_ctl: T,
 ) -> impl DataModel + 'a
 where
-    T: NetCtl + NetCtlStatus + 'a,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif + 'a,
 {
     (
         NODE_THREAD,
-        endpoints::ThreadSysHandlerBuilder::new(net_ctl, thread_diag)
+        endpoints::ThreadSysHandlerBuilder::new(networks, net_ctl, thread_diag)
             .netif_diag(&SysNetifs)
             .build(rand)
             .chain(

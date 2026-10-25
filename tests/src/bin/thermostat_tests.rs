@@ -66,11 +66,10 @@ use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ELECTRICAL_SENSOR, DEV_TYPE_THERMOSTAT};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::{EthInteractionModelState, InteractionModel};
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
@@ -104,7 +103,7 @@ const THERMOSTAT_ENDPOINT: u16 = 1;
 // Statically allocate in BSS the bigger objects
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
+static STATE: StaticCell<InteractionModelState> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     logging::init();
@@ -127,8 +126,8 @@ fn main() -> Result<(), Error> {
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store).
-    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
+    // Create the data model state (subscriptions, events).
+    let state = STATE.init(InteractionModelState::new());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
