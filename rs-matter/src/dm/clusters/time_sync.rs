@@ -66,7 +66,8 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TIME_ZONE_KEY, TRUSTED_TIME_SOURCE_KEY,
+    load_logged, KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TIME_ZONE_KEY,
+    TRUSTED_TIME_SOURCE_KEY,
 };
 use crate::tlv::{
     FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV,
@@ -228,8 +229,9 @@ impl Rtc {
         // the on-disk value must never regress us
         // below the build timestamp (the documented lower bound
         // we never adjust backwards past).
-        if let Some(data) = kv.load(LKG_UTC_KEY, buf)? {
-            let stored = u64::from_tlv(&TLVElement::new(data))?;
+        if let Ok(Some(stored)) = load_logged(&mut kv, LKG_UTC_KEY, buf, |data| {
+            u64::from_tlv(&TLVElement::new(data))
+        }) {
             let floor = FIRMWARE_BUILD_MATTER_US;
 
             self.utc_us_persisted = stored;
@@ -237,9 +239,11 @@ impl Rtc {
         }
 
         // Load the persisted Trusted Time Source, if any.
-        if let Some(data) = kv.load(TRUSTED_TIME_SOURCE_KEY, buf)? {
-            self.trusted_time_source = Some(TrustedTimeSource::from_tlv(&TLVElement::new(data))?);
-        }
+        self.trusted_time_source = load_logged(&mut kv, TRUSTED_TIME_SOURCE_KEY, buf, |data| {
+            TrustedTimeSource::from_tlv(&TLVElement::new(data))
+        })
+        .ok()
+        .flatten();
 
         Ok(())
     }
@@ -861,12 +865,12 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
     /// serving operations. A missing key (first boot / cleared persistence)
     /// leaves the defaults.
     fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(TIME_ZONE_KEY, buf)? else {
+        // TODO: LARGE BUFFER
+        let Ok(Some(loaded)) = load_logged(&mut store, TIME_ZONE_KEY, buf, |data| {
+            TimeZoneStoreData::from_tlv(&TLVElement::new(data))
+        }) else {
             return Ok(());
         };
-
-        // TODO: LARGE BUFFER
-        let loaded = TimeZoneStoreData::from_tlv(&TLVElement::new(data))?;
 
         self.state.lock(|state| {
             let mut state = state.borrow_mut();

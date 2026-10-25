@@ -33,7 +33,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::im::EventPriority;
-use crate::persist::{KvBlobStoreAccess, Persist};
+use crate::persist::{load_logged, KvBlobStoreAccess, Persist};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,
     ToTLVArrayBuilder, ToTLVBuilder,
@@ -1872,16 +1872,19 @@ impl<N, T> defmt::Format for NetCommHandler<'_, N, T> {
 }
 
 /// Reload the committed networks of `networks` from `kv`, where they are
-/// persisted under `key`; reset the store if nothing is persisted.
+/// persisted under `key`; reset the store if nothing is persisted, or if what
+/// is cannot be loaded.
 pub fn load_networks<N, K>(mut networks: N, key: u16, kv: K) -> Result<(), Error>
 where
     N: Networks,
     K: KvBlobStoreAccess,
 {
-    kv.access(|kv, buf| match kv.load(key, buf)? {
-        Some(data) => networks.load(data),
-        None => networks.reset(),
-    })
+    kv.access(
+        |kv, buf| match load_logged(kv, key, buf, |data| networks.load(data)) {
+            Ok(Some(())) => Ok(()),
+            _ => networks.reset(),
+        },
+    )
 }
 
 /// Persist `networks` into `kv`, under `key`.

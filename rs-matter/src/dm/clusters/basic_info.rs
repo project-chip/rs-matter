@@ -21,7 +21,7 @@ use core::str::FromStr;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
+use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::tlv::{
     FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder,
 };
@@ -566,9 +566,7 @@ impl BasicInfoSettings {
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(data) = store.load(BASIC_INFO_KEY, buf)? {
-            self.load(data)?;
-
+        if let Ok(Some(())) = load_logged(&mut store, BASIC_INFO_KEY, buf, |data| self.load(data)) {
             info!("Loaded basic info settings from storage");
         }
 

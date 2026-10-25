@@ -36,7 +36,8 @@ use crate::fabric::MAX_FABRICS;
 use crate::im::encoding::GenericPath;
 use crate::im::ImStats;
 use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, Persist, ICD_CHECK_IN_COUNTER_KEY, ICD_REGISTERED_CLIENTS_KEY,
+    load_logged, KvBlobStore, KvBlobStoreAccess, Persist, ICD_CHECK_IN_COUNTER_KEY,
+    ICD_REGISTERED_CLIENTS_KEY,
 };
 use crate::sc::checkin::{CheckIn, CheckInCounter};
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, ToTLV};
@@ -454,24 +455,42 @@ impl LitIcd {
     /// start + epoch`) are only guaranteed unique once `start + epoch` is
     /// durable. A crash before the next boundary crossing would otherwise
     /// reload `start` and hand out the same values a second time.
+    ///
+    /// Registrations that cannot be loaded are dropped, and so are all of them
+    /// if the counter cannot be.
     fn load_persist<S: KvBlobStore, C: Crypto>(
         &self,
         crypto: C,
         mut kv: S,
         buf: &mut [u8],
     ) -> Result<(), Error> {
-        let clients = match kv.load(ICD_REGISTERED_CLIENTS_KEY, buf)? {
-            Some(data) => Vec::from_tlv(&TLVElement::new(data))?,
-            None => Vec::new(),
-        };
+        let clients = load_logged(&mut kv, ICD_REGISTERED_CLIENTS_KEY, buf, |data| {
+            Vec::from_tlv(&TLVElement::new(data))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(Vec::new);
 
         self.update(|s| s.clients = clients);
 
-        let start = match kv.load(ICD_CHECK_IN_COUNTER_KEY, buf)? {
-            Some(data) => u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::Invalid)?),
+        let start = match load_logged(&mut kv, ICD_CHECK_IN_COUNTER_KEY, buf, |data| {
+            Ok(u32::from_le_bytes(
+                data.try_into().map_err(|_| ErrorCode::Invalid)?,
+            ))
+        }) {
+            Ok(Some(start)) => start,
             // First boot (or a cleared store): start somewhere random rather
             // than at a fixed value every device shares.
-            None => Self::random_counter_start(crypto)?,
+            Ok(None) => Self::random_counter_start(crypto)?,
+            Err(_) => {
+                // The clients' keys may have been used with any counter value,
+                // which a fresh counter could repeat: drop them, from `kv` too so
+                // that the next boot does not restore them; the clients re-register
+                self.update(|s| s.clients.clear());
+                kv.remove(ICD_REGISTERED_CLIENTS_KEY, buf)?;
+
+                Self::random_counter_start(crypto)?
+            }
         };
 
         let boundary = self.reseed_counter(start);

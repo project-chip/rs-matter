@@ -428,7 +428,11 @@ where
 
     /// Restore the persisted attributes, if any.
     fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<(), Error> {
-        if let Some(persisted) = Persist::new(kv).load_tlv::<PersistedAttrs>(self.kv_key)? {
+        if let Some(persisted) = Persist::new(kv)
+            .load_tlv_logged::<PersistedAttrs>(self.kv_key)
+            .ok()
+            .flatten()
+        {
             self.attrs.lock(|attrs| attrs.set(persisted));
         }
 

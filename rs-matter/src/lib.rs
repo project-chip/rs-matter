@@ -54,8 +54,8 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist, OPERATIONAL_HOURS_KEY,
-    REBOOT_COUNT_KEY,
+    load_logged, KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist,
+    OPERATIONAL_HOURS_KEY, REBOOT_COUNT_KEY,
 };
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
@@ -309,14 +309,13 @@ impl<'a> Matter<'a> {
         let reboot_count = self.with_state(|state| state.reboot_count);
 
         kv.access(|store, buf| {
-            let stored = store
-                .load(REBOOT_COUNT_KEY, buf)?
-                .map(|data| TLVElement::new(data).u16())
-                .transpose()?;
+            let stored = load_logged(&mut *store, REBOOT_COUNT_KEY, buf, |data| {
+                TLVElement::new(data).u16()
+            });
 
             // Nothing to do if this boot's count is already on record, so
             // calling this more than once per boot costs no writes.
-            if stored == Some(reboot_count) {
+            if matches!(stored, Ok(Some(count)) if count == reboot_count) {
                 return Ok(());
             }
 
@@ -352,12 +351,11 @@ impl<'a> Matter<'a> {
         let hours = self.total_operational_hours();
 
         kv.access(|store, buf| {
-            let stored = store
-                .load(OPERATIONAL_HOURS_KEY, buf)?
-                .map(|data| TLVElement::new(data).u32())
-                .transpose()?;
+            let stored = load_logged(&mut *store, OPERATIONAL_HOURS_KEY, buf, |data| {
+                TLVElement::new(data).u32()
+            });
 
-            if stored == Some(hours) {
+            if matches!(stored, Ok(Some(stored)) if stored == hours) {
                 return Ok(());
             }
 
@@ -1089,19 +1087,22 @@ impl<'a> Matter<'a> {
                 // "best-effort" count - it deliberately does not distinguish a
                 // crash from a power cut. A wake from sleep does not re-enter
                 // startup, which is the one case the spec excludes.
-                state.reboot_count = store
-                    .load(REBOOT_COUNT_KEY, buf)?
-                    .map(|data| TLVElement::new(data).u16())
-                    .transpose()?
-                    .unwrap_or(0)
-                    .saturating_add(1);
+                state.reboot_count = load_logged(&mut store, REBOOT_COUNT_KEY, buf, |data| {
+                    TLVElement::new(data).u16()
+                })
+                .ok()
+                .flatten()
+                .unwrap_or(0)
+                .saturating_add(1);
 
                 // `TotalOperationalHours` on record; the current boot's hours
                 // count on top of it.
-                state.operational_hours = store
-                    .load(OPERATIONAL_HOURS_KEY, buf)?
-                    .map(|data| TLVElement::new(data).u32())
-                    .transpose()?
+                state.operational_hours =
+                    load_logged(&mut store, OPERATIONAL_HOURS_KEY, buf, |data| {
+                        TLVElement::new(data).u32()
+                    })
+                    .ok()
+                    .flatten()
                     .unwrap_or(0);
 
                 Ok::<_, Error>(())

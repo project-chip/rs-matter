@@ -228,14 +228,14 @@ impl<const NS: usize, const NE: usize> InteractionModelState<NS, NE> {
 
     /// Re-hydrate this state's persisted contents - the events-queue epoch, so
     /// event numbers are not reused across reboots - using the scratch buffer
-    /// provided by `kv`.
+    /// provided by `kv`; `utc_us` replaces an epoch that cannot be loaded.
     ///
     /// Driven by [`InteractionModel::startup`].
-    fn load_persist<K>(&self, kv: K) -> Result<(), Error>
+    fn load_persist<K>(&self, kv: K, utc_us: u64) -> Result<(), Error>
     where
         K: KvBlobStoreAccess,
     {
-        kv.access(|store, buf| self.events.load_persist(store, buf))
+        kv.access(|store, buf| self.events.load_persist(store, buf, utc_us))
     }
 
     /// The subscriptions table.
@@ -436,7 +436,9 @@ where
     /// The `Matter`-level counterpart is [`Matter::startup`] - call that one
     /// first.
     pub async fn startup(&self) -> Result<(), Error> {
-        self.state.load_persist(&self.kv)?;
+        let utc_us = self.matter.with_state(|state| state.rtc.utc_time().any());
+
+        self.state.load_persist(&self.kv, utc_us)?;
 
         // Needs the events watermark loaded just above.
         self.resume_subscriptions()?;

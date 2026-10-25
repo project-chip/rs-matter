@@ -24,7 +24,7 @@ use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
 use crate::im::{AttrId, ClusterId, DeviceLoad, EndptId, EventId, EventNumber, IMBuffer, NodeId};
 #[cfg(feature = "persistent-subscriptions")]
-use crate::persist::{KvBlobStore, PERSISTENT_SUBSCRIPTIONS_START};
+use crate::persist::{load_logged, KvBlobStore, PERSISTENT_SUBSCRIPTIONS_START};
 #[cfg(feature = "persistent-subscriptions")]
 use crate::tlv::{FromTLV, OctetStr, Octets, TLVElement, TLVTag, ToTLV};
 use crate::utils::cell::RefCell;
@@ -697,8 +697,8 @@ impl<const N: usize> Subscriptions<N> {
     /// Each reloaded subscription enters the table un-primed, so the reporter sends
     /// it a prompt priming report (establishing a session on demand) rather than
     /// waiting toward its max-interval deadline — see the priming note in the body
-    /// for why that timing matters. A record that cannot be re-added (e.g. no free
-    /// buffer) is skipped, and one whose priming report then fails is dropped
+    /// for why that timing matters. A record that cannot be loaded or re-added (e.g.
+    /// no free buffer) is skipped, and one whose priming report then fails is dropped
     /// rather than retried (see [`ReportContext::set_keep_retry`]).
     pub(crate) fn load_persist<'a, 's, B, S>(
         &'s self,
@@ -720,12 +720,14 @@ impl<const N: usize> Subscriptions<N> {
         for slot in 0..N {
             let key = PERSISTENT_SUBSCRIPTIONS_START + slot as u16;
 
-            let Some(data) = kv.load(key, buf)? else {
+            let record = match load_logged(&mut kv, key, buf, |data| {
+                PersistedSubscription::from_tlv(&TLVElement::new(data))
+            }) {
+                Ok(Some(record)) => record,
                 // The range is contiguous: the first empty slot ends the set.
-                break;
+                Ok(None) => break,
+                Err(_) => continue,
             };
-
-            let record = PersistedSubscription::from_tlv(&TLVElement::new(data))?;
 
             let Some(mut rx) = pool.get_immediate() else {
                 warn!("No free buffer to resume a persisted subscription; skipping");

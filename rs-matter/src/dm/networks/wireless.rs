@@ -26,7 +26,7 @@ use crate::dm::clusters::net_comm::{
 use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
-use crate::persist::KvBlobStore;
+use crate::persist::{load_logged, KvBlobStore};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
@@ -173,6 +173,8 @@ where
 
     /// Load all networks from the provided BLOB store
     ///
+    /// Networks that cannot be loaded leave the store empty.
+    ///
     /// # Arguments
     /// - `store`: the BLOB store to load the networks from
     /// - `key`: the key the networks are persisted under
@@ -185,13 +187,14 @@ where
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(data) = kv.load(key, buf)? {
-            self.load(data)?;
-
-            info!(
+        match load_logged(&mut kv, key, buf, |data| self.load(data)) {
+            Ok(Some(())) => info!(
                 "Loaded {} wireless networks from storage",
                 self.networks.len()
-            );
+            ),
+            Ok(None) => (),
+            // `load` may have stopped half-way
+            Err(_) => self.reset(),
         }
 
         Ok(())

@@ -807,9 +807,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     }
 
     /// Restore the attributes persisted under the handler's KV key.
-    /// Returns `false` if there is nothing persisted yet.
+    /// Returns `false` if there is nothing persisted yet, or nothing loadable.
     fn load_persisted(&self, kv: impl KvBlobStoreAccess) -> Result<bool, Error> {
-        let Some(persisted) = Persist::new(kv).load_tlv::<PersistedAttrs>(self.kv_key)? else {
+        let Some(persisted) = Persist::new(kv)
+            .load_tlv_logged::<PersistedAttrs>(self.kv_key)
+            .ok()
+            .flatten()
+        else {
             return Ok(false);
         };
 

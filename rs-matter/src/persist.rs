@@ -94,8 +94,8 @@ pub const LKG_UTC_KEY: u16 = BINDINGS_KEY + 1;
 
 /// The key used for storing the Trusted Time Source configured by
 /// the `SetTrustedTimeSource` command (Matter Core spec).
-/// A single 11-byte payload: `[fab_idx:1 | node_id:8 (LE) | endpoint:2 (LE)]`,
-/// updated synchronously from [`crate::Matter::set_trusted_time_source`].
+/// A [`TrustedTimeSource`](crate::dm::clusters::time_sync::TrustedTimeSource)
+/// TLV struct, updated synchronously from [`crate::Matter::set_trusted_time_source`].
 /// The key is absent on disk when no trusted source is configured.
 pub const TRUSTED_TIME_SOURCE_KEY: u16 = LKG_UTC_KEY + 1;
 
@@ -447,6 +447,22 @@ where
         })
     }
 
+    /// Like [`Self::load_tlv`], but logs a value that cannot be loaded or
+    /// decoded (see [`load_logged`]).
+    pub fn load_tlv_logged<T>(&mut self, key: u16) -> Result<Option<T>, Error>
+    where
+        T: for<'a> FromTLV<'a>,
+    {
+        self.kvb.access(|kvb, buf| {
+            if buf.is_empty() {
+                // A no-op access (e.g. a dummy store with an empty buffer) has nothing persisted
+                return Ok(None);
+            }
+
+            load_logged(kvb, key, buf, |data| T::from_tlv(&TLVElement::new(data)))
+        })
+    }
+
     /// Remove the value with the specified key from the storage.
     pub fn remove(&mut self, key: u16) -> Result<(), Error> {
         self.kvb.access(|kvb, buf| {
@@ -466,6 +482,43 @@ where
 
         Ok(())
     }
+}
+
+/// Load the BLOB under `key` from `store` and decode it with `decode`, or
+/// `Ok(None)` if there is none.
+///
+/// A BLOB that cannot be loaded or decoded (e.g. one in a format of another
+/// firmware) is logged here, leaving the caller to pick a fallback, since
+/// persisted state must not stop the node from booting. The BLOB is left in
+/// place, for the next store under `key` to replace.
+pub fn load_logged<'a, S, F, T>(
+    store: &mut S,
+    key: u16,
+    buf: &'a mut [u8],
+    decode: F,
+) -> Result<Option<T>, Error>
+where
+    S: KvBlobStore + ?Sized,
+    F: FnOnce(&'a [u8]) -> Result<T, Error>,
+{
+    let result = store
+        .load(key, buf)
+        .and_then(|data| data.map(decode).transpose());
+
+    if let Err(e) = &result {
+        log_unreadable(key, e);
+    }
+
+    result
+}
+
+#[cold]
+#[inline(never)]
+fn log_unreadable(key: u16, e: &Error) {
+    error!(
+        "Ignoring the persisted value under key 0x{:x}, which cannot be loaded: {:?}",
+        key, e
+    );
 }
 
 #[cfg(feature = "std")]

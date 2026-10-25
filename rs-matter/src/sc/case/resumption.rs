@@ -30,7 +30,7 @@ use core::num::NonZeroU8;
 use crate::crypto::CanonPkcSharedSecret;
 use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
-use crate::persist::{KvBlobStore, CASE_RESUMPTION_KEY, KV_BUF_SIZE};
+use crate::persist::{load_logged, KvBlobStore, CASE_RESUMPTION_KEY, KV_BUF_SIZE};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use crate::transport::session::{NocCatIds, MAX_SESSIONS};
 use crate::utils::init::{init, Init};
@@ -239,13 +239,13 @@ impl ResumableSessions {
     /// Missing key is not an error — the cache simply stays empty
     /// (first boot, or after [`Self::reset_persist`]).
     ///
-    /// A blob that fails to parse is also **not** propagated as an
+    /// A blob that fails to load or parse is also **not** propagated as an
     /// error. Because the resumption cache is a soft (rebuildable)
     /// cache — losing it costs only one full CASE handshake per peer
     /// the next time they connect — we prefer to keep the node
     /// bootable over the theoretical safety of aborting the load.
     /// The unparseable blob is dropped from storage so the failure
-    /// isn't sticky, and a warning is logged. Realistic causes:
+    /// isn't sticky, and an error is logged. Realistic causes:
     ///
     /// - A firmware update lowered `MAX_RESUMPTION_RECORDS` (feature
     ///   flag change) below what's persisted, so
@@ -260,37 +260,28 @@ impl ResumableSessions {
     ) -> Result<(), Error> {
         self.reset();
 
-        // Scope-limit the borrow of `buf` (via `data`) so `buf` is
-        // freely reborrowable for the drop-on-error path below.
-        let parse_result: Result<Vec<ResumableSession, MAX_RESUMPTION_RECORDS>, Error> = {
-            let Some(data) = store.load(CASE_RESUMPTION_KEY, buf)? else {
-                return Ok(());
-            };
+        let loaded = load_logged(&mut store, CASE_RESUMPTION_KEY, buf, |data| {
             Vec::<ResumableSession, MAX_RESUMPTION_RECORDS>::from_tlv(&TLVElement::new(data))
-        };
+        });
 
-        match parse_result {
-            Ok(records) => {
+        match loaded {
+            Ok(Some(records)) => {
                 self.records = records;
                 info!(
                     "Loaded {} CASE session resumption record(s) from storage",
                     self.records.len()
                 );
-                Ok(())
             }
-            Err(e) => {
-                warn!(
-                    "CASE session resumption cache is unparseable ({}); \
-                     dropping the persisted blob so the node can still boot",
-                    e
-                );
+            Ok(None) => (),
+            Err(_) => {
                 // Best-effort remove — if it also errors we've still
                 // logged the underlying cause. Next successful
                 // `store_persist` will overwrite the blob anyway.
                 let _ = store.remove(CASE_RESUMPTION_KEY, buf);
-                Ok(())
             }
         }
+
+        Ok(())
     }
 
     /// Serialise the current cache to `store` under

@@ -46,7 +46,7 @@ use crate::dm::{AttrId, EndptId, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
 use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, Persist, OTA_PROVIDERS_KEY, RUNNING_VERSION_KEY,
+    load_logged, KvBlobStore, KvBlobStoreAccess, Persist, OTA_PROVIDERS_KEY, RUNNING_VERSION_KEY,
 };
 use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -293,12 +293,13 @@ impl Providers {
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`OtaRequestorHandler`] borrowing this registry.
     fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(OTA_PROVIDERS_KEY, buf)? else {
+        let Ok(Some(loaded)) = load_logged(&mut store, OTA_PROVIDERS_KEY, buf, |data| {
+            Vec::<Provider, MAX_FABRICS>::from_tlv(&TLVElement::new(data))
+        }) else {
             self.state.lock(|cell| cell.borrow_mut().default.clear());
             return Ok(());
         };
 
-        let loaded = Vec::<Provider, MAX_FABRICS>::from_tlv(&TLVElement::new(data))?;
         self.state.lock(|cell| cell.borrow_mut().default = loaded);
 
         info!("Loaded OTA provider entries from storage");
@@ -815,12 +816,16 @@ impl<'a> OtaRequestorHandler<'a> {
     fn note_running_version(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
         let dev = ctx.matter().dev_det();
 
-        let last = ctx.kv().access(|store, buf| {
-            store
-                .load(RUNNING_VERSION_KEY, buf)?
-                .map(|data| u32::from_tlv(&TLVElement::new(data)))
-                .transpose()
-        })?;
+        // An unreadable version counts as none: there is no telling an update happened
+        let last = ctx
+            .kv()
+            .access(|store, buf| {
+                load_logged(store, RUNNING_VERSION_KEY, buf, |data| {
+                    u32::from_tlv(&TLVElement::new(data))
+                })
+            })
+            .ok()
+            .flatten();
 
         if last == Some(dev.sw_ver) {
             return Ok(());

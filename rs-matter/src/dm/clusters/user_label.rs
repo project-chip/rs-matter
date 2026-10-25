@@ -53,7 +53,7 @@ use crate::dm::{
     LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
+use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -197,15 +197,15 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     /// Missing key (first boot, or persistence cleared) is not an
     /// error — the registry simply stays empty.
     fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(USER_LABELS_KEY, buf)? else {
+        let Ok(Some(loaded)) = load_logged(&mut store, USER_LABELS_KEY, buf, |data| {
+            Vec::<EndpointLabels<N>, E>::from_tlv(&TLVElement::new(data))
+        }) else {
             // No prior persistence — reset to empty so re-calling
             // `load_persist` after a `remove` of the key behaves
             // deterministically.
             self.state.lock(|cell| cell.borrow_mut().clear());
             return Ok(());
         };
-
-        let loaded = Vec::<EndpointLabels<N>, E>::from_tlv(&TLVElement::new(data))?;
 
         self.state.lock(|cell| *cell.borrow_mut() = loaded);
 
