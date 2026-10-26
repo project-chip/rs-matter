@@ -257,8 +257,10 @@ pub async fn stub_mdns_resolver_txt(
     table: &[(u64, SocketAddrV6)],
     tcp: &str,
 ) -> ! {
+    let responder = matter.transport().mdns_responder();
+
     loop {
-        let service = matter.transport().wait_mdns_resolve_request().await;
+        let service = responder.wait_resolve_request().await;
 
         let MatterRemoteService::Operational { node_id, .. } = &service else {
             continue;

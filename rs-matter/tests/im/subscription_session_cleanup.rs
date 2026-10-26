@@ -174,9 +174,11 @@ fn session_cleanup(failure: Failure) {
                     }
                 }),
                 async {
+                    let responder = im.matter.transport().mdns_responder();
+
                     let (old_session, mut old_report) = match failure {
                         Failure::Resolve => {
-                            let service = im.matter.transport().wait_mdns_resolve_request().await;
+                            let service = responder.wait_resolve_request().await;
                             assert!(matches!(
                                 service,
                                 MatterRemoteService::Operational {

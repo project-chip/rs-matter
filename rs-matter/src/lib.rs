@@ -30,7 +30,7 @@
 #![recursion_limit = "1024"]
 // `cargo llvm-cov` sets `coverage_nightly` when it runs on a nightly toolchain;
 // the test modules are then excluded from the coverage report
-#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
 use core::num::NonZeroU8;
 

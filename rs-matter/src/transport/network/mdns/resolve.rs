@@ -33,6 +33,7 @@ use zbus::Connection;
 use crate::error::Error;
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
+use crate::transport::MdnsResponder;
 use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
 use crate::Matter;
@@ -92,9 +93,10 @@ impl ResolveMdns {
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         let connection = self.connection.clone();
 
+        let responder = matter.transport().mdns_responder();
         let mut respond = pin!(self.run_respond(matter));
-        let mut resolve = pin!(Self::run_resolve(matter, &connection));
-        let mut browse = pin!(Self::run_browse(matter, &connection));
+        let mut resolve = pin!(Self::run_resolve(matter, &responder, &connection));
+        let mut browse = pin!(Self::run_browse(matter, &responder, &connection));
 
         select3(&mut respond, &mut resolve, &mut browse)
             .coalesce()
@@ -124,9 +126,13 @@ impl ResolveMdns {
     /// Service commissionable-browse requests: PTR-query `_matterc._udp.local`,
     /// resolve each discovered instance, and deposit it (filter + exclude checks
     /// happen in the deposit) while the browse is in flight.
-    async fn run_browse(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
+    async fn run_browse(
+        matter: &Matter<'_>,
+        responder: &MdnsResponder<'_>,
+        connection: &Connection,
+    ) -> Result<(), Error> {
         loop {
-            let query = matter.transport().wait_mdns_browse_request().await;
+            let query = responder.wait_browse_request().await;
             let ptr_name = format!("{}.local", query.base_service_type());
 
             let resolve = ManagerProxy::new(connection).await?;
@@ -177,9 +183,13 @@ impl ResolveMdns {
 
     /// Service operational-resolve requests: resolve the requested instance and
     /// deposit its address + MRP params, while the resolve is in flight.
-    async fn run_resolve(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
+    async fn run_resolve(
+        matter: &Matter<'_>,
+        responder: &MdnsResponder<'_>,
+        connection: &Connection,
+    ) -> Result<(), Error> {
         loop {
-            let service = matter.transport().wait_mdns_resolve_request().await;
+            let service = responder.wait_resolve_request().await;
 
             let mut name_buf: heapless::String<128> = heapless::String::new();
             service.instance_name(&mut name_buf);

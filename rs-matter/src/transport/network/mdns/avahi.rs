@@ -35,6 +35,7 @@ use zbus::Connection;
 use crate::error::Error;
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
+use crate::transport::MdnsResponder;
 use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::record_browser::RecordBrowserProxy;
@@ -143,9 +144,10 @@ impl AvahiMdns {
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         let connection = self.connection.clone();
 
+        let responder = matter.transport().mdns_responder();
         let mut respond = pin!(self.run_respond(matter));
-        let mut resolve = pin!(Self::run_resolve(matter, &connection));
-        let mut browse = pin!(Self::run_browse(matter, &connection));
+        let mut resolve = pin!(Self::run_resolve(matter, &responder, &connection));
+        let mut browse = pin!(Self::run_browse(matter, &responder, &connection));
 
         select3(&mut respond, &mut resolve, &mut browse)
             .coalesce()
@@ -195,9 +197,13 @@ impl AvahiMdns {
     /// attaches, and a browser fires `ItemNew` for it essentially immediately,
     /// whereas name-resolve polling would only notice it much later. Once the
     /// instance exists, resolving it is near-instant.
-    async fn run_resolve(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
+    async fn run_resolve(
+        matter: &Matter<'_>,
+        responder: &MdnsResponder<'_>,
+        connection: &Connection,
+    ) -> Result<(), Error> {
         loop {
-            let service = matter.transport().wait_mdns_resolve_request().await;
+            let service = responder.wait_resolve_request().await;
 
             // The label we're looking for (e.g. `<compressed-fabric>-<node-id>`),
             // and the full instance name to deposit under.
@@ -291,9 +297,13 @@ impl AvahiMdns {
     /// checks happen in the deposit). Avahi is async over DBus, so this
     /// interleaves naturally with the Matter transport. Polls the in-flight flag
     /// so it stops as soon as the first match is consumed or the caller gives up.
-    async fn run_browse(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
+    async fn run_browse(
+        matter: &Matter<'_>,
+        responder: &MdnsResponder<'_>,
+        connection: &Connection,
+    ) -> Result<(), Error> {
         loop {
-            let query = matter.transport().wait_mdns_browse_request().await;
+            let query = responder.wait_browse_request().await;
 
             let mut service_type: heapless::String<64> = heapless::String::new();
             query.service_type(&mut service_type, false);

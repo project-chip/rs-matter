@@ -31,7 +31,7 @@ use domain::rdata::{Aaaa, Ptr, Srv, A};
 
 use crate::error::Error;
 use crate::transport::network::mdns::builtin::types::Buf;
-use crate::transport::network::mdns::MdnsRemoteService;
+use crate::transport::network::mdns::{MdnsRemoteService, MdnsTxt};
 use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Build an mDNS browse query: a PTR question against a service type
@@ -127,52 +127,6 @@ impl Iterator for MdnsAddrs<'_> {
                     return Some(addr);
                 }
                 seen += 1;
-            }
-        }
-
-        None
-    }
-}
-
-/// A lazy iterator over the `key=value` TXT pairs of a parsed mDNS answer.
-///
-/// Borrows the TXT record's raw rdata directly out of the receive buffer and
-/// splits it into character strings (then each on its first `=`) on the fly - so
-/// no TXT buffer is materialized and there is no upper bound on the pair count.
-/// Entries that aren't valid UTF-8 or lack a `=` are skipped.
-#[derive(Debug, Clone, Copy)]
-pub struct MdnsTxt<'a> {
-    /// Raw TXT rdata: a sequence of length-prefixed character strings.
-    data: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> MdnsTxt<'a> {
-    /// An empty TXT iterator (for answers carrying no TXT record).
-    const fn empty() -> Self {
-        Self { data: &[], pos: 0 }
-    }
-
-    /// Wrap raw TXT rdata (a sequence of length-prefixed character strings).
-    const fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
-    }
-}
-
-impl<'a> Iterator for MdnsTxt<'a> {
-    type Item = (&'a str, &'a str);
-
-    fn next(&mut self) -> Option<(&'a str, &'a str)> {
-        while self.pos < self.data.len() {
-            let len = self.data[self.pos] as usize;
-            let start = self.pos + 1;
-            let end = (start + len).min(self.data.len());
-            self.pos = end;
-
-            if let Ok(s) = core::str::from_utf8(&self.data[start..end]) {
-                if let Some(eq) = s.find('=') {
-                    return Some((&s[..eq], &s[eq + 1..]));
-                }
             }
         }
 

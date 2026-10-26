@@ -26,7 +26,7 @@ use domain::base::name::ToLabelIter;
 #[cfg(feature = "groups")]
 use embassy_futures::select::select4;
 use embassy_futures::select::{select, select3, Either};
-use embassy_time::{Duration, Timer};
+use embassy_time::{with_timeout, Duration, Timer};
 
 use rand_core::Rng;
 
@@ -136,6 +136,8 @@ pub struct Transport {
     /// The single in-flight mDNS browse rendezvous, shared between
     /// [`Transport::browse`] callers and the running mDNS responder.
     mdns_browse: Signal<MdnsBrowseState>,
+    /// How many [`MdnsResponder`]s are registered.
+    mdns_responders: Signal<u8>,
     /// A notification that a session had been removed
     session_removed: MultiNotification,
     /// A notification that a Matter message was received or sent over a session -
@@ -180,6 +182,7 @@ impl Transport {
             mdns_changed: Notification::new(),
             mdns_resolve: Signal::new(MdnsResolveState::Idle),
             mdns_browse: Signal::new(MdnsBrowseState::Idle),
+            mdns_responders: Signal::new(0),
             session_removed: MultiNotification::new(),
             activity: Notification::new(),
             comm_window_changed: MultiNotification::new(),
@@ -200,6 +203,7 @@ impl Transport {
             mdns_changed <- Notification::init(),
             mdns_resolve <- Signal::init(MdnsResolveState::Idle),
             mdns_browse <- Signal::init(MdnsBrowseState::Idle),
+            mdns_responders <- Signal::init(0),
             session_removed <- MultiNotification::init(),
             activity <- Notification::init(),
             comm_window_changed <- MultiNotification::init(),
@@ -371,13 +375,19 @@ impl Transport {
     /// If this future is dropped before completing, the rendezvous is reset so
     /// other callers can proceed.
     ///
-    /// Requires a running mDNS responder (e.g. `BuiltinMdns::run`) to
-    /// service the request; without one, every resolve will time out.
+    /// Requires a registered mDNS responder (see [`Self::mdns_responder`]). As
+    /// one may still be coming up with the network, `timeout_ms` only starts
+    /// once there is one, which is waited for up to
+    /// [`Self::MDNS_READY_TIMEOUT_MS`].
     async fn resolve(
         &self,
         service: MatterRemoteService,
         timeout_ms: u32,
     ) -> Result<ResolvedNode, Error> {
+        if !self.wait_mdns_ready().await {
+            return Err(ErrorCode::NotFound.into());
+        }
+
         // 1. Serialize with other resolvers and place the request.
         self.mdns_resolve
             .wait(|state| {
@@ -443,26 +453,41 @@ impl Transport {
         }
     }
 
-    /// Responder-side: await the next pending mDNS resolve request, marking it
-    /// in-flight.
+    /// Responder-side: register an mDNS responder for as long as the returned
+    /// handle lives.
     ///
     /// Part of the public responder contract: a third-party mDNS responder
-    /// (living outside this crate) drives the resolve use case by awaiting a
-    /// request here, issuing its own query, and depositing any answers via
-    /// [`Transport::try_deposit_mdns_resolve`].
-    pub async fn wait_mdns_resolve_request(&self) -> MatterRemoteService {
-        self.mdns_resolve
-            .wait(|state| match state {
-                MdnsResolveState::Requested { service } => {
-                    let service = service.clone();
-                    *state = MdnsResolveState::InFlight {
-                        service: service.clone(),
-                    };
-                    Some(service)
-                }
-                _ => None,
-            })
-            .await
+    /// (living outside this crate) takes the resolve and browse requests
+    /// through the handle, issues its own queries, and deposits the answers via
+    /// [`Transport::try_deposit_mdns_resolve`] and
+    /// [`Transport::try_deposit_mdns_browse`].
+    ///
+    /// Register only once the queries can reach the network: resolves start
+    /// their timeout from then. Requests still in flight when the handle is
+    /// dropped are handed back, for the next responder to take.
+    pub fn mdns_responder(&self) -> MdnsResponder<'_> {
+        self.mdns_responders.modify(|count| {
+            *count = unwrap!(count.checked_add(1));
+
+            (*count == 1, ())
+        });
+
+        MdnsResponder { transport: self }
+    }
+
+    /// Wait up to [`Self::MDNS_READY_TIMEOUT_MS`] for an mDNS responder to be
+    /// registered. Returns `false` if none was.
+    pub(crate) async fn wait_mdns_ready(&self) -> bool {
+        let ready = self
+            .mdns_responders
+            .wait(|count| (*count > 0).then_some(()));
+
+        with_timeout(
+            Duration::from_millis(Self::MDNS_READY_TIMEOUT_MS as u64),
+            ready,
+        )
+        .await
+        .is_ok()
     }
 
     /// Whether an operational resolve is currently in flight.
@@ -708,35 +733,6 @@ impl Transport {
         }
     }
 
-    /// Responder-side: await the next pending mDNS browse request, marking it
-    /// in-flight, and return what to browse for. Which matches the request
-    /// takes is decided at deposit time.
-    ///
-    /// Part of the public responder contract: a third-party mDNS responder
-    /// (living outside this crate) serves browse requests by awaiting one here,
-    /// issuing its own query for it, and depositing every service it finds via
-    /// [`Transport::try_deposit_mdns_browse`] while
-    /// [`Transport::mdns_browse_in_flight`].
-    pub async fn wait_mdns_browse_request(&self) -> MdnsBrowseQuery {
-        self.mdns_browse
-            .wait(
-                |state| match core::mem::replace(state, MdnsBrowseState::Idle) {
-                    MdnsBrowseState::Requested(browse) => {
-                        let query = browse.query.clone();
-                        *state = MdnsBrowseState::InFlight(browse);
-
-                        Some(query)
-                    }
-                    other => {
-                        *state = other;
-
-                        None
-                    }
-                },
-            )
-            .await
-    }
-
     /// Whether a browse is currently in flight.
     ///
     /// Used by mDNS implementations to poll-drive their browse
@@ -848,6 +844,10 @@ impl Transport {
     /// (CASE operational resolve, or PASE commissionable resolve).
     /// Single-shot for now (no backoff re-query); see follow-ups.
     const RESOLVE_TIMEOUT_MS: u32 = 5_000;
+
+    /// How long resolves and Check-Ins wait for an mDNS responder to be
+    /// registered: long enough for a node to (re-)join its network after boot.
+    pub(crate) const MDNS_READY_TIMEOUT_MS: u32 = 15_000;
 
     /// Open an exchange over a CASE session to an already-commissioned node.
     ///
@@ -1235,6 +1235,102 @@ pub enum TransportPreference {
     /// a silent downgrade would hand the caller a session that cannot carry what
     /// it asked to send.
     LargePayload,
+}
+
+/// A registered mDNS responder (see [`Transport::mdns_responder`]), through
+/// which it takes the resolve and browse requests to serve.
+#[must_use = "the responder is registered only while the handle lives"]
+pub struct MdnsResponder<'a> {
+    transport: &'a Transport,
+}
+
+impl MdnsResponder<'_> {
+    /// Await the next pending mDNS resolve request, marking it in flight.
+    ///
+    /// Deposit the answers via [`Transport::try_deposit_mdns_resolve`] while
+    /// [`Transport::mdns_resolve_in_flight`].
+    pub async fn wait_resolve_request(&self) -> MatterRemoteService {
+        self.transport
+            .mdns_resolve
+            .wait(|state| match state {
+                MdnsResolveState::Requested { service } => {
+                    let service = service.clone();
+                    *state = MdnsResolveState::InFlight {
+                        service: service.clone(),
+                    };
+                    Some(service)
+                }
+                _ => None,
+            })
+            .await
+    }
+
+    /// Await the next pending mDNS browse request, marking it in flight, and
+    /// return what to browse for. Which matches the request takes is decided
+    /// at deposit time.
+    ///
+    /// Deposit every service found via [`Transport::try_deposit_mdns_browse`]
+    /// while [`Transport::mdns_browse_in_flight`].
+    pub async fn wait_browse_request(&self) -> MdnsBrowseQuery {
+        self.transport
+            .mdns_browse
+            .wait(
+                |state| match core::mem::replace(state, MdnsBrowseState::Idle) {
+                    MdnsBrowseState::Requested(browse) => {
+                        let query = browse.query.clone();
+                        *state = MdnsBrowseState::InFlight(browse);
+
+                        Some(query)
+                    }
+                    other => {
+                        *state = other;
+
+                        None
+                    }
+                },
+            )
+            .await
+    }
+}
+
+impl Drop for MdnsResponder<'_> {
+    fn drop(&mut self) {
+        let transport = self.transport;
+
+        transport.mdns_responders.modify(|count| {
+            *count -= 1;
+
+            (false, ())
+        });
+
+        // Hand back what is in flight: nobody may be serving it any more. When
+        // another responder is, it just takes it again.
+        transport.mdns_resolve.modify(|state| {
+            let MdnsResolveState::InFlight { service } = state else {
+                return (false, ());
+            };
+
+            let service = service.clone();
+            *state = MdnsResolveState::Requested { service };
+
+            (true, ())
+        });
+
+        transport.mdns_browse.modify(|state| {
+            match core::mem::replace(state, MdnsBrowseState::Idle) {
+                MdnsBrowseState::InFlight(browse) => {
+                    *state = MdnsBrowseState::Requested(browse);
+
+                    (true, ())
+                }
+                other => {
+                    *state = other;
+
+                    (false, ())
+                }
+            }
+        });
+    }
 }
 
 /// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.
@@ -2860,12 +2956,16 @@ mod tests {
 mod resolve_tests {
     use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
+    use embassy_time::{Duration, Timer};
+
     use futures_lite::future::{block_on, zip};
 
     use crate::error::ErrorCode;
     use crate::test::test_matter;
     use crate::transport::network::mdns::{DottedName, MdnsRemoteService, MAX_RESOLVE_CANDIDATES};
     use crate::transport::network::MatterRemoteService;
+    use crate::transport::MdnsResponder;
+    use crate::Matter;
 
     fn op_service() -> MatterRemoteService {
         MatterRemoteService::Operational {
@@ -2882,11 +2982,13 @@ mod resolve_tests {
         let matter = test_matter();
         let service = op_service();
 
+        let responder = matter.transport().mdns_responder();
+
         let resolved = block_on(async {
             let resolver = matter.transport().resolve(service.clone(), 5_000);
 
             let responder = async {
-                let picked = matter.transport().wait_mdns_resolve_request().await;
+                let picked = responder.wait_resolve_request().await;
                 assert_eq!(picked, service);
 
                 let mut name = heapless::String::<128>::new();
@@ -2933,11 +3035,13 @@ mod resolve_tests {
         let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1);
         let ipv4 = Ipv4Addr::new(10, 0, 0, 5);
 
+        let responder = matter.transport().mdns_responder();
+
         let resolved = block_on(async {
             let resolver = matter.transport().resolve(service.clone(), 5_000);
 
             let responder = async {
-                matter.transport().wait_mdns_resolve_request().await;
+                responder.wait_resolve_request().await;
 
                 let mut name = heapless::String::<128>::new();
                 service.instance_name(&mut name);
@@ -2986,11 +3090,13 @@ mod resolve_tests {
         let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1);
         let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
 
+        let responder = matter.transport().mdns_responder();
+
         let resolved = block_on(async {
             let resolver = matter.transport().resolve(service.clone(), 5_000);
 
             let responder = async {
-                matter.transport().wait_mdns_resolve_request().await;
+                responder.wait_resolve_request().await;
 
                 let mut name = heapless::String::<128>::new();
                 service.instance_name(&mut name);
@@ -3040,11 +3146,12 @@ mod resolve_tests {
         assert_eq!(resolved.sii, Some(300));
     }
 
-    /// Without a responder, a resolve times out and releases the slot (drop-clean),
+    /// Without an answer, a resolve times out and releases the slot (drop-clean),
     /// so a subsequent resolve also simply times out rather than hanging.
     #[test]
     fn resolve_times_out_and_releases_slot() {
         let matter = test_matter();
+        let _responder = matter.transport().mdns_responder();
 
         let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
         assert!(matches!(err.code(), ErrorCode::NotFound));
@@ -3058,6 +3165,7 @@ mod resolve_tests {
     #[test]
     fn deposit_without_request_is_noop() {
         let matter = test_matter();
+        let _responder = matter.transport().mdns_responder();
 
         let mut name = heapless::String::<128>::new();
         op_service().instance_name(&mut name);
@@ -3072,6 +3180,77 @@ mod resolve_tests {
 
         let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
         assert!(matches!(err.code(), ErrorCode::NotFound));
+    }
+    /// Answer the request `responder` takes for `service`.
+    async fn answer(
+        matter: &Matter<'_>,
+        responder: &MdnsResponder<'_>,
+        service: &MatterRemoteService,
+    ) {
+        assert_eq!(&responder.wait_resolve_request().await, service);
+
+        let mut name = heapless::String::<128>::new();
+        service.instance_name(&mut name);
+
+        matter.transport().try_deposit_mdns_resolve(
+            &MdnsRemoteService {
+                instance_name: DottedName(name.as_str()),
+                port: Some(1234),
+                addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))].into_iter(),
+                txt: core::iter::empty::<(&str, &str)>(),
+                scope_id: 0,
+            },
+            &[],
+        );
+    }
+
+    /// A resolve placed before any responder is registered waits for one, and
+    /// its timeout only starts then.
+    #[test]
+    fn resolve_waits_for_a_responder() {
+        let matter = test_matter();
+        let service = op_service();
+
+        block_on(async {
+            let resolver = matter.transport().resolve(service.clone(), 50);
+
+            let responder = async {
+                // Longer than the resolve timeout.
+                Timer::after(Duration::from_millis(100)).await;
+
+                let responder = matter.transport().mdns_responder();
+                answer(&matter, &responder, &service).await;
+            };
+
+            let (node, ()) = zip(resolver, responder).await;
+            node
+        })
+        .unwrap();
+    }
+
+    /// A request in flight with a responder that goes away (e.g. restarted on a
+    /// network change) is handed back, and the next responder serves it.
+    #[test]
+    fn dropped_responder_hands_back_the_request() {
+        let matter = test_matter();
+        let service = op_service();
+
+        block_on(async {
+            let resolver = matter.transport().resolve(service.clone(), 5_000);
+
+            let responders = async {
+                let responder = matter.transport().mdns_responder();
+                assert_eq!(responder.wait_resolve_request().await, service);
+                drop(responder);
+
+                let responder = matter.transport().mdns_responder();
+                answer(&matter, &responder, &service).await;
+            };
+
+            let (node, ()) = zip(resolver, responders).await;
+            node
+        })
+        .unwrap();
     }
 }
 
@@ -3128,6 +3307,7 @@ mod browse_tests {
         windows: usize,
     ) -> Vec<MdnsBrowseMatch, 16> {
         let matter = test_matter();
+        let responder = matter.transport().mdns_responder();
         let mut found = Vec::new();
 
         block_on(async {
@@ -3137,7 +3317,7 @@ mod browse_tests {
 
             let responder = async {
                 for _ in 0..windows {
-                    assert_eq!(matter.transport().wait_mdns_browse_request().await, query);
+                    assert_eq!(responder.wait_browse_request().await, query);
 
                     for instance in instances {
                         matter
@@ -3153,6 +3333,43 @@ mod browse_tests {
         .unwrap();
 
         found
+    }
+
+    /// A browse in flight with a responder that goes away is handed back, with
+    /// what it found so far, and the next responder carries on with it.
+    #[test]
+    fn dropped_responder_hands_back_the_browse() {
+        let matter = test_matter();
+        let query = MdnsBrowseQuery::Operational {
+            compressed_fabric_id: Some(0xAA),
+        };
+        let mut found = Vec::<_, 16>::new();
+
+        block_on(async {
+            let browser = matter.transport().browse(&query, 20, |id| {
+                found.push(id).unwrap();
+            });
+
+            let responders = async {
+                for instance in [
+                    "00000000000000AA-0000000000000002._matter._tcp.local",
+                    "00000000000000AA-0000000000000001._matter._tcp.local",
+                ] {
+                    let responder = matter.transport().mdns_responder();
+                    assert_eq!(responder.wait_browse_request().await, query);
+
+                    matter
+                        .transport()
+                        .try_deposit_mdns_browse(&answer(instance, &[]));
+                }
+            };
+
+            let (result, ()) = zip(browser, responders).await;
+            result
+        })
+        .unwrap();
+
+        assert_eq!(found.as_slice(), &[node(0xAA, 1), node(0xAA, 2)]);
     }
 
     /// Operational node `node_id` of fabric `fabric`, as a browse finds it.

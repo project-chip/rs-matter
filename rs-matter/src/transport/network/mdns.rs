@@ -484,6 +484,51 @@ where
     }
 }
 
+/// A lazy iterator over the `key=value` pairs of raw DNS-SD TXT data.
+///
+/// Splits the data into its length-prefixed character strings (then each on
+/// its first `=`) on the fly, so no TXT buffer is materialized. Entries that
+/// aren't valid UTF-8 or lack a `=` are skipped.
+#[derive(Debug, Clone, Copy)]
+pub struct MdnsTxt<'a> {
+    /// Raw TXT data: a sequence of length-prefixed character strings.
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> MdnsTxt<'a> {
+    /// An empty TXT iterator (for answers carrying no TXT record).
+    pub const fn empty() -> Self {
+        Self { data: &[], pos: 0 }
+    }
+
+    /// Wrap raw TXT data (a sequence of length-prefixed character strings).
+    pub const fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+}
+
+impl<'a> Iterator for MdnsTxt<'a> {
+    type Item = (&'a str, &'a str);
+
+    fn next(&mut self) -> Option<(&'a str, &'a str)> {
+        while self.pos < self.data.len() {
+            let len = self.data[self.pos] as usize;
+            let start = self.pos + 1;
+            let end = (start + len).min(self.data.len());
+            self.pos = end;
+
+            if let Ok(s) = core::str::from_utf8(&self.data[start..end]) {
+                if let Some(eq) = s.find('=') {
+                    return Some((&s[..eq], &s[eq + 1..]));
+                }
+            }
+        }
+
+        None
+    }
+}
+
 /// Filter criteria for discovering commissionable devices.
 ///
 /// This filter is used by mDNS discovery implementations to narrow down
@@ -882,7 +927,7 @@ pub(crate) type BrowseIds = Vec<MdnsBrowseMatch, MAX_BROWSE_IDS>;
 /// What an mDNS browse looks for.
 ///
 /// An mDNS responder awaits one with
-/// [`Transport::wait_mdns_browse_request`](crate::transport::Transport::wait_mdns_browse_request),
+/// [`MdnsResponder::wait_browse_request`](crate::transport::MdnsResponder::wait_browse_request),
 /// browses the service it names, and deposits what it finds with
 /// [`Transport::try_deposit_mdns_browse`](crate::transport::Transport::try_deposit_mdns_browse).
 #[derive(Debug, Clone, Eq, PartialEq)]
