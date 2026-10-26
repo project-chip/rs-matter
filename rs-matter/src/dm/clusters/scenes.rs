@@ -584,8 +584,8 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`ScenesHandler`] borrowing this state.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(SCENES_KEY, buf)? else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let Some(loaded) = Persist::new(kv).load_tlv::<ScenesStateInner<N, M>>(SCENES_KEY)? else {
             // Reset to empty so a `load_persist` after a key
             // `remove` is deterministic.
             self.with(|inner| {
@@ -595,7 +595,6 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
             return Ok(());
         };
 
-        let loaded = ScenesStateInner::<N, M>::from_tlv(&TLVElement::new(data))?;
         let entries = loaded.table.len();
 
         self.with(|inner| {
@@ -1651,9 +1650,7 @@ where
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            LifecycleOp::Startup => ctx
-                .kv()
-                .access(|store, buf| self.state.load_persist(store, buf)),
+            LifecycleOp::Startup => self.state.load_persist(ctx.kv()),
             LifecycleOp::FactoryReset => ctx
                 .kv()
                 .access(|store, buf| self.state.reset_persist(store, buf)),

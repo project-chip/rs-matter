@@ -701,9 +701,10 @@ impl ClusterHandler for NocHandler {
                 .notify_comm_window_changed()
         };
 
-        let mut persist = FabricPersist::new(ctx.kv());
+        // The removal is reported as failed if the fabric stays in storage
+        let mut persist = FabricPersist::strict(ctx.kv());
 
-        let (status, opener_fabric_removed) = ctx.exchange().with_state(|state| {
+        let (status, opener_fabric_removed, persisted) = ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             if state.fabrics.remove(fab_idx).is_ok() {
@@ -741,18 +742,20 @@ impl ClusterHandler for NocHandler {
                 // Note that since we might have removed our own session, the exchange
                 // will terminate with a "NoSession" error, but that's OK and handled properly
 
-                persist.remove(fab_idx)?;
+                // The fabric is gone from memory already, so a failure to remove
+                // it from storage too is reported only once the removal is complete
+                let mut persisted = persist.remove(fab_idx);
 
                 // Matter Core spec: if the removed fabric is the
                 // one that installed the TrustedTimeSource, the device SHALL
                 // clear the attribute (and emit `MissingTrustedTimeSource`).
                 if state.rtc.trusted_time_source().map(|tts| tts.fab_idx) == Some(fab_idx) {
-                    state.rtc.set_trusted_time_source_persist(
+                    persisted = persisted.and(state.rtc.set_trusted_time_source_persist(
                         None,
                         persist.persist_mut(),
                         &ctx,
                         &ctx,
-                    )?;
+                    ));
 
                     ctx.exchange().matter().notify_trusted_time_source_changed();
                 }
@@ -770,9 +773,17 @@ impl ClusterHandler for NocHandler {
                     .map(|opener| opener.fab_idx == fab_idx)
                     .unwrap_or(false);
 
-                Ok::<_, Error>((NodeOperationalCertStatusEnum::OK, opener_fabric_removed))
+                Ok::<_, Error>((
+                    NodeOperationalCertStatusEnum::OK,
+                    opener_fabric_removed,
+                    persisted,
+                ))
             } else {
-                Ok((NodeOperationalCertStatusEnum::InvalidFabricIndex, false))
+                Ok((
+                    NodeOperationalCertStatusEnum::InvalidFabricIndex,
+                    false,
+                    Ok(()),
+                ))
             }
         })?;
 
@@ -810,6 +821,8 @@ impl ClusterHandler for NocHandler {
         if opener_fabric_removed {
             ctx.notify_cluster_changed(ROOT_ENDPOINT_ID, adm_comm::FULL_CLUSTER.id);
         }
+
+        persisted?;
 
         response
             .status_code(status)?

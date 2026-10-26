@@ -30,7 +30,7 @@ use crate::crypto::{
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START};
+use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START};
 #[cfg(feature = "groups")]
 use crate::tlv::Skippable;
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
@@ -1125,6 +1125,10 @@ cfg_if! {
 /// All fabrics
 pub struct Fabrics {
     fabrics: Vec<Fabric, MAX_FABRICS>,
+    /// The indices of the persisted fabrics that could not be loaded, one bit
+    /// each. Never reallocated: state kept for them outside of the fabric (CASE
+    /// resumption records, bindings, ...) would pass to the new fabric.
+    unloaded: [u8; 32],
 }
 
 impl Default for Fabrics {
@@ -1139,6 +1143,7 @@ impl Fabrics {
     pub const fn new() -> Self {
         Self {
             fabrics: Vec::new(),
+            unloaded: [0; 32],
         }
     }
 
@@ -1146,12 +1151,14 @@ impl Fabrics {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Vec::init(),
+            unloaded: [0; 32],
         })
     }
 
     /// Remove all fabrics
     pub(crate) fn reset(&mut self) {
         self.fabrics.clear();
+        self.unloaded = [0; 32];
     }
 
     /// Remove all fabrics from the provided BLOB store as well as from memory.
@@ -1166,13 +1173,17 @@ impl Fabrics {
     ) -> Result<(), Error> {
         self.reset();
 
+        let mut result = Ok(());
+
         for idx in 1..=255u8 {
-            store.remove(FABRIC_KEYS_START + idx as u16, buf)?;
+            result = result.and(store.remove(FABRIC_KEYS_START + idx as u16, buf));
         }
 
-        info!("Removed all fabrics from storage");
+        if result.is_ok() {
+            info!("Removed all fabrics from storage");
+        }
 
-        Ok(())
+        result
     }
 
     /// Load all fabrics from the provided BLOB store
@@ -1194,28 +1205,48 @@ impl Fabrics {
         Ok(())
     }
 
+    /// Load the fabric with index `fab_idx` from `store`, if persisted.
+    ///
+    /// A fabric that cannot be loaded is skipped, with its index kept reserved.
     pub(crate) fn add_load<S: KvBlobStore>(
         &mut self,
         fab_idx: u8,
         mut store: S,
         buf: &mut [u8],
     ) -> Result<(), Error> {
-        if let Some(data) = store.load(FABRIC_KEYS_START + fab_idx as u16, buf)? {
-            self.fabrics
-                .push_init(Fabric::init_from_tlv(TLVElement::new(data)), || {
-                    ErrorCode::ResourceExhausted.into()
-                })?;
+        let loaded = load_logged(
+            &mut store,
+            FABRIC_KEYS_START + fab_idx as u16,
+            buf,
+            |data| {
+                self.fabrics
+                    .push_init(Fabric::init_from_tlv(TLVElement::new(data)), || {
+                        ErrorCode::ResourceExhausted.into()
+                    })
+            },
+        );
 
-            let fabric = unwrap!(self.fabrics.last());
+        match loaded {
+            Ok(Some(())) => {
+                let fabric = unwrap!(self.fabrics.last());
 
-            info!(
-                "Loaded fabric {} with ID {:x} from storage",
-                fabric.fab_idx(),
-                fabric.compressed_fabric_id()
-            );
+                info!(
+                    "Loaded fabric {} with ID {:x} from storage",
+                    fabric.fab_idx(),
+                    fabric.compressed_fabric_id()
+                );
+            }
+            Ok(None) => (),
+            Err(_) => self.unloaded[fab_idx as usize / 8] |= 1 << (fab_idx % 8),
         }
 
         Ok(())
+    }
+
+    /// Whether the index `fab_idx` is taken by a fabric, loaded or not.
+    fn is_taken(&self, fab_idx: u8) -> bool {
+        self.unloaded[fab_idx as usize / 8] & (1 << (fab_idx % 8)) != 0
+            || self.iter().any(|fabric| fabric.fab_idx().get() == fab_idx)
     }
 
     /// Add a new fabric to the fabrics with the provided data and immediately updates it with the provided post-init updater.
@@ -1227,19 +1258,16 @@ impl Fabrics {
     where
         F: FnOnce(&mut Fabric) -> Result<(), Error>,
     {
-        let max_fab_idx = self
-            .iter()
-            .map(|fabric| fabric.fab_idx().get())
-            .max()
+        let max_fab_idx = (1..u8::MAX)
+            .rev()
+            .find(|fab_idx| self.is_taken(*fab_idx))
             .unwrap_or(0);
         let fab_idx = unwrap!(NonZeroU8::new(if max_fab_idx < u8::MAX - 1 {
             // First try with the next available fabric index larger than all currently used
             max_fab_idx + 1
         } else {
             // If there is already a fabric with index 254, try to find the first unused one
-            let Some(fab_idx) = (1..u8::MAX)
-                .find(|fab_idx| self.iter().all(|fabric| fabric.fab_idx().get() != *fab_idx))
-            else {
+            let Some(fab_idx) = (1..u8::MAX).find(|fab_idx| !self.is_taken(*fab_idx)) else {
                 return Err(ErrorCode::ResourceExhausted.into());
             };
 
@@ -1465,6 +1493,9 @@ impl Fabrics {
 }
 
 /// A utility for persisting a fabric in a `KvBlobStore` instance.
+///
+/// Like [`Persist`], it logs and ignores what it cannot persist, unless created
+/// with [`FabricPersist::strict`].
 pub struct FabricPersist<S>(Persist<S>);
 
 impl<S> FabricPersist<S>
@@ -1474,6 +1505,12 @@ where
     /// Create a new `FabricPersist` with the given key-value store instance.
     pub const fn new(kvb: S) -> Self {
         Self(Persist::new(kvb))
+    }
+
+    /// Create a new `FabricPersist` with the given key-value store instance,
+    /// which returns the errors of what it cannot persist.
+    pub const fn strict(kvb: S) -> Self {
+        Self(Persist::strict(kvb))
     }
 
     /// Return a reference to the underlying `Persist` instance.
@@ -2954,6 +2991,20 @@ pub(crate) mod tests {
         assert_eq!(fabrics.iter().count(), 0);
         assert_eq!(store.len(), 0);
         assert_eq!(load_all(&kv).iter().count(), 0);
+    }
+
+    #[test]
+    fn unloadable_fabric_keeps_its_index() {
+        let mut store = MemKvBlobStore::default();
+        store
+            .store(FABRIC_KEYS_START + 1, &[0xff], &mut [])
+            .unwrap();
+
+        let mut fabrics = load_all(&MemKv::new(store));
+        assert_eq!(fabrics.iter().count(), 0);
+
+        let fabric = fabrics.add_with_post_init(|_| Ok(())).unwrap();
+        assert_eq!(fabric.fab_idx(), idx(2));
     }
 
     #[test]

@@ -196,16 +196,16 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     ///
     /// Missing key (first boot, or persistence cleared) is not an
     /// error — the registry simply stays empty.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(USER_LABELS_KEY, buf)? else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let Some(loaded) =
+            Persist::new(kv).load_tlv::<Vec<EndpointLabels<N>, E>>(USER_LABELS_KEY)?
+        else {
             // No prior persistence — reset to empty so re-calling
             // `load_persist` after a `remove` of the key behaves
             // deterministically.
             self.state.lock(|cell| cell.borrow_mut().clear());
             return Ok(());
         };
-
-        let loaded = Vec::<EndpointLabels<N>, E>::from_tlv(&TLVElement::new(data))?;
 
         self.state.lock(|cell| *cell.borrow_mut() = loaded);
 
@@ -403,13 +403,15 @@ impl<const E: usize, const N: usize> ClusterHandler for UserLabelHandler<'_, E, 
     }
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        ctx.kv().access(|store, buf| match op {
-            LifecycleOp::Startup => self.labels.load_persist(store, buf),
-            LifecycleOp::FactoryReset => self.labels.reset_persist(store, buf),
+        match op {
+            LifecycleOp::Startup => self.labels.load_persist(ctx.kv()),
+            LifecycleOp::FactoryReset => ctx
+                .kv()
+                .access(|store, buf| self.labels.reset_persist(store, buf)),
             LifecycleOp::FabricRemoval { .. }
             | LifecycleOp::FailSafeCommit
             | LifecycleOp::FailSafeExpiry => Ok(()),
-        })
+        }
     }
 
     fn label_list<P: TLVBuilderParent>(

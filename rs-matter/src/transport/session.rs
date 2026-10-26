@@ -35,7 +35,7 @@ use crate::fabric::MAX_FABRICS;
 #[cfg(feature = "groups")]
 use crate::group_keys::KeySet;
 #[cfg(feature = "groups")]
-use crate::persist::{KvBlobStore, GROUP_DATA_COUNTER_KEY};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, GROUP_DATA_COUNTER_KEY};
 use crate::sc::SessionParameters;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::{self, ReliableMessage};
@@ -1400,14 +1400,18 @@ impl Sessions {
     ///
     /// An absent key means "first boot": the counter is instead seeded
     /// randomly on first use, which likewise stores its boundary first.
-    pub(crate) fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        if let Some(data) = store.load(GROUP_DATA_COUNTER_KEY, buf)? {
-            let boundary = u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::InvalidData)?);
+    ///
+    /// So does a key that cannot be loaded, at a small risk of repeating a value
+    /// the previous run used with the same group keys: the counter wraps within
+    /// its whole range, so no value is certain to be past the previous run's.
+    pub(crate) fn load_persist<S: KvBlobStoreAccess>(&mut self, kv: S) -> Result<(), Error> {
+        let boundary = Persist::new(kv).load(GROUP_DATA_COUNTER_KEY, |data| {
+            Ok(u32::from_le_bytes(
+                data.try_into().map_err(|_| ErrorCode::InvalidData)?,
+            ))
+        })?;
 
+        if let Some(boundary) = boundary {
             self.resume_global_group_data_ctr(boundary);
         }
 

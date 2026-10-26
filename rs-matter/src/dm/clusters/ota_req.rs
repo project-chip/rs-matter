@@ -48,7 +48,7 @@ use crate::fabric::MAX_FABRICS;
 use crate::persist::{
     KvBlobStore, KvBlobStoreAccess, Persist, OTA_PROVIDERS_KEY, RUNNING_VERSION_KEY,
 };
-use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
+use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -292,13 +292,14 @@ impl Providers {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`OtaRequestorHandler`] borrowing this registry.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(OTA_PROVIDERS_KEY, buf)? else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let Some(loaded) =
+            Persist::new(kv).load_tlv::<Vec<Provider, MAX_FABRICS>>(OTA_PROVIDERS_KEY)?
+        else {
             self.state.lock(|cell| cell.borrow_mut().default.clear());
             return Ok(());
         };
 
-        let loaded = Vec::<Provider, MAX_FABRICS>::from_tlv(&TLVElement::new(data))?;
         self.state.lock(|cell| cell.borrow_mut().default = loaded);
 
         info!("Loaded OTA provider entries from storage");
@@ -815,12 +816,8 @@ impl<'a> OtaRequestorHandler<'a> {
     fn note_running_version(&self, ctx: &impl HandlerContext) -> Result<(), Error> {
         let dev = ctx.matter().dev_det();
 
-        let last = ctx.kv().access(|store, buf| {
-            store
-                .load(RUNNING_VERSION_KEY, buf)?
-                .map(|data| u32::from_tlv(&TLVElement::new(data)))
-                .transpose()
-        })?;
+        // An unreadable version counts as none: there is no telling an update happened
+        let last = Persist::new(ctx.kv()).load_tlv::<u32>(RUNNING_VERSION_KEY)?;
 
         if last == Some(dev.sw_ver) {
             return Ok(());
@@ -865,14 +862,14 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
             LifecycleOp::Startup => {
-                ctx.kv()
-                    .access(|store, buf| self.providers.load_persist(store, buf))?;
+                self.providers.load_persist(ctx.kv())?;
 
                 self.note_running_version(&ctx)
             }
             LifecycleOp::FactoryReset => ctx.kv().access(|mut store, buf| {
-                self.providers.reset_persist(&mut store, buf)?;
-                store.remove(RUNNING_VERSION_KEY, buf)
+                let result = self.providers.reset_persist(&mut store, buf);
+
+                result.and(store.remove(RUNNING_VERSION_KEY, buf))
             }),
             LifecycleOp::FailSafeCommit | LifecycleOp::FailSafeExpiry => Ok(()),
             LifecycleOp::FabricRemoval { fab_idx } => {

@@ -65,7 +65,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
-use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
+use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
@@ -150,13 +150,12 @@ impl<const N: usize> Bindings<N> {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`BindingHandler`] instance(s) borrowing this registry.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(BINDINGS_KEY, buf)? else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let Some(loaded) = Persist::new(kv).load_tlv::<Vec<Binding, N>>(BINDINGS_KEY)? else {
             self.state.lock(|cell| cell.borrow_mut().clear());
             return Ok(());
         };
 
-        let loaded = Vec::<Binding, N>::from_tlv(&TLVElement::new(data))?;
         self.state.lock(|cell| *cell.borrow_mut() = loaded);
 
         info!("Loaded Binding entries for all endpoints from storage");
@@ -444,9 +443,7 @@ impl<const N: usize> ClusterHandler for BindingHandler<'_, N> {
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            LifecycleOp::Startup => ctx
-                .kv()
-                .access(|store, buf| self.bindings.load_persist(store, buf)),
+            LifecycleOp::Startup => self.bindings.load_persist(ctx.kv()),
             LifecycleOp::FactoryReset => ctx
                 .kv()
                 .access(|store, buf| self.bindings.reset_persist(store, buf)),

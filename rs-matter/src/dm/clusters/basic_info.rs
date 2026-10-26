@@ -554,21 +554,14 @@ impl BasicInfoSettings {
         persist.store_tlv(BASIC_INFO_KEY, self)
     }
 
-    /// Load all basic info settings from the provided BLOB store
-    ///
-    /// # Arguments
-    /// - `store`: the BLOB store to load the fabrics from
-    /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub(crate) fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    /// Load all basic info settings from the provided key-value store
+    pub(crate) fn load_persist<S: KvBlobStoreAccess>(&mut self, kv: S) -> Result<(), Error> {
         self.reset();
 
-        if let Some(data) = store.load(BASIC_INFO_KEY, buf)? {
-            self.load(data)?;
-
+        if Persist::new(kv)
+            .load(BASIC_INFO_KEY, |data| self.load(data))?
+            .is_some()
+        {
             info!("Loaded basic info settings from storage");
         }
 

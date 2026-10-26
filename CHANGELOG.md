@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: persisted state that cannot be loaded (e.g. written by another firmware) is logged and replaced with defaults instead of failing the boot; `persist::load_logged` (#616)
+* Fix: a failing write no longer stops the node or leaves a factory reset, fabric removal or commissioning half-done; ICD Check-Ins wait until their counter is persisted
+  * Breaking: `Persist` and `FabricPersist` log and ignore what they cannot store, remove or load; their `strict` constructors return the errors
+  * New: `Persist::load`, decoding the stored value with a closure
+* Fix: the last-known UTC time is persisted as the integer it is loaded as
 * New: a node can have several network interfaces: one `NetCommHandler` each, owning its networks store (by value or `&mut`) under its own KV key and running its connection manager; `DEV_TYPE_SECONDARY_NETWORK_INTERFACE` (#615)
   * Breaking: `NetCommHandler::new` and the Wi-Fi/Thread root endpoint builders take the networks store; `InteractionModelState` and `InteractionModel` lose it, the network controller and `connect_once` (now `wireless::connect_once`)
   * Breaking: `SharedNetworks`, `NetworksAccess`, `HandlerContext::networks` and the `Eth`/`Wireless` IM aliases are gone; `LifecycleOp` gains `FailSafeCommit` and `FailSafeExpiry`; `HandlerContext` gains `broadcast_lifecycle`

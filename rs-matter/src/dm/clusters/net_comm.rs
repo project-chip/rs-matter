@@ -1872,16 +1872,20 @@ impl<N, T> defmt::Format for NetCommHandler<'_, N, T> {
 }
 
 /// Reload the committed networks of `networks` from `kv`, where they are
-/// persisted under `key`; reset the store if nothing is persisted.
+/// persisted under `key`; reset the store if nothing is persisted, or if what
+/// is cannot be loaded.
 pub fn load_networks<N, K>(mut networks: N, key: u16, kv: K) -> Result<(), Error>
 where
     N: Networks,
     K: KvBlobStoreAccess,
 {
-    kv.access(|kv, buf| match kv.load(key, buf)? {
-        Some(data) => networks.load(data),
+    let loaded = Persist::new(kv).load(key, |data| networks.load(data))?;
+
+    // A load that failed may have stopped half-way
+    match loaded {
+        Some(()) => Ok(()),
         None => networks.reset(),
-    })
+    }
 }
 
 /// Persist `networks` into `kv`, under `key`.
@@ -1905,7 +1909,8 @@ where
 {
     networks.reset()?;
 
-    let mut persist = Persist::new(kv);
+    // Strict, as credentials surviving a factory reset must not go unreported
+    let mut persist = Persist::strict(kv);
 
     persist.remove(key)?;
 

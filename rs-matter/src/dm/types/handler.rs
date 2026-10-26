@@ -1725,9 +1725,10 @@ where
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         // Lifecycle ops are a broadcast: every handler in the chain gets them,
-        // regardless of the matcher.
-        self.handler.lifecycle(&ctx, op)?;
-        self.next.lifecycle(ctx, op)
+        // regardless of the matcher, and even if one fails (the first error wins)
+        let result = self.handler.lifecycle(&ctx, op);
+
+        result.and(self.next.lifecycle(ctx, op))
     }
 
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
@@ -2171,9 +2172,10 @@ mod asynch {
 
         fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
             // Lifecycle ops are a broadcast: every handler in the chain gets them,
-            // regardless of the matcher.
-            self.handler.lifecycle(&ctx, op)?;
-            self.next.lifecycle(ctx, op)
+            // regardless of the matcher, and even if one fails (the first error wins)
+            let result = self.handler.lifecycle(&ctx, op);
+
+            result.and(self.next.lifecycle(ctx, op))
         }
 
         async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {

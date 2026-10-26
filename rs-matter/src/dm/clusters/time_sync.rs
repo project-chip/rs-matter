@@ -211,25 +211,22 @@ impl Rtc {
     ) -> Result<(), Error> {
         self.reset();
 
-        store.remove(LKG_UTC_KEY, buf)?;
-        store.remove(TRUSTED_TIME_SOURCE_KEY, buf)?;
-        Ok(())
+        let result = store.remove(LKG_UTC_KEY, buf);
+
+        result.and(store.remove(TRUSTED_TIME_SOURCE_KEY, buf))
     }
 
-    pub(crate) fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    pub(crate) fn load_persist<S: KvBlobStoreAccess>(&mut self, kv: S) -> Result<(), Error> {
         self.reset();
+
+        let mut persist = Persist::new(kv);
 
         // Load the persisted Last-Known-Good UTC Time, if any.
         // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec -
         // the on-disk value must never regress us
         // below the build timestamp (the documented lower bound
         // we never adjust backwards past).
-        if let Some(data) = kv.load(LKG_UTC_KEY, buf)? {
-            let stored = u64::from_tlv(&TLVElement::new(data))?;
+        if let Some(stored) = persist.load_tlv::<u64>(LKG_UTC_KEY)? {
             let floor = FIRMWARE_BUILD_MATTER_US;
 
             self.utc_us_persisted = stored;
@@ -237,9 +234,7 @@ impl Rtc {
         }
 
         // Load the persisted Trusted Time Source, if any.
-        if let Some(data) = kv.load(TRUSTED_TIME_SOURCE_KEY, buf)? {
-            self.trusted_time_source = Some(TrustedTimeSource::from_tlv(&TLVElement::new(data))?);
-        }
+        self.trusted_time_source = persist.load_tlv(TRUSTED_TIME_SOURCE_KEY)?;
 
         Ok(())
     }
@@ -433,7 +428,7 @@ impl Rtc {
 
             info!("TimeSync: UTC time changed by more than a day, persisting");
 
-            persist.store_tlv(LKG_UTC_KEY, utc_us.to_le_bytes())?;
+            persist.store_tlv(LKG_UTC_KEY, utc_us)?;
             self.utc_us_persisted = utc_us;
         }
 
@@ -860,13 +855,11 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
     /// Driven by [`LifecycleOp::Startup`], before the data model starts
     /// serving operations. A missing key (first boot / cleared persistence)
     /// leaves the defaults.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Some(data) = store.load(TIME_ZONE_KEY, buf)? else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        // TODO: LARGE BUFFER
+        let Some(loaded) = Persist::new(kv).load_tlv(TIME_ZONE_KEY)? else {
             return Ok(());
         };
-
-        // TODO: LARGE BUFFER
-        let loaded = TimeZoneStoreData::from_tlv(&TLVElement::new(data))?;
 
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -1533,7 +1526,7 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         };
 
         match op {
-            LifecycleOp::Startup => ctx.kv().access(|kv, buf| store.load_persist(kv, buf)),
+            LifecycleOp::Startup => store.load_persist(ctx.kv()),
             LifecycleOp::FactoryReset => ctx.kv().access(|kv, buf| store.reset_persist(kv, buf)),
             LifecycleOp::FabricRemoval { .. }
             | LifecycleOp::FailSafeCommit
@@ -2021,5 +2014,34 @@ impl core::fmt::Debug for TimeSyncHandler<'_> {
 impl defmt::Format for TimeSyncHandler<'_> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "TimeSyncHandler {{ dataver: {} }}", self.dataver.get());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::fabric::tests::{MemKv, MemKvBlobStore};
+
+    use super::*;
+
+    #[test]
+    fn persisted_utc_time_loads_back() {
+        let kv = MemKv::new(MemKvBlobStore::default());
+        let utc_us = FIRMWARE_BUILD_MATTER_US + 7 * 24 * 60 * 60 * 1_000_000;
+
+        let mut rtc = Rtc::new();
+        rtc.set_utc_time_persist(
+            utc_us,
+            GranularityEnum::SecondsGranularity,
+            TimeSourceEnum::Admin,
+            &mut Persist::new(&kv),
+            &(),
+        )
+        .unwrap();
+
+        let mut rtc = Rtc::new();
+        rtc.load_persist(&kv).unwrap();
+
+        assert_eq!(rtc.utc_time(), UtcTime::LastKnown(utc_us));
     }
 }

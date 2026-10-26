@@ -26,7 +26,7 @@ use crate::im::{
     EventData, EventDataTag, EventDataTimestamp, EventFilter, EventNumber, EventPath,
     EventPriority, EventResp, EventRespTag,
 };
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
+use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
 use crate::tlv::{
     FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVSequence, TLVSequenceIter, TLVTag,
     TLVWrite, TagType, ToTLV,
@@ -85,14 +85,19 @@ impl<const N: usize> Events<N> {
     /// Load the persisted event-number epoch from the given key-value store,
     /// so that event numbers are not reused across reboots.
     ///
+    /// An epoch that cannot be loaded is replaced with `utc_us`, the UTC time in
+    /// microseconds: far past any number of events the node can have emitted,
+    /// whereas restarting at 1 would reuse numbers subscribers already saw.
+    ///
     /// Driven by [`InteractionModel::startup`](crate::im::InteractionModel::startup).
     pub(crate) fn load_persist(
         &self,
         kv: &mut dyn KvBlobStore,
         buf: &mut [u8],
+        utc_us: u64,
     ) -> Result<(), Error> {
         self.inner
-            .lock(|state| state.borrow_mut().load_persist(kv, buf))
+            .lock(|state| state.borrow_mut().load_persist(kv, buf, utc_us))
     }
 
     /// Remove the persisted event-number epoch from the given key-value store
@@ -264,21 +269,20 @@ impl<const N: usize> EventsInner<N> {
         &mut self,
         kv: &mut dyn KvBlobStore,
         buf: &mut [u8],
+        utc_us: u64,
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(data) = kv.load(EVENT_EPOCH_KEY, buf)? {
-            self.load(data)?;
+        match load_logged(kv, EVENT_EPOCH_KEY, buf, |data| TLVElement::new(data).u64()) {
+            Ok(Some(epoch)) => {
+                self.next_event_number = epoch;
 
-            info!("Loaded events counter from storage");
+                info!("Loaded events counter from storage");
+            }
+            Ok(None) => (),
+            // An epoch boundary, so that the first event persists the next one
+            Err(_) => self.next_event_number = utc_us.next_multiple_of(EVENT_NUMBER_EPOCH_SIZE),
         }
-
-        Ok(())
-    }
-
-    /// Restore events from previously persisted state.
-    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.next_event_number = TLVElement::new(data).u64()?;
 
         Ok(())
     }
@@ -969,6 +973,18 @@ mod tests {
             crit1.push_into(&mut q).expect_err("").code(),
             ErrorCode::ResourceExhausted
         );
+    }
+
+    #[test]
+    fn unloadable_epoch_resumes_past_utc_time() {
+        let mut store = crate::fabric::tests::MemKvBlobStore::default();
+        store.store(EVENT_EPOCH_KEY, &[0xff], &mut []).unwrap();
+
+        let mut q: EventsInner<8> = EventsInner::new();
+        q.load_persist(&mut store, &mut [0; 16], 123_456_789)
+            .unwrap();
+
+        assert_eq!(q.next_event_number, 123_460_000);
     }
 
     // Test utilities for this suite

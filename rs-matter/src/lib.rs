@@ -61,7 +61,6 @@ use crate::persist::{
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::{CommWindowState, Pase};
-use crate::tlv::{TLVElement, TLVTag, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
@@ -71,7 +70,6 @@ use crate::transport::{
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::Buffers;
-use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 
@@ -308,27 +306,15 @@ impl<'a> Matter<'a> {
     pub fn persist_reboot_count<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         let reboot_count = self.with_state(|state| state.reboot_count);
 
-        kv.access(|store, buf| {
-            let stored = store
-                .load(REBOOT_COUNT_KEY, buf)?
-                .map(|data| TLVElement::new(data).u16())
-                .transpose()?;
+        let mut persist = Persist::new(kv);
 
-            // Nothing to do if this boot's count is already on record, so
-            // calling this more than once per boot costs no writes.
-            if stored == Some(reboot_count) {
-                return Ok(());
-            }
+        // Nothing to do if this boot's count is already on record, so
+        // calling this more than once per boot costs no writes.
+        if persist.load_tlv::<u16>(REBOOT_COUNT_KEY)? != Some(reboot_count) {
+            persist.store_tlv(REBOOT_COUNT_KEY, reboot_count)?;
+        }
 
-            let mut wb = WriteBuf::new(buf);
-
-            reboot_count.to_tlv(&TLVTag::Anonymous, &mut wb)?;
-
-            let len = wb.get_tail();
-            let (data, buf) = buf.split_at_mut(len);
-
-            store.store(REBOOT_COUNT_KEY, data, buf)
-        })
+        persist.run()
     }
 
     /// The node's reboot count, as reported by
@@ -351,25 +337,13 @@ impl<'a> Matter<'a> {
     pub fn persist_operational_hours<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         let hours = self.total_operational_hours();
 
-        kv.access(|store, buf| {
-            let stored = store
-                .load(OPERATIONAL_HOURS_KEY, buf)?
-                .map(|data| TLVElement::new(data).u32())
-                .transpose()?;
+        let mut persist = Persist::new(kv);
 
-            if stored == Some(hours) {
-                return Ok(());
-            }
+        if persist.load_tlv::<u32>(OPERATIONAL_HOURS_KEY)? != Some(hours) {
+            persist.store_tlv(OPERATIONAL_HOURS_KEY, hours)?;
+        }
 
-            let mut wb = WriteBuf::new(buf);
-
-            hours.to_tlv(&TLVTag::Anonymous, &mut wb)?;
-
-            let len = wb.get_tail();
-            let (data, buf) = buf.split_at_mut(len);
-
-            store.store(OPERATIONAL_HOURS_KEY, data, buf)
-        })
+        persist.run()
     }
 
     /// The node's operational hours, as reported by
@@ -1025,31 +999,35 @@ impl<'a> Matter<'a> {
     /// factory-reset, alongside
     /// [`InteractionModel::factory_reset`](crate::im::InteractionModel::factory_reset).
     ///
+    /// Everything is removed even if removing some of it fails, the first failure
+    /// being returned.
+    ///
     /// Arguments:
     /// - `kv`: The key-value store access (obtained via [`Matter::kv`]) to remove the fabrics
     ///   and basic info settings from. Provides both the store and the scratch buffer.
     pub fn factory_reset<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
-        self.with_state(|state| {
+        let result = self.with_state(|state| {
             // The KV ops are sync, so do them all inside a single `access` closure.
             kv.access(|mut store, buf| {
-                state.fabrics.reset_persist(&mut store, buf)?;
-                state.basic_info_settings.reset_persist(&mut store, buf)?;
-                state.rtc.reset_persist(&mut store, buf)?;
+                let result = state
+                    .fabrics
+                    .reset_persist(&mut store, buf)
+                    .and(state.basic_info_settings.reset_persist(&mut store, buf))
+                    .and(state.rtc.reset_persist(&mut store, buf));
                 #[cfg(feature = "case-resumption")]
-                state.resumption.reset_persist(&mut store, buf)?;
+                let result = result.and(state.resumption.reset_persist(&mut store, buf));
                 #[cfg(feature = "groups")]
-                state.sessions.reset_persist(&mut store, buf)?;
+                let result = result.and(state.sessions.reset_persist(&mut store, buf));
 
                 state.operational_hours = 0;
-                store.remove(OPERATIONAL_HOURS_KEY, buf)?;
 
-                Ok::<_, Error>(())
+                result.and(store.remove(OPERATIONAL_HOURS_KEY, buf))
             })
-        })?;
+        });
 
         self.transport().notify_mdns_changed();
 
-        Ok(())
+        result
     }
 
     /// Re-hydrate the `Matter` persistable state - the fabrics, the basic info
@@ -1065,47 +1043,40 @@ impl<'a> Matter<'a> {
     ///   and basic info settings from. Provides both the store and the scratch buffer.
     pub fn startup<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         self.with_state(|state| {
-            // The KV ops are sync, so do them all inside a single `access` closure.
-            kv.access(|mut store, buf| {
-                state.fabrics.load_persist(&mut store, buf)?;
-                state.basic_info_settings.load_persist(&mut store, buf)?;
-                state.rtc.load_persist(&mut store, buf)?;
-                #[cfg(feature = "case-resumption")]
-                state.resumption.load_persist(&mut store, buf)?;
-                #[cfg(feature = "groups")]
-                state.sessions.load_persist(&mut store, buf)?;
+            kv.access(|store, buf| state.fabrics.load_persist(store, buf))?;
+            state.basic_info_settings.load_persist(&kv)?;
+            state.rtc.load_persist(&kv)?;
+            #[cfg(feature = "case-resumption")]
+            state.resumption.load_persist(&kv)?;
+            #[cfg(feature = "groups")]
+            state.sessions.load_persist(&kv)?;
 
-                // `RebootCount` for *this* boot: the persisted value plus one.
-                //
-                // Only loaded here - the matching write is
-                // [`Matter::persist_reboot_count`], which the device calls once
-                // it considers the boot healthy. Writing it here instead would
-                // put one flash write in the boot path, so a device stuck in a
-                // boot loop would churn its write-endurance budget while
-                // already broken.
-                //
-                // Reaching `startup` *is* a boot, so no platform support is
-                // needed to detect one, and the spec asks only for a
-                // "best-effort" count - it deliberately does not distinguish a
-                // crash from a power cut. A wake from sleep does not re-enter
-                // startup, which is the one case the spec excludes.
-                state.reboot_count = store
-                    .load(REBOOT_COUNT_KEY, buf)?
-                    .map(|data| TLVElement::new(data).u16())
-                    .transpose()?
-                    .unwrap_or(0)
-                    .saturating_add(1);
+            let mut persist = Persist::new(&kv);
 
-                // `TotalOperationalHours` on record; the current boot's hours
-                // count on top of it.
-                state.operational_hours = store
-                    .load(OPERATIONAL_HOURS_KEY, buf)?
-                    .map(|data| TLVElement::new(data).u32())
-                    .transpose()?
-                    .unwrap_or(0);
+            // `RebootCount` for *this* boot: the persisted value plus one.
+            //
+            // Only loaded here - the matching write is
+            // [`Matter::persist_reboot_count`], which the device calls once
+            // it considers the boot healthy. Writing it here instead would
+            // put one flash write in the boot path, so a device stuck in a
+            // boot loop would churn its write-endurance budget while
+            // already broken.
+            //
+            // Reaching `startup` *is* a boot, so no platform support is
+            // needed to detect one, and the spec asks only for a
+            // "best-effort" count - it deliberately does not distinguish a
+            // crash from a power cut. A wake from sleep does not re-enter
+            // startup, which is the one case the spec excludes.
+            state.reboot_count = persist
+                .load_tlv::<u16>(REBOOT_COUNT_KEY)?
+                .unwrap_or(0)
+                .saturating_add(1);
 
-                Ok::<_, Error>(())
-            })
+            // `TotalOperationalHours` on record; the current boot's hours
+            // count on top of it.
+            state.operational_hours = persist.load_tlv(OPERATIONAL_HOURS_KEY)?.unwrap_or(0);
+
+            persist.run()
         })?;
 
         self.transport().notify_mdns_changed();
@@ -1160,9 +1131,7 @@ impl<'a> Matter<'a> {
             self.transport().wait_resumption_dirty().await;
             embassy_time::Timer::after(min_interval).await;
 
-            self.with_state(|state| {
-                kv.access(|mut store, buf| state.resumption.store_persist(&mut store, buf))
-            })?;
+            self.with_state(|state| state.resumption.store_persist(&kv))?;
 
             debug!("CASE session resumption cache persisted");
         }

@@ -337,6 +337,20 @@ impl FailSafe {
         session_mode: &SessionMode,
         fabrics: &'a mut Fabrics,
     ) -> Result<&'a mut Fabric, Error> {
+        self.disarm_with(session_mode, fabrics, |_| Ok(()))
+    }
+
+    /// Like [`Self::disarm`], running `commit` on the fabric first. If `commit`
+    /// fails, the fail-safe stays armed, for its expiry to revert the fabric.
+    pub(crate) fn disarm_with<'a, F>(
+        &mut self,
+        session_mode: &SessionMode,
+        fabrics: &'a mut Fabrics,
+        commit: F,
+    ) -> Result<&'a mut Fabric, Error>
+    where
+        F: FnOnce(&Fabric) -> Result<(), Error>,
+    {
         if matches!(self.state, State::Idle) {
             error!("Received Fail-Safe Disarm without it being armed");
             return Err(ErrorCode::FailSafeRequired.into());
@@ -353,6 +367,8 @@ impl FailSafe {
         )?;
 
         let fabric = fabrics.fabric_mut(fab_idx)?;
+
+        commit(fabric)?;
 
         self.state = State::Idle;
         self.breadcrumb = 0;
