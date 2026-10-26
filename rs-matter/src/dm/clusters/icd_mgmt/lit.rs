@@ -40,7 +40,7 @@ use crate::persist::{
     ICD_REGISTERED_CLIENTS_KEY,
 };
 use crate::sc::checkin::{CheckIn, CheckInCounter};
-use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, ToTLV};
+use crate::tlv::{FromTLV, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
@@ -502,26 +502,22 @@ impl LitIcd {
     ///
     /// Registrations that cannot be loaded are dropped, and so are all of them
     /// if the counter cannot be.
-    fn load_persist<S: KvBlobStore, C: Crypto>(
-        &self,
-        crypto: C,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        let clients = load_logged(&mut kv, ICD_REGISTERED_CLIENTS_KEY, buf, |data| {
-            Vec::from_tlv(&TLVElement::new(data))
-        })
-        .ok()
-        .flatten()
-        .unwrap_or_else(Vec::new);
+    fn load_persist<K: KvBlobStoreAccess, C: Crypto>(&self, crypto: C, kv: K) -> Result<(), Error> {
+        let clients = Persist::new(&kv)
+            .load_tlv(ICD_REGISTERED_CLIENTS_KEY)?
+            .unwrap_or_else(Vec::new);
 
         self.update(|s| s.clients = clients);
 
-        let start = match load_logged(&mut kv, ICD_CHECK_IN_COUNTER_KEY, buf, |data| {
-            Ok(u32::from_le_bytes(
-                data.try_into().map_err(|_| ErrorCode::Invalid)?,
-            ))
-        }) {
+        let counter = kv.access(|store, buf| {
+            load_logged(store, ICD_CHECK_IN_COUNTER_KEY, buf, |data| {
+                Ok(u32::from_le_bytes(
+                    data.try_into().map_err(|_| ErrorCode::Invalid)?,
+                ))
+            })
+        });
+
+        let start = match counter {
             Ok(Some(start)) => start,
             // First boot (or a cleared store): start somewhere random rather
             // than at a fixed value every device shares.
@@ -542,7 +538,7 @@ impl LitIcd {
         self.reseed_counter(start);
 
         // Not an error: Check-Ins wait for the counter instead
-        if let Err(e) = self.persist_counter(&mut kv, buf) {
+        if let Err(e) = kv.access(|store, buf| self.persist_counter(store, buf)) {
             warn!("ICD: Failed to persist the Check-In counter: {:?}", e);
         }
 
@@ -896,8 +892,7 @@ impl ClusterHandler for LitIcdMgmtHandler<'_> {
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
             LifecycleOp::Startup => {
-                ctx.kv()
-                    .access(|store, buf| self.lit.load_persist(ctx.crypto(), store, buf))?;
+                self.lit.load_persist(ctx.crypto(), ctx.kv())?;
 
                 // Advertise the operating mode from the reloaded registration
                 // set right away, so a client registered before the reboot
@@ -1098,6 +1093,8 @@ impl ClusterHandler for LitIcdMgmtHandler<'_> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::test_only_crypto;
+
+    use crate::persist::SharedKvBlobStore;
 
     use super::super::tests::{force_idle, mode, notified};
     use super::*;
@@ -1365,6 +1362,13 @@ mod tests {
         }
     }
 
+    /// Re-hydrate `lit` from `kv`, the way `LifecycleOp::Startup` does.
+    fn load(lit: &LitIcd, kv: &mut MemKv) -> Result<(), Error> {
+        let buf = Mutex::new(RefCell::new([0u8; 256]));
+
+        lit.load_persist(test_only_crypto(), SharedKvBlobStore::new(kv, &buf))
+    }
+
     #[test]
     fn counter_persists_at_boundary_and_resumes_across_restart() {
         const EPOCH: u32 = 10;
@@ -1402,8 +1406,7 @@ mod tests {
         // The epoch comes from the counter this `LitIcd` was built with, not
         // from the blob.
         let lit2 = LitIcd::new(EPOCH, mode(), SIT_SLOW_POLL_MAX_MS);
-        lit2.load_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
+        load(&lit2, &mut kv).unwrap();
         assert!(lit2.next_counter() > last_used);
 
         // Re-hydrating must itself persist the boundary it resumes from, or a
@@ -1419,8 +1422,7 @@ mod tests {
         // Session 3 (a second restart, no traffic in session 2): still strictly
         // past every value session 2 could have used.
         let lit3 = LitIcd::new(EPOCH, mode(), SIT_SLOW_POLL_MAX_MS);
-        lit3.load_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
+        load(&lit3, &mut kv).unwrap();
         assert!(lit3.next_counter() > lit2.next_counter() + EPOCH - 1);
     }
 
@@ -1428,13 +1430,11 @@ mod tests {
     fn first_boot_seeds_the_counter_and_persists_a_boundary() {
         const EPOCH: u32 = 10;
         let mut kv = MemKv::default();
-        let mut buf = [0u8; 256];
 
         // Nothing stored: the counter is seeded from a random start, and the
         // boundary it resumes from must be durable before any Check-In goes out.
         let lit = LitIcd::new(EPOCH, mode(), SIT_SLOW_POLL_MAX_MS);
-        lit.load_persist(test_only_crypto(), &mut kv, &mut buf)
-            .unwrap();
+        load(&lit, &mut kv).unwrap();
 
         let boundary = u32::from_le_bytes(
             kv.get(ICD_CHECK_IN_COUNTER_KEY)

@@ -54,14 +54,13 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{
-    load_logged, KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist,
-    OPERATIONAL_HOURS_KEY, REBOOT_COUNT_KEY,
+    KvBlobStore, KvBlobStoreAccess, MatterKvBlobStoreAccess, Persist, OPERATIONAL_HOURS_KEY,
+    REBOOT_COUNT_KEY,
 };
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::{CommWindowState, Pase};
-use crate::tlv::{TLVElement, TLVTag, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
@@ -71,7 +70,6 @@ use crate::transport::{
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::Buffers;
-use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 
@@ -308,26 +306,15 @@ impl<'a> Matter<'a> {
     pub fn persist_reboot_count<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         let reboot_count = self.with_state(|state| state.reboot_count);
 
-        kv.access(|store, buf| {
-            let stored = load_logged(&mut *store, REBOOT_COUNT_KEY, buf, |data| {
-                TLVElement::new(data).u16()
-            });
+        let mut persist = Persist::new(kv);
 
-            // Nothing to do if this boot's count is already on record, so
-            // calling this more than once per boot costs no writes.
-            if matches!(stored, Ok(Some(count)) if count == reboot_count) {
-                return Ok(());
-            }
+        // Nothing to do if this boot's count is already on record, so
+        // calling this more than once per boot costs no writes.
+        if persist.load_tlv::<u16>(REBOOT_COUNT_KEY)? != Some(reboot_count) {
+            persist.store_tlv(REBOOT_COUNT_KEY, reboot_count)?;
+        }
 
-            let mut wb = WriteBuf::new(buf);
-
-            reboot_count.to_tlv(&TLVTag::Anonymous, &mut wb)?;
-
-            let len = wb.get_tail();
-            let (data, buf) = buf.split_at_mut(len);
-
-            store.store(REBOOT_COUNT_KEY, data, buf)
-        })
+        persist.run()
     }
 
     /// The node's reboot count, as reported by
@@ -350,24 +337,13 @@ impl<'a> Matter<'a> {
     pub fn persist_operational_hours<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         let hours = self.total_operational_hours();
 
-        kv.access(|store, buf| {
-            let stored = load_logged(&mut *store, OPERATIONAL_HOURS_KEY, buf, |data| {
-                TLVElement::new(data).u32()
-            });
+        let mut persist = Persist::new(kv);
 
-            if matches!(stored, Ok(Some(stored)) if stored == hours) {
-                return Ok(());
-            }
+        if persist.load_tlv::<u32>(OPERATIONAL_HOURS_KEY)? != Some(hours) {
+            persist.store_tlv(OPERATIONAL_HOURS_KEY, hours)?;
+        }
 
-            let mut wb = WriteBuf::new(buf);
-
-            hours.to_tlv(&TLVTag::Anonymous, &mut wb)?;
-
-            let len = wb.get_tail();
-            let (data, buf) = buf.split_at_mut(len);
-
-            store.store(OPERATIONAL_HOURS_KEY, data, buf)
-        })
+        persist.run()
     }
 
     /// The node's operational hours, as reported by
@@ -1067,50 +1043,40 @@ impl<'a> Matter<'a> {
     ///   and basic info settings from. Provides both the store and the scratch buffer.
     pub fn startup<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         self.with_state(|state| {
-            // The KV ops are sync, so do them all inside a single `access` closure.
-            kv.access(|mut store, buf| {
-                state.fabrics.load_persist(&mut store, buf)?;
-                state.basic_info_settings.load_persist(&mut store, buf)?;
-                state.rtc.load_persist(&mut store, buf)?;
-                #[cfg(feature = "case-resumption")]
-                state.resumption.load_persist(&mut store, buf)?;
-                #[cfg(feature = "groups")]
-                state.sessions.load_persist(&mut store, buf)?;
+            kv.access(|store, buf| state.fabrics.load_persist(store, buf))?;
+            state.basic_info_settings.load_persist(&kv)?;
+            state.rtc.load_persist(&kv)?;
+            #[cfg(feature = "case-resumption")]
+            state.resumption.load_persist(&kv)?;
+            #[cfg(feature = "groups")]
+            state.sessions.load_persist(&kv)?;
 
-                // `RebootCount` for *this* boot: the persisted value plus one.
-                //
-                // Only loaded here - the matching write is
-                // [`Matter::persist_reboot_count`], which the device calls once
-                // it considers the boot healthy. Writing it here instead would
-                // put one flash write in the boot path, so a device stuck in a
-                // boot loop would churn its write-endurance budget while
-                // already broken.
-                //
-                // Reaching `startup` *is* a boot, so no platform support is
-                // needed to detect one, and the spec asks only for a
-                // "best-effort" count - it deliberately does not distinguish a
-                // crash from a power cut. A wake from sleep does not re-enter
-                // startup, which is the one case the spec excludes.
-                state.reboot_count = load_logged(&mut store, REBOOT_COUNT_KEY, buf, |data| {
-                    TLVElement::new(data).u16()
-                })
-                .ok()
-                .flatten()
+            let mut persist = Persist::new(&kv);
+
+            // `RebootCount` for *this* boot: the persisted value plus one.
+            //
+            // Only loaded here - the matching write is
+            // [`Matter::persist_reboot_count`], which the device calls once
+            // it considers the boot healthy. Writing it here instead would
+            // put one flash write in the boot path, so a device stuck in a
+            // boot loop would churn its write-endurance budget while
+            // already broken.
+            //
+            // Reaching `startup` *is* a boot, so no platform support is
+            // needed to detect one, and the spec asks only for a
+            // "best-effort" count - it deliberately does not distinguish a
+            // crash from a power cut. A wake from sleep does not re-enter
+            // startup, which is the one case the spec excludes.
+            state.reboot_count = persist
+                .load_tlv::<u16>(REBOOT_COUNT_KEY)?
                 .unwrap_or(0)
                 .saturating_add(1);
 
-                // `TotalOperationalHours` on record; the current boot's hours
-                // count on top of it.
-                state.operational_hours =
-                    load_logged(&mut store, OPERATIONAL_HOURS_KEY, buf, |data| {
-                        TLVElement::new(data).u32()
-                    })
-                    .ok()
-                    .flatten()
-                    .unwrap_or(0);
+            // `TotalOperationalHours` on record; the current boot's hours
+            // count on top of it.
+            state.operational_hours = persist.load_tlv(OPERATIONAL_HOURS_KEY)?.unwrap_or(0);
 
-                Ok::<_, Error>(())
-            })
+            persist.run()
         })?;
 
         self.transport().notify_mdns_changed();
@@ -1165,18 +1131,9 @@ impl<'a> Matter<'a> {
             self.transport().wait_resumption_dirty().await;
             embassy_time::Timer::after(min_interval).await;
 
-            // A cache that is not persisted only costs full CASE handshakes after a reboot
-            let persisted = self.with_state(|state| {
-                kv.access(|mut store, buf| state.resumption.store_persist(&mut store, buf))
-            });
+            self.with_state(|state| state.resumption.store_persist(&kv))?;
 
-            match persisted {
-                Ok(()) => debug!("CASE session resumption cache persisted"),
-                Err(e) => warn!(
-                    "Failed to persist the CASE session resumption cache: {:?}",
-                    e
-                ),
-            }
+            debug!("CASE session resumption cache persisted");
         }
     }
 

@@ -66,8 +66,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{
-    load_logged, KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TIME_ZONE_KEY,
-    TRUSTED_TIME_SOURCE_KEY,
+    KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TIME_ZONE_KEY, TRUSTED_TIME_SOURCE_KEY,
 };
 use crate::tlv::{
     FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV,
@@ -217,21 +216,17 @@ impl Rtc {
         result.and(store.remove(TRUSTED_TIME_SOURCE_KEY, buf))
     }
 
-    pub(crate) fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    pub(crate) fn load_persist<S: KvBlobStoreAccess>(&mut self, kv: S) -> Result<(), Error> {
         self.reset();
+
+        let mut persist = Persist::new(kv);
 
         // Load the persisted Last-Known-Good UTC Time, if any.
         // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec -
         // the on-disk value must never regress us
         // below the build timestamp (the documented lower bound
         // we never adjust backwards past).
-        if let Ok(Some(stored)) = load_logged(&mut kv, LKG_UTC_KEY, buf, |data| {
-            u64::from_tlv(&TLVElement::new(data))
-        }) {
+        if let Some(stored) = persist.load_tlv::<u64>(LKG_UTC_KEY)? {
             let floor = FIRMWARE_BUILD_MATTER_US;
 
             self.utc_us_persisted = stored;
@@ -239,11 +234,7 @@ impl Rtc {
         }
 
         // Load the persisted Trusted Time Source, if any.
-        self.trusted_time_source = load_logged(&mut kv, TRUSTED_TIME_SOURCE_KEY, buf, |data| {
-            TrustedTimeSource::from_tlv(&TLVElement::new(data))
-        })
-        .ok()
-        .flatten();
+        self.trusted_time_source = persist.load_tlv(TRUSTED_TIME_SOURCE_KEY)?;
 
         Ok(())
     }
@@ -864,11 +855,9 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
     /// Driven by [`LifecycleOp::Startup`], before the data model starts
     /// serving operations. A missing key (first boot / cleared persistence)
     /// leaves the defaults.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
         // TODO: LARGE BUFFER
-        let Ok(Some(loaded)) = load_logged(&mut store, TIME_ZONE_KEY, buf, |data| {
-            TimeZoneStoreData::from_tlv(&TLVElement::new(data))
-        }) else {
+        let Some(loaded) = Persist::new(kv).load_tlv(TIME_ZONE_KEY)? else {
             return Ok(());
         };
 
@@ -1537,7 +1526,7 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         };
 
         match op {
-            LifecycleOp::Startup => ctx.kv().access(|kv, buf| store.load_persist(kv, buf)),
+            LifecycleOp::Startup => store.load_persist(ctx.kv()),
             LifecycleOp::FactoryReset => ctx.kv().access(|kv, buf| store.reset_persist(kv, buf)),
             LifecycleOp::FabricRemoval { .. }
             | LifecycleOp::FailSafeCommit
@@ -2051,7 +2040,7 @@ mod tests {
         .unwrap();
 
         let mut rtc = Rtc::new();
-        kv.access(|kv, buf| rtc.load_persist(kv, buf)).unwrap();
+        rtc.load_persist(&kv).unwrap();
 
         assert_eq!(rtc.utc_time(), UtcTime::LastKnown(utc_us));
     }

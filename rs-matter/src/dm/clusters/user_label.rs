@@ -53,7 +53,7 @@ use crate::dm::{
     LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -196,10 +196,10 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     ///
     /// Missing key (first boot, or persistence cleared) is not an
     /// error — the registry simply stays empty.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Ok(Some(loaded)) = load_logged(&mut store, USER_LABELS_KEY, buf, |data| {
-            Vec::<EndpointLabels<N>, E>::from_tlv(&TLVElement::new(data))
-        }) else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let Some(loaded) =
+            Persist::new(kv).load_tlv::<Vec<EndpointLabels<N>, E>>(USER_LABELS_KEY)?
+        else {
             // No prior persistence — reset to empty so re-calling
             // `load_persist` after a `remove` of the key behaves
             // deterministically.
@@ -403,13 +403,15 @@ impl<const E: usize, const N: usize> ClusterHandler for UserLabelHandler<'_, E, 
     }
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        ctx.kv().access(|store, buf| match op {
-            LifecycleOp::Startup => self.labels.load_persist(store, buf),
-            LifecycleOp::FactoryReset => self.labels.reset_persist(store, buf),
+        match op {
+            LifecycleOp::Startup => self.labels.load_persist(ctx.kv()),
+            LifecycleOp::FactoryReset => ctx
+                .kv()
+                .access(|store, buf| self.labels.reset_persist(store, buf)),
             LifecycleOp::FabricRemoval { .. }
             | LifecycleOp::FailSafeCommit
             | LifecycleOp::FailSafeExpiry => Ok(()),
-        })
+        }
     }
 
     fn label_list<P: TLVBuilderParent>(

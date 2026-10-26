@@ -42,7 +42,7 @@ use crate::dm::{
     InvokeContext, LifecycleOp, ReadContext, SceneId,
 };
 use crate::error::{Error, ErrorCode};
-use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{
     FromTLV, Nullable, OptionalBuilder, TLVArray, TLVBuilder, TLVBuilderParent, TLVElement,
     TLVSequence, TLVTag, TLVWrite, TLVWriteParent, ToTLV, TLV,
@@ -584,10 +584,8 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
     ///
     /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
     /// delivered to the [`ScenesHandler`] borrowing this state.
-    fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
-        let Ok(Some(loaded)) = load_logged(&mut store, SCENES_KEY, buf, |data| {
-            ScenesStateInner::<N, M>::from_tlv(&TLVElement::new(data))
-        }) else {
+    fn load_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let Some(loaded) = Persist::new(kv).load_tlv::<ScenesStateInner<N, M>>(SCENES_KEY)? else {
             // Reset to empty so a `load_persist` after a key
             // `remove` is deterministic.
             self.with(|inner| {
@@ -1652,9 +1650,7 @@ where
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
         match op {
-            LifecycleOp::Startup => ctx
-                .kv()
-                .access(|store, buf| self.state.load_persist(store, buf)),
+            LifecycleOp::Startup => self.state.load_persist(ctx.kv()),
             LifecycleOp::FactoryReset => ctx
                 .kv()
                 .access(|store, buf| self.state.reset_persist(store, buf)),

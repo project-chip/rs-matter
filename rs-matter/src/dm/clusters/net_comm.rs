@@ -33,7 +33,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::im::EventPriority;
-use crate::persist::{load_logged, KvBlobStoreAccess, Persist};
+use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,
     ToTLVArrayBuilder, ToTLVBuilder,
@@ -1879,12 +1879,13 @@ where
     N: Networks,
     K: KvBlobStoreAccess,
 {
-    kv.access(
-        |kv, buf| match load_logged(kv, key, buf, |data| networks.load(data)) {
-            Ok(Some(())) => Ok(()),
-            _ => networks.reset(),
-        },
-    )
+    let loaded = Persist::new(kv).load(key, |data| networks.load(data))?;
+
+    // A load that failed may have stopped half-way
+    match loaded {
+        Some(()) => Ok(()),
+        None => networks.reset(),
+    }
 }
 
 /// Persist `networks` into `kv`, under `key`.

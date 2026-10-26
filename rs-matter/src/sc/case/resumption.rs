@@ -30,11 +30,11 @@ use core::num::NonZeroU8;
 use crate::crypto::CanonPkcSharedSecret;
 use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
-use crate::persist::{load_logged, KvBlobStore, CASE_RESUMPTION_KEY, KV_BUF_SIZE};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, CASE_RESUMPTION_KEY, KV_BUF_SIZE};
+use crate::tlv::{FromTLV, ToTLV};
 use crate::transport::session::{NocCatIds, MAX_SESSIONS};
 use crate::utils::init::{init, Init};
-use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::storage::Vec;
 
 use super::casep::CaseResumptionId;
 
@@ -235,17 +235,14 @@ impl ResumableSessions {
             .retain(|r| !r.is_for_peer(fab_idx, peer_nodeid));
     }
 
-    /// Load the cache from `store` under [`CASE_RESUMPTION_KEY`].
+    /// Load the cache from `kv` under [`CASE_RESUMPTION_KEY`].
     /// Missing key is not an error — the cache simply stays empty
     /// (first boot, or after [`Self::reset_persist`]).
     ///
-    /// A blob that fails to load or parse is also **not** propagated as an
-    /// error. Because the resumption cache is a soft (rebuildable)
-    /// cache — losing it costs only one full CASE handshake per peer
-    /// the next time they connect — we prefer to keep the node
-    /// bootable over the theoretical safety of aborting the load.
-    /// The unparseable blob is dropped from storage so the failure
-    /// isn't sticky, and an error is logged. Realistic causes:
+    /// Neither is a blob that fails to load or parse: the resumption cache
+    /// is soft (rebuildable), losing it costs only one full CASE handshake
+    /// per peer. The next [`Self::store_persist`] replaces the blob.
+    /// Realistic causes:
     ///
     /// - A firmware update lowered `MAX_RESUMPTION_RECORDS` (feature
     ///   flag change) below what's persisted, so
@@ -253,58 +250,26 @@ impl ResumableSessions {
     /// - The `ResumableSession` layout gains or loses a required
     ///   field in a future release.
     /// - The KV backend served corrupted bytes.
-    pub(crate) fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    pub(crate) fn load_persist<S: KvBlobStoreAccess>(&mut self, kv: S) -> Result<(), Error> {
         self.reset();
 
-        let loaded = load_logged(&mut store, CASE_RESUMPTION_KEY, buf, |data| {
-            Vec::<ResumableSession, MAX_RESUMPTION_RECORDS>::from_tlv(&TLVElement::new(data))
-        });
-
-        match loaded {
-            Ok(Some(records)) => {
-                self.records = records;
-                info!(
-                    "Loaded {} CASE session resumption record(s) from storage",
-                    self.records.len()
-                );
-            }
-            Ok(None) => (),
-            Err(_) => {
-                // Best-effort remove — if it also errors we've still
-                // logged the underlying cause. Next successful
-                // `store_persist` will overwrite the blob anyway.
-                let _ = store.remove(CASE_RESUMPTION_KEY, buf);
-            }
+        if let Some(records) = Persist::new(kv).load_tlv(CASE_RESUMPTION_KEY)? {
+            self.records = records;
+            info!(
+                "Loaded {} CASE session resumption record(s) from storage",
+                self.records.len()
+            );
         }
 
         Ok(())
     }
 
-    /// Serialise the current cache to `store` under
+    /// Serialise the current cache to `kv` under
     /// [`CASE_RESUMPTION_KEY`]. Called from the background snapshot
     /// task whenever the in-memory cache diverges from what was last
     /// persisted.
-    pub(crate) fn store_persist<S: KvBlobStore>(
-        &self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        // Serialise into `buf` first; then split it so the remainder
-        // can serve as the KV store's own scratch space. This mirrors
-        // the same split-and-lend pattern that [`Persist::store`] uses
-        // through its access closure.
-        let len = {
-            let mut wb = WriteBuf::new(buf);
-            self.records.to_tlv(&TLVTag::Anonymous, &mut wb)?;
-            wb.get_tail()
-        };
-
-        let (data, scratch) = buf.split_at_mut(len);
-        store.store(CASE_RESUMPTION_KEY, data, scratch)
+    pub(crate) fn store_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        Persist::new(kv).store_tlv(CASE_RESUMPTION_KEY, &self.records)
     }
 
     /// Remove the persisted cache from `store` and wipe the in-memory

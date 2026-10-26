@@ -442,11 +442,12 @@ where
         })
     }
 
-    /// Load a value that implements the `FromTLV` trait from the storage with
-    /// the specified key, or `None` if there is no value under that key.
-    pub fn load_tlv<T>(&mut self, key: u16) -> Result<Option<T>, Error>
+    /// Load a value from the storage with the specified key by calling the
+    /// provided closure to deserialize it, or `None` if there is no value under
+    /// that key.
+    pub fn load<T, F>(&mut self, key: u16, f: F) -> Result<Option<T>, Error>
     where
-        T: for<'a> FromTLV<'a>,
+        F: FnOnce(&[u8]) -> Result<T, Error>,
     {
         let strict = self.strict;
 
@@ -457,17 +458,20 @@ where
             }
 
             if strict {
-                kvb.load(key, buf)?
-                    .map(|data| T::from_tlv(&TLVElement::new(data)))
-                    .transpose()
+                kvb.load(key, buf)?.map(f).transpose()
             } else {
-                Ok(
-                    load_logged(kvb, key, buf, |data| T::from_tlv(&TLVElement::new(data)))
-                        .ok()
-                        .flatten(),
-                )
+                Ok(load_logged(kvb, key, buf, f).ok().flatten())
             }
         })
+    }
+
+    /// Load a value that implements the `FromTLV` trait from the storage with
+    /// the specified key, or `None` if there is no value under that key.
+    pub fn load_tlv<T>(&mut self, key: u16) -> Result<Option<T>, Error>
+    where
+        T: for<'a> FromTLV<'a>,
+    {
+        self.load(key, |data| T::from_tlv(&TLVElement::new(data)))
     }
 
     /// Remove the value with the specified key from the storage.
