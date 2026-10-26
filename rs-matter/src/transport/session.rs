@@ -515,9 +515,16 @@ impl Session {
         // on such a session. It is the peer initiating (`PBKDFParamRequest`,
         // `CASESigma1`) and must get a responder session of its own, or the
         // peer's handshake would be answered under our initiator identity.
+        //
+        // Conversely, a message with one is never for a session where we are
+        // the responder (the initiator encloses its ID as the source only): it
+        // answers one we initiated, e.g. a `CASESigma2`, while the session of a
+        // Check-In from the same peer lingers.
         let dest_nodeid_matches = self.is_encrypted()
-            || self.local_nodeid == 0
-            || rx_plain.get_dst_unicast_nodeid() == Some(self.local_nodeid);
+            || match self.local_nodeid {
+                0 => rx_plain.get_dst_unicast_nodeid().is_none(),
+                local => rx_plain.get_dst_unicast_nodeid() == Some(local),
+            };
 
         // Group session IDs are derived from the group key rather than allocated
         // by us, so they may collide with the local ID of a unicast session.
@@ -3368,6 +3375,12 @@ mod tests {
         let sess = Session::new(2, 0, false, peer, Some(0xaabb), 300, 5000, 4000);
         rx_plain.set_dst_unicast_nodeid(None);
         assert!(sess.is_for_rx(&peer, &rx_plain));
+
+        // But not the peer's reply on an unsecured session we initiated to it
+        // (e.g. its `CASESigma2`): that one has a destination, and no source.
+        rx_plain.set_src_nodeid(None);
+        rx_plain.set_dst_unicast_nodeid(Some(0x1122_3344_5566_7788));
+        assert!(!sess.is_for_rx(&peer, &rx_plain));
     }
 
     /// A peer may send the messages of one unsecured session from different UDP

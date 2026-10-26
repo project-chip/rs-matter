@@ -297,6 +297,12 @@ impl CheckInCounter {
         }
     }
 
+    /// The value of the counter: the last one used. What a client registering
+    /// takes as its starting value, so that the next Check-In is past it.
+    pub fn value(&self) -> u32 {
+        self.value
+    }
+
     /// The counter value to encrypt the next Check-In message with.
     ///
     /// This only peeks; it does not consume the value. Call [`advance`](Self::advance)
