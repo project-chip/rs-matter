@@ -660,6 +660,15 @@ impl CheckIns for LitIcd {
         }
 
         let matter = ctx.matter();
+
+        // Right after boot, the network may still be coming up: wait for it
+        // rather than spend the Check-In timeouts on it.
+        if !matter.transport().wait_mdns_ready().await {
+            warn!("ICD: Check-Ins withheld, no mDNS responder to resolve the clients");
+
+            return Ok(());
+        }
+
         let crypto = ctx.crypto();
         let counter = self.next_counter();
         let mut buf = [0; CHECK_IN_BUF_LEN];

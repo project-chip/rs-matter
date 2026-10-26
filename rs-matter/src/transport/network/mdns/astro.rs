@@ -33,6 +33,7 @@ use std::time::Duration;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
+use crate::transport::MdnsResponder;
 use crate::Matter;
 
 /// mDNS interval (ms) between non-blocking polls of the OS browser while a
@@ -68,9 +69,10 @@ impl AstroMdns {
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        let responder = matter.transport().mdns_responder();
         let mut respond = core::pin::pin!(self.run_respond(matter));
-        let mut resolve = core::pin::pin!(Self::run_resolve(matter));
-        let mut browse = core::pin::pin!(Self::run_browse(matter));
+        let mut resolve = core::pin::pin!(Self::run_resolve(matter, &responder));
+        let mut browse = core::pin::pin!(Self::run_browse(matter, &responder));
 
         select3(&mut respond, &mut resolve, &mut browse)
             .coalesce()
@@ -103,9 +105,9 @@ impl AstroMdns {
     /// the requested service's type and match its instance label, then resolve
     /// the address and deposit it. Polled non-blocking with a yield, only while
     /// the resolve is in flight.
-    async fn run_resolve(matter: &Matter<'_>) -> Result<(), Error> {
+    async fn run_resolve(matter: &Matter<'_>, responder: &MdnsResponder<'_>) -> Result<(), Error> {
         loop {
-            let service = matter.transport().wait_mdns_resolve_request().await;
+            let service = responder.wait_resolve_request().await;
 
             let mut name_buf: heapless::String<128> = heapless::String::new();
             service.instance_name(&mut name_buf);
@@ -169,9 +171,9 @@ impl AstroMdns {
     /// `_matterc._udp` services and let the deposit apply the full filter. The
     /// daemon's browser is polled non-blocking with a yield in between, and only
     /// while the browse is in flight, so the Matter transport is not starved.
-    async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
+    async fn run_browse(matter: &Matter<'_>, responder: &MdnsResponder<'_>) -> Result<(), Error> {
         loop {
-            let query = matter.transport().wait_mdns_browse_request().await;
+            let query = responder.wait_browse_request().await;
 
             let browser = ServiceBrowserBuilder::new(query.base_service_type())
                 .browse()

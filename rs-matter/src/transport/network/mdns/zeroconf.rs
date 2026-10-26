@@ -38,6 +38,7 @@ use zeroconf::{BrowserEvent, MdnsBrowser, ServiceDiscovery, ServiceType};
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
+use crate::transport::MdnsResponder;
 use crate::utils::select::Coalesce;
 use crate::Matter;
 
@@ -81,9 +82,10 @@ impl ZeroconfMdns {
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        let responder = matter.transport().mdns_responder();
         let mut respond = pin!(self.run_respond(matter));
-        let mut resolve = pin!(Self::run_resolve(matter));
-        let mut browse = pin!(Self::run_browse(matter));
+        let mut resolve = pin!(Self::run_resolve(matter, &responder));
+        let mut browse = pin!(Self::run_browse(matter, &responder));
 
         select3(&mut respond, &mut resolve, &mut browse)
             .coalesce()
@@ -113,9 +115,9 @@ impl ZeroconfMdns {
     /// Service operational-resolve requests: run a browser for the requested
     /// service's type on a worker thread and deposit the instance whose name
     /// matches the requested one, while the resolve is in flight.
-    async fn run_resolve(matter: &Matter<'_>) -> Result<(), Error> {
+    async fn run_resolve(matter: &Matter<'_>, responder: &MdnsResponder<'_>) -> Result<(), Error> {
         loop {
-            let service = matter.transport().wait_mdns_resolve_request().await;
+            let service = responder.wait_resolve_request().await;
 
             let mut name_buf: heapless::String<128> = heapless::String::new();
             service.instance_name(&mut name_buf);
@@ -165,9 +167,9 @@ impl ZeroconfMdns {
     /// Service commissionable-browse requests: run a `_matterc._udp` browser on a
     /// worker thread and deposit each discovered service (filter + exclude checks
     /// happen in the deposit) while the browse is in flight.
-    async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
+    async fn run_browse(matter: &Matter<'_>, responder: &MdnsResponder<'_>) -> Result<(), Error> {
         loop {
-            let query = matter.transport().wait_mdns_browse_request().await;
+            let query = responder.wait_browse_request().await;
 
             let [service, protocol] = query.base_service_labels();
             let service_type = ServiceType::new(

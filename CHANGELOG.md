@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: resolves and ICD Check-Ins wait for an mDNS responder before their timeouts start, so those right after boot don't run out while the node joins its network (#618)
+  * Breaking: an mDNS responder registers with `Transport::mdns_responder` and takes the requests through the returned `MdnsResponder`
+* New: `transport::network::mdns::MdnsTxt`, an iterator over raw DNS-SD TXT data, for mDNS responders of other crates (#618)
+* Fix: a resolve or browse in flight with an mDNS responder that stops (e.g. restarted on a network change) is handed back to the next one, instead of waiting for nobody until it times out (#618)
 * Fix: the QR scanner reads camera pictures of small printed codes, dim, grainy or skewed, that `rqrr` alone misses (#617)
   * Breaking: `scan_luma`, `scan_luma_with` and `scan_bitmap` give way to `QrLuma::new(pixels, width).scan()`
 * Fix: persisted state that cannot be loaded (e.g. written by another firmware) is logged and replaced with defaults instead of failing the boot; `persist::load_logged` (#616)

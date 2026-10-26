@@ -39,6 +39,7 @@ use crate::transport::network::mdns::{
 use crate::transport::network::{
     Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4, SocketAddrV6,
 };
+use crate::transport::MdnsResponder;
 use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
@@ -139,6 +140,8 @@ impl BuiltinMdns {
 
         let send = IfMutex::new((send, &mut self.services_new));
 
+        let responder = matter.transport().mdns_responder();
+
         let mut broadcast = pin!(Self::broadcast(
             &send,
             &mut self.services_cur,
@@ -161,6 +164,7 @@ impl BuiltinMdns {
             &send,
             ipv4_interface,
             ipv6_interface,
+            &responder,
             matter,
             &crypto,
         ));
@@ -168,6 +172,7 @@ impl BuiltinMdns {
             &send,
             ipv4_interface,
             ipv6_interface,
+            &responder,
             matter,
             &crypto,
         ));
@@ -183,6 +188,7 @@ impl BuiltinMdns {
         send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
+        responder: &MdnsResponder<'_>,
         matter: &Matter<'_>,
         crypto: C,
     ) -> Result<(), Error>
@@ -191,7 +197,7 @@ impl BuiltinMdns {
         C: Crypto,
     {
         loop {
-            let service = matter.transport().wait_mdns_resolve_request().await;
+            let service = responder.wait_resolve_request().await;
 
             // Compose the instance name straight from labels (a tiny buffer for
             // the variable hex label; the rest are static `&str`s) - no full-name
@@ -231,6 +237,7 @@ impl BuiltinMdns {
         send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
+        responder: &MdnsResponder<'_>,
         matter: &Matter<'_>,
         crypto: C,
     ) -> Result<(), Error>
@@ -239,7 +246,7 @@ impl BuiltinMdns {
         C: Crypto,
     {
         loop {
-            let query = matter.transport().wait_mdns_browse_request().await;
+            let query = responder.wait_browse_request().await;
 
             // A small random delay before sending, as per spec (collision avoidance).
             Self::rand_delay(&crypto).await?;
