@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a reply on an unsecured session we initiated (e.g. a `CASESigma2`) is no longer taken for a message of an unsecured session the same peer initiated (e.g. its lingering Check-In's), as only the latter carry no destination node ID
+* Fix: a Check-In from a device opens an unsecured session on the receiving node, as the spec has it for an unencrypted message with a source node ID, so that a controller's `AsyncScHandler::check_in` gets it instead of the transport dropping it (#619)
+* Fix: an ICD counts its active period anew once its operational network is up (an mDNS responder registers), so that a network slow to come back after a wake-up doesn't eat it before the device reports or checks in (#619)
+* Fix: the `ICDCounter` attribute and `RegisterClientResponse` give the last Check-In counter value used, as the spec has it, so that the next Check-In is past the counter a client registered with; `CheckInCounter::value` (#619)
 * Fix: resolves and ICD Check-Ins wait for an mDNS responder before their timeouts start, so those right after boot don't run out while the node joins its network (#618)
   * Breaking: an mDNS responder registers with `Transport::mdns_responder` and takes the requests through the returned `MdnsResponder`
 * New: `transport::network::mdns::MdnsTxt`, an iterator over raw DNS-SD TXT data, for mDNS responders of other crates (#618)

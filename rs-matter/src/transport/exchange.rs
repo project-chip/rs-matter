@@ -597,6 +597,15 @@ impl MessageMeta {
                 || self.proto_opcode == sc::OpCode::CASESigma1 as u8)
     }
 
+    /// Utility method to check if the meta-data indicates a message that opens
+    /// an unsecured session of its own: a new session request, or a Check-In,
+    /// which a device sends on one.
+    pub(crate) fn opens_unsecured_session(&self) -> bool {
+        self.is_new_session()
+            || (self.proto_id == PROTO_ID_SECURE_CHANNEL
+                && self.proto_opcode == sc::OpCode::CheckIn as u8)
+    }
+
     /// Utility method to check if the meta-data indicates a new exchange
     pub(crate) fn is_new_exchange(&self) -> bool {
         // Don't create new exchanges for standalone ACKs and for SC status codes

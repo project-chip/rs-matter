@@ -421,6 +421,11 @@ impl LitIcd {
 
     // --- Check-In counter ---
 
+    /// The value of the Check-In counter: the last one used.
+    fn counter(&self) -> u32 {
+        self.state.lock(|s| s.borrow().counter.value())
+    }
+
     /// The counter value the next Check-In message will use (a peek).
     fn next_counter(&self) -> u32 {
         self.state.lock(|s| s.borrow().counter.next())
@@ -832,8 +837,9 @@ impl<'a> LitIcdMgmtHandler<'a> {
             fab_idx, node_id
         );
 
-        // The client stores this as its starting Check-In counter reference.
-        response.icd_counter(self.lit.next_counter())?.end()
+        // The client stores this as its starting Check-In counter reference,
+        // and takes only the Check-Ins past it.
+        response.icd_counter(self.lit.counter())?.end()
     }
 
     /// The `UnregisterClient` command, minus the logging of its outcome.
@@ -1002,7 +1008,7 @@ impl ClusterHandler for LitIcdMgmtHandler<'_> {
     }
 
     fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.lit.next_counter())
+        Ok(self.lit.counter())
     }
 
     fn registered_clients<P: TLVBuilderParent>(
@@ -1376,6 +1382,23 @@ mod tests {
         let buf = Mutex::new(RefCell::new([0u8; 256]));
 
         lit.load_persist(test_only_crypto(), SharedKvBlobStore::new(kv, &buf))
+    }
+
+    #[test]
+    fn the_next_check_in_is_past_the_counter_a_client_registers_with() {
+        let mut kv = MemKv::default();
+        let mut buf = [0u8; 16];
+
+        let lit = LitIcd::new(10, mode(), SIT_SLOW_POLL_MAX_MS);
+        lit.reseed_counter(100);
+
+        // A client takes a Check-In only past the counter it registered with.
+        let registered = lit.counter();
+        assert_eq!(registered, 100);
+        assert_eq!(lit.next_counter(), registered + 1);
+
+        lit.advance_counter(&mut kv, &mut buf).unwrap();
+        assert_eq!(lit.counter(), registered + 1);
     }
 
     #[test]

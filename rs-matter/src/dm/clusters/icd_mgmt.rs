@@ -45,7 +45,7 @@
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::dm::HandlerContext;
@@ -673,6 +673,10 @@ impl Icd {
     ///   `ActiveModeThreshold` as its `SAT`;
     /// - starts in active mode for `ActiveModeDuration`, as a freshly booted
     ///   ICD does, and sends the Check-Ins of a LIT right away;
+    /// - starts that active period anew whenever the operational network comes
+    ///   up (an mDNS responder registers): the device is reachable only from
+    ///   then, and a network slow to come back after a wake-up would else eat
+    ///   it;
     /// - feeds the transport's activity and the commissioning window state in;
     /// - expires the active window into idle mode - but not while an exchange
     ///   is open or the fail-safe is armed: work in flight keeps the device
@@ -720,10 +724,18 @@ impl Icd {
             }
         });
 
+        let mut network = pin!(async {
+            loop {
+                transport.wait_mdns_responder(true).await;
+                self.request_active();
+                transport.wait_mdns_responder(false).await;
+            }
+        });
+
         let mut duty = pin!(self.run_power_mode(&ctx, check_ins));
 
-        match select3(&mut activity, &mut comm_window, &mut duty).await {
-            Either3::Third(result) => result,
+        match select4(&mut activity, &mut comm_window, &mut network, &mut duty).await {
+            Either4::Fourth(result) => result,
             _ => unreachable!(),
         }
     }

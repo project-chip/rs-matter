@@ -490,6 +490,14 @@ impl Transport {
         .is_ok()
     }
 
+    /// Wait until an mDNS responder is registered, with `present`, or until
+    /// none is.
+    pub(crate) async fn wait_mdns_responder(&self, present: bool) {
+        self.mdns_responders
+            .wait(|count| ((*count > 0) == present).then_some(()))
+            .await
+    }
+
     /// Whether an operational resolve is currently in flight.
     ///
     /// Used by mDNS implementations to poll-drive their resolve
@@ -1832,9 +1840,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     }
                 }
                 Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
-                    if !packet.header.plain.is_encrypted()
-                        && MessageMeta::from(&packet.header.proto).is_new_session()
-                    {
+                    let meta = MessageMeta::from(&packet.header.proto);
+
+                    if !packet.header.plain.is_encrypted() && meta.opens_unsecured_session() {
                         if self.evict_some_session().await.is_ok() {
                             // A session slot was freed, so decode the packet again to take it.
                             // Decoding a plaintext packet doesn't modify the buffer, so
@@ -1843,27 +1851,35 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                             continue;
                         }
 
-                        warn!(
-                            "\n>>RCV {}\n      => No space for a new unencrypted session, sending Busy",
-                            packet
-                        );
+                        if meta.is_new_session() {
+                            warn!(
+                                "\n>>RCV {}\n      => No space for a new unencrypted session, sending Busy",
+                                packet
+                            );
 
-                        let ack = packet.header.plain.ctr;
+                            let ack = packet.header.plain.ctr;
 
-                        packet.header.proto.toggle_initiator();
-                        packet.header.proto.set_ack(Some(ack));
+                            packet.header.proto.toggle_initiator();
+                            packet.header.proto.set_ack(Some(ack));
 
-                        self.write_packet(packet, None, None, true, |wb| {
-                            sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
-                        })?;
+                            self.write_packet(packet, None, None, true, |wb| {
+                                sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
+                            })?;
 
-                        Self::netw_send(
-                            send,
-                            packet.peer,
-                            &packet.buf[packet.payload_start..],
-                            true,
-                        )
-                        .await?;
+                            Self::netw_send(
+                                send,
+                                packet.peer,
+                                &packet.buf[packet.payload_start..],
+                                true,
+                            )
+                            .await?;
+                        } else {
+                            // A Check-In: no answer, `Busy` or other
+                            warn!(
+                                "\n>>RCV {}\n      => No space for a new unencrypted session, dropping",
+                                packet
+                            );
+                        }
                     } else {
                         error!(
                             "\n>>RCV {}\n      => No space for a new encrypted session, dropping",
@@ -2199,9 +2215,10 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 let payload_range = pb.slice_range();
                 set_payload(packet, payload_range);
 
-                if MessageMeta::from(&packet.header.proto).is_new_session() {
-                    // As per spec, new unencrypted sessions are only created for
-                    // `PBKDFParamRequest` or `CASESigma1` unencrypted messages
+                if MessageMeta::from(&packet.header.proto).opens_unsecured_session() {
+                    // New unencrypted sessions are only created for the messages
+                    // opening one: `PBKDFParamRequest`, `CASESigma1`, and the
+                    // Check-Ins of the ICDs we are a client of
 
                     let mut rand = self.crypto.rand()?;
 
