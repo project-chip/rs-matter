@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: the QR scanner reads camera pictures of small printed codes, dim, grainy or skewed, that `rqrr` alone misses (#617)
+  * Breaking: `scan_luma`, `scan_luma_with` and `scan_bitmap` give way to `QrLuma::new(pixels, width).scan()`
 * Fix: persisted state that cannot be loaded (e.g. written by another firmware) is logged and replaced with defaults instead of failing the boot; `persist::load_logged` (#616)
 * Fix: a failing write no longer stops the node or leaves a factory reset, fabric removal or commissioning half-done; ICD Check-Ins wait until their counter is persisted
   * Breaking: `Persist` and `FabricPersist` log and ignore what they cannot store, remove or load; their `strict` constructors return the errors
