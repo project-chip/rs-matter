@@ -51,6 +51,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 pub use crate::dm::clusters::decl::scenes_management::*;
 pub use crate::persist::SCENES_KEY;
@@ -89,7 +90,7 @@ pub const MAX_EXT_FIELDS_LEN: usize = 128;
 /// Back-direction (a scenable attribute mutated, so `SceneValid` may
 /// need to flip) goes through [`SceneInvalidator`], implemented by
 /// [`ScenesState`].
-pub trait SceneClusterHandler {
+pub trait SceneClusterHandler: MaybeSendSync {
     /// The Matter cluster ID this impl handles.
     const CLUSTER_ID: ClusterId;
 
@@ -133,7 +134,7 @@ pub trait SceneClusterHandler {
         ctx: &C,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         transition_time_ms: u32,
-    ) -> impl Future<Output = Result<(), Error>>;
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }
 
 /// Lets the application pass `&handler` into the scenes registry
@@ -170,7 +171,7 @@ impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T {
 /// Tuple-recursive composition of [`SceneClusterHandler`]s. Mirrors
 /// [`crate::dm::ChainedHandler`]: terminated by `()`, one cluster
 /// registers as `(impl, ())`, multiple as `(a, (b, (c, ())))`.
-pub trait SceneClusters {
+pub trait SceneClusters: MaybeSendSync {
     /// Emit one EFS struct per registered cluster whose
     /// `endpoint_id()` matches `endpoint_id`. EFS structs are written
     /// directly into the parent without an outer array wrapper; the
@@ -195,7 +196,7 @@ pub trait SceneClusters {
         cluster_id: ClusterId,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         transition_time_ms: u32,
-    ) -> impl Future<Output = Result<bool, Error>>;
+    ) -> impl Future<Output = Result<bool, Error>> + MaybeSend;
 }
 
 impl SceneClusters for () {
@@ -472,7 +473,7 @@ impl<const N: usize, const M: usize> Default for ScenesState<N, M> {
 ///
 /// Implementations MUST be cheap and re-entrant — they run inline on
 /// the command-handler path.
-pub trait SceneInvalidator {
+pub trait SceneInvalidator: MaybeSendSync {
     /// Flip `SceneValid → false` for every recalled scene on
     /// `endpoint_id`, across all fabrics. No-op when no fabric has a
     /// scene recalled there.

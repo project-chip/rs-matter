@@ -32,6 +32,7 @@ use crate::tlv::{
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
+use crate::utils::sync::blocking::Mutex;
 
 pub use crate::dm::clusters::decl::globals::*;
 pub use crate::dm::clusters::decl::unit_testing::*;
@@ -503,12 +504,20 @@ impl UnitTestingHandlerData {
 
 pub struct UnitTestingHandler<'a> {
     dataver: Dataver,
-    data: &'a RefCell<UnitTestingHandlerData>,
+    data: &'a Mutex<RefCell<UnitTestingHandlerData>>,
 }
 
 impl<'a> UnitTestingHandler<'a> {
-    pub const fn new(dataver: Dataver, data: &'a RefCell<UnitTestingHandlerData>) -> Self {
+    pub const fn new(dataver: Dataver, data: &'a Mutex<RefCell<UnitTestingHandlerData>>) -> Self {
         Self { dataver, data }
+    }
+
+    fn with<R>(&self, f: impl FnOnce(&UnitTestingHandlerData) -> R) -> R {
+        self.data.lock(|data| f(&data.borrow()))
+    }
+
+    fn with_mut<R>(&self, f: impl FnOnce(&mut UnitTestingHandlerData) -> R) -> R {
+        self.data.lock(|data| f(&mut data.borrow_mut()))
     }
 
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
@@ -533,103 +542,103 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        Ok(self.data.borrow().boolean)
+        Ok(self.with(|data| data.boolean))
     }
 
     fn bitmap_8(&self, _ctx: impl ReadContext) -> Result<Bitmap8MaskMap, Error> {
-        Ok(self.data.borrow().bitmap_8)
+        Ok(self.with(|data| data.bitmap_8))
     }
 
     fn bitmap_16(&self, _ctx: impl ReadContext) -> Result<Bitmap16MaskMap, Error> {
-        Ok(self.data.borrow().bitmap_16)
+        Ok(self.with(|data| data.bitmap_16))
     }
 
     fn bitmap_32(&self, _ctx: impl ReadContext) -> Result<Bitmap32MaskMap, Error> {
-        Ok(self.data.borrow().bitmap_32)
+        Ok(self.with(|data| data.bitmap_32))
     }
 
     fn bitmap_64(&self, _ctx: impl ReadContext) -> Result<Bitmap64MaskMap, Error> {
-        Ok(self.data.borrow().bitmap_64)
+        Ok(self.with(|data| data.bitmap_64))
     }
 
     fn int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.data.borrow().int_8_u)
+        Ok(self.with(|data| data.int_8_u))
     }
 
     fn int_16_u(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.data.borrow().int_16_u)
+        Ok(self.with(|data| data.int_16_u))
     }
 
     fn int_24_u(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.data.borrow().int_24_u)
+        Ok(self.with(|data| data.int_24_u))
     }
 
     fn int_32_u(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.data.borrow().int_32_u)
+        Ok(self.with(|data| data.int_32_u))
     }
 
     fn int_40_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(self.data.borrow().int_40_u)
+        Ok(self.with(|data| data.int_40_u))
     }
 
     fn int_48_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(self.data.borrow().int_48_u)
+        Ok(self.with(|data| data.int_48_u))
     }
 
     fn int_56_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(self.data.borrow().int_56_u)
+        Ok(self.with(|data| data.int_56_u))
     }
 
     fn int_64_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(self.data.borrow().int_64_u)
+        Ok(self.with(|data| data.int_64_u))
     }
 
     fn int_8_s(&self, _ctx: impl ReadContext) -> Result<i8, Error> {
-        Ok(self.data.borrow().int_8_s)
+        Ok(self.with(|data| data.int_8_s))
     }
 
     fn int_16_s(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
-        Ok(self.data.borrow().int_16_s)
+        Ok(self.with(|data| data.int_16_s))
     }
 
     fn int_24_s(&self, _ctx: impl ReadContext) -> Result<i32, Error> {
-        Ok(self.data.borrow().int_24_s)
+        Ok(self.with(|data| data.int_24_s))
     }
 
     fn int_32_s(&self, _ctx: impl ReadContext) -> Result<i32, Error> {
-        Ok(self.data.borrow().int_32_s)
+        Ok(self.with(|data| data.int_32_s))
     }
 
     fn int_40_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
-        Ok(self.data.borrow().int_40_s)
+        Ok(self.with(|data| data.int_40_s))
     }
 
     fn int_48_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
-        Ok(self.data.borrow().int_48_s)
+        Ok(self.with(|data| data.int_48_s))
     }
 
     fn int_56_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
-        Ok(self.data.borrow().int_56_s)
+        Ok(self.with(|data| data.int_56_s))
     }
 
     fn int_64_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
-        Ok(self.data.borrow().int_64_s)
+        Ok(self.with(|data| data.int_64_s))
     }
 
     fn enum_8(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.data.borrow().enum_8)
+        Ok(self.with(|data| data.enum_8))
     }
 
     fn enum_16(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.data.borrow().enum_16)
+        Ok(self.with(|data| data.enum_16))
     }
 
     fn float_single(&self, _ctx: impl ReadContext) -> Result<f32, Error> {
-        Ok(self.data.borrow().float_single)
+        Ok(self.with(|data| data.float_single))
     }
 
     fn float_double(&self, _ctx: impl ReadContext) -> Result<f64, Error> {
-        Ok(self.data.borrow().float_double)
+        Ok(self.with(|data| data.float_double))
     }
 
     fn octet_string<P: TLVBuilderParent>(
@@ -637,7 +646,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: OctetsBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(Octets(self.data.borrow().octet_string.as_slice()))
+        self.with(|data| builder.set(Octets(data.octet_string.as_slice())))
     }
 
     fn list_int_8_u<P: TLVBuilderParent>(
@@ -646,23 +655,20 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u8>, ToTLVBuilder<P, u8>>,
     ) -> Result<P, Error> {
         match builder {
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let data = self.data.borrow();
+            ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_int_8_u.len() as u16 {
                     builder.set(&data.list_int_8_u[index as usize])
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                let data = self.data.borrow();
-
+            }),
+            ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for i in &data.list_int_8_u {
                     builder = builder.push(i)?;
                 }
 
                 builder.end()
-            }
+            }),
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
@@ -673,23 +679,20 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let data = self.data.borrow();
+            ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_octet_string.len() as u16 {
                     builder.set(Octets(data.list_octet_string[index as usize].as_slice()))
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                let data = self.data.borrow();
-
+            }),
+            ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for i in &data.list_octet_string {
                     builder = builder.push(Octets(i.as_slice()))?;
                 }
 
                 builder.end()
-            }
+            }),
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
@@ -703,8 +706,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         >,
     ) -> Result<P, Error> {
         match builder {
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let data = self.data.borrow();
+            ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_struct_octet_string.len() as u16 {
                     let s = &data.list_struct_octet_string[index as usize];
 
@@ -715,10 +717,8 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                let data = self.data.borrow();
-
+            }),
+            ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for s in &data.list_struct_octet_string {
                     builder = builder
                         .push()?
@@ -728,7 +728,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 }
 
                 builder.end()
-            }
+            }),
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
@@ -738,7 +738,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: OctetsBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(Octets(self.data.borrow().long_octet_string.as_slice()))
+        self.with(|data| builder.set(Octets(data.long_octet_string.as_slice())))
     }
 
     fn char_string<P: TLVBuilderParent>(
@@ -746,7 +746,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.data.borrow().char_string.as_str())
+        self.with(|data| builder.set(data.char_string.as_str()))
     }
 
     fn long_char_string<P: TLVBuilderParent>(
@@ -754,19 +754,19 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.data.borrow().long_char_string.as_str())
+        self.with(|data| builder.set(data.long_char_string.as_str()))
     }
 
     fn epoch_us(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(self.data.borrow().epoch_us)
+        Ok(self.with(|data| data.epoch_us))
     }
 
     fn epoch_s(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.data.borrow().epoch_s)
+        Ok(self.with(|data| data.epoch_s))
     }
 
     fn vendor_id(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.data.borrow().vendor_id)
+        Ok(self.with(|data| data.vendor_id))
     }
 
     fn list_nullables_and_optionals_struct<P: TLVBuilderParent>(
@@ -864,8 +864,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         }
 
         match builder {
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let data = self.data.borrow();
+            ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_nullables_and_optionals_struct.len() as u16 {
                     let s = &data.list_nullables_and_optionals_struct[index as usize];
 
@@ -873,22 +872,20 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                let data = self.data.borrow();
-
+            }),
+            ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for s in &data.list_nullables_and_optionals_struct {
                     builder = read_one(builder.push()?, s)?;
                 }
 
                 builder.end()
-            }
+            }),
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
     fn enum_attr(&self, _ctx: impl ReadContext) -> Result<SimpleEnum, Error> {
-        Ok(self.data.borrow().enum_attr)
+        Ok(self.with(|data| data.enum_attr))
     }
 
     fn struct_attr<P: TLVBuilderParent>(
@@ -896,36 +893,37 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: SimpleStructBuilder<P>,
     ) -> Result<P, Error> {
-        let data = self.data.borrow();
-        let s = &data.struct_attr;
+        self.with(|data| {
+            let s = &data.struct_attr;
 
-        builder
-            .a(s.a)?
-            .b(s.b)?
-            .c(s.c)?
-            .d(Octets(&s.d))?
-            .e(s.e.as_str())?
-            .f(s.f)?
-            .g(s.g)?
-            .h(s.h)?
-            .i(s.i)?
-            .end()
+            builder
+                .a(s.a)?
+                .b(s.b)?
+                .c(s.c)?
+                .d(Octets(&s.d))?
+                .e(s.e.as_str())?
+                .f(s.f)?
+                .g(s.g)?
+                .h(s.h)?
+                .i(s.i)?
+                .end()
+        })
     }
 
     fn range_restricted_int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.data.borrow().range_restricted_int_8_u)
+        Ok(self.with(|data| data.range_restricted_int_8_u))
     }
 
     fn range_restricted_int_8_s(&self, _ctx: impl ReadContext) -> Result<i8, Error> {
-        Ok(self.data.borrow().range_restricted_int_8_s)
+        Ok(self.with(|data| data.range_restricted_int_8_s))
     }
 
     fn range_restricted_int_16_u(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.data.borrow().range_restricted_int_16_u)
+        Ok(self.with(|data| data.range_restricted_int_16_u))
     }
 
     fn range_restricted_int_16_s(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
-        Ok(self.data.borrow().range_restricted_int_16_s)
+        Ok(self.with(|data| data.range_restricted_int_16_s))
     }
 
     fn list_long_octet_string<P: TLVBuilderParent>(
@@ -934,8 +932,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let data = self.data.borrow();
+            ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_long_octet_string.len() as u16 {
                     builder.set(Octets(
                         data.list_long_octet_string[index as usize].as_slice(),
@@ -943,16 +940,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                let data = self.data.borrow();
-
+            }),
+            ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for i in &data.list_long_octet_string {
                     builder = builder.push(Octets(i.as_slice()))?;
                 }
 
                 builder.end()
-            }
+            }),
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
@@ -1015,31 +1010,32 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
         let attr = ctx.attr();
 
-        let data = self.data.borrow();
-        let mut list = data
-            .list_fabric_scoped
-            .iter()
-            .flat_map(|(fab_idx, fab_items)| fab_items.iter().map(move |item| (fab_idx, item)))
-            .filter(|s| !attr.fab_filter || s.0.get() == attr.fab_idx);
+        self.with(|data| {
+            let mut list = data
+                .list_fabric_scoped
+                .iter()
+                .flat_map(|(fab_idx, fab_items)| fab_items.iter().map(move |item| (fab_idx, item)))
+                .filter(|s| !attr.fab_filter || s.0.get() == attr.fab_idx);
 
-        match builder {
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let item = list.nth(index as _).ok_or(ErrorCode::ConstraintError)?;
-                read_into(attr.fab_idx, *item.0, item.1, builder)
-            }
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for s in list {
-                    builder = read_into(attr.fab_idx, *s.0, s.1, builder.push()?)?;
+            match builder {
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let item = list.nth(index as _).ok_or(ErrorCode::ConstraintError)?;
+                    read_into(attr.fab_idx, *item.0, item.1, builder)
                 }
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for s in list {
+                        builder = read_into(attr.fab_idx, *s.0, s.1, builder.push()?)?;
+                    }
 
-                builder.end()
+                    builder.end()
+                }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn timed_write_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        Ok(self.data.borrow().timed_write_boolean)
+        Ok(self.with(|data| data.timed_write_boolean))
     }
 
     fn general_error_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
@@ -1051,112 +1047,112 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn nullable_boolean(&self, _ctx: impl ReadContext) -> Result<Nullable<bool>, Error> {
-        Ok(self.data.borrow().nullable_boolean.clone())
+        Ok(self.with(|data| data.nullable_boolean.clone()))
     }
 
     fn nullable_bitmap_8(&self, _ctx: impl ReadContext) -> Result<Nullable<Bitmap8MaskMap>, Error> {
-        Ok(self.data.borrow().nullable_bitmap_8.clone())
+        Ok(self.with(|data| data.nullable_bitmap_8.clone()))
     }
 
     fn nullable_bitmap_16(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<Bitmap16MaskMap>, Error> {
-        Ok(self.data.borrow().nullable_bitmap_16.clone())
+        Ok(self.with(|data| data.nullable_bitmap_16.clone()))
     }
 
     fn nullable_bitmap_32(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<Bitmap32MaskMap>, Error> {
-        Ok(self.data.borrow().nullable_bitmap_32.clone())
+        Ok(self.with(|data| data.nullable_bitmap_32.clone()))
     }
 
     fn nullable_bitmap_64(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<Bitmap64MaskMap>, Error> {
-        Ok(self.data.borrow().nullable_bitmap_64.clone())
+        Ok(self.with(|data| data.nullable_bitmap_64.clone()))
     }
 
     fn nullable_int_8_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        Ok(self.data.borrow().nullable_int_8_u.clone())
+        Ok(self.with(|data| data.nullable_int_8_u.clone()))
     }
 
     fn nullable_int_16_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        Ok(self.data.borrow().nullable_int_16_u.clone())
+        Ok(self.with(|data| data.nullable_int_16_u.clone()))
     }
 
     fn nullable_int_24_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
-        Ok(self.data.borrow().nullable_int_24_u.clone())
+        Ok(self.with(|data| data.nullable_int_24_u.clone()))
     }
 
     fn nullable_int_32_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
-        Ok(self.data.borrow().nullable_int_32_u.clone())
+        Ok(self.with(|data| data.nullable_int_32_u.clone()))
     }
 
     fn nullable_int_40_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        Ok(self.data.borrow().nullable_int_40_u.clone())
+        Ok(self.with(|data| data.nullable_int_40_u.clone()))
     }
 
     fn nullable_int_48_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        Ok(self.data.borrow().nullable_int_48_u.clone())
+        Ok(self.with(|data| data.nullable_int_48_u.clone()))
     }
 
     fn nullable_int_56_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        Ok(self.data.borrow().nullable_int_56_u.clone())
+        Ok(self.with(|data| data.nullable_int_56_u.clone()))
     }
 
     fn nullable_int_64_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        Ok(self.data.borrow().nullable_int_64_u.clone())
+        Ok(self.with(|data| data.nullable_int_64_u.clone()))
     }
 
     fn nullable_int_8_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i8>, Error> {
-        Ok(self.data.borrow().nullable_int_8_s.clone())
+        Ok(self.with(|data| data.nullable_int_8_s.clone()))
     }
 
     fn nullable_int_16_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
-        Ok(self.data.borrow().nullable_int_16_s.clone())
+        Ok(self.with(|data| data.nullable_int_16_s.clone()))
     }
 
     fn nullable_int_24_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i32>, Error> {
-        Ok(self.data.borrow().nullable_int_24_s.clone())
+        Ok(self.with(|data| data.nullable_int_24_s.clone()))
     }
 
     fn nullable_int_32_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i32>, Error> {
-        Ok(self.data.borrow().nullable_int_32_s.clone())
+        Ok(self.with(|data| data.nullable_int_32_s.clone()))
     }
 
     fn nullable_int_40_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
-        Ok(self.data.borrow().nullable_int_40_s.clone())
+        Ok(self.with(|data| data.nullable_int_40_s.clone()))
     }
 
     fn nullable_int_48_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
-        Ok(self.data.borrow().nullable_int_48_s.clone())
+        Ok(self.with(|data| data.nullable_int_48_s.clone()))
     }
 
     fn nullable_int_56_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
-        Ok(self.data.borrow().nullable_int_56_s.clone())
+        Ok(self.with(|data| data.nullable_int_56_s.clone()))
     }
 
     fn nullable_int_64_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
-        Ok(self.data.borrow().nullable_int_64_s.clone())
+        Ok(self.with(|data| data.nullable_int_64_s.clone()))
     }
 
     fn nullable_enum_8(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        Ok(self.data.borrow().nullable_enum_8.clone())
+        Ok(self.with(|data| data.nullable_enum_8.clone()))
     }
 
     fn nullable_enum_16(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        Ok(self.data.borrow().nullable_enum_16.clone())
+        Ok(self.with(|data| data.nullable_enum_16.clone()))
     }
 
     fn nullable_float_single(&self, _ctx: impl ReadContext) -> Result<Nullable<f32>, Error> {
-        Ok(self.data.borrow().nullable_float_single.clone())
+        Ok(self.with(|data| data.nullable_float_single.clone()))
     }
 
     fn nullable_float_double(&self, _ctx: impl ReadContext) -> Result<Nullable<f64>, Error> {
-        Ok(self.data.borrow().nullable_float_double.clone())
+        Ok(self.with(|data| data.nullable_float_double.clone()))
     }
 
     fn nullable_octet_string<P: TLVBuilderParent>(
@@ -1164,11 +1160,13 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
-        if let Some(o) = self.data.borrow().nullable_octet_string.as_opt_deref() {
-            builder.non_null()?.set(Octets(o))
-        } else {
-            builder.null()
-        }
+        self.with(|data| {
+            if let Some(o) = data.nullable_octet_string.as_opt_deref() {
+                builder.non_null()?.set(Octets(o))
+            } else {
+                builder.null()
+            }
+        })
     }
 
     fn nullable_char_string<P: TLVBuilderParent>(
@@ -1176,15 +1174,17 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, Utf8StrBuilder<P>>,
     ) -> Result<P, Error> {
-        if let Some(o) = self.data.borrow().nullable_char_string.as_opt_deref() {
-            builder.non_null()?.set(o)
-        } else {
-            builder.null()
-        }
+        self.with(|data| {
+            if let Some(o) = data.nullable_char_string.as_opt_deref() {
+                builder.non_null()?.set(o)
+            } else {
+                builder.null()
+            }
+        })
     }
 
     fn nullable_enum_attr(&self, _ctx: impl ReadContext) -> Result<Nullable<SimpleEnum>, Error> {
-        Ok(self.data.borrow().nullable_enum_attr.clone())
+        Ok(self.with(|data| data.nullable_enum_attr.clone()))
     }
 
     fn nullable_struct<P: TLVBuilderParent>(
@@ -1192,63 +1192,57 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, SimpleStructBuilder<P>>,
     ) -> Result<P, Error> {
-        if let Some(s) = self.data.borrow().nullable_struct.as_opt_ref() {
-            let builder = builder.non_null()?;
+        self.with(|data| {
+            if let Some(s) = data.nullable_struct.as_opt_ref() {
+                let builder = builder.non_null()?;
 
-            builder
-                .a(s.a)?
-                .b(s.b)?
-                .c(s.c)?
-                .d(Octets(&s.d))?
-                .e(s.e.as_str())?
-                .f(s.f)?
-                .g(s.g)?
-                .h(s.h)?
-                .i(s.i)?
-                .end()
-        } else {
-            builder.null()
-        }
+                builder
+                    .a(s.a)?
+                    .b(s.b)?
+                    .c(s.c)?
+                    .d(Octets(&s.d))?
+                    .e(s.e.as_str())?
+                    .f(s.f)?
+                    .g(s.g)?
+                    .h(s.h)?
+                    .i(s.i)?
+                    .end()
+            } else {
+                builder.null()
+            }
+        })
     }
 
     fn nullable_range_restricted_int_8_u(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
-        Ok(self.data.borrow().nullable_range_restricted_int_8_u.clone())
+        Ok(self.with(|data| data.nullable_range_restricted_int_8_u.clone()))
     }
 
     fn nullable_range_restricted_int_8_s(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<i8>, Error> {
-        Ok(self.data.borrow().nullable_range_restricted_int_8_s.clone())
+        Ok(self.with(|data| data.nullable_range_restricted_int_8_s.clone()))
     }
 
     fn nullable_range_restricted_int_16_u(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u16>, Error> {
-        Ok(self
-            .data
-            .borrow()
-            .nullable_range_restricted_int_16_u
-            .clone())
+        Ok(self.with(|data| data.nullable_range_restricted_int_16_u.clone()))
     }
 
     fn nullable_range_restricted_int_16_s(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<i16>, Error> {
-        Ok(self
-            .data
-            .borrow()
-            .nullable_range_restricted_int_16_s
-            .clone())
+        Ok(self.with(|data| data.nullable_range_restricted_int_16_s.clone()))
     }
 
     fn global_enum(&self, _ctx: impl ReadContext) -> Result<TestGlobalEnum, Error> {
-        Ok(self.data.borrow().global_enum)
+        Ok(self.with(|data| data.global_enum))
     }
 
     fn global_struct<P: TLVBuilderParent>(
@@ -1256,19 +1250,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: TestGlobalStructBuilder<P>,
     ) -> Result<P, Error> {
-        let s = &self.data.borrow().global_struct;
-        builder
-            .name(s.name.as_str())?
-            .my_bitmap(s.my_bitmap.clone())?
-            .my_enum(s.my_enum.clone())?
-            .end()
+        self.with(|data| {
+            let s = &data.global_struct;
+            builder
+                .name(s.name.as_str())?
+                .my_bitmap(s.my_bitmap.clone())?
+                .my_enum(s.my_enum.clone())?
+                .end()
+        })
     }
 
     fn nullable_global_enum(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<TestGlobalEnum>, Error> {
-        Ok(Nullable::some(self.data.borrow().global_enum))
+        Ok(Nullable::some(self.with(|data| data.global_enum)))
     }
 
     fn nullable_global_struct<P: TLVBuilderParent>(
@@ -1276,147 +1272,149 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, TestGlobalStructBuilder<P>>,
     ) -> Result<P, Error> {
-        if let Some(s) = self.data.borrow().nullable_global_struct.as_opt_ref() {
-            let builder = builder.non_null()?;
+        self.with(|data| {
+            if let Some(s) = data.nullable_global_struct.as_opt_ref() {
+                let builder = builder.non_null()?;
 
-            builder
-                .name(s.name.as_str())?
-                .my_bitmap(s.my_bitmap.clone())?
-                .my_enum(s.my_enum.clone())?
-                .end()
-        } else {
-            builder.null()
-        }
+                builder
+                    .name(s.name.as_str())?
+                    .my_bitmap(s.my_bitmap.clone())?
+                    .my_enum(s.my_enum.clone())?
+                    .end()
+            } else {
+                builder.null()
+            }
+        })
     }
 
     fn set_boolean(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {
-        self.data.borrow_mut().boolean = value;
+        self.with_mut(|data| data.boolean = value);
         Ok(())
     }
 
     fn set_bitmap_8(&self, _ctx: impl WriteContext, value: Bitmap8MaskMap) -> Result<(), Error> {
-        self.data.borrow_mut().bitmap_8 = value;
+        self.with_mut(|data| data.bitmap_8 = value);
         Ok(())
     }
 
     fn set_bitmap_16(&self, _ctx: impl WriteContext, value: Bitmap16MaskMap) -> Result<(), Error> {
-        self.data.borrow_mut().bitmap_16 = value;
+        self.with_mut(|data| data.bitmap_16 = value);
         Ok(())
     }
 
     fn set_bitmap_32(&self, _ctx: impl WriteContext, value: Bitmap32MaskMap) -> Result<(), Error> {
-        self.data.borrow_mut().bitmap_32 = value;
+        self.with_mut(|data| data.bitmap_32 = value);
         Ok(())
     }
 
     fn set_bitmap_64(&self, _ctx: impl WriteContext, value: Bitmap64MaskMap) -> Result<(), Error> {
-        self.data.borrow_mut().bitmap_64 = value;
+        self.with_mut(|data| data.bitmap_64 = value);
         Ok(())
     }
 
     fn set_int_8_u(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
-        self.data.borrow_mut().int_8_u = value;
+        self.with_mut(|data| data.int_8_u = value);
         Ok(())
     }
 
     fn set_int_16_u(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
-        self.data.borrow_mut().int_16_u = value;
+        self.with_mut(|data| data.int_16_u = value);
         Ok(())
     }
 
     fn set_int_24_u(&self, _ctx: impl WriteContext, value: u32) -> Result<(), Error> {
-        self.data.borrow_mut().int_24_u = value;
+        self.with_mut(|data| data.int_24_u = value);
         Ok(())
     }
 
     fn set_int_32_u(&self, _ctx: impl WriteContext, value: u32) -> Result<(), Error> {
-        self.data.borrow_mut().int_32_u = value;
+        self.with_mut(|data| data.int_32_u = value);
         Ok(())
     }
 
     fn set_int_40_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
-        self.data.borrow_mut().int_40_u = value;
+        self.with_mut(|data| data.int_40_u = value);
         Ok(())
     }
 
     fn set_int_48_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
-        self.data.borrow_mut().int_48_u = value;
+        self.with_mut(|data| data.int_48_u = value);
         Ok(())
     }
 
     fn set_int_56_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
-        self.data.borrow_mut().int_56_u = value;
+        self.with_mut(|data| data.int_56_u = value);
         Ok(())
     }
 
     fn set_int_64_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
-        self.data.borrow_mut().int_64_u = value;
+        self.with_mut(|data| data.int_64_u = value);
         Ok(())
     }
 
     fn set_int_8_s(&self, _ctx: impl WriteContext, value: i8) -> Result<(), Error> {
-        self.data.borrow_mut().int_8_s = value;
+        self.with_mut(|data| data.int_8_s = value);
         Ok(())
     }
 
     fn set_int_16_s(&self, _ctx: impl WriteContext, value: i16) -> Result<(), Error> {
-        self.data.borrow_mut().int_16_s = value;
+        self.with_mut(|data| data.int_16_s = value);
         Ok(())
     }
 
     fn set_int_24_s(&self, _ctx: impl WriteContext, value: i32) -> Result<(), Error> {
-        self.data.borrow_mut().int_24_s = value;
+        self.with_mut(|data| data.int_24_s = value);
         Ok(())
     }
 
     fn set_int_32_s(&self, _ctx: impl WriteContext, value: i32) -> Result<(), Error> {
-        self.data.borrow_mut().int_32_s = value;
+        self.with_mut(|data| data.int_32_s = value);
         Ok(())
     }
 
     fn set_int_40_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
-        self.data.borrow_mut().int_40_s = value;
+        self.with_mut(|data| data.int_40_s = value);
         Ok(())
     }
 
     fn set_int_48_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
-        self.data.borrow_mut().int_48_s = value;
+        self.with_mut(|data| data.int_48_s = value);
         Ok(())
     }
 
     fn set_int_56_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
-        self.data.borrow_mut().int_56_s = value;
+        self.with_mut(|data| data.int_56_s = value);
         Ok(())
     }
 
     fn set_int_64_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
-        self.data.borrow_mut().int_64_s = value;
+        self.with_mut(|data| data.int_64_s = value);
         Ok(())
     }
 
     fn set_enum_8(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
-        self.data.borrow_mut().enum_8 = value;
+        self.with_mut(|data| data.enum_8 = value);
         Ok(())
     }
 
     fn set_enum_16(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
-        self.data.borrow_mut().enum_16 = value;
+        self.with_mut(|data| data.enum_16 = value);
         Ok(())
     }
 
     fn set_float_single(&self, _ctx: impl WriteContext, value: f32) -> Result<(), Error> {
-        self.data.borrow_mut().float_single = value;
+        self.with_mut(|data| data.float_single = value);
         Ok(())
     }
 
     fn set_float_double(&self, _ctx: impl WriteContext, value: f64) -> Result<(), Error> {
-        self.data.borrow_mut().float_double = value;
+        self.with_mut(|data| data.float_double = value);
         Ok(())
     }
 
     fn set_octet_string(&self, _ctx: impl WriteContext, value: OctetStr<'_>) -> Result<(), Error> {
-        self.data.borrow_mut().octet_string =
-            value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        let value = value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        self.with_mut(|data| data.octet_string = value);
         Ok(())
     }
 
@@ -1431,41 +1429,39 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let mut data = self.data.borrow_mut();
-                data.list_int_8_u.clear();
-                for i in arr {
-                    unwrap!(data.list_int_8_u.push(i?));
-                }
+                self.with_mut(|data| {
+                    data.list_int_8_u.clear();
+                    for i in arr {
+                        unwrap!(data.list_int_8_u.push(i?));
+                    }
 
-                Ok(())
+                    Ok(())
+                })
             }
-            ArrayAttributeWrite::Add(item) => {
-                let mut data = self.data.borrow_mut();
+            ArrayAttributeWrite::Add(item) => self.with_mut(|data| {
                 if data.list_int_8_u.len() < 16 {
                     unwrap!(data.list_int_8_u.push(item));
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Update(index, item) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Update(index, item) => self.with_mut(|data| {
                 if index < data.list_int_8_u.len() as u16 {
                     data.list_int_8_u[index as usize] = item;
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Remove(index) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Remove(index) => self.with_mut(|data| {
                 if index < data.list_int_8_u.len() as u16 {
                     let _ = data.list_int_8_u.remove(index as usize);
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
+            }),
         }
     }
 
@@ -1480,18 +1476,18 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let mut data = self.data.borrow_mut();
-                data.list_octet_string.clear();
-                for i in arr {
-                    unwrap!(data
-                        .list_octet_string
-                        .push(i?.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
-                }
+                self.with_mut(|data| {
+                    data.list_octet_string.clear();
+                    for i in arr {
+                        unwrap!(data
+                            .list_octet_string
+                            .push(i?.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
+                    }
 
-                Ok(())
+                    Ok(())
+                })
             }
-            ArrayAttributeWrite::Add(item) => {
-                let mut data = self.data.borrow_mut();
+            ArrayAttributeWrite::Add(item) => self.with_mut(|data| {
                 if data.list_octet_string.len() < 16 {
                     unwrap!(data
                         .list_octet_string
@@ -1500,9 +1496,8 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Update(index, item) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Update(index, item) => self.with_mut(|data| {
                 if index < data.list_octet_string.len() as u16 {
                     data.list_octet_string[index as usize] =
                         item.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
@@ -1510,16 +1505,15 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Remove(index) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Remove(index) => self.with_mut(|data| {
                 if index < data.list_octet_string.len() as u16 {
                     let _ = data.list_octet_string.remove(index as usize);
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
+            }),
         }
     }
 
@@ -1534,27 +1528,27 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let mut data = self.data.borrow_mut();
-                data.list_struct_octet_string.clear();
-                for i in arr {
-                    let s = i?;
+                self.with_mut(|data| {
+                    data.list_struct_octet_string.clear();
+                    for i in arr {
+                        let s = i?;
 
-                    unwrap!(data
-                        .list_struct_octet_string
-                        .push(TestListStructOctetOwned {
-                            member_1: s.member_1()?,
-                            member_2: s
-                                .member_2()?
-                                .0
-                                .try_into()
-                                .map_err(|_| ErrorCode::ConstraintError)?,
-                        }));
-                }
+                        unwrap!(data
+                            .list_struct_octet_string
+                            .push(TestListStructOctetOwned {
+                                member_1: s.member_1()?,
+                                member_2: s
+                                    .member_2()?
+                                    .0
+                                    .try_into()
+                                    .map_err(|_| ErrorCode::ConstraintError)?,
+                            }));
+                    }
 
-                Ok(())
+                    Ok(())
+                })
             }
-            ArrayAttributeWrite::Add(item) => {
-                let mut data = self.data.borrow_mut();
+            ArrayAttributeWrite::Add(item) => self.with_mut(|data| {
                 if data.list_struct_octet_string.len() < 16 {
                     unwrap!(data
                         .list_struct_octet_string
@@ -1570,9 +1564,8 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Update(index, item) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Update(index, item) => self.with_mut(|data| {
                 if index < data.list_struct_octet_string.len() as u16 {
                     data.list_struct_octet_string[index as usize] = TestListStructOctetOwned {
                         member_1: item.member_1()?,
@@ -1586,16 +1579,15 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Remove(index) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Remove(index) => self.with_mut(|data| {
                 if index < data.list_struct_octet_string.len() as u16 {
                     let _ = data.list_struct_octet_string.remove(index as usize);
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
+            }),
         }
     }
 
@@ -1604,14 +1596,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: OctetStr<'_>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().long_octet_string =
-            value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        let value = value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        self.with_mut(|data| data.long_octet_string = value);
         Ok(())
     }
 
     fn set_char_string(&self, _ctx: impl WriteContext, value: Utf8Str<'_>) -> Result<(), Error> {
-        self.data.borrow_mut().char_string =
-            value.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        let value = value.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        self.with_mut(|data| data.char_string = value);
         Ok(())
     }
 
@@ -1620,23 +1612,23 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Utf8Str<'_>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().long_char_string =
-            value.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        let value = value.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        self.with_mut(|data| data.long_char_string = value);
         Ok(())
     }
 
     fn set_epoch_us(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
-        self.data.borrow_mut().epoch_us = value;
+        self.with_mut(|data| data.epoch_us = value);
         Ok(())
     }
 
     fn set_epoch_s(&self, _ctx: impl WriteContext, value: u32) -> Result<(), Error> {
-        self.data.borrow_mut().epoch_s = value;
+        self.with_mut(|data| data.epoch_s = value);
         Ok(())
     }
 
     fn set_vendor_id(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
-        self.data.borrow_mut().vendor_id = value;
+        self.with_mut(|data| data.vendor_id = value);
         Ok(())
     }
 
@@ -1664,37 +1656,35 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let mut data = self.data.borrow_mut();
-                data.list_nullables_and_optionals_struct.clear();
-                for i in arr {
-                    let s = i?;
+                self.with_mut(|data| {
+                    data.list_nullables_and_optionals_struct.clear();
+                    for i in arr {
+                        let s = i?;
 
-                    data.list_nullables_and_optionals_struct
-                        .push_init(to_owned(&s), no_space)?;
-                }
+                        data.list_nullables_and_optionals_struct
+                            .push_init(to_owned(&s), no_space)?;
+                    }
 
-                Ok(())
+                    Ok(())
+                })
             }
-            ArrayAttributeWrite::Add(item) => {
-                let mut data = self.data.borrow_mut();
+            ArrayAttributeWrite::Add(item) => self.with_mut(|data| {
                 if data.list_nullables_and_optionals_struct.len() < 16 {
                     data.list_nullables_and_optionals_struct
                         .push_init(to_owned(&item), no_space)
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Update(index, item) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Update(index, item) => self.with_mut(|data| {
                 if index < data.list_nullables_and_optionals_struct.len() as u16 {
                     data.list_nullables_and_optionals_struct[index as usize].update(&item)?;
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Remove(index) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Remove(index) => self.with_mut(|data| {
                 if index < data.list_nullables_and_optionals_struct.len() as u16 {
                     let _ = data
                         .list_nullables_and_optionals_struct
@@ -1703,12 +1693,12 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
+            }),
         }
     }
 
     fn set_enum_attr(&self, _ctx: impl WriteContext, value: SimpleEnum) -> Result<(), Error> {
-        self.data.borrow_mut().enum_attr = value;
+        self.with_mut(|data| data.enum_attr = value);
         Ok(())
     }
 
@@ -1717,26 +1707,26 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: SimpleStruct<'_>,
     ) -> Result<(), Error> {
-        let mut data = self.data.borrow_mut();
+        self.with_mut(|data| {
+            let s = &mut data.struct_attr;
+            s.a = value.a()?;
+            s.b = value.b()?;
+            s.c = value.c()?;
+            s.d = value
+                .d()?
+                .0
+                .try_into()
+                .map_err(|_| ErrorCode::ConstraintError)?;
+            s.e = value
+                .e()?
+                .try_into()
+                .map_err(|_| ErrorCode::ConstraintError)?;
+            s.f = value.f()?;
+            s.g = value.g()?;
+            s.h = value.h()?;
 
-        let s = &mut data.struct_attr;
-        s.a = value.a()?;
-        s.b = value.b()?;
-        s.c = value.c()?;
-        s.d = value
-            .d()?
-            .0
-            .try_into()
-            .map_err(|_| ErrorCode::ConstraintError)?;
-        s.e = value
-            .e()?
-            .try_into()
-            .map_err(|_| ErrorCode::ConstraintError)?;
-        s.f = value.f()?;
-        s.g = value.g()?;
-        s.h = value.h()?;
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn set_range_restricted_int_8_u(
@@ -1747,7 +1737,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         const RANGE: core::ops::RangeInclusive<u8> = 20..=100;
 
         if RANGE.contains(&value) {
-            self.data.borrow_mut().range_restricted_int_8_u = value;
+            self.with_mut(|data| data.range_restricted_int_8_u = value);
         } else {
             Err(ErrorCode::ConstraintError)?;
         }
@@ -1763,7 +1753,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         const RANGE: core::ops::RangeInclusive<i8> = -40..=50;
 
         if RANGE.contains(&value) {
-            self.data.borrow_mut().range_restricted_int_8_s = value;
+            self.with_mut(|data| data.range_restricted_int_8_s = value);
         } else {
             Err(ErrorCode::ConstraintError)?;
         }
@@ -1779,7 +1769,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         const RANGE: core::ops::RangeInclusive<u16> = 100..=1000;
 
         if RANGE.contains(&value) {
-            self.data.borrow_mut().range_restricted_int_16_u = value;
+            self.with_mut(|data| data.range_restricted_int_16_u = value);
         } else {
             Err(ErrorCode::ConstraintError)?;
         }
@@ -1795,7 +1785,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         const RANGE: core::ops::RangeInclusive<i16> = -150..=200;
 
         if RANGE.contains(&value) {
-            self.data.borrow_mut().range_restricted_int_16_s = value;
+            self.with_mut(|data| data.range_restricted_int_16_s = value);
         } else {
             Err(ErrorCode::ConstraintError)?;
         }
@@ -1814,18 +1804,18 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let mut data = self.data.borrow_mut();
-                data.list_long_octet_string.clear();
-                for i in arr {
-                    unwrap!(data
-                        .list_long_octet_string
-                        .push(i?.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
-                }
+                self.with_mut(|data| {
+                    data.list_long_octet_string.clear();
+                    for i in arr {
+                        unwrap!(data
+                            .list_long_octet_string
+                            .push(i?.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
+                    }
 
-                Ok(())
+                    Ok(())
+                })
             }
-            ArrayAttributeWrite::Add(item) => {
-                let mut data = self.data.borrow_mut();
+            ArrayAttributeWrite::Add(item) => self.with_mut(|data| {
                 if data.list_long_octet_string.len() < 16 {
                     unwrap!(data
                         .list_long_octet_string
@@ -1834,9 +1824,8 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Update(index, item) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Update(index, item) => self.with_mut(|data| {
                 if index < data.list_long_octet_string.len() as u16 {
                     data.list_long_octet_string[index as usize] =
                         item.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
@@ -1844,16 +1833,15 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
-            ArrayAttributeWrite::Remove(index) => {
-                let mut data = self.data.borrow_mut();
+            }),
+            ArrayAttributeWrite::Remove(index) => self.with_mut(|data| {
                 if index < data.list_long_octet_string.len() as u16 {
                     let _ = data.list_long_octet_string.remove(index as usize);
                     Ok(())
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }
+            }),
         }
     }
 
@@ -1864,65 +1852,66 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     ) -> Result<(), Error> {
         let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::ConstraintError)?;
 
-        let mut data = self.data.borrow_mut();
-        let list = data
-            .list_fabric_scoped
-            .iter_mut()
-            .find(|(idx, _)| *idx == fab_idx)
-            .map(|(_, items)| items);
+        self.with_mut(|data| {
+            let list = data
+                .list_fabric_scoped
+                .iter_mut()
+                .find(|(idx, _)| *idx == fab_idx)
+                .map(|(_, items)| items);
 
-        let list = if let Some(list) = list {
-            list
-        } else {
-            data.list_fabric_scoped
-                .push((fab_idx, Vec::new()))
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
+            let list = if let Some(list) = list {
+                list
+            } else {
+                data.list_fabric_scoped
+                    .push((fab_idx, Vec::new()))
+                    .map_err(|_| ErrorCode::ResourceExhausted)?;
 
-            &mut data.list_fabric_scoped.last_mut().unwrap().1
-        };
+                &mut data.list_fabric_scoped.last_mut().unwrap().1
+            };
 
-        match value {
-            ArrayAttributeWrite::Replace(array) => {
-                list.clear();
+            match value {
+                ArrayAttributeWrite::Replace(array) => {
+                    list.clear();
 
-                for i in array {
-                    let s = i?;
+                    for i in array {
+                        let s = i?;
 
+                        list.push_init(TestFabricScopedOwned::init().into_fallible(), || {
+                            ErrorCode::ResourceExhausted
+                        })?;
+
+                        list.last_mut().unwrap().update(&s)?;
+                    }
+                }
+                ArrayAttributeWrite::Add(s) => {
                     list.push_init(TestFabricScopedOwned::init().into_fallible(), || {
                         ErrorCode::ResourceExhausted
                     })?;
 
                     list.last_mut().unwrap().update(&s)?;
                 }
-            }
-            ArrayAttributeWrite::Add(s) => {
-                list.push_init(TestFabricScopedOwned::init().into_fallible(), || {
-                    ErrorCode::ResourceExhausted
-                })?;
+                ArrayAttributeWrite::Update(index, s) => {
+                    if index as usize >= list.len() {
+                        Err(ErrorCode::ConstraintError)?;
+                    }
 
-                list.last_mut().unwrap().update(&s)?;
-            }
-            ArrayAttributeWrite::Update(index, s) => {
-                if index as usize >= list.len() {
-                    Err(ErrorCode::ConstraintError)?;
+                    list[index as usize].update(&s)?;
                 }
+                ArrayAttributeWrite::Remove(index) => {
+                    if index as usize >= list.len() {
+                        Err(ErrorCode::ConstraintError)?;
+                    }
 
-                list[index as usize].update(&s)?;
-            }
-            ArrayAttributeWrite::Remove(index) => {
-                if index as usize >= list.len() {
-                    Err(ErrorCode::ConstraintError)?;
+                    let _ = list.remove(index as usize);
                 }
-
-                let _ = list.remove(index as usize);
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn set_timed_write_boolean(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {
-        self.data.borrow_mut().timed_write_boolean = value;
+        self.with_mut(|data| data.timed_write_boolean = value);
         Ok(())
     }
 
@@ -1947,7 +1936,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<bool>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_boolean = value;
+        self.with_mut(|data| data.nullable_boolean = value);
         Ok(())
     }
 
@@ -1956,7 +1945,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<Bitmap8MaskMap>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_bitmap_8 = value;
+        self.with_mut(|data| data.nullable_bitmap_8 = value);
         Ok(())
     }
 
@@ -1965,7 +1954,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<Bitmap16MaskMap>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_bitmap_16 = value;
+        self.with_mut(|data| data.nullable_bitmap_16 = value);
         Ok(())
     }
 
@@ -1974,7 +1963,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<Bitmap32MaskMap>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_bitmap_32 = value;
+        self.with_mut(|data| data.nullable_bitmap_32 = value);
         Ok(())
     }
 
@@ -1983,7 +1972,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<Bitmap64MaskMap>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_bitmap_64 = value;
+        self.with_mut(|data| data.nullable_bitmap_64 = value);
         Ok(())
     }
 
@@ -1992,7 +1981,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_8_u = value;
+        self.with_mut(|data| data.nullable_int_8_u = value);
         Ok(())
     }
 
@@ -2001,7 +1990,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_16_u = value;
+        self.with_mut(|data| data.nullable_int_16_u = value);
         Ok(())
     }
 
@@ -2010,7 +1999,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u32>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_24_u = value;
+        self.with_mut(|data| data.nullable_int_24_u = value);
         Ok(())
     }
 
@@ -2019,7 +2008,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u32>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_32_u = value;
+        self.with_mut(|data| data.nullable_int_32_u = value);
         Ok(())
     }
 
@@ -2028,7 +2017,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_40_u = value;
+        self.with_mut(|data| data.nullable_int_40_u = value);
         Ok(())
     }
 
@@ -2037,7 +2026,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_48_u = value;
+        self.with_mut(|data| data.nullable_int_48_u = value);
         Ok(())
     }
 
@@ -2046,7 +2035,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_56_u = value;
+        self.with_mut(|data| data.nullable_int_56_u = value);
         Ok(())
     }
 
@@ -2055,7 +2044,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_64_u = value;
+        self.with_mut(|data| data.nullable_int_64_u = value);
         Ok(())
     }
 
@@ -2064,7 +2053,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i8>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_8_s = value;
+        self.with_mut(|data| data.nullable_int_8_s = value);
         Ok(())
     }
 
@@ -2073,7 +2062,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i16>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_16_s = value;
+        self.with_mut(|data| data.nullable_int_16_s = value);
         Ok(())
     }
 
@@ -2082,7 +2071,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i32>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_24_s = value;
+        self.with_mut(|data| data.nullable_int_24_s = value);
         Ok(())
     }
 
@@ -2091,7 +2080,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i32>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_32_s = value;
+        self.with_mut(|data| data.nullable_int_32_s = value);
         Ok(())
     }
 
@@ -2100,7 +2089,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_40_s = value;
+        self.with_mut(|data| data.nullable_int_40_s = value);
         Ok(())
     }
 
@@ -2109,7 +2098,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_48_s = value;
+        self.with_mut(|data| data.nullable_int_48_s = value);
         Ok(())
     }
 
@@ -2118,7 +2107,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_56_s = value;
+        self.with_mut(|data| data.nullable_int_56_s = value);
         Ok(())
     }
 
@@ -2127,7 +2116,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_int_64_s = value;
+        self.with_mut(|data| data.nullable_int_64_s = value);
         Ok(())
     }
 
@@ -2136,7 +2125,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_enum_8 = value;
+        self.with_mut(|data| data.nullable_enum_8 = value);
         Ok(())
     }
 
@@ -2145,7 +2134,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_enum_16 = value;
+        self.with_mut(|data| data.nullable_enum_16 = value);
         Ok(())
     }
 
@@ -2154,7 +2143,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<f32>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_float_single = value;
+        self.with_mut(|data| data.nullable_float_single = value);
         Ok(())
     }
 
@@ -2163,7 +2152,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<f64>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_float_double = value;
+        self.with_mut(|data| data.nullable_float_double = value);
         Ok(())
     }
 
@@ -2173,10 +2162,10 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         value: Nullable<OctetStr<'_>>,
     ) -> Result<(), Error> {
         if let Some(value) = value.into_option() {
-            self.data.borrow_mut().nullable_octet_string =
-                Nullable::some(value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?);
+            let value = Nullable::some(value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?);
+            self.with_mut(|data| data.nullable_octet_string = value);
         } else {
-            self.data.borrow_mut().nullable_octet_string = Nullable::none();
+            self.with_mut(|data| data.nullable_octet_string = Nullable::none());
         }
 
         Ok(())
@@ -2188,10 +2177,10 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         value: Nullable<Utf8Str<'_>>,
     ) -> Result<(), Error> {
         if let Some(value) = value.into_option() {
-            self.data.borrow_mut().nullable_char_string =
-                Nullable::some(value.try_into().map_err(|_| ErrorCode::ConstraintError)?);
+            let value = Nullable::some(value.try_into().map_err(|_| ErrorCode::ConstraintError)?);
+            self.with_mut(|data| data.nullable_char_string = value);
         } else {
-            self.data.borrow_mut().nullable_char_string = Nullable::none();
+            self.with_mut(|data| data.nullable_char_string = Nullable::none());
         }
 
         Ok(())
@@ -2202,7 +2191,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<SimpleEnum>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_enum_attr = value;
+        self.with_mut(|data| data.nullable_enum_attr = value);
         Ok(())
     }
 
@@ -2212,7 +2201,6 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         value: Nullable<SimpleStruct<'_>>,
     ) -> Result<(), Error> {
         if let Some(s) = value.into_option() {
-            let mut data = self.data.borrow_mut();
             let ns = SimpleStructOwned {
                 a: s.a()?,
                 b: s.b()?,
@@ -2228,9 +2216,9 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 i: s.i()?,
             };
 
-            data.nullable_struct = Nullable::some(ns);
+            self.with_mut(|data| data.nullable_struct = Nullable::some(ns));
         } else {
-            self.data.borrow_mut().nullable_struct = Nullable::none();
+            self.with_mut(|data| data.nullable_struct = Nullable::none());
         }
 
         Ok(())
@@ -2245,15 +2233,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             const RANGE: core::ops::RangeInclusive<u8> = 20..=100;
 
             if RANGE.contains(&value) {
-                self.data.borrow_mut().nullable_range_restricted_int_8_u = Nullable::some(value);
+                self.with_mut(|data| {
+                    data.nullable_range_restricted_int_8_u = Nullable::some(value)
+                });
             } else {
                 Err(ErrorCode::ConstraintError)?;
             }
         } else {
-            self.data
-                .borrow_mut()
-                .nullable_range_restricted_int_8_u
-                .clear();
+            self.with_mut(|data| data.nullable_range_restricted_int_8_u.clear());
         }
 
         Ok(())
@@ -2268,15 +2255,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             const RANGE: core::ops::RangeInclusive<i8> = -40..=50;
 
             if RANGE.contains(&value) {
-                self.data.borrow_mut().nullable_range_restricted_int_8_s = Nullable::some(value);
+                self.with_mut(|data| {
+                    data.nullable_range_restricted_int_8_s = Nullable::some(value)
+                });
             } else {
                 Err(ErrorCode::ConstraintError)?;
             }
         } else {
-            self.data
-                .borrow_mut()
-                .nullable_range_restricted_int_8_s
-                .clear();
+            self.with_mut(|data| data.nullable_range_restricted_int_8_s.clear());
         }
 
         Ok(())
@@ -2291,15 +2277,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             const RANGE: core::ops::RangeInclusive<u16> = 100..=1000;
 
             if RANGE.contains(&value) {
-                self.data.borrow_mut().nullable_range_restricted_int_16_u = Nullable::some(value);
+                self.with_mut(|data| {
+                    data.nullable_range_restricted_int_16_u = Nullable::some(value)
+                });
             } else {
                 Err(ErrorCode::ConstraintError)?;
             }
         } else {
-            self.data
-                .borrow_mut()
-                .nullable_range_restricted_int_16_u
-                .clear();
+            self.with_mut(|data| data.nullable_range_restricted_int_16_u.clear());
         }
 
         Ok(())
@@ -2314,22 +2299,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             const RANGE: core::ops::RangeInclusive<i16> = -150..=200;
 
             if RANGE.contains(&value) {
-                self.data.borrow_mut().nullable_range_restricted_int_16_s = Nullable::some(value);
+                self.with_mut(|data| {
+                    data.nullable_range_restricted_int_16_s = Nullable::some(value)
+                });
             } else {
                 Err(ErrorCode::ConstraintError)?;
             }
         } else {
-            self.data
-                .borrow_mut()
-                .nullable_range_restricted_int_16_s
-                .clear();
+            self.with_mut(|data| data.nullable_range_restricted_int_16_s.clear());
         }
 
         Ok(())
     }
 
     fn set_global_enum(&self, _ctx: impl WriteContext, value: TestGlobalEnum) -> Result<(), Error> {
-        self.data.borrow_mut().global_enum = value;
+        self.with_mut(|data| data.global_enum = value);
         Ok(())
     }
 
@@ -2338,7 +2322,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: TestGlobalStruct<'_>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().global_struct = TestGlobalStructOwned {
+        let value = TestGlobalStructOwned {
             name: value
                 .name()?
                 .try_into()
@@ -2346,6 +2330,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             my_bitmap: value.my_bitmap()?,
             my_enum: value.my_enum()?,
         };
+        self.with_mut(|data| data.global_struct = value);
         Ok(())
     }
 
@@ -2354,7 +2339,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<TestGlobalEnum>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_global_enum = value;
+        self.with_mut(|data| data.nullable_global_enum = value);
         Ok(())
     }
 
@@ -2364,16 +2349,15 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         value: Nullable<TestGlobalStruct<'_>>,
     ) -> Result<(), Error> {
         if let Some(s) = value.into_option() {
-            let mut data = self.data.borrow_mut();
             let ns = TestGlobalStructOwned {
                 name: s.name()?.try_into().map_err(|_| ErrorCode::InvalidAction)?,
                 my_bitmap: s.my_bitmap()?,
                 my_enum: s.my_enum()?,
             };
 
-            data.nullable_global_struct = Nullable::some(ns);
+            self.with_mut(|data| data.nullable_global_struct = Nullable::some(ns));
         } else {
-            self.data.borrow_mut().nullable_global_struct = Nullable::none();
+            self.with_mut(|data| data.nullable_global_struct = Nullable::none());
         }
 
         Ok(())
@@ -2994,11 +2978,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn mei_int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.data.borrow().mei_int_8_u)
+        Ok(self.with(|data| data.mei_int_8_u))
     }
 
     fn set_mei_int_8_u(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
-        self.data.borrow_mut().mei_int_8_u = value;
+        self.with_mut(|data| data.mei_int_8_u = value);
 
         Ok(())
     }

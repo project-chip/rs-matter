@@ -64,7 +64,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -127,28 +127,46 @@ pub struct Trigger {
 /// lifecycle. Each method has a no-op default body — implementors only
 /// need to override the events they actually care about.
 #[allow(unused_variables)]
-pub trait ZoneMgmtHooks<const NV: usize> {
-    fn zone_created(&self, zone: &Zone<NV>) -> impl Future<Output = Result<(), ZoneError>> {
+pub trait ZoneMgmtHooks<const NV: usize>: MaybeSendSync {
+    fn zone_created(
+        &self,
+        zone: &Zone<NV>,
+    ) -> impl Future<Output = Result<(), ZoneError>> + MaybeSend {
         async { Ok(()) }
     }
 
-    fn zone_updated(&self, zone: &Zone<NV>) -> impl Future<Output = Result<(), ZoneError>> {
+    fn zone_updated(
+        &self,
+        zone: &Zone<NV>,
+    ) -> impl Future<Output = Result<(), ZoneError>> + MaybeSend {
         async { Ok(()) }
     }
 
-    fn zone_removed(&self, zone_id: u16) -> impl Future<Output = Result<(), ZoneError>> {
+    fn zone_removed(
+        &self,
+        zone_id: u16,
+    ) -> impl Future<Output = Result<(), ZoneError>> + MaybeSend {
         async { Ok(()) }
     }
 
-    fn trigger_set(&self, trigger: &Trigger) -> impl Future<Output = Result<(), ZoneError>> {
+    fn trigger_set(
+        &self,
+        trigger: &Trigger,
+    ) -> impl Future<Output = Result<(), ZoneError>> + MaybeSend {
         async { Ok(()) }
     }
 
-    fn trigger_removed(&self, zone_id: u16) -> impl Future<Output = Result<(), ZoneError>> {
+    fn trigger_removed(
+        &self,
+        zone_id: u16,
+    ) -> impl Future<Output = Result<(), ZoneError>> + MaybeSend {
         async { Ok(()) }
     }
 
-    fn set_sensitivity(&self, value: u8) -> impl Future<Output = Result<(), ZoneError>> {
+    fn set_sensitivity(
+        &self,
+        value: u8,
+    ) -> impl Future<Output = Result<(), ZoneError>> + MaybeSend {
         async { Ok(()) }
     }
 }

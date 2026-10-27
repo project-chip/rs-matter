@@ -440,7 +440,8 @@ mod tests {
     use crate::dm::networks::wireless::wifi::WifiNetworks;
     use crate::dm::networks::NetChangeNotif;
     use crate::error::{Error, ErrorCode};
-    use crate::utils::sync::DynBase;
+    use crate::utils::sync::blocking::Mutex;
+    use crate::utils::sync::MaybeSend;
 
     // ── Helper: create NetworksCell<WifiNetworks> with entries ──
 
@@ -467,34 +468,33 @@ mod tests {
     // ── Fake NetCtl (no production equivalent with controllable state) ──
 
     struct FakeNetCtl {
-        connected: Cell<bool>,
-        connect_fails_remaining: Cell<u32>,
-        connect_calls: Cell<u32>,
+        connected: Mutex<Cell<bool>>,
+        connect_fails_remaining: Mutex<Cell<u32>>,
+        connect_calls: Mutex<Cell<u32>>,
         /// The SSID of the last `connect` call (successful or not) - what a
         /// `NetCtlWithStatusImpl` would report as `LastNetworkID`. Seedable
         /// by tests to model a device attached to a network the manager did
         /// not connect itself (e.g. via the cluster's `ConnectNetwork`).
-        last_network_id: core::cell::RefCell<heapless::Vec<u8, 32>>,
+        last_network_id: Mutex<core::cell::RefCell<heapless::Vec<u8, 32>>>,
     }
 
     impl FakeNetCtl {
         fn new() -> Self {
             Self {
-                connected: Cell::new(false),
-                connect_fails_remaining: Cell::new(0),
-                connect_calls: Cell::new(0),
-                last_network_id: core::cell::RefCell::new(heapless::Vec::new()),
+                connected: Mutex::new(Cell::new(false)),
+                connect_fails_remaining: Mutex::new(Cell::new(0)),
+                connect_calls: Mutex::new(Cell::new(0)),
+                last_network_id: Mutex::new(core::cell::RefCell::new(heapless::Vec::new())),
             }
         }
 
         fn with_connected_to(network_id: &[u8]) -> Self {
             let this = Self::new();
 
-            this.connected.set(true);
-            this.last_network_id
-                .borrow_mut()
-                .extend_from_slice(network_id)
-                .unwrap();
+            this.connected.lock(|connected| connected.set(true));
+            this.last_network_id.lock(|last| {
+                last.borrow_mut().extend_from_slice(network_id).unwrap();
+            });
 
             this
         }
@@ -507,32 +507,38 @@ mod tests {
 
         async fn scan<F>(&self, _network: Option<&[u8]>, _f: F) -> Result<(), NetCtlError>
         where
-            F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+            F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
         {
             Err(NetCtlError::Other(ErrorCode::InvalidAction.into()))
         }
 
         async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
-            self.connect_calls.set(self.connect_calls.get() + 1);
+            self.connect_calls.lock(|calls| calls.set(calls.get() + 1));
 
             if let WirelessCreds::Wifi { ssid, .. } = creds {
-                let mut last = self.last_network_id.borrow_mut();
-                last.clear();
-                last.extend_from_slice(ssid).unwrap();
+                self.last_network_id.lock(|last| {
+                    let mut last = last.borrow_mut();
+                    last.clear();
+                    last.extend_from_slice(ssid).unwrap();
+                });
             }
 
-            let remaining = self.connect_fails_remaining.get();
-            if remaining > 0 {
-                self.connect_fails_remaining.set(remaining - 1);
+            let failed = self.connect_fails_remaining.lock(|remaining| {
+                let failed = remaining.get() > 0;
+                if failed {
+                    remaining.set(remaining.get() - 1);
+                }
+                failed
+            });
+
+            if failed {
                 Err(NetCtlError::OtherConnectionFailure)
             } else {
-                self.connected.set(true);
+                self.connected.lock(|connected| connected.set(true));
                 Ok(())
             }
         }
     }
-
-    impl DynBase for FakeNetCtl {}
 
     impl net_comm::NetCtlStatus for FakeNetCtl {
         fn last_networking_status(
@@ -545,9 +551,11 @@ mod tests {
         where
             F: FnOnce(Option<&[u8]>) -> Result<R, Error>,
         {
-            let last = self.last_network_id.borrow();
+            self.last_network_id.lock(|last| {
+                let last = last.borrow();
 
-            f((!last.is_empty()).then_some(last.as_slice()))
+                f((!last.is_empty()).then_some(last.as_slice()))
+            })
         }
 
         fn last_connect_error_value(&self) -> Result<Option<i32>, Error> {
@@ -557,7 +565,7 @@ mod tests {
 
     impl wifi_diag::WirelessDiag for FakeNetCtl {
         fn connected(&self) -> Result<bool, Error> {
-            Ok(self.connected.get())
+            Ok(self.connected.lock(Cell::get))
         }
     }
 
@@ -692,7 +700,7 @@ mod tests {
         embassy_futures::block_on(async {
             let result = connect_with_retries(&net_ctl, &creds).await;
             assert!(result.is_ok());
-            assert!(net_ctl.connected.get());
+            assert!(net_ctl.connected.lock(Cell::get));
         });
     }
 
@@ -769,7 +777,7 @@ mod tests {
             .await;
         });
 
-        assert_eq!(net_ctl.connect_calls.get(), 1);
+        assert_eq!(net_ctl.connect_calls.lock(Cell::get), 1);
         // Connected to the stored network, as it is told.
         assert_eq!(reported.get(), Some(true));
     }
@@ -794,7 +802,7 @@ mod tests {
             .await;
         });
 
-        assert_eq!(net_ctl.connect_calls.get(), 0);
+        assert_eq!(net_ctl.connect_calls.lock(Cell::get), 0);
     }
 
     // ── creds-by-id / connect_once tests (deferred non-concurrent connect) ──
@@ -845,7 +853,7 @@ mod tests {
                 .is_ok());
         });
 
-        assert!(net_ctl.connected.get());
+        assert!(net_ctl.connected.lock(Cell::get));
     }
 
     #[test]

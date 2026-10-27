@@ -65,14 +65,14 @@ const MAX_URL: usize = 256;
 /// `Some((start, len))` it must request only `len` bytes starting at `start`
 /// (i.e. send `Range: bytes=start-start+len-1`); a server returning fewer bytes
 /// (e.g. the tail of the file) is fine, and `0` marks end-of-file.
-pub trait OtaHttp {
+pub trait OtaHttp: MaybeSendSync {
     /// Perform the GET. See the trait docs for `range`/return semantics.
-    async fn get(
+    fn get(
         &self,
         url: &str,
         range: Option<(u64, usize)>,
         buf: &mut [u8],
-    ) -> Result<usize, Error>;
+    ) -> impl Future<Output = Result<usize, Error>> + MaybeSend;
 }
 
 impl<T> OtaHttp for &T

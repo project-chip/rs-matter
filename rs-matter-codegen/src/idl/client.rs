@@ -1005,10 +1005,9 @@ fn client_trait(
                         #krate::error::Error,
                     >,
                 {
-                    use #krate::im::client::ImClient as _ImClient;
                     use self::#cmd_requests_trait_name as _Cmds;
 
-                    #chunk_binding = _ImClient::invoke_with(self.exchange, None, |msg| {
+                    #chunk_binding = #krate::im::client::invoke_with(self.exchange, None, |msg| {
                         // `suppress_response` and `timed_request` are
                         // skipped — `InvReqBuilder` fills them in as
                         // `false` on the wire (the common-case
@@ -1040,10 +1039,9 @@ fn client_trait(
                     self,
                     endpoint: #krate::dm::EndptId,
                 ) -> Result<#return_ty, #krate::error::Error> {
-                    use #krate::im::client::ImClient as _ImClient;
                     use self::#cmd_requests_trait_name as _Cmds;
 
-                    #chunk_binding = _ImClient::invoke_with(self.exchange, None, |msg| {
+                    #chunk_binding = #krate::im::client::invoke_with(self.exchange, None, |msg| {
                         // `suppress_response` / `timed_request`
                         // skipped — see the parameterized branch.
                         // `.<cluster>_inv()` enters the cluster
@@ -1177,10 +1175,9 @@ fn client_trait(
         let snake = idl_field_name_to_rs_name(&attr.field.field.id);
 
         let read_request = quote!(
-            use #krate::im::client::ImClient as _ImClient;
             use self::#attr_reads_trait_name as _Reads;
 
-            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+            let mut chunk = #krate::im::client::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .#attr_reads_entry()
                     .#attr_method(endpoint)?
@@ -1337,10 +1334,9 @@ fn client_trait(
                 endpoint: #krate::dm::EndptId,
                 value: #value_ty,
             ) -> Result<(), #krate::error::Error> {
-                use #krate::im::client::ImClient as _ImClient;
                 use self::#attr_writes_trait_name as _Writes;
 
-                let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                let handle = #krate::im::client::write_with(self.exchange, None, |msg| {
                     msg.write_requests()?
                         .#attr_writes_entry()
                         .#attr_method(endpoint, value.clone())?

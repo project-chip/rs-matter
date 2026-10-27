@@ -25,18 +25,43 @@ mod mutex;
 mod notification;
 mod signal;
 
-/// A trait that all other `rs-matter` `dyn` traits should extend from.
+/// A bound on the types that `rs-matter` shares between its futures. Most `rs-matter` traits
+/// extend it.
 ///
-/// When feature `sync-mutex` is enabled, this trait extends `Send + Sync` so that all `dyn` traits are `Send + Sync`.
-#[cfg(feature = "sync-mutex")]
-pub trait DynBase: Send + Sync {}
+/// With feature `send-sync`, this trait extends `Send + Sync`, so that these types can be shared
+/// between the threads of a work-stealing executor, and it is implemented for every type that is
+/// `Send + Sync`.
+#[cfg(feature = "send-sync")]
+pub trait MaybeSendSync: Send + Sync {}
 
-/// A trait that all other `rs-matter` `dyn` traits should extend from.
+#[cfg(feature = "send-sync")]
+impl<T: ?Sized + Send + Sync> MaybeSendSync for T {}
+
+/// A bound on the types that `rs-matter` shares between its futures. Most `rs-matter` traits
+/// extend it.
 ///
-/// When feature `sync-mutex` is disabled, this trait is empty and does not require `Send + Sync`.
-#[cfg(not(feature = "sync-mutex"))]
-pub trait DynBase {}
+/// Without feature `send-sync`, this trait is empty and implemented for every type.
+#[cfg(not(feature = "send-sync"))]
+pub trait MaybeSendSync {}
 
-impl<T> DynBase for &T where T: DynBase {}
+#[cfg(not(feature = "send-sync"))]
+impl<T: ?Sized> MaybeSendSync for T {}
 
-impl DynBase for () {}
+/// A bound on the futures returned by `rs-matter` traits.
+///
+/// With feature `send-sync`, this trait extends `Send`, so that the futures can run on a
+/// work-stealing executor, and it is implemented for every type that is `Send`.
+#[cfg(feature = "send-sync")]
+pub trait MaybeSend: Send {}
+
+#[cfg(feature = "send-sync")]
+impl<T: ?Sized + Send> MaybeSend for T {}
+
+/// A bound on the futures returned by `rs-matter` traits.
+///
+/// Without feature `send-sync`, this trait is empty and implemented for every type.
+#[cfg(not(feature = "send-sync"))]
+pub trait MaybeSend {}
+
+#[cfg(not(feature = "send-sync"))]
+impl<T: ?Sized> MaybeSend for T {}

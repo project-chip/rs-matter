@@ -43,7 +43,7 @@ use rs_matter::im::InteractionModel;
 use rs_matter::im::InteractionModelState;
 use rs_matter::persist::{NETWORKS_KEY, VENDOR_KEYS_START};
 use rs_matter::transport::exchange::MatterBuffers;
-use rs_matter::utils::sync::DynBase;
+use rs_matter::utils::sync::MaybeSend;
 use rs_matter::{Matter, MATTER_PORT};
 
 use crate::common::{init_env_logger, MemKvBlobStore};
@@ -359,7 +359,7 @@ impl NetCtl for EnabledRecorder {
 
     async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         self.net_ctl.scan(network, f).await
     }
@@ -391,7 +391,5 @@ impl NetChangeNotif for EnabledRecorder {
         self.net_ctl.wait_changed().await
     }
 }
-
-impl DynBase for EnabledRecorder {}
 
 impl WirelessDiag for EnabledRecorder {}

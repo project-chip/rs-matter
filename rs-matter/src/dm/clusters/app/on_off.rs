@@ -56,7 +56,7 @@ pub use crate::dm::clusters::decl::on_off::*;
 use crate::tlv::Nullable;
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Signal;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 /// Messages passed to the `notify` closure in `OnOffHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1192,7 +1192,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H
     }
 }
 
-pub trait OnOffHooks {
+pub trait OnOffHooks: MaybeSendSync {
     const CLUSTER: Cluster<'static>;
 
     /// The initial value of the `OnOff` attribute, used until the handler has
@@ -1216,7 +1216,10 @@ pub trait OnOffHooks {
     /// this method with the restored state.
     fn set_on_off(&self, on: bool);
 
-    async fn handle_off_with_effect(&self, effect: EffectVariantEnum);
+    fn handle_off_with_effect(
+        &self,
+        effect: EffectVariantEnum,
+    ) -> impl Future<Output = ()> + MaybeSend;
 
     /// Background task for out-of-band notifications to the handler.
     ///
@@ -1225,8 +1228,11 @@ pub trait OnOffHooks {
     ///
     /// # Panics
     /// The SDK will panic if this method returns.
-    async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
-        core::future::pending::<()>().await
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
+        core::future::pending::<()>()
     }
 }
 
@@ -1250,7 +1256,7 @@ where
         (*self).handle_off_with_effect(effect)
     }
 
-    fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
     }
 }
@@ -1341,6 +1347,7 @@ pub mod test {
     use crate::dm::Cluster;
     use crate::utils::cell::RefCell;
     use crate::utils::sync::blocking::Mutex;
+    use crate::utils::sync::MaybeSend;
     use crate::with;
 
     struct TestOnOffState {
@@ -1415,7 +1422,7 @@ pub mod test {
             // no effect
         }
 
-        async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
+        async fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) {
             if self.toggle_periodically {
                 loop {
                     // In a real example we wait for physical interaction.

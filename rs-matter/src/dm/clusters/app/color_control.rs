@@ -40,7 +40,7 @@ use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Signal;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 pub use crate::dm::clusters::decl::color_control::*;
 
@@ -317,7 +317,7 @@ fn ct_mireds_to_xy_f32_pair(mireds: u16) -> (u16, u16) {
 /// static capabilities and initial values, (b) push the colour onto the
 /// hardware via [`Self::set_device_color`] and (c) report colour changes
 /// the device makes by itself from [`Self::run`].
-pub trait ColorControlHooks {
+pub trait ColorControlHooks: MaybeSendSync {
     /// Cluster metadata for this device — typically `FULL_CLUSTER`
     /// passed through `.with_features(...).with_attrs(...).with_cmds(...)`.
     const CLUSTER: Cluster<'static>;
@@ -369,7 +369,10 @@ pub trait ColorControlHooks {
 
     /// Background task for out-of-band notifications. The future MUST
     /// NOT return — implementers should loop or `pending::<()>().await`.
-    fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
         pending::<()>()
     }
 }
@@ -400,7 +403,7 @@ where
         (*self).set_device_color(target)
     }
 
-    fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
     }
 }
@@ -3783,25 +3786,26 @@ pub mod test {
     };
     use crate::dm::clusters::decl::color_control::{AttributeId, CommandId, Feature, FULL_CLUSTER};
     use crate::dm::Cluster;
+    use crate::utils::sync::blocking::Mutex;
     use crate::with;
 
     /// All-features-enabled [`ColorControlHooks`] for tests, demos
     /// and the bundled `light_tests` example. This stub drives no
     /// hardware; it only records the colour it was last set to.
     pub struct TestColorControlDeviceLogic {
-        color: Cell<Option<SetDeviceColor>>,
+        color: Mutex<Cell<Option<SetDeviceColor>>>,
     }
 
     impl TestColorControlDeviceLogic {
         pub const fn new() -> Self {
             Self {
-                color: Cell::new(None),
+                color: Mutex::new(Cell::new(None)),
             }
         }
 
         /// The colour the (simulated) device was last set to.
         pub fn color(&self) -> Option<SetDeviceColor> {
-            self.color.get()
+            self.color.lock(Cell::get)
         }
     }
 
@@ -3884,7 +3888,7 @@ pub mod test {
 
         fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()> {
             // Real devices would drive their LED here.
-            self.color.set(Some(target));
+            self.color.lock(|color| color.set(Some(target)));
             Ok(())
         }
     }
@@ -3912,13 +3916,13 @@ mod tests {
     /// instantiation. Use `MockHooks::<{Feature::XY.bits()}>::new()`.
     /// It also records the last colour sent to the device.
     struct MockHooks<const F: u32> {
-        color: Cell<Option<SetDeviceColor>>,
+        color: Mutex<Cell<Option<SetDeviceColor>>>,
     }
 
     impl<const F: u32> MockHooks<F> {
         fn new() -> Self {
             Self {
-                color: Cell::new(None),
+                color: Mutex::new(Cell::new(None)),
             }
         }
     }
@@ -3963,31 +3967,31 @@ mod tests {
         const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
 
         fn set_device_color(&self, target: SetDeviceColor) -> Result<(), ()> {
-            self.color.set(Some(target));
+            self.color.lock(|color| color.set(Some(target)));
             Ok(())
         }
     }
 
     /// [`SceneInvalidator`] mock that counts calls.
     struct CountingInvalidator {
-        count: Cell<u32>,
+        count: Mutex<Cell<u32>>,
     }
 
     impl CountingInvalidator {
         const fn new() -> Self {
             Self {
-                count: Cell::new(0),
+                count: Mutex::new(Cell::new(0)),
             }
         }
 
         fn count(&self) -> u32 {
-            self.count.get()
+            self.count.lock(Cell::get)
         }
     }
 
     impl SceneInvalidator for CountingInvalidator {
         fn scenable_attribute_changed(&self, _endpoint_id: EndptId) {
-            self.count.set(self.count.get() + 1);
+            self.count.lock(|count| count.set(count.get() + 1));
         }
     }
 
@@ -4597,7 +4601,7 @@ mod tests {
         // Clamped to the physical maximum.
         assert_eq!(h.with_state(|s| s.color_temperature_mireds), 500);
         // The device already shows the colour, so it is not driven.
-        assert_eq!(h.hooks.color.get(), None);
+        assert_eq!(h.hooks.color.lock(Cell::get), None);
     }
 
     #[test]
@@ -4692,7 +4696,7 @@ mod tests {
         h.apply_inner(NULL_CTX, &arr, 0).unwrap();
 
         assert_eq!(
-            h.hooks.color.get(),
+            h.hooks.color.lock(Cell::get),
             Some(SetDeviceColor::Xy {
                 x: 0x1000,
                 y: 0x2000
@@ -4733,7 +4737,7 @@ mod tests {
         h.startup(NULL_CTX, true);
 
         assert_eq!(
-            h.hooks.color.get(),
+            h.hooks.color.lock(Cell::get),
             Some(SetDeviceColor::Xy {
                 x: 0x1234,
                 y: 0x2345

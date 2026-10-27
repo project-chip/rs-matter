@@ -77,7 +77,7 @@ use crate::utils::epoch::FIRMWARE_BUILD_MATTER_US;
 use crate::utils::init::{init, into_init, try_init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{MaybeSendSync, Notification};
 
 pub use crate::dm::clusters::decl::time_synchronization::*;
 
@@ -542,7 +542,7 @@ pub struct TrustedTimeSourceData {
 ///
 /// Implemented by [`TimeZoneStore`], the batteries-included validated
 /// storage; custom implementors take over validation and storage themselves.
-pub trait TimeZones {
+pub trait TimeZones: MaybeSendSync {
     /// Stream the active time-zone entries into `visit`.
     fn time_zone(
         &self,
@@ -628,7 +628,7 @@ where
 }
 
 /// Data provider for the `NTP_CLIENT` feature.
-pub trait NtpClient {
+pub trait NtpClient: MaybeSendSync {
     /// Hostname or IP address of the default NTP server, or `Null` if
     /// none is configured.
     fn default_ntp(&self) -> Result<Nullable<&str>, Error>;
@@ -674,7 +674,7 @@ where
 }
 
 /// Data provider for the `NTP_SERVER` feature.
-pub trait NtpServer {
+pub trait NtpServer: MaybeSendSync {
     /// Whether the device is currently serving NTP queries.
     fn ntp_server_available(&self) -> Result<bool, Error>;
 }

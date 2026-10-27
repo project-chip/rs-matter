@@ -461,8 +461,8 @@ pub struct HeatingElement {
 ///
 /// It has to be a lock rather than a set of `Cell`s: the element is reachable
 /// from the `GenDiag` hook below, which the data model takes as a `dyn` trait
-/// object, and every `rs-matter` `dyn` trait extends `DynBase` - which under
-/// the `sync-mutex` feature means `Send + Sync`. Without that feature the
+/// object, and every `rs-matter` `dyn` trait extends `MaybeSendSync` - which under
+/// the `send-sync` feature means `Send + Sync`. Without that feature the
 /// mutex is a `NoopRawMutex` and costs nothing.
 struct ElementState {
     /// Whether the relay is closed and the element is drawing power.
@@ -934,8 +934,6 @@ impl<'a> TestEventTriggers<'a> {
         Self { element }
     }
 }
-
-impl rs_matter::utils::sync::DynBase for TestEventTriggers<'_> {}
 
 impl GenDiag for TestEventTriggers<'_> {
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {

@@ -116,14 +116,14 @@ pub fn handler(
                 Ok(())
             }
 
-            fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+            fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> + #krate::utils::sync::MaybeSend {
                 core::future::pending::<Result::<(), #krate::error::Error>>()
             }
         );
 
         quote!(
             #[doc = "The handler trait for the cluster."]
-            pub trait #handler_name {
+            pub trait #handler_name: #krate::utils::sync::MaybeSendSync {
                 #[doc = "The cluster-metadata corresponding to this handler trait."]
                 const CLUSTER: #krate::dm::Cluster<'static>;
 
@@ -446,7 +446,7 @@ fn handler_attribute(
         if !delegate && attr.field.is_optional {
             if asynch {
                 quote!(
-                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> + #krate::utils::sync::MaybeSend {
                         core::future::ready(Err(#krate::error::ErrorCode::AttributeNotFound.into()))
                     }
                 )
@@ -465,21 +465,22 @@ fn handler_attribute(
                     }
                 )
             } else {
-                let stream = quote!(
-                    #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>
+                let sig = quote!(
+                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type)
                 );
+                let ret = quote!(Result<P, #krate::error::Error>);
 
                 if delegate {
-                    quote!(#stream { T::#attr_name(self, ctx, builder)#sawait })
+                    quote!(#pasync #sig -> #ret { T::#attr_name(self, ctx, builder)#sawait })
                 } else {
-                    quote!(#stream;)
+                    declaration(asynch, sig, ret, krate)
                 }
             }
         }
     } else if !delegate && attr.field.is_optional {
         if asynch {
             quote!(
-                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
+                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> + #krate::utils::sync::MaybeSend {
                     core::future::ready(Err(#krate::error::ErrorCode::AttributeNotFound.into()))
                 }
             )
@@ -498,14 +499,15 @@ fn handler_attribute(
                 }
             )
         } else {
-            let stream = quote!(
-                #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>
+            let sig = quote!(
+                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext)
             );
+            let ret = quote!(Result<#attr_type, #krate::error::Error>);
 
             if delegate {
-                quote!(#stream { T::#attr_name(self, ctx)#sawait })
+                quote!(#pasync #sig -> #ret { T::#attr_name(self, ctx)#sawait })
             } else {
-                quote!(#stream;)
+                declaration(asynch, sig, ret, krate)
             }
         }
     }
@@ -565,7 +567,7 @@ fn handler_attribute_write(
     if !delegate && attr.field.is_optional {
         if asynch {
             quote!(
-                fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> + #krate::utils::sync::MaybeSend {
                     core::future::ready(Err(#krate::error::ErrorCode::AttributeNotFound.into()))
                 }
             )
@@ -584,14 +586,15 @@ fn handler_attribute_write(
                 }
             )
         } else {
-            let stream = quote!(
-                #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
+            let sig = quote!(
+                fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type)
             );
+            let ret = quote!(Result<(), #krate::error::Error>);
 
             if delegate {
-                quote!(#stream { T::#attr_name(self, ctx, value)#sawait })
+                quote!(#pasync #sig -> #ret { T::#attr_name(self, ctx, value)#sawait })
             } else {
-                quote!(#stream;)
+                declaration(asynch, sig, ret, krate)
             }
         }
     }
@@ -668,19 +671,20 @@ fn handler_command(
                         }
                     )
                 } else {
-                    let stream = quote!(
-                        #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                    let sig = quote!(
+                        fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                             &self,
                             ctx: impl #krate::dm::InvokeContext,
                             request: #field_req,
                             response: #field_resp,
-                        ) -> Result<P, #krate::error::Error>
+                        )
                     );
+                    let ret = quote!(Result<P, #krate::error::Error>);
 
                     if delegate {
-                        quote!(#stream { T::#cmd_name(self, ctx, request, response)#sawait })
+                        quote!(#pasync #sig -> #ret { T::#cmd_name(self, ctx, request, response)#sawait })
                     } else {
-                        quote!(#stream;)
+                        declaration(asynch, sig, ret, krate)
                     }
                 }
             } else {
@@ -695,18 +699,19 @@ fn handler_command(
                         }
                     )
                 } else {
-                    let stream = quote!(
-                        #pasync fn #cmd_name(
+                    let sig = quote!(
+                        fn #cmd_name(
                             &self,
                             ctx: impl #krate::dm::InvokeContext,
                             request: #field_req,
-                        ) -> Result<#field_resp, #krate::error::Error>
+                        )
                     );
+                    let ret = quote!(Result<#field_resp, #krate::error::Error>);
 
                     if delegate {
-                        quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
+                        quote!(#pasync #sig -> #ret { T::#cmd_name(self, ctx, request)#sawait })
                     } else {
-                        quote!(#stream;)
+                        declaration(asynch, sig, ret, krate)
                     }
                 }
             }
@@ -722,18 +727,19 @@ fn handler_command(
                     }
                 )
             } else {
-                let stream = quote!(
-                    #pasync fn #cmd_name(
+                let sig = quote!(
+                    fn #cmd_name(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
-                    ) -> Result<(), #krate::error::Error>
+                    )
                 );
+                let ret = quote!(Result<(), #krate::error::Error>);
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
+                    quote!(#pasync #sig -> #ret { T::#cmd_name(self, ctx, request)#sawait })
                 } else {
-                    quote!(#stream;)
+                    declaration(asynch, sig, ret, krate)
                 }
             }
         }
@@ -750,18 +756,19 @@ fn handler_command(
                     }
                 )
             } else {
-                let stream = quote!(
-                    #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                let sig = quote!(
+                    fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         response: #field_resp,
-                    ) -> Result<P, #krate::error::Error>
+                    )
                 );
+                let ret = quote!(Result<P, #krate::error::Error>);
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, response)#sawait })
+                    quote!(#pasync #sig -> #ret { T::#cmd_name(self, ctx, response)#sawait })
                 } else {
-                    quote!(#stream;)
+                    declaration(asynch, sig, ret, krate)
                 }
             }
         } else {
@@ -775,17 +782,18 @@ fn handler_command(
                     }
                 )
             } else {
-                let stream = quote!(
-                    #pasync fn #cmd_name(
+                let sig = quote!(
+                    fn #cmd_name(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
-                    ) -> Result<#field_resp, #krate::error::Error>
+                    )
                 );
+                let ret = quote!(Result<#field_resp, #krate::error::Error>);
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx)#sawait })
+                    quote!(#pasync #sig -> #ret { T::#cmd_name(self, ctx)#sawait })
                 } else {
-                    quote!(#stream;)
+                    declaration(asynch, sig, ret, krate)
                 }
             }
         }
@@ -800,19 +808,32 @@ fn handler_command(
                 }
             )
         } else {
-            let stream = quote!(
-                #pasync fn #cmd_name(
+            let sig = quote!(
+                fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
-                ) -> Result<(), #krate::error::Error>
+                )
             );
+            let ret = quote!(Result<(), #krate::error::Error>);
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx)#sawait })
+                quote!(#pasync #sig -> #ret { T::#cmd_name(self, ctx)#sawait })
             } else {
-                quote!(#stream;)
+                declaration(asynch, sig, ret, krate)
             }
         }
+    }
+}
+
+/// Return a token stream declaring a handler trait method with the provided signature and return type.
+///
+/// An async method returns a future that is `MaybeSend`, so that the adaptor can rely on it being
+/// `Send` when `rs-matter` is built with feature `send-sync`.
+fn declaration(asynch: bool, sig: TokenStream, ret: TokenStream, krate: &Ident) -> TokenStream {
+    if asynch {
+        quote!(#sig -> impl core::future::Future<Output = #ret> + #krate::utils::sync::MaybeSend;)
+    } else {
+        quote!(#sig -> #ret;)
     }
 }
 
@@ -1308,7 +1329,7 @@ mod tests {
             &handler(false, false, cluster, &idl.globals, &context),
             &quote!(
                 #[doc = "The handler trait for the cluster."]
-                pub trait ClusterHandler {
+                pub trait ClusterHandler: rs_matter_crate::utils::sync::MaybeSendSync {
                     #[doc = "The cluster-metadata corresponding to this handler trait."]
                     const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
                     fn dataver(&self) -> u32;
@@ -1324,7 +1345,7 @@ mod tests {
                         &self,
                         _ctx: impl rs_matter_crate::dm::HandlerContext,
                     ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
-                    {
+                           + rs_matter_crate::utils::sync::MaybeSend {
                         core::future::pending::<Result<(), rs_matter_crate::error::Error>>()
                     }
                     fn on_off(

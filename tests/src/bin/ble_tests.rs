@@ -96,6 +96,7 @@ use rs_matter::transport::network::thread::otbr::OtbrCtl;
 use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::sync::MaybeSend;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
@@ -512,7 +513,7 @@ impl NetCtl for DeferredNetCtl<'_> {
 
     async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         self.ctl.scan(network, f).await
     }
@@ -539,8 +540,6 @@ impl NetChangeNotif for DeferredNetCtl<'_> {
         self.ctl.wait_changed().await
     }
 }
-
-impl rs_matter::utils::sync::DynBase for DeferredNetCtl<'_> {}
 
 impl WirelessDiag for DeferredNetCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {

@@ -28,6 +28,7 @@ use crate::error::{Error, ErrorCode};
 use crate::im::encoding::{AttrPath, AttrStatus, IMStatusCode};
 use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
 use crate::utils::maybe::Maybe;
+use crate::utils::sync::blocking::Mutex;
 
 use super::{Access, AttrId, Cluster, ClusterId, EndptId, Quality};
 
@@ -288,7 +289,7 @@ pub struct AttrDetails {
     /// handlers set this via `ReadContext::attr().set_cluster_status(...)` /
     /// `WriteContext::attr().set_cluster_status(...)` before returning an
     /// error.
-    pub cluster_status: Cell<Option<NonZeroU8>>,
+    pub cluster_status: Mutex<Cell<Option<NonZeroU8>>>,
 }
 
 impl AttrDetails {
@@ -348,12 +349,13 @@ impl AttrDetails {
     /// `NonZeroU8::new(code)`, which maps the reserved `0x00` (global
     /// `SUCCESS`) to `None` visibly rather than silently.
     pub fn set_cluster_status(&self, cluster_status: Option<NonZeroU8>) {
-        self.cluster_status.set(cluster_status);
+        self.cluster_status
+            .lock(|status| status.set(cluster_status));
     }
 
     /// The currently stashed cluster-specific status, if any.
     pub fn cluster_status(&self) -> Option<NonZeroU8> {
-        self.cluster_status.get()
+        self.cluster_status.lock(Cell::get)
     }
 
     pub fn status(&self, status: IMStatusCode) -> Option<AttrStatus> {

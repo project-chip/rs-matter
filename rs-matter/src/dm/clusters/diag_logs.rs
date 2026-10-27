@@ -51,6 +51,7 @@
 //! with [`client::DiagLogsBdxHandler`] (the mirror of the server-side
 //! [`OtaBdxHandler`](crate::dm::clusters::ota_prov::OtaBdxHandler)).
 
+use core::future::Future;
 use core::num::NonZeroU8;
 
 use crate::bdx::{BdxBuffer, BdxUploadInitiator};
@@ -61,7 +62,7 @@ use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE};
 use crate::utils::cell::RefCell;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{Notification, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification, Signal};
 use crate::with;
 
 pub use crate::dm::clusters::decl::diagnostic_logs::*;
@@ -84,19 +85,24 @@ const MAX_FILE_DESIGNATOR: usize = 32;
 /// inline response and the BDX stream, so a single implementation covers every
 /// flavor and both delivery paths - e.g. return a stored crash core dump for
 /// [`IntentEnum::CrashLogs`].
-pub trait DiagLogs {
+pub trait DiagLogs: MaybeSendSync {
     /// The total size, in bytes, of the log for `intent`, or `None` if the node
     /// has no such log (the cluster answers `NoLogs`).
     ///
     /// The size decides the delivery path: a log up to [`MAX_INLINE_LOG`] bytes
     /// is returned inline; a larger one is streamed over BDX when the requestor
     /// asks for it (and is otherwise truncated to an inline response).
-    async fn size(&self, intent: IntentEnum) -> Option<u64>;
+    fn size(&self, intent: IntentEnum) -> impl Future<Output = Option<u64>> + MaybeSend;
 
     /// Read up to `buf.len()` bytes of the log for `intent` starting at `offset`,
     /// returning the number of bytes read (`0` marks the end of the log). Used
     /// for both the inline response and BDX streaming.
-    async fn read(&self, intent: IntentEnum, offset: u64, buf: &mut [u8]) -> Result<usize, Error>;
+    fn read(
+        &self,
+        intent: IntentEnum,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> impl Future<Output = Result<usize, Error>> + MaybeSend;
 
     /// Called once the `intent` log has been successfully delivered to the
     /// requestor - the inline response built with the content, or the BDX transfer
@@ -106,7 +112,9 @@ pub trait DiagLogs {
     /// It is **not** called when delivery did not happen (`NoLogs`/`Busy`/`Denied`,
     /// or a BDX transfer the requestor aborted), so a log that was not handed over
     /// is preserved for a later retry.
-    async fn retrieved(&self, _intent: IntentEnum) {}
+    fn retrieved(&self, _intent: IntentEnum) -> impl Future<Output = ()> + MaybeSend {
+        core::future::ready(())
+    }
 }
 
 impl<T> DiagLogs for &T

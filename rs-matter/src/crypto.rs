@@ -18,6 +18,7 @@
 //! Cryptographic abstractions and backend.
 
 use crate::error::Error;
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 pub use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
@@ -35,45 +36,45 @@ mod rand;
 /// The trait is designed in a way where it allows customizing a concrete implementation by
 /// swapping out its out of the box algorithms with custom (potentially HW-accelerated) ones,
 /// by decorating the original implementation and replacing only the required types and methods.
-pub trait Crypto {
-    type Rand<'a>: CryptoRng + Copy
+pub trait Crypto: MaybeSendSync {
+    type Rand<'a>: CryptoRng + Copy + MaybeSend
     where
         Self: 'a;
 
-    type WeakRand<'a>: Rng + Copy
+    type WeakRand<'a>: Rng + Copy + MaybeSend
     where
         Self: 'a;
 
     /// Hasher type returned by `Crypto::hash`.
     ///
     /// As per the Matter spec, the hasher should be SHA-256.
-    type Hash<'a>: Digest<HASH_LEN>
+    type Hash<'a>: Digest<HASH_LEN> + MaybeSend
     where
         Self: 'a;
 
     /// SHA-1 hasher type returned by `Crypto::hash1`.
-    type Hash1<'a>: Digest<SHA1_HASH_LEN>
+    type Hash1<'a>: Digest<SHA1_HASH_LEN> + MaybeSend
     where
         Self: 'a;
 
     /// HMAC hasher type returned by `Crypto::hmac`.
     ///
     /// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.
-    type Hmac<'a>: Digest<HASH_LEN>
+    type Hmac<'a>: Digest<HASH_LEN> + MaybeSend
     where
         Self: 'a;
 
     /// KDF type returned by `Crypto::kdf`.
     ///
     /// As per the Matter spec, the KDF should be HKDF-SHA256.
-    type Kdf<'a>: Kdf
+    type Kdf<'a>: Kdf + MaybeSend
     where
         Self: 'a;
 
     /// PBKDF type returned by `Crypto::pbkdf`.
     ///
     /// As per the Matter spec, the PBKDF should be PBKDF2-HMAC-SHA256.
-    type PbKdf<'a>: PbKdf
+    type PbKdf<'a>: PbKdf + MaybeSend
     where
         Self: 'a;
 
@@ -81,7 +82,7 @@ pub trait Crypto {
     ///
     /// As per the Matter spec, the AEAD algorithm used is AES-CCM with 128-bit keys, 13-byte nonces
     /// and 16-byte tags.
-    type Aead<'a>: Aead<AEAD_CANON_KEY_LEN, AEAD_NONCE_LEN>
+    type Aead<'a>: Aead<AEAD_CANON_KEY_LEN, AEAD_NONCE_LEN> + MaybeSend
     where
         Self: 'a;
 
@@ -96,7 +97,7 @@ pub trait Crypto {
     /// representation of the public key type as compared to the `EcPoint` type.
     /// The only requirement is that both should be possible to convert from/to
     /// the same canonical representation.
-    type PublicKey<'a>: PublicKey<'a, PKC_CANON_PUBLIC_KEY_LEN, PKC_SIGNATURE_LEN>
+    type PublicKey<'a>: PublicKey<'a, PKC_CANON_PUBLIC_KEY_LEN, PKC_SIGNATURE_LEN> + MaybeSend
     where
         Self: 'a;
 
@@ -112,11 +113,11 @@ pub trait Crypto {
     /// The only requirement is that both should be possible to convert from/to
     /// the same canonical representation.
     type SigningSecretKey<'a>: SigningSecretKey<
-        'a,
-        PKC_CANON_PUBLIC_KEY_LEN,
-        PKC_SIGNATURE_LEN,
-        PublicKey<'a> = Self::PublicKey<'a>,
-    >
+            'a,
+            PKC_CANON_PUBLIC_KEY_LEN,
+            PKC_SIGNATURE_LEN,
+            PublicKey<'a> = Self::PublicKey<'a>,
+        > + MaybeSend
     where
         Self: 'a;
 
@@ -132,13 +133,13 @@ pub trait Crypto {
     /// The only requirement is that both should be possible to convert from/to
     /// the same canonical representation.
     type SecretKey<'a>: SecretKey<
-        'a,
-        PKC_CANON_SECRET_KEY_LEN,
-        PKC_CANON_PUBLIC_KEY_LEN,
-        PKC_SIGNATURE_LEN,
-        PKC_SHARED_SECRET_LEN,
-        PublicKey<'a> = Self::PublicKey<'a>,
-    >
+            'a,
+            PKC_CANON_SECRET_KEY_LEN,
+            PKC_CANON_PUBLIC_KEY_LEN,
+            PKC_SIGNATURE_LEN,
+            PKC_SHARED_SECRET_LEN,
+            PublicKey<'a> = Self::PublicKey<'a>,
+        > + MaybeSend
     where
         Self: 'a;
 
@@ -147,7 +148,7 @@ pub trait Crypto {
     /// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
     ///
     /// In other words, the EC scalar is a scalar on the secp256r1 curve.
-    type EcScalar<'a>: EcScalar<'a, EC_CANON_SCALAR_LEN>
+    type EcScalar<'a>: EcScalar<'a, EC_CANON_SCALAR_LEN> + MaybeSend
     where
         Self: 'a;
 
@@ -156,12 +157,8 @@ pub trait Crypto {
     /// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
     ///
     /// In other words, the EC point is a point on the secp256r1 curve.
-    type EcPoint<'a>: EcPoint<
-        'a,
-        EC_CANON_POINT_LEN,
-        EC_CANON_SCALAR_LEN,
-        Scalar<'a> = Self::EcScalar<'a>,
-    >
+    type EcPoint<'a>: EcPoint<'a, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, Scalar<'a> = Self::EcScalar<'a>>
+        + MaybeSend
     where
         Self: 'a;
 
@@ -655,7 +652,7 @@ pub fn default_crypto<'s, R>(
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 ) -> impl Crypto + 's
 where
-    R: CryptoRng + 's,
+    R: CryptoRng + MaybeSend + 's,
 {
     #[cfg(feature = "openssl")]
     let crypto = backend::openssl::OpenSslCrypto::new(singleton_secret_key);

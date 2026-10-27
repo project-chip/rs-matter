@@ -40,6 +40,7 @@
 //! that itself rather than trusting the hooks; see
 //! [`EnergyMeasurement::as_cumulative`].
 
+use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select, Either};
@@ -52,7 +53,7 @@ use crate::dm::{
 use crate::error::Error;
 use crate::im::EnergyMilliWh;
 use crate::tlv::{Nullable, NullableBuilder, TLVBuilderParent};
-use crate::utils::sync::Signal;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 use super::measurement::{write_accuracy, MeasurementAccuracy};
 
@@ -561,7 +562,7 @@ where
 }
 
 /// Device-specific hooks for the Electrical Energy Measurement cluster.
-pub trait ElecEnergyMeasHooks {
+pub trait ElecEnergyMeasHooks: MaybeSendSync {
     /// The features, attributes and events this instance serves. See
     /// [`ElecEnergyMeasHandler::validate`] for what a serveable configuration
     /// is.
@@ -604,8 +605,11 @@ pub trait ElecEnergyMeasHooks {
     /// # Panics
     /// This future must not return; the SDK panics if it does. Loop forever,
     /// or await `core::future::pending::<()>()`.
-    async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
-        core::future::pending::<()>().await
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
+        core::future::pending::<()>()
     }
 }
 
@@ -624,7 +628,7 @@ where
         (*self).periodic_energy_imported()
     }
 
-    async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
+    async fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) {
         (*self).run(notify).await
     }
 }

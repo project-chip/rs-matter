@@ -82,6 +82,7 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
@@ -785,13 +786,13 @@ const LIGHT_PATTERNS: &[Mode] = &[
 /// power-cycle step on `PICS_USER_PROMPT` and are not enabled, so persisting
 /// here would buy nothing testable.
 struct ModeSelectDeviceLogic {
-    current: Cell<ModeId>,
+    current: Mutex<Cell<ModeId>>,
 }
 
 impl ModeSelectDeviceLogic {
     pub const fn new() -> Self {
         Self {
-            current: Cell::new(0),
+            current: Mutex::new(Cell::new(0)),
         }
     }
 }
@@ -830,7 +831,7 @@ impl ModeSelectHooks for ModeSelectDeviceLogic {
 
     fn change_to_mode(&self, mode: ModeId) -> Result<(), Error> {
         trace!("ModeSelectDeviceLogic: light pattern -> {mode}");
-        self.current.set(mode);
+        self.current.lock(|current| current.set(mode));
 
         Ok(())
     }

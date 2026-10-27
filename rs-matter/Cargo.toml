@@ -186,7 +186,7 @@ openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
 # This is a WIP feature and not yet fully supported.
-sync-mutex = []
+send-sync = []
 # Enable a small OTA DCL client.
 # TODO: We likely don't need this hidden behind a feature.
 ota-dcl = ["dep:serde", "dep:serde-json-core", "heapless/serde"]
@@ -319,6 +319,11 @@ async-io = "2"
 [[test]]
 name = "mcsp"
 required-features = ["async-io", "groups", "max-group-keys-per-fabric-2", "max-groups-per-fabric-4"]
+
+# Checks that the futures of a node are `Send`, which they are only with `send-sync`.
+[[test]]
+name = "send_sync"
+required-features = ["send-sync", "os"]
 
 [lints.rust]
 # `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)

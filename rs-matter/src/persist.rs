@@ -24,6 +24,7 @@ use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 #[cfg(feature = "std")]
 pub use fileio::*;
@@ -318,7 +319,7 @@ impl KvBlobStore for DummyKvBlobStore {
 }
 
 /// A trait representing access to a `KvBlobStore` instance and a buffer for its use.
-pub trait KvBlobStoreAccess {
+pub trait KvBlobStoreAccess: MaybeSendSync {
     /// Get the `KvBlobStore` instance and buffer provided by this access.
     fn access<F, R>(&self, f: F) -> R
     where
@@ -370,7 +371,7 @@ impl<'a, S, const KB: usize> SharedKvBlobStore<'a, S, KB> {
 
 impl<S, const KB: usize> KvBlobStoreAccess for SharedKvBlobStore<'_, S, KB>
 where
-    S: KvBlobStore,
+    S: KvBlobStore + MaybeSend,
 {
     fn access<F, R>(&self, f: F) -> R
     where

@@ -33,16 +33,16 @@ use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
-use crate::utils::sync::DynBase;
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
 
 use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
 pub use asynch::*;
 
-pub trait DynAttrChangeNotifier: DynBase + AttrChangeNotifier {}
+pub trait DynAttrChangeNotifier: MaybeSendSync + AttrChangeNotifier {}
 
-impl<T> DynAttrChangeNotifier for T where T: DynBase + AttrChangeNotifier {}
+impl<T> DynAttrChangeNotifier for T where T: MaybeSendSync + AttrChangeNotifier {}
 
 /// A trait for notifying the data model that the state of an attribute has changed.
 pub trait AttrChangeNotifier {
@@ -283,7 +283,7 @@ where
 ///
 /// It provides access to the Matter instance and to Data Model-related objects,
 /// which could be useful in the context of executing background tasks specific for the concrete handler.
-pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
+pub trait HandlerContext: AttrChangeNotifier + EventEmitter + MaybeSendSync {
     /// Return the Matter object that is associated with this handler
     fn matter(&self) -> &Matter<'_>;
 
@@ -375,7 +375,7 @@ where
 }
 
 /// A context super-type that is passed to the handler when bumping a dataver
-pub trait MatchContext {
+pub trait MatchContext: MaybeSendSync {
     /// Return the endpoint ID that is associated with context.
     /// `None` if the context is not associated with a specific endpoint (e.g. a global handler's dataver bump).
     fn endpt(&self) -> Option<EndptId>;
@@ -1386,7 +1386,7 @@ pub enum LifecycleOp {
 ///
 /// Prefer this trait when implementing handlers that are known to be non-blocking and additionally,
 /// mark those with `NonBlockingHandler`.
-pub trait Handler {
+pub trait Handler: MaybeSendSync {
     /// Read from the requested attribute and encode the result using the provided reply type.
     fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error>;
 
@@ -1416,7 +1416,10 @@ pub trait Handler {
 
     /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
     /// asynchronously - forever and in the "background".
-    fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+    fn run(
+        &self,
+        _ctx: impl HandlerContext,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
         // Default implementation pends forever.
         // This is useful for handlers that do not need to run any async operations in the background.
         core::future::pending::<Result<(), Error>>()
@@ -1491,6 +1494,7 @@ impl<T> NonBlockingHandler for &mut T where T: NonBlockingHandler {}
 
 impl<M, H> Handler for (M, H)
 where
+    M: MaybeSendSync,
     H: Handler,
 {
     fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
@@ -1518,11 +1522,16 @@ where
     }
 }
 
-impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
+impl<M, H> NonBlockingHandler for (M, H)
+where
+    M: MaybeSendSync,
+    H: NonBlockingHandler,
+{
+}
 
 /// A trait that defines a matcher for determining whether a handler - member of a handler-chain (`ChainedHandler`)
 /// should be invoked for a specific operation.
-pub trait Matcher {
+pub trait Matcher: MaybeSendSync {
     /// Return `true` if the corresponding handler should be invoked for the provided context.
     fn matches(&self, ctx: impl MatchContext) -> bool;
 }
@@ -1543,7 +1552,7 @@ pub type FnMatcher = fn(EndptId, ClusterId) -> bool;
 
 impl<F> Matcher for F
 where
-    F: Fn(EndptId, ClusterId) -> bool,
+    F: Fn(EndptId, ClusterId) -> bool + MaybeSendSync,
 {
     fn matches(&self, ctx: impl MatchContext) -> bool {
         // A matcher is a function of both IDs, so a context that lacks one cannot be
@@ -1794,6 +1803,7 @@ mod asynch {
     use crate::utils::select::Coalesce;
 
     use crate::im::encoding::{IMStatusCode, ReportDataResp};
+    use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
     use super::{
         ChainedHandler, EmptyHandler, Handler, InvokeContext, LifecycleOp, NonBlockingHandler,
@@ -1809,18 +1819,21 @@ mod asynch {
     /// Moreover, the `InteractionModel` implementation expects a single `AsyncHandler` instance, so the expectation
     /// is that the user will compose multiple handlers into a single `AsyncHandler` instance, using `ChainedHandler`
     /// or other means.
-    pub trait AsyncHandler {
+    pub trait AsyncHandler: MaybeSendSync {
         /// Read from the requested attribute and encode the result using the provided reply type.
         fn read(
             &self,
             ctx: impl ReadContext,
             reply: impl ReadReply,
-        ) -> impl Future<Output = Result<(), Error>>;
+        ) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 
         /// Write into the requested attribute using the provided data.
         ///
         /// The default implementation errors out with `ErrorCode::AttributeNotFound`.
-        fn write(&self, _ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+        fn write(
+            &self,
+            _ctx: impl WriteContext,
+        ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
             core::future::ready(Err(ErrorCode::AttributeNotFound.into()))
         }
 
@@ -1831,7 +1844,7 @@ mod asynch {
             &self,
             _ctx: impl InvokeContext,
             _reply: impl InvokeReply,
-        ) -> impl Future<Output = Result<(), Error>> {
+        ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
             core::future::ready(Err(ErrorCode::CommandNotFound.into()))
         }
 
@@ -1856,7 +1869,10 @@ mod asynch {
 
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
-        fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        fn run(
+            &self,
+            _ctx: impl HandlerContext,
+        ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
             // Default implementation pends forever.
             // This is useful for handlers that do not need to run any async operations in the background.
             core::future::pending::<Result<(), Error>>()
@@ -1965,7 +1981,7 @@ mod asynch {
     /// multi-chunk loop and the inter-chunk `StatusResponse(Success)` acks; a
     /// handler that cares about chunk boundaries reads `report.more_chunks` and
     /// reassembles across calls itself.
-    pub trait ReportDataHandler {
+    pub trait ReportDataHandler: MaybeSendSync {
         /// Handle a single received `ReportData` chunk.
         ///
         /// Returning `Ok(())` makes the `InteractionModel` reply
@@ -1976,7 +1992,7 @@ mod asynch {
             &self,
             ctx: impl ReportContext,
             report: &ReportDataResp<'_>,
-        ) -> impl Future<Output = Result<(), IMStatusCode>>;
+        ) -> impl Future<Output = Result<(), IMStatusCode>> + MaybeSend;
     }
 
     impl<T> ReportDataHandler for &T
@@ -2022,6 +2038,7 @@ mod asynch {
 
     impl<M, H> AsyncHandler for (M, H)
     where
+        M: MaybeSendSync,
         H: AsyncHandler,
     {
         fn read(

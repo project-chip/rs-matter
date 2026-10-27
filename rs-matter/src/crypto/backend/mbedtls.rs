@@ -50,6 +50,7 @@ use crate::crypto::{CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef, S
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::MaybeSend;
 
 /// MbedTLS-based crypto backend for Matter.
 pub struct MbedtlsCrypto<'s, T> {
@@ -87,7 +88,7 @@ impl<'s, T> MbedtlsCrypto<'s, T> {
 
 impl<T> crate::crypto::Crypto for MbedtlsCrypto<'_, T>
 where
-    T: CryptoRng,
+    T: CryptoRng + MaybeSend,
 {
     type Rand<'a>
         = &'a SharedRand<T>
@@ -513,6 +514,10 @@ impl<const HASH_LEN: usize> Drop for Hmac<HASH_LEN> {
     }
 }
 
+// SAFETY: The pointers of the MbedTLS context refer to memory owned by the context, or to
+// static tables, and MbedTLS keeps no per-thread state for it.
+unsafe impl<const HASH_LEN: usize> Send for Hmac<HASH_LEN> {}
+
 impl<const HASH_LEN: usize> Clone for Hmac<HASH_LEN> {
     fn clone(&self) -> Self {
         let mut raw = Default::default();
@@ -811,6 +816,10 @@ impl Drop for Mpi {
     }
 }
 
+// SAFETY: The pointers of the MbedTLS context refer to memory owned by the context, or to
+// static tables, and MbedTLS keeps no per-thread state for it.
+unsafe impl Send for Mpi {}
+
 /// A shareable elliptic curve group protected by a mutex.
 ///
 /// Necessary because a lot of MbedTLS EC functions require a mutable reference to the group,
@@ -875,6 +884,10 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECGroup<LEN, SCALAR_LEN
         }
     }
 }
+
+// SAFETY: The pointers of the MbedTLS context refer to memory owned by the context, or to
+// static tables, and MbedTLS keeps no per-thread state for it.
+unsafe impl<const LEN: usize, const SCALAR_LEN: usize> Send for ECGroup<LEN, SCALAR_LEN> {}
 
 /// Elliptic curve point implementation using MbedTLS.
 pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize, R> {
@@ -957,6 +970,15 @@ impl<const LEN: usize, const SCALAR_LEN: usize, R> Drop for ECPoint<'_, LEN, SCA
             mbedtls_rs_sys::mbedtls_ecp_point_free(&mut self.raw);
         }
     }
+}
+
+// SAFETY: The pointers of the MbedTLS context refer to memory owned by the context, or to
+// static tables, and MbedTLS keeps no per-thread state for it.
+unsafe impl<const LEN: usize, const SCALAR_LEN: usize, R> Send for ECPoint<'_, LEN, SCALAR_LEN, R>
+where
+    SharedECGroup<LEN, SCALAR_LEN>: Sync,
+    R: Sync,
+{
 }
 
 impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>

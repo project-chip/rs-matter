@@ -32,8 +32,7 @@ use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
-use crate::utils::sync::blocking;
-use crate::utils::sync::DynBase;
+use crate::utils::sync::{blocking, MaybeSend, MaybeSendSync};
 
 use super::NetChangeNotif;
 
@@ -600,7 +599,7 @@ where
 
 impl<const N: usize, T> Networks for WirelessNetworks<N, T>
 where
-    T: WirelessNetwork,
+    T: WirelessNetwork + MaybeSendSync,
 {
     fn max_networks(&self) -> Result<u8, Error> {
         Ok(N as _)
@@ -780,8 +779,6 @@ impl net_comm::NetCtlStatus for NoopWirelessNetCtl {
     }
 }
 
-impl DynBase for NoopWirelessNetCtl {}
-
 impl wifi_diag::WirelessDiag for NoopWirelessNetCtl {}
 
 impl wifi_diag::WifiDiag for NoopWirelessNetCtl {}
@@ -957,7 +954,7 @@ where
 
     async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&net_comm::NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&net_comm::NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         self.net_ctl.scan(network, f).await
     }
@@ -1007,12 +1004,6 @@ where
         self.net_ctl.wait_changed().await
     }
 }
-
-#[cfg(feature = "sync-mutex")]
-impl<T> DynBase for NetCtlWithStatusImpl<'_, T> where T: Send + Sync {}
-
-#[cfg(not(feature = "sync-mutex"))]
-impl<T> DynBase for NetCtlWithStatusImpl<'_, T> {}
 
 impl<T> wifi_diag::WirelessDiag for NetCtlWithStatusImpl<'_, T>
 where

@@ -19,6 +19,8 @@
 
 use core::future::Future;
 
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
+
 pub mod eth;
 #[cfg(feature = "os")]
 pub mod generic;
@@ -40,9 +42,9 @@ pub use generic::GenericNetifs as SysNetifs;
 pub use unix::UnixNetifs as SysNetifs;
 
 /// A generic trait for network change notifications.
-pub trait NetChangeNotif {
+pub trait NetChangeNotif: MaybeSendSync {
     /// Wait until a change occurs.
-    async fn wait_changed(&self);
+    fn wait_changed(&self) -> impl Future<Output = ()> + MaybeSend;
 }
 
 impl<T> NetChangeNotif for &T

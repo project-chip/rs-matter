@@ -128,7 +128,7 @@ fn main() -> Result<(), Error> {
     // closes its relay) and the two metering clusters (which report what it
     // draws). A plain shared reference is enough: the device state behind it
     // is kept in an `rs-matter` `Mutex`, so it is `Sync` when the crate is
-    // built with the `sync-mutex` feature and free of charge when it is not.
+    // built with the `send-sync` feature and free of charge when it is not.
     let element = HeatingElement::new();
 
     // Thermostat cluster setup. The Thermostat cluster is not coupled to any
@@ -391,7 +391,7 @@ pub struct HeatingElement {
 }
 
 /// The element's state, behind one lock the way `on_off` keeps its own: the
-/// mutex is a no-op unless `rs-matter` is built with the `sync-mutex` feature,
+/// mutex is a no-op unless `rs-matter` is built with the `send-sync` feature,
 /// and with it the device logic is `Sync`.
 struct ElementState {
     /// Whether the relay is closed and the element is drawing power.

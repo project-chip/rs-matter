@@ -34,6 +34,7 @@ use crate::sc::SecureChannel;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
 
 /// Send a busy response if - after that many ms - the exchange
@@ -44,8 +45,9 @@ const RESPOND_BUSY_MS: u32 = 500;
 ///
 /// The handler takes ownership of the exchange: once handling is done, the only
 /// thing left to do with the exchange is to drop it (which ends it).
-pub trait ExchangeHandler {
-    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error>;
+pub trait ExchangeHandler: MaybeSendSync {
+    fn handle(&self, exchange: Exchange<'_>)
+        -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }
 
 impl<T> ExchangeHandler for &T
@@ -278,7 +280,7 @@ pub type DefaultExchangeHandler<
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > = ChainedExchangeHandler<
     &'d InteractionModel<'a, C, B, T, K, R, NS, NE>,
-    SecureChannel<'d, &'d C>,
+    SecureChannel<&'d C, &'d InteractionModel<'a, C, B, T, K, R, NS, NE>>,
 >;
 
 impl<'d, 'a, C, B, T, K, R, const NS: usize, const NE: usize>
@@ -388,7 +390,7 @@ where
         'a,
         ChainedExchangeHandler<
             &'d InteractionModel<'a, C, B, T, K, R, NS, NE>,
-            SecureChannel<'d, &'d C>,
+            SecureChannel<&'d C, &'d InteractionModel<'a, C, B, T, K, R, NS, NE>>,
         >,
     > {
         &self.responder

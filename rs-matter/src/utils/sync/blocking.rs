@@ -114,19 +114,42 @@ mod mutex {
             unsafe { &mut *self.data.get() }
         }
     }
+
+    impl<T: Clone, R: RawMutex> Clone for Mutex<T, R> {
+        fn clone(&self) -> Self {
+            Self::new(self.lock(T::clone))
+        }
+    }
+
+    /// Formats the protected data. This locks the mutex, so it must not be used
+    /// from within [`Mutex::lock`] with a raw mutex that is not reentrant.
+    impl<T: core::fmt::Debug, R: RawMutex> core::fmt::Debug for Mutex<T, R> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            self.lock(|data| core::fmt::Debug::fmt(data, f))
+        }
+    }
+
+    /// Formats the protected data. This locks the mutex, so it must not be used
+    /// from within [`Mutex::lock`] with a raw mutex that is not reentrant.
+    #[cfg(feature = "defmt")]
+    impl<T: defmt::Format, R: RawMutex> defmt::Format for Mutex<T, R> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            self.lock(|data| data.format(f))
+        }
+    }
 }
 
 pub mod raw {
     /// The raw mutex used throughout the `rs-matter` codebase
-    #[cfg(not(feature = "sync-mutex"))]
+    #[cfg(not(feature = "send-sync"))]
     pub type MatterRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     /// The raw mutex used throughout the `rs-matter` codebase
-    #[cfg(all(feature = "sync-mutex", not(feature = "std")))]
+    #[cfg(all(feature = "send-sync", not(feature = "std")))]
     pub type MatterRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     /// The raw mutex used throughout the `rs-matter` codebase
-    #[cfg(all(feature = "sync-mutex", feature = "std"))]
+    #[cfg(all(feature = "send-sync", feature = "std"))]
     pub type MatterRawMutex = StdRawMutex;
 
     #[cfg(feature = "std")]

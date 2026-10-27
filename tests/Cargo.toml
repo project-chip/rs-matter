@@ -45,7 +45,7 @@ default = ["log"]
 log = []
 mbedtls = ["rs-matter/mbedtls"]
 openssl = ["rs-matter/openssl"]
-sync-mutex = ["rs-matter/sync-mutex"]
+send-sync = ["rs-matter/send-sync"]
 zbus = ["rs-matter/zbus"]
 # The BlueZ (zbus) BLE backend - the default for `ble_tests`.
 ble = ["zbus"]

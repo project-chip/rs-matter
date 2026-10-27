@@ -40,7 +40,7 @@ use crate::tlv::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
@@ -391,7 +391,7 @@ impl NetworkCommissioningStatusEnum {
 }
 
 /// Trait for managing networks' credentials storage
-pub trait Networks {
+pub trait Networks: MaybeSendSync {
     /// Return the maximum number of networks supported by the implementation
     ///
     /// For `NetworkType::Ethernet` this method should always return 1
@@ -705,7 +705,7 @@ impl Networks for DummyNetworks {
 }
 
 /// Trait for managing network connectivity
-pub trait NetCtl {
+pub trait NetCtl: MaybeSendSync {
     /// Return the network type of the implementation
     fn net_type(&self) -> NetworkType;
 
@@ -771,14 +771,21 @@ pub trait NetCtl {
     /// Scan for networks and call the provided function for each network found
     ///
     /// For `NetworkType::Ethernet` this method should always fail with an error.
-    async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
+    fn scan<F>(
+        &self,
+        network: Option<&[u8]>,
+        f: F,
+    ) -> impl Future<Output = Result<(), NetCtlError>> + MaybeSend
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>;
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend;
 
     /// Connect to the network with the given credentials
     ///
     /// For `NetworkType::Ethernet` this method should always fail with an error.
-    async fn connect(&self, creds: &WirelessCreds) -> Result<(), NetCtlError>;
+    fn connect(
+        &self,
+        creds: &WirelessCreds,
+    ) -> impl Future<Output = Result<(), NetCtlError>> + MaybeSend;
 }
 
 impl<T> NetCtl for &T
@@ -818,7 +825,7 @@ where
 
     fn scan<F>(&self, network: Option<&[u8]>, f: F) -> impl Future<Output = Result<(), NetCtlError>>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         (*self).scan(network, f)
     }
@@ -906,7 +913,7 @@ where
     }
 }
 
-impl<N> NetChangeNotif for NetworksCell<N> {
+impl<N: MaybeSend> NetChangeNotif for NetworksCell<N> {
     fn wait_changed(&self) -> impl Future<Output = ()> {
         self.changed.wait()
     }

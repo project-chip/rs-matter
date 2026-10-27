@@ -92,7 +92,7 @@ use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 use super::super::decl::web_rtc_transport_provider as decl;
@@ -278,7 +278,7 @@ impl<const CAND_LEN: usize, const MAX_CAND: usize> IceCandidateSink
 ///
 /// All methods are `async` and invoked inline from the handler's command
 /// dispatch. Implementations MUST NOT perform blocking I/O.
-pub trait WebRtcHooks {
+pub trait WebRtcHooks: MaybeSendSync {
     /// Handle an inbound `SolicitOffer` command. The session ID has been
     /// allocated; the hook decides whether to respond with `deferred = false`
     /// (in which case it MUST shortly enqueue an [`OutboundWork::Offer`] so
@@ -288,41 +288,45 @@ pub trait WebRtcHooks {
     ///
     /// `SolicitOfferResponse` itself does NOT carry an SDP — see Matter Spec -
     /// so this hook never returns Offer bytes inline.
-    async fn on_solicit_offer(
+    fn on_solicit_offer(
         &self,
         session_id: u16,
         params: &OfferParams,
-    ) -> Result<SolicitOutcome, WebRtcError>;
+    ) -> impl Future<Output = Result<SolicitOutcome, WebRtcError>> + MaybeSend;
 
     /// Handle an inbound `ProvideOffer` command. The SDP Offer has been
     /// validated as UTF-8; the hooks buffers the SDP Answer internally
     /// and enqueues an [`OutboundWork::Answer`] so the handler can push
     /// it to the peer's `WebRTCTransportRequestor::Answer` command.
-    async fn on_offer(
+    fn on_offer(
         &self,
         session_id: u16,
         sdp: &str,
         params: &OfferParams,
-    ) -> Result<AnswerOutcome, WebRtcError>;
+    ) -> impl Future<Output = Result<AnswerOutcome, WebRtcError>> + MaybeSend;
 
     /// Handle an inbound `ProvideAnswer` for a session whose Offer THIS
     /// node originally sent (deferred-offer flow).
-    async fn on_answer(&self, session_id: u16, sdp: &str) -> Result<(), WebRtcError>;
+    fn on_answer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend;
 
     /// Handle an inbound batch of remote ICE candidates.
-    async fn on_ice_candidates(
+    fn on_ice_candidates(
         &self,
         session_id: u16,
         candidates: &TLVArray<'_, ICECandidateStruct<'_>>,
-    ) -> Result<(), WebRtcError>;
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend;
 
     /// Handle an inbound `EndSession`. The session entry is removed from
     /// the table immediately after this call returns.
-    async fn on_end_session(
+    fn on_end_session(
         &self,
         session_id: u16,
         reason: WebRTCEndReasonEnum,
-    ) -> Result<(), WebRtcError>;
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend;
 
     /// Await the next outbound invocation the camera wants to push to the
     /// controller. Called in a tight loop from [`WebRtcProvHandler::run`]:
@@ -333,8 +337,8 @@ pub trait WebRtcHooks {
     /// A default implementation is provided that parks forever, i.e.
     /// opts the implementor out of outbound support. Override to enable
     /// trickle-ICE and camera-initiated session end.
-    async fn next_outbound(&self) -> OutboundWork {
-        core::future::pending().await
+    fn next_outbound(&self) -> impl Future<Output = OutboundWork> + MaybeSend {
+        core::future::pending()
     }
 
     /// Snapshot-and-consume the queued ICE candidates for
@@ -355,12 +359,12 @@ pub trait WebRtcHooks {
     /// Default: returns `Err(WebRtcError::InvalidInState)` — override
     /// alongside [`Self::next_outbound`] when emitting
     /// [`OutboundWork::IceCandidates`].
-    async fn take_ice_candidates(
+    fn take_ice_candidates(
         &self,
         _session_id: u16,
         _out: &mut dyn IceCandidateSink,
-    ) -> Result<(), WebRtcError> {
-        Err(WebRtcError::InvalidInState)
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend {
+        core::future::ready(Err(WebRtcError::InvalidInState))
     }
 
     /// Write the SDP Answer bytes for `session_id` into the supplied
@@ -373,12 +377,12 @@ pub trait WebRtcHooks {
     /// `session_id` return [`WebRtcError::InvalidInState`].
     ///
     /// Default: errors out — override when overriding [`Self::on_offer`].
-    async fn take_answer_sdp(
+    fn take_answer_sdp(
         &self,
         _session_id: u16,
         _sdp_out: &mut [u8],
-    ) -> Result<usize, WebRtcError> {
-        Err(WebRtcError::InvalidInState)
+    ) -> impl Future<Output = Result<usize, WebRtcError>> + MaybeSend {
+        core::future::ready(Err(WebRtcError::InvalidInState))
     }
 
     /// Write the SDP Offer bytes for `session_id` into the supplied
@@ -394,12 +398,12 @@ pub trait WebRtcHooks {
     /// flow ([`SolicitOutcome::deferred = true`](SolicitOutcome) on a
     /// `SolicitOffer` response, followed by an [`OutboundWork::Offer`]
     /// from [`Self::next_outbound`]).
-    async fn take_offer_sdp(
+    fn take_offer_sdp(
         &self,
         _session_id: u16,
         _sdp_out: &mut [u8],
-    ) -> Result<usize, WebRtcError> {
-        Err(WebRtcError::InvalidInState)
+    ) -> impl Future<Output = Result<usize, WebRtcError>> + MaybeSend {
+        core::future::ready(Err(WebRtcError::InvalidInState))
     }
 }
 

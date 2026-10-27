@@ -20,6 +20,7 @@ use core::fmt;
 use core::num::NonZeroU8;
 
 use crate::im::encoding::{CmdPath, CmdStatus, IMStatusCode};
+use crate::utils::sync::blocking::Mutex;
 
 use super::{Access, ClusterId, CmdId, EndptId};
 
@@ -109,7 +110,7 @@ pub struct CmdDetails {
     /// before returning an error. Stored here rather than on `Error` so that
     /// `Result<T, Error>` keeps its compact 1-byte error payload across the
     /// codebase.
-    pub cluster_status: Cell<Option<NonZeroU8>>,
+    pub cluster_status: Mutex<Cell<Option<NonZeroU8>>>,
 }
 
 impl CmdDetails {
@@ -130,7 +131,7 @@ impl CmdDetails {
             fab_idx,
             wildcard,
             command_ref,
-            cluster_status: Cell::new(None),
+            cluster_status: Mutex::new(Cell::new(None)),
         }
     }
 
@@ -142,12 +143,13 @@ impl CmdDetails {
     /// `NonZeroU8::new(code)`, which maps the reserved `0x00` (global
     /// `SUCCESS`) to `None` visibly rather than silently.
     pub fn set_cluster_status(&self, cluster_status: Option<NonZeroU8>) {
-        self.cluster_status.set(cluster_status);
+        self.cluster_status
+            .lock(|status| status.set(cluster_status));
     }
 
     /// The currently stashed cluster-specific status, if any.
     pub fn cluster_status(&self) -> Option<NonZeroU8> {
-        self.cluster_status.get()
+        self.cluster_status.lock(Cell::get)
     }
 }
 

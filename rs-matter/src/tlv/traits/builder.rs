@@ -217,6 +217,7 @@ use core::marker::PhantomData;
 
 use crate::error::Error;
 use crate::tlv::{TLVTag, TLVWrite};
+use crate::utils::sync::MaybeSend;
 
 use super::{Nullable, Octets, ToTLV, Utf8Str};
 
@@ -267,7 +268,7 @@ where
 /// using the builder, as the user cannot "forget" to build the complete TLV type which
 /// is expected.
 #[cfg(not(feature = "defmt"))]
-pub trait TLVBuilderParent: Sized + core::fmt::Debug {
+pub trait TLVBuilderParent: Sized + core::fmt::Debug + MaybeSend {
     /// The type of the writer.
     type Write: TLVWrite;
 
@@ -276,7 +277,7 @@ pub trait TLVBuilderParent: Sized + core::fmt::Debug {
 }
 
 #[cfg(feature = "defmt")]
-pub trait TLVBuilderParent: Sized + core::fmt::Debug + defmt::Format {
+pub trait TLVBuilderParent: Sized + core::fmt::Debug + defmt::Format + MaybeSend {
     /// The type of the writer.
     type Write: TLVWrite;
 
@@ -316,8 +317,8 @@ where
 #[cfg(not(feature = "defmt"))]
 impl<S, W> TLVBuilderParent for TLVWriteParent<S, W>
 where
-    S: core::fmt::Debug,
-    W: TLVWrite,
+    S: core::fmt::Debug + MaybeSend,
+    W: TLVWrite + MaybeSend,
 {
     type Write = W;
 
@@ -329,8 +330,8 @@ where
 #[cfg(feature = "defmt")]
 impl<S, W> TLVBuilderParent for TLVWriteParent<S, W>
 where
-    S: core::fmt::Debug + defmt::Format,
-    W: TLVWrite,
+    S: core::fmt::Debug + defmt::Format + MaybeSend,
+    W: TLVWrite + MaybeSend,
 {
     type Write = W;
 

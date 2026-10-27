@@ -121,6 +121,7 @@ use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, Matter};
 
@@ -145,7 +146,7 @@ use pipe::run_app_pipe_actions;
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
-static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
+static UNIT_TESTING_DATA: StaticCell<Mutex<RefCell<UnitTestingHandlerData>>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 static ICD: StaticCell<LitIcd> = StaticCell::new();
 const SCENES_CAPACITY: usize = 16;
@@ -299,7 +300,7 @@ fn main() -> Result<(), Error> {
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
-        .init_with(RefCell::init(UnitTestingHandlerData::init()));
+        .init_with(Mutex::init(RefCell::init(UnitTestingHandlerData::init())));
 
     // `--app-pipe <path>` is only ever supplied by `TC_BINFO_3_2`. We use it
     // as the trigger to switch the device's BasicInformation cluster metadata
@@ -1024,7 +1025,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
     mut rand: impl Rng + Copy,
-    unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
+    unit_testing_data: &'a Mutex<RefCell<UnitTestingHandlerData>>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
     scenes_1: ScenesHandler<'a, SCENES_CAPACITY, (&'a OnOffHandler<'a, OH, LH>, ())>,
@@ -1288,8 +1289,6 @@ struct TestEventTriggerDiag {
 /// Fires when a counter-invalidation trigger moved the persist boundary, asking
 /// the async drainer to write it to KV.
 static ICD_COUNTER_PERSIST_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
-
-impl rs_matter::utils::sync::DynBase for TestEventTriggerDiag {}
 
 impl GenDiag for TestEventTriggerDiag {
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {

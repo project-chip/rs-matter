@@ -24,7 +24,7 @@ required-features = ["zbus"]
 
 [[bin]]
 name = "onoff_light_work_stealing"
-required-features = ["sync-mutex"]
+required-features = ["send-sync"]
 
 [[bin]]
 name = "speaker"
@@ -53,7 +53,7 @@ default = ["log"]
 log = []
 mbedtls = ["rs-matter/mbedtls"]
 openssl = ["rs-matter/openssl"]
-sync-mutex = ["rs-matter/sync-mutex"]
+send-sync = ["rs-matter/send-sync"]
 zbus = ["rs-matter/zbus"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]

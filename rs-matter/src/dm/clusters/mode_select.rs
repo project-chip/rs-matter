@@ -101,6 +101,7 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, ToTLV, Utf8StrBuilder};
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::MaybeSendSync;
 use crate::with;
 
 pub use crate::dm::clusters::decl::mode_select::*;
@@ -188,7 +189,7 @@ impl<'a> Mode<'a> {
 }
 
 /// Device-specific logic behind the ModeSelect cluster.
-pub trait ModeSelectHooks {
+pub trait ModeSelectHooks: MaybeSendSync {
     /// The cluster metadata this handler exposes. See [`CLUSTER`].
     const CLUSTER: Cluster<'static>;
 
@@ -291,7 +292,7 @@ where
 /// Implemented by [`ModeSelectHandler`]; hand it to the OnOff handler on the
 /// same endpoint with
 /// [`OnOffHandler::with_on_mode_applier`](crate::dm::clusters::app::on_off::OnOffHandler::with_on_mode_applier).
-pub trait OnModeApplier {
+pub trait OnModeApplier: MaybeSendSync {
     /// Apply `OnMode`, if any.
     ///
     /// Returns the `(cluster, attribute)` the caller must report when the mode
@@ -665,6 +666,7 @@ where
 impl<H> OnModeApplier for ModeSelectHandler<H>
 where
     H: ModeSelectHooks,
+    Self: MaybeSendSync,
 {
     fn apply_on_mode(&self) -> Option<(ClusterId, AttrId)> {
         let mode = self.attrs().on_mode?;

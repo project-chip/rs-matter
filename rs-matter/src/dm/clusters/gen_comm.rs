@@ -33,7 +33,7 @@ use crate::persist::Persist;
 use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::{Nullable, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::transport::session::SessionMode;
-use crate::utils::sync::DynBase;
+use crate::utils::sync::MaybeSendSync;
 use crate::{except, with, MatterState};
 
 pub use crate::dm::clusters::decl::general_commissioning::*;
@@ -69,7 +69,7 @@ impl CommissioningErrorEnum {
 
 /// A trait indicating the commissioning policy supported by `rs-matter`.
 /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
-pub trait CommPolicy: DynBase {
+pub trait CommPolicy: MaybeSendSync {
     /// Return true if the device supports concurrent connection
     /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
     fn concurrent_connection_supported(&self) -> bool;
@@ -104,8 +104,6 @@ where
         (*self).location_cap()
     }
 }
-
-impl DynBase for bool {}
 
 impl CommPolicy for bool {
     fn concurrent_connection_supported(&self) -> bool {

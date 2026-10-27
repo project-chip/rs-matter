@@ -18,6 +18,7 @@
 //! Wifi network controller implementation based on the wpa-supplicant D-Bus service.
 
 use core::cell::RefCell;
+use core::future::Future;
 
 use std::collections::HashMap;
 
@@ -37,7 +38,7 @@ use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
-use crate::utils::sync::{blocking, DynBase, IfMultiMutex};
+use crate::utils::sync::{blocking, IfMultiMutex, MaybeSend, MaybeSendSync};
 use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
 use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
 use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;
@@ -269,7 +270,7 @@ where
 
     async fn scan<F>(&self, network: Option<&[u8]>, mut f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         const SCAN_RETRIES: usize = 3;
         const SCAN_RETRIES_SLEEP_SEC: u64 = 5;
@@ -433,8 +434,6 @@ where
     }
 }
 
-impl<T> DynBase for WpaSuppCtl<'_, T> where T: IpStackCtl {}
-
 impl<T> WifiDiag for WpaSuppCtl<'_, T>
 where
     T: IpStackCtl,
@@ -502,12 +501,12 @@ where
 /// One possible implementation would be to just invoke the command line `dhclient` utility on the
 /// wireless interface. Another possibility would be to use the DHCP client in the `edge-mdns` crate for Ipv4
 /// and then additionally assign a pre-computed link-local IP address to the interface for Ipv6.
-pub trait IpStackCtl: DynBase {
+pub trait IpStackCtl: MaybeSendSync {
     /// Connect the IP stack by e.g. configuring the network interface via DHCP (for IPv4) and SLAAC (for IPv6).
-    async fn connect(&self) -> Result<(), NetCtlError>;
+    fn connect(&self) -> impl Future<Output = Result<(), NetCtlError>> + MaybeSend;
 
     /// Wait for changes in the IP stack, such as connection status changes or network configuration updates.
-    async fn wait_changed(&self);
+    fn wait_changed(&self) -> impl Future<Output = ()> + MaybeSend;
 
     /// Check if the IP stack is currently connected.
     fn is_connected(&self) -> Result<bool, NetCtlError>;
