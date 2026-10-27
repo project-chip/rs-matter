@@ -3970,24 +3970,24 @@ mod tests {
 
     /// [`SceneInvalidator`] mock that counts calls.
     struct CountingInvalidator {
-        count: Cell<u32>,
+        count: Mutex<Cell<u32>>,
     }
 
     impl CountingInvalidator {
         const fn new() -> Self {
             Self {
-                count: Cell::new(0),
+                count: Mutex::new(Cell::new(0)),
             }
         }
 
         fn count(&self) -> u32 {
-            self.count.get()
+            self.count.lock(Cell::get)
         }
     }
 
     impl SceneInvalidator for CountingInvalidator {
         fn scenable_attribute_changed(&self, _endpoint_id: EndptId) {
-            self.count.set(self.count.get() + 1);
+            self.count.lock(|count| count.set(count.get() + 1));
         }
     }
 

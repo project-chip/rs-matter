@@ -37,8 +37,6 @@ pub use crate::dm::clusters::decl::globals::{
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct StandardPartsMatcher;
 
-impl DynBase for StandardPartsMatcher {}
-
 impl PartsMatcher for StandardPartsMatcher {
     fn matches(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
         our_endpoint == 0 && endpoint != our_endpoint
@@ -54,8 +52,6 @@ impl PartsMatcher for StandardPartsMatcher {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct AggregatorPartsMatcher;
-
-impl DynBase for AggregatorPartsMatcher {}
 
 impl PartsMatcher for AggregatorPartsMatcher {
     fn matches(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {

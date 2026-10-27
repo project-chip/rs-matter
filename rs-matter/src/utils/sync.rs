@@ -27,16 +27,19 @@ mod signal;
 
 /// A trait that all other `rs-matter` `dyn` traits should extend from.
 ///
-/// When feature `sync-mutex` is enabled, this trait extends `Send + Sync` so that all `dyn` traits are `Send + Sync`.
+/// With feature `sync-mutex`, this trait extends `Send + Sync`, so that all `dyn` traits are
+/// `Send + Sync`, and it is implemented for every type that is `Send + Sync`.
 #[cfg(feature = "sync-mutex")]
 pub trait DynBase: Send + Sync {}
 
+#[cfg(feature = "sync-mutex")]
+impl<T: ?Sized + Send + Sync> DynBase for T {}
+
 /// A trait that all other `rs-matter` `dyn` traits should extend from.
 ///
-/// When feature `sync-mutex` is disabled, this trait is empty and does not require `Send + Sync`.
+/// Without feature `sync-mutex`, this trait is empty and implemented for every type.
 #[cfg(not(feature = "sync-mutex"))]
 pub trait DynBase {}
 
-impl<T> DynBase for &T where T: DynBase {}
-
-impl DynBase for () {}
+#[cfg(not(feature = "sync-mutex"))]
+impl<T: ?Sized> DynBase for T {}

@@ -36,7 +36,7 @@ use crate::dm::clusters::thread_diag::{
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::Error;
-use crate::utils::sync::{blocking, DynBase};
+use crate::utils::sync::blocking;
 use crate::utils::zbus_proxies::openthread::border_router::{
     BorderRouterProxy, LeaderData, MacCounters, NeighborEntry,
 };
@@ -265,8 +265,6 @@ impl NetCtl for OtbrCtl<'_> {
         Ok(())
     }
 }
-
-impl DynBase for OtbrCtl<'_> {}
 
 impl WirelessDiag for OtbrCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {

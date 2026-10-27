@@ -34,7 +34,7 @@ use crate::utils::storage::Vec;
 #[cfg(feature = "persistent-subscriptions")]
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, Notification};
+use crate::utils::sync::Notification;
 
 /// The maximum number of subscriptions that can be tracked at the same time by default.
 ///
@@ -810,8 +810,6 @@ impl<const N: usize> Default for Subscriptions<N> {
         Self::new()
     }
 }
-
-impl<const N: usize> DynBase for Subscriptions<N> {}
 
 /// The inner state of `Subscriptions`, protected by a mutex.
 /// See `Subscriptions` for the public API and invariants.

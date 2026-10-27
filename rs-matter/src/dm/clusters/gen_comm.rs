@@ -105,8 +105,6 @@ where
     }
 }
 
-impl DynBase for bool {}
-
 impl CommPolicy for bool {
     fn concurrent_connection_supported(&self) -> bool {
         *self

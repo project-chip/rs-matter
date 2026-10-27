@@ -43,7 +43,7 @@ use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 use crate::transport::network::wifi::wpa_supp::band::{band_and_channel, signal_strength_to_rssi};
-use crate::utils::sync::{blocking, DynBase, IfMultiMutex};
+use crate::utils::sync::{blocking, IfMultiMutex};
 use crate::utils::zbus_proxies::nm::access_point::AccessPointProxy;
 use crate::utils::zbus_proxies::nm::connection::ConnectionProxy;
 use crate::utils::zbus_proxies::nm::device::wireless::WirelessProxy;
@@ -413,8 +413,6 @@ impl NetCtl for NetMgrCtl<'_> {
         Ok(())
     }
 }
-
-impl DynBase for NetMgrCtl<'_> {}
 
 impl WirelessDiag for NetMgrCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {

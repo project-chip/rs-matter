@@ -114,6 +114,29 @@ mod mutex {
             unsafe { &mut *self.data.get() }
         }
     }
+
+    impl<T: Clone, R: RawMutex> Clone for Mutex<T, R> {
+        fn clone(&self) -> Self {
+            Self::new(self.lock(T::clone))
+        }
+    }
+
+    /// Formats the protected data. This locks the mutex, so it must not be used
+    /// from within [`Mutex::lock`] with a raw mutex that is not reentrant.
+    impl<T: core::fmt::Debug, R: RawMutex> core::fmt::Debug for Mutex<T, R> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            self.lock(|data| core::fmt::Debug::fmt(data, f))
+        }
+    }
+
+    /// Formats the protected data. This locks the mutex, so it must not be used
+    /// from within [`Mutex::lock`] with a raw mutex that is not reentrant.
+    #[cfg(feature = "defmt")]
+    impl<T: defmt::Format, R: RawMutex> defmt::Format for Mutex<T, R> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            self.lock(|data| data.format(f))
+        }
+    }
 }
 
 pub mod raw {

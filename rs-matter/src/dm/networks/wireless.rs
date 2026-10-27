@@ -33,7 +33,6 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking;
-use crate::utils::sync::DynBase;
 
 use super::NetChangeNotif;
 
@@ -780,8 +779,6 @@ impl net_comm::NetCtlStatus for NoopWirelessNetCtl {
     }
 }
 
-impl DynBase for NoopWirelessNetCtl {}
-
 impl wifi_diag::WirelessDiag for NoopWirelessNetCtl {}
 
 impl wifi_diag::WifiDiag for NoopWirelessNetCtl {}
@@ -1007,12 +1004,6 @@ where
         self.net_ctl.wait_changed().await
     }
 }
-
-#[cfg(feature = "sync-mutex")]
-impl<T> DynBase for NetCtlWithStatusImpl<'_, T> where T: Send + Sync {}
-
-#[cfg(not(feature = "sync-mutex"))]
-impl<T> DynBase for NetCtlWithStatusImpl<'_, T> {}
 
 impl<T> wifi_diag::WirelessDiag for NetCtlWithStatusImpl<'_, T>
 where

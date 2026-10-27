@@ -58,8 +58,6 @@ impl WirelessDiag for () {}
 /// attribute while being down.
 pub struct AlwaysConnected;
 
-impl DynBase for AlwaysConnected {}
-
 impl WirelessDiag for AlwaysConnected {
     fn connected(&self) -> Result<bool, Error> {
         Ok(true)

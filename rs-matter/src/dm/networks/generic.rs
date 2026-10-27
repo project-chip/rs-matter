@@ -28,7 +28,6 @@ use alloc::vec::Vec;
 
 use crate::dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
 use crate::error::{Error, ErrorCode};
-use crate::utils::sync::DynBase;
 
 use super::NetChangeNotif;
 
@@ -79,8 +78,6 @@ impl GenericNetifs {
         Ok(netifs)
     }
 }
-
-impl DynBase for GenericNetifs {}
 
 impl NetifDiag for GenericNetifs {
     fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error> {

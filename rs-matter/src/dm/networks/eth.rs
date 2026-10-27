@@ -26,7 +26,6 @@ use crate::dm::clusters::net_comm::{
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
-use crate::utils::sync::DynBase;
 
 /// A fixed `Networks` trait implementation for Ethernet.
 ///
@@ -180,8 +179,6 @@ impl NetCtlStatus for EthNetCtl<'_> {
         Ok(None)
     }
 }
-
-impl DynBase for EthNetCtl<'_> {}
 
 impl WirelessDiag for EthNetCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {

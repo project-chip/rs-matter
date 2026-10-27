@@ -1289,8 +1289,6 @@ struct TestEventTriggerDiag {
 /// the async drainer to write it to KV.
 static ICD_COUNTER_PERSIST_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
-impl rs_matter::utils::sync::DynBase for TestEventTriggerDiag {}
-
 impl GenDiag for TestEventTriggerDiag {
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
         Ok(true)

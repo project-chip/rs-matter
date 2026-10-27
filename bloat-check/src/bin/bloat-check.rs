@@ -94,7 +94,6 @@ use rs_matter::transport::network::{
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::sync::blocking::Mutex;
-use rs_matter::utils::sync::DynBase;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
 // Baremetal entry point macro depending on target
@@ -671,8 +670,6 @@ impl NetworkSend for FakeUdp {
 
 /// A fake Wifi implemewntation
 struct FakeWifi;
-
-impl DynBase for FakeWifi {}
 
 impl NetCtl for FakeWifi {
     fn net_type(&self) -> NetworkType {

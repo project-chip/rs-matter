@@ -62,6 +62,7 @@ use bitflags::bitflags;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
+use crate::utils::sync::DynBase;
 use crate::with;
 
 pub use crate::dm::clusters::decl::software_diagnostics::*;
@@ -126,7 +127,7 @@ pub struct ThreadMetric<'a> {
 /// handler. All methods have sensible defaults so an implementor
 /// can opt in to just the bits the device can actually report;
 /// `impl SwDiag for ()` lets `&()` stand in as the no-op provider.
-pub trait SwDiag {
+pub trait SwDiag: DynBase {
     /// Free bytes on the device's heap right now. Default `0` for
     /// "not tracked".
     fn current_heap_free(&self) -> Result<u64, Error>;

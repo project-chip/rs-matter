@@ -278,7 +278,7 @@ pub type DefaultExchangeHandler<
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > = ChainedExchangeHandler<
     &'d InteractionModel<'a, C, B, T, K, R, NS, NE>,
-    SecureChannel<'d, &'d C>,
+    SecureChannel<&'d C, &'d InteractionModel<'a, C, B, T, K, R, NS, NE>>,
 >;
 
 impl<'d, 'a, C, B, T, K, R, const NS: usize, const NE: usize>
@@ -388,7 +388,7 @@ where
         'a,
         ChainedExchangeHandler<
             &'d InteractionModel<'a, C, B, T, K, R, NS, NE>,
-            SecureChannel<'d, &'d C>,
+            SecureChannel<&'d C, &'d InteractionModel<'a, C, B, T, K, R, NS, NE>>,
         >,
     > {
         &self.responder

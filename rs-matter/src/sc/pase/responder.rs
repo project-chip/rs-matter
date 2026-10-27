@@ -43,15 +43,15 @@ use super::{
 };
 
 /// The PASE Responder (device side) handler
-pub struct PaseResponder<'a, C: Crypto> {
+pub struct PaseResponder<C: Crypto, N> {
     crypto: C,
-    notify: &'a dyn AttrChangeNotifier,
+    notify: N,
     spake2p: Spake2P,
 }
 
-impl<'a, C: Crypto> PaseResponder<'a, C> {
+impl<C: Crypto, N: AttrChangeNotifier> PaseResponder<C, N> {
     /// Create a new PASE Responder handler
-    pub const fn new(crypto: C, notify: &'a dyn AttrChangeNotifier) -> Self {
+    pub const fn new(crypto: C, notify: N) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
             crypto,
@@ -60,7 +60,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         }
     }
 
-    pub fn init(crypto: C, notify: &'a dyn AttrChangeNotifier) -> impl Init<Self> {
+    pub fn init(crypto: C, notify: N) -> impl Init<Self> {
         init!(Self {
             crypto,
             notify,

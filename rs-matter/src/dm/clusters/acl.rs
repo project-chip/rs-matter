@@ -536,6 +536,7 @@ mod tests {
     use crate::fabric::Fabrics;
     use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, ToTLV};
     use crate::utils::storage::WriteBuf;
+    use crate::utils::sync::blocking::Mutex;
 
     use super::AclHandler;
 
@@ -708,7 +709,7 @@ mod tests {
                 dataver: None,
                 wildcard: false,
                 array: false,
-                cluster_status: Cell::new(None),
+                cluster_status: Mutex::new(Cell::new(None)),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);
@@ -736,7 +737,7 @@ mod tests {
                 dataver: None,
                 wildcard: false,
                 array: false,
-                cluster_status: Cell::new(None),
+                cluster_status: Mutex::new(Cell::new(None)),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);
@@ -763,7 +764,7 @@ mod tests {
                 dataver: None,
                 wildcard: false,
                 array: false,
-                cluster_status: Cell::new(None),
+                cluster_status: Mutex::new(Cell::new(None)),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);

@@ -27,7 +27,6 @@ use nix::net::if_::InterfaceFlags;
 
 use crate::dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
 use crate::error::{Error, ErrorCode};
-use crate::utils::sync::DynBase;
 
 use super::NetChangeNotif;
 
@@ -72,8 +71,6 @@ impl UnixNetifs {
         Ok(netifs)
     }
 }
-
-impl DynBase for UnixNetifs {}
 
 impl NetifDiag for UnixNetifs {
     fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error> {

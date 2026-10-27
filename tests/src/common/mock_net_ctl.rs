@@ -42,7 +42,6 @@ use rs_matter::dm::clusters::wifi_diag::{
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::error::Error;
 use rs_matter::tlv::Nullable;
-use rs_matter::utils::sync::DynBase;
 
 /// A canned Wi-Fi network, as reported by `ScanNetworks`.
 pub struct MockWifiNetwork {
@@ -247,8 +246,6 @@ impl NetChangeNotif for MockNetCtl {
         core::future::pending().await
     }
 }
-
-impl DynBase for MockNetCtl {}
 
 impl WirelessDiag for MockNetCtl {
     fn connected(&self) -> Result<bool, Error> {

@@ -160,36 +160,14 @@ fn main() -> Result<(), Error> {
     // NOTE: Commented out because compiling this line blocks forever
     //executor.spawn(im_job).detach();
 
-    // NOTE: Commented out because compiling this line spits out the following errors:
-    // (Likely, we are experiencing https://github.com/rust-lang/rust/issues/64552)
+    // NOTE: Commented out because the compiler cannot prove that the responder's future is `Send`:
+    // "`impl Future<Output = Result<(), Error>>` cannot be sent between threads safely", pointing at
+    // the `AsyncHandler::read`, `write` and `invoke` calls in `rs-matter/src/im/invoker.rs`.
     //
-    // ```
-    // error: implementation of `Crypto` is not general enough
-    //    --> examples/src/bin/onoff_light_work_stealing.rs:207:5
-    //     |
-    // 207 |     executor.spawn(respond).detach();
-    //     |     ^^^^^^^^^^^^^^^^^^^^^^^ implementation of `Crypto` is not general enough
-    //     |
-    //     = note: `Crypto` would have to be implemented for the type `&'0 &RustCrypto<'_, FakeRng>`, for any lifetime `'0`...
-    //     = note: ...but `Crypto` is actually implemented for the type `&'1 &RustCrypto<'_, FakeRng>`, for some specific lifetime `'1`
-    //
-    // error: implementation of `Send` is not general enough
-    //    --> examples/src/bin/onoff_light_work_stealing.rs:219:5
-    //     |
-    // 219 |     executor.spawn(respond).detach();
-    //     |     ^^^^^^^^^^^^^^^^^^^^^^^ implementation of `Send` is not general enough
-    //     |
-    //     = note: `Send` would have to be implemented for the type `&Notification`
-    //     = note: ...but `Send` is actually implemented for the type `&'0 Notification`, for some specific lifetime `'0`
-    // error: implementation of `Send` is not general enough
-    //    --> examples/src/bin/onoff_light_work_stealing.rs:229:5
-    //     |
-    // 229 |     executor.spawn(respond).detach();
-    //     |     ^^^^^^^^^^^^^^^^^^^^^^^ implementation of `Send` is not general enough
-    //     |
-    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::app::Async<on_off::HandlerAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
-    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<FnMatcher, rs_matter::dm::clusters::app::Async<on_off::HandlerAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>>, ChainedHandler<FnMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
-    //```
+    // These futures are `Send` when called directly (e.g. `im.handle(&mut exchange)`), but not when
+    // reached through the generic layers of the responder. This is likely
+    // https://github.com/rust-lang/rust/issues/64552. `-Znext-solver`, `-Zhigher-ranked-assumptions`
+    // and `-Zassumptions-on-binders` do not help.
     //executor.spawn(respond).detach();
 
     futures_lite::future::block_on(executor.run(core::future::pending::<()>()));

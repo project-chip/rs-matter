@@ -51,6 +51,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::DynBase;
 
 pub use crate::dm::clusters::decl::scenes_management::*;
 pub use crate::persist::SCENES_KEY;
@@ -472,7 +473,7 @@ impl<const N: usize, const M: usize> Default for ScenesState<N, M> {
 ///
 /// Implementations MUST be cheap and re-entrant — they run inline on
 /// the command-handler path.
-pub trait SceneInvalidator {
+pub trait SceneInvalidator: DynBase {
     /// Flip `SceneValid → false` for every recalled scene on
     /// `endpoint_id`, across all fabrics. No-op when no fabric has a
     /// scene recalled there.

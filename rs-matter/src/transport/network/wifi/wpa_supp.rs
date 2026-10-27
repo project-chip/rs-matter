@@ -433,8 +433,6 @@ where
     }
 }
 
-impl<T> DynBase for WpaSuppCtl<'_, T> where T: IpStackCtl {}
-
 impl<T> WifiDiag for WpaSuppCtl<'_, T>
 where
     T: IpStackCtl,

@@ -291,15 +291,15 @@ where
 }
 
 /// Handle messages related to the Secure Channel
-pub struct SecureChannel<'a, C, H = ()> {
+pub struct SecureChannel<C, N, H = ()> {
     crypto: C,
-    notify: &'a dyn AttrChangeNotifier,
+    notify: N,
     handler: H,
 }
 
-impl<'a, C: Crypto> SecureChannel<'a, C, ()> {
+impl<C: Crypto, N: AttrChangeNotifier> SecureChannel<C, N, ()> {
     #[inline(always)]
-    pub const fn new(crypto: C, notify: &'a dyn AttrChangeNotifier) -> Self {
+    pub const fn new(crypto: C, notify: N) -> Self {
         Self {
             crypto,
             notify,
@@ -308,15 +308,11 @@ impl<'a, C: Crypto> SecureChannel<'a, C, ()> {
     }
 }
 
-impl<'a, C: Crypto, H: AsyncScHandler> SecureChannel<'a, C, H> {
+impl<C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler> SecureChannel<C, N, H> {
     /// Like [`new`](Self::new) but with a controller-side [`AsyncScHandler`] that
     /// receives incoming Check-In / MCSP-response messages instead of dropping them.
     #[inline(always)]
-    pub const fn new_with_handler(
-        crypto: C,
-        notify: &'a dyn AttrChangeNotifier,
-        handler: H,
-    ) -> Self {
+    pub const fn new_with_handler(crypto: C, notify: N, handler: H) -> Self {
         Self {
             crypto,
             notify,
@@ -337,7 +333,7 @@ impl<'a, C: Crypto, H: AsyncScHandler> SecureChannel<'a, C, H> {
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
                 let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                pase.init_with(PaseResponder::init(&self.crypto, self.notify))
+                pase.init_with(PaseResponder::init(&self.crypto, &self.notify))
                     .handle(exchange)
                     .await
             }
@@ -371,7 +367,9 @@ impl<'a, C: Crypto, H: AsyncScHandler> SecureChannel<'a, C, H> {
     }
 }
 
-impl<C: Crypto, H: AsyncScHandler> ExchangeHandler for SecureChannel<'_, C, H> {
+impl<C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler> ExchangeHandler
+    for SecureChannel<C, N, H>
+{
     fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }

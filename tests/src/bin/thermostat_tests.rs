@@ -935,8 +935,6 @@ impl<'a> TestEventTriggers<'a> {
     }
 }
 
-impl rs_matter::utils::sync::DynBase for TestEventTriggers<'_> {}
-
 impl GenDiag for TestEventTriggers<'_> {
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
         Ok(true)

@@ -540,8 +540,6 @@ impl NetChangeNotif for DeferredNetCtl<'_> {
     }
 }
 
-impl rs_matter::utils::sync::DynBase for DeferredNetCtl<'_> {}
-
 impl WirelessDiag for DeferredNetCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {
         self.ctl.connected()
