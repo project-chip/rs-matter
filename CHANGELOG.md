@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Breaking: `AttrDetails::cluster_status` and `CmdDetails::cluster_status` are `Mutex<Cell<..>>`; use `cluster_status()` and `set_cluster_status()`
   * Breaking: `UnitTestingHandler` takes its data as a `Mutex<RefCell<..>>`
 * New: the blocking `Mutex` implements `Clone`, `Debug` and `defmt::Format` when its contents do (#621)
+* New: the `ImClient` operations are also free functions in `im::client` (e.g. `invoke_with(exchange, ..)`), whose futures `rustc` can prove `Send`; the generated cluster clients use them (#621)
 * Fix: callers that initiate to a node while its CASE session is being established wait for that handshake and use its session, or get its error, instead of each running a handshake of their own (#620)
 * New: `MultiSignal` and `IfMultiMutex`, aliases of `Signal` and `IfMutex` that mark the places where waiters from different tasks may wait at the same time (#620)
 * Fix: a reply on an unsecured session we initiated (e.g. a `CASESigma2`) is no longer taken for a message of an unsecured session the same peer initiated (e.g. its lingering Check-Ins), as only the latter carry no destination node ID (#619)

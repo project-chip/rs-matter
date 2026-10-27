@@ -31,6 +31,8 @@
 //! — see [`SubscriptionCtx`](crate::dm::SubscriptionCtx) for the
 //! identity a report is matched by.
 
+use core::future::Future;
+
 use either::Either;
 
 pub use super::{AttrId, ClusterId, EndptId};
@@ -75,6 +77,13 @@ use super::{
 /// `Exchange<'a>` itself implements `Into<Exchange<'a>>` for free via
 /// the standard-library identity impl.
 ///
+/// Each method forwards to the free function of the same name in this
+/// module (e.g. [`invoke_with`]), which takes the [`Exchange`] as its
+/// first argument. With feature `send-sync`, prefer the free functions
+/// in futures that have to be `Send`: `rustc` cannot prove the futures
+/// of this trait `Send` in all cases, because the trait is implemented
+/// for `Exchange<'a>` only.
+///
 /// # Lifecycle
 ///
 /// Every method **consumes** the exchange (`self` by value) — one
@@ -95,23 +104,11 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     ///   `ReportData` streams iterate via `ReadRespChunk::complete()`
     /// - `Err` if the transaction fails at any point (request build,
     ///   I/O, response parsing, etc.)
-    async fn read_with<B>(self, mut build: B) -> Result<ReadRespChunk<'a>, Error>
+    fn read_with<B>(self, build: B) -> impl Future<Output = Result<ReadRespChunk<'a>, Error>>
     where
         B: FnMut(ReadReqBuilder<ReadSender<'a>>) -> Result<ReadSender<'a>, Error>,
     {
-        // Drives the retransmit loop on the caller's behalf
-        // (build closure idempotency contract — same TLV bytes on
-        // every call). First response chunk handed back; the caller
-        // iterates further chunks via `chunk.complete()`.
-        let mut sender = self.read_sender().await?;
-        loop {
-            match sender.tx().await? {
-                TxOutcome::BuildRequest(builder) => {
-                    sender = build(builder)?;
-                }
-                TxOutcome::GotResponse(chunk) => return Ok(chunk),
-            }
-        }
+        read_with(self.into(), build)
     }
 
     /// Perform an IM read transaction without using a closure.
@@ -121,12 +118,8 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     ///   The first call to [`ReadSender::tx`] yields the initial builder.
     ///   See [`invoke_sender`](Self::invoke_sender) for the full pattern.
     /// - `Err` if the transaction fails at any point (I/O, etc.)
-    async fn read_sender(self) -> Result<ReadSender<'a>, Error> {
-        let exchange: Exchange<'a> = self.into();
-        let sender = exchange.into_sender()?;
-        Ok(ReadSender {
-            state: ReadSenderState::Ready(sender),
-        })
+    fn read_sender(self) -> impl Future<Output = Result<ReadSender<'a>, Error>> {
+        read_sender(self.into())
     }
 
     /// Perform an IM write transaction.
@@ -140,23 +133,15 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// - `Ok(WriteRespHandle)` once the request is ACK-ed and the response is parsed; call
     ///   `WriteRespHandle::response()` to inspect the parsed `WriteResp`.
     /// - `Err` if the transaction fails at any point (request build, I/O, response parsing, etc.)
-    async fn write_with<B>(
+    fn write_with<B>(
         self,
         timed_timeout_ms: Option<u16>,
-        mut build: B,
-    ) -> Result<WriteRespHandle<'a>, Error>
+        build: B,
+    ) -> impl Future<Output = Result<WriteRespHandle<'a>, Error>>
     where
         B: FnMut(WriteReqBuilder<WriteSender<'a>>) -> Result<WriteSender<'a>, Error>,
     {
-        let mut sender = self.write_sender(timed_timeout_ms).await?;
-        loop {
-            match sender.tx().await? {
-                TxOutcome::BuildRequest(builder) => {
-                    sender = build(builder)?;
-                }
-                TxOutcome::GotResponse(handle) => return Ok(handle),
-            }
-        }
+        write_with(self.into(), timed_timeout_ms, build)
     }
 
     /// Perform an IM write transaction without using a closure.
@@ -169,15 +154,11 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     ///   The first call to [`WriteSender::tx`] yields the initial builder.
     ///   See [`invoke_sender`](Self::invoke_sender) for the full pattern.
     /// - `Err` if the transaction fails at any point (I/O, etc.)
-    async fn write_sender(self, timed_timeout_ms: Option<u16>) -> Result<WriteSender<'a>, Error> {
-        let mut exchange: Exchange<'a> = self.into();
-        if let Some(timeout_ms) = timed_timeout_ms {
-            send_timed_request(&mut exchange, timeout_ms).await?;
-        }
-        let sender = exchange.into_sender()?;
-        Ok(WriteSender {
-            state: WriteSenderState::Ready(sender),
-        })
+    fn write_sender(
+        self,
+        timed_timeout_ms: Option<u16>,
+    ) -> impl Future<Output = Result<WriteSender<'a>, Error>> {
+        write_sender(self.into(), timed_timeout_ms)
     }
 
     /// Perform an IM invoke transaction.
@@ -192,28 +173,15 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// - `Ok(InvokeRespChunk)` once the request is ACK-ed and the first response chunk is parsed;
     ///   multi-chunk `InvokeResponse` streams iterate via `InvokeRespChunk::complete()`.
     /// - `Err` if the transaction fails at any point (request build, I/O, response parsing, etc.)
-    async fn invoke_with<B>(
+    fn invoke_with<B>(
         self,
         timed_timeout_ms: Option<u16>,
-        mut build: B,
-    ) -> Result<InvokeRespChunk<'a>, Error>
+        build: B,
+    ) -> impl Future<Output = Result<InvokeRespChunk<'a>, Error>>
     where
         B: FnMut(InvReqBuilder<InvokeSender<'a>>) -> Result<InvokeSender<'a>, Error>,
     {
-        // Drives the retransmit loop on the caller's behalf:
-        // the `build` closure is (re-)run on every framework attempt
-        // (so it must remain idempotent — same TLV bytes on every
-        // call), and the first response chunk is returned to the
-        // caller for direct inspection / `complete()` iteration.
-        let mut sender = self.invoke_sender(timed_timeout_ms).await?;
-        loop {
-            match sender.tx().await? {
-                TxOutcome::BuildRequest(builder) => {
-                    sender = build(builder)?;
-                }
-                TxOutcome::GotResponse(chunk) => return Ok(chunk),
-            }
-        }
+        invoke_with(self.into(), timed_timeout_ms, build)
     }
 
     /// Perform an IM invoke transaction without using a closure.
@@ -231,15 +199,11 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// 1. `let mut sender = exchange.invoke_sender(None).await?;`
     /// 2. `loop { match sender.tx().await? { TxOutcome::BuildRequest(b) => sender = build(b)?, TxOutcome::GotResponse(c) => break c } }`
     /// 3. `loop { let resp = chunk.response()?; …; match chunk.complete().await? { … } }`
-    async fn invoke_sender(self, timed_timeout_ms: Option<u16>) -> Result<InvokeSender<'a>, Error> {
-        let mut exchange: Exchange<'a> = self.into();
-        if let Some(timeout_ms) = timed_timeout_ms {
-            send_timed_request(&mut exchange, timeout_ms).await?;
-        }
-        let sender = exchange.into_sender()?;
-        Ok(InvokeSender {
-            state: InvokeSenderState::Ready(sender),
-        })
+    fn invoke_sender(
+        self,
+        timed_timeout_ms: Option<u16>,
+    ) -> impl Future<Output = Result<InvokeSender<'a>, Error>> {
+        invoke_sender(self.into(), timed_timeout_ms)
     }
 
     /// Perform the *establishment* phase of an IM subscribe
@@ -277,19 +241,14 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// [`SubscribeEstablished`] is returned, the
     /// fabric+peer+subscription-id triple identifies the active
     /// subscription for any such future incoming reports.
-    async fn subscribe_with<B>(self, mut build: B) -> Result<SubscribePrimingChunk<'a>, Error>
+    fn subscribe_with<B>(
+        self,
+        build: B,
+    ) -> impl Future<Output = Result<SubscribePrimingChunk<'a>, Error>>
     where
         B: FnMut(SubscribeReqBuilder<SubscribeSender<'a>>) -> Result<SubscribeSender<'a>, Error>,
     {
-        let mut sender = self.subscribe_sender().await?;
-        loop {
-            match sender.tx().await? {
-                TxOutcome::BuildRequest(builder) => {
-                    sender = build(builder)?;
-                }
-                TxOutcome::GotResponse(chunk) => return Ok(chunk),
-            }
-        }
+        subscribe_with(self.into(), build)
     }
 
     /// Perform the establishment phase of an IM subscribe transaction
@@ -300,12 +259,8 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     ///   [`SubscribeSender::tx`]. The first call yields the initial
     ///   [`SubscribeReqBuilder`].
     /// - `Err` if the underlying exchange handoff fails.
-    async fn subscribe_sender(self) -> Result<SubscribeSender<'a>, Error> {
-        let exchange: Exchange<'a> = self.into();
-        let sender = exchange.into_sender()?;
-        Ok(SubscribeSender {
-            state: SubscribeSenderState::Ready(sender),
-        })
+    fn subscribe_sender(self) -> impl Future<Output = Result<SubscribeSender<'a>, Error>> {
+        subscribe_sender(self.into())
     }
 
     /// Perform a fire-and-forget IM invoke — for group (multicast) exchanges
@@ -319,28 +274,13 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// [`crate::im::CmdPath`]) — receivers apply them to their group-member
     /// endpoints.
     #[cfg(feature = "groups")]
-    async fn group_invoke_with<B>(self, mut build: B) -> Result<(), Error>
+    fn group_invoke_with<B>(self, build: B) -> impl Future<Output = Result<(), Error>>
     where
         B: for<'x, 'y> FnMut(
             GroupInvokeRequestsBuilder<'x, 'y>,
         ) -> Result<GroupInvokeRequestsBuilder<'x, 'y>, Error>,
     {
-        let mut exchange: Exchange<'a> = self.into();
-
-        exchange
-            .send_with(|_, wb| {
-                let builder =
-                    InvReqBuilder::new(TLVWriteParent::new("GroupInvoke", wb), &TLVTag::Anonymous)?
-                        .suppress_response(true)?
-                        .invoke_requests()?;
-
-                let builder = build(builder)?;
-
-                builder.end()?.end()?;
-
-                Ok(Some(OpCode::InvokeRequest.meta().reliable(false)))
-            })
-            .await
+        group_invoke_with(self.into(), build)
     }
 }
 
@@ -1378,6 +1318,161 @@ pub struct SubscribeEstablished {
 // that we don't have to expose them as required trait items the way
 // trait inheritance would force.
 // =====================================================================
+
+/// [`ImClient::read_with`] as a free function.
+pub async fn read_with<'a, B>(
+    exchange: Exchange<'a>,
+    mut build: B,
+) -> Result<ReadRespChunk<'a>, Error>
+where
+    B: FnMut(ReadReqBuilder<ReadSender<'a>>) -> Result<ReadSender<'a>, Error>,
+{
+    // Drives the retransmit loop on the caller's behalf
+    // (build closure idempotency contract — same TLV bytes on
+    // every call). First response chunk handed back; the caller
+    // iterates further chunks via `chunk.complete()`.
+    let mut sender = read_sender(exchange).await?;
+    loop {
+        match sender.tx().await? {
+            TxOutcome::BuildRequest(builder) => {
+                sender = build(builder)?;
+            }
+            TxOutcome::GotResponse(chunk) => return Ok(chunk),
+        }
+    }
+}
+
+/// [`ImClient::read_sender`] as a free function.
+pub async fn read_sender<'a>(exchange: Exchange<'a>) -> Result<ReadSender<'a>, Error> {
+    let sender = exchange.into_sender()?;
+    Ok(ReadSender {
+        state: ReadSenderState::Ready(sender),
+    })
+}
+
+/// [`ImClient::write_with`] as a free function.
+pub async fn write_with<'a, B>(
+    exchange: Exchange<'a>,
+    timed_timeout_ms: Option<u16>,
+    mut build: B,
+) -> Result<WriteRespHandle<'a>, Error>
+where
+    B: FnMut(WriteReqBuilder<WriteSender<'a>>) -> Result<WriteSender<'a>, Error>,
+{
+    let mut sender = write_sender(exchange, timed_timeout_ms).await?;
+    loop {
+        match sender.tx().await? {
+            TxOutcome::BuildRequest(builder) => {
+                sender = build(builder)?;
+            }
+            TxOutcome::GotResponse(handle) => return Ok(handle),
+        }
+    }
+}
+
+/// [`ImClient::write_sender`] as a free function.
+pub async fn write_sender<'a>(
+    mut exchange: Exchange<'a>,
+    timed_timeout_ms: Option<u16>,
+) -> Result<WriteSender<'a>, Error> {
+    if let Some(timeout_ms) = timed_timeout_ms {
+        send_timed_request(&mut exchange, timeout_ms).await?;
+    }
+    let sender = exchange.into_sender()?;
+    Ok(WriteSender {
+        state: WriteSenderState::Ready(sender),
+    })
+}
+
+/// [`ImClient::invoke_with`] as a free function.
+pub async fn invoke_with<'a, B>(
+    exchange: Exchange<'a>,
+    timed_timeout_ms: Option<u16>,
+    mut build: B,
+) -> Result<InvokeRespChunk<'a>, Error>
+where
+    B: FnMut(InvReqBuilder<InvokeSender<'a>>) -> Result<InvokeSender<'a>, Error>,
+{
+    // Drives the retransmit loop on the caller's behalf:
+    // the `build` closure is (re-)run on every framework attempt
+    // (so it must remain idempotent — same TLV bytes on every
+    // call), and the first response chunk is returned to the
+    // caller for direct inspection / `complete()` iteration.
+    let mut sender = invoke_sender(exchange, timed_timeout_ms).await?;
+    loop {
+        match sender.tx().await? {
+            TxOutcome::BuildRequest(builder) => {
+                sender = build(builder)?;
+            }
+            TxOutcome::GotResponse(chunk) => return Ok(chunk),
+        }
+    }
+}
+
+/// [`ImClient::invoke_sender`] as a free function.
+pub async fn invoke_sender<'a>(
+    mut exchange: Exchange<'a>,
+    timed_timeout_ms: Option<u16>,
+) -> Result<InvokeSender<'a>, Error> {
+    if let Some(timeout_ms) = timed_timeout_ms {
+        send_timed_request(&mut exchange, timeout_ms).await?;
+    }
+    let sender = exchange.into_sender()?;
+    Ok(InvokeSender {
+        state: InvokeSenderState::Ready(sender),
+    })
+}
+
+/// [`ImClient::subscribe_with`] as a free function.
+pub async fn subscribe_with<'a, B>(
+    exchange: Exchange<'a>,
+    mut build: B,
+) -> Result<SubscribePrimingChunk<'a>, Error>
+where
+    B: FnMut(SubscribeReqBuilder<SubscribeSender<'a>>) -> Result<SubscribeSender<'a>, Error>,
+{
+    let mut sender = subscribe_sender(exchange).await?;
+    loop {
+        match sender.tx().await? {
+            TxOutcome::BuildRequest(builder) => {
+                sender = build(builder)?;
+            }
+            TxOutcome::GotResponse(chunk) => return Ok(chunk),
+        }
+    }
+}
+
+/// [`ImClient::subscribe_sender`] as a free function.
+pub async fn subscribe_sender<'a>(exchange: Exchange<'a>) -> Result<SubscribeSender<'a>, Error> {
+    let sender = exchange.into_sender()?;
+    Ok(SubscribeSender {
+        state: SubscribeSenderState::Ready(sender),
+    })
+}
+
+/// [`ImClient::group_invoke_with`] as a free function.
+#[cfg(feature = "groups")]
+pub async fn group_invoke_with<'a, B>(mut exchange: Exchange<'a>, mut build: B) -> Result<(), Error>
+where
+    B: for<'x, 'y> FnMut(
+        GroupInvokeRequestsBuilder<'x, 'y>,
+    ) -> Result<GroupInvokeRequestsBuilder<'x, 'y>, Error>,
+{
+    exchange
+        .send_with(|_, wb| {
+            let builder =
+                InvReqBuilder::new(TLVWriteParent::new("GroupInvoke", wb), &TLVTag::Anonymous)?
+                    .suppress_response(true)?
+                    .invoke_requests()?;
+
+            let builder = build(builder)?;
+
+            builder.end()?.end()?;
+
+            Ok(Some(OpCode::InvokeRequest.meta().reliable(false)))
+        })
+        .await
+}
 
 /// Send a timed-request handshake and wait for `StatusResponse(Success)`.
 /// Used before timed writes/invokes.

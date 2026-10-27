@@ -107,7 +107,7 @@ jobs:
 
       - name: Examples - Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,send-sync
+        run: cargo build -p rs-matter-examples --bin onoff_light_work_stealing --features zbus,send-sync
 
       - name: Examples - WebRTC Camera
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
@@ -132,3 +132,23 @@ jobs:
 
       - name: Miri
         run: "cd rs-matter; cargo miri test --lib -- utils:: tlv:: dm:: im:: transport::"
+
+  check_send:
+    # Checks the futures that `rs-matter` asserts to be `Send` with `AssertSend::new`:
+    # with `--cfg rs_matter_check_send` that constructor requires them to be `Send`,
+    # which a nightly `rustc` with `-Zhigher-ranked-assumptions` can prove where a
+    # stable one cannot. The futures wrapped with `AssertSend::new_unchecked` are
+    # not checked.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check
+        run: cargo rustc -p rs-matter --lib --profile check --features async-io,groups,persistent-subscriptions,case-resumption,zbus,send-sync -- --cfg rs_matter_check_send -Zhigher-ranked-assumptions

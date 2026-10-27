@@ -70,17 +70,41 @@ pub trait MaybeSend {}
 #[cfg(not(feature = "send-sync"))]
 impl<T: ?Sized> MaybeSend for T {}
 
+/// The bound of [`AssertSend::new`] on the wrapped future.
+///
+/// With `--cfg rs_matter_check_send`, this trait extends `MaybeSend`, so that `rustc` checks the
+/// futures wrapped with [`AssertSend::new`], and it is implemented for every type that is
+/// `MaybeSend`. This needs a `rustc` which can prove these futures `Send`, e.g. a nightly one with
+/// `-Zhigher-ranked-assumptions`.
+#[cfg(rs_matter_check_send)]
+pub(crate) trait CheckSend: MaybeSend {}
+
+#[cfg(rs_matter_check_send)]
+impl<T: ?Sized + MaybeSend> CheckSend for T {}
+
+/// The bound of [`AssertSend::new`] on the wrapped future.
+///
+/// Without `--cfg rs_matter_check_send`, this trait is empty and implemented for every type.
+#[cfg(not(rs_matter_check_send))]
+pub(crate) trait CheckSend {}
+
+#[cfg(not(rs_matter_check_send))]
+impl<T: ?Sized> CheckSend for T {}
+
 /// A future wrapper for futures which are `Send`, but for which `rustc` cannot prove it.
 ///
 /// `rustc` sometimes fails to prove that a future is `Send` when the future holds, across an
 /// `.await`, a value whose type depends on a lifetime that the compiler erases
 /// (<https://github.com/rust-lang/rust/issues/64552>,
 /// <https://github.com/rust-lang/rust/issues/100013>). Examples are the associated types of
-/// `Crypto`, which have a `where Self: 'a` bound, and the futures of `ImClient<'a>`, which is
-/// implemented for `Exchange<'a>` only.
+/// `Crypto`, which have a `where Self: 'a` bound, and references kept by the futures of inner
+/// `async fn`s.
 ///
 /// With feature `send-sync`, this wrapper is always `Send`. Without it, it is `Send` only when
 /// the wrapped future is.
+///
+/// The futures wrapped with [`AssertSend::new`] are checked with `--cfg rs_matter_check_send`
+/// (see [`CheckSend`]). Those wrapped with [`AssertSend::new_unchecked`] are not.
 pub(crate) struct AssertSend<F>(F);
 
 impl<F> AssertSend<F> {
@@ -90,12 +114,28 @@ impl<F> AssertSend<F> {
     ///
     /// With feature `send-sync`, the future must be `Send`, i.e. all values it holds across an
     /// `.await` must be `Send`.
-    pub(crate) const unsafe fn new(fut: F) -> Self {
+    pub(crate) const unsafe fn new(fut: F) -> Self
+    where
+        F: CheckSend,
+    {
+        Self(fut)
+    }
+
+    /// Wrap the provided future like [`AssertSend::new`], but without checking it with
+    /// `--cfg rs_matter_check_send`.
+    ///
+    /// For futures that no `rustc` can prove `Send` yet.
+    ///
+    /// # Safety
+    ///
+    /// With feature `send-sync`, the future must be `Send`, i.e. all values it holds across an
+    /// `.await` must be `Send`.
+    pub(crate) const unsafe fn new_unchecked(fut: F) -> Self {
         Self(fut)
     }
 }
 
-// SAFETY: `AssertSend::new` requires the wrapped future to be `Send`.
+// SAFETY: Both constructors of `AssertSend` require the wrapped future to be `Send`.
 #[cfg(feature = "send-sync")]
 unsafe impl<F> Send for AssertSend<F> {}
 

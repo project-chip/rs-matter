@@ -133,9 +133,10 @@ impl BuiltinMdns {
         // SAFETY: With feature `send-sync`, everything `run_inner` keeps across an `.await` is
         // `Send`: `S` and `R` are `MaybeSend` and so are their futures, and `C` is `MaybeSendSync`.
         // `rustc` cannot prove it because the inner futures keep references whose lifetimes it
-        // erases (<https://github.com/rust-lang/rust/issues/64552>).
+        // erases (<https://github.com/rust-lang/rust/issues/64552>), not even a nightly one, so
+        // this is not checked with `--cfg rs_matter_check_send`.
         unsafe {
-            AssertSend::new(self.run_inner(
+            AssertSend::new_unchecked(self.run_inner(
                 send,
                 recv,
                 host,

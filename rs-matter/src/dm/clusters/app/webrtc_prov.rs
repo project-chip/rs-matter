@@ -92,7 +92,7 @@ use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{AssertSend, MaybeSend, MaybeSendSync, Notification};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 use super::super::decl::web_rtc_transport_provider as decl;
@@ -843,40 +843,6 @@ impl<
         }
         Ok(())
     }
-
-    /// Push the outbound work of the hooks to the remote requestors, and end the sessions
-    /// dropped on fabric removal.
-    async fn run_outbound(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        // Drain loop: the hook parks in `next_outbound().await` until it
-        // has something to say, then we push it to the paired
-        // `WebRTCTransportRequestor` on the remote. Errors are logged
-        // (when a `log`/`defmt` feature is enabled) and the loop
-        // continues — a single failed push must not take down the whole
-        // cluster.
-        //
-        // While parked, the loop also ends the sessions dropped on fabric
-        // removal. `next_outbound` is only paused meanwhile, never dropped,
-        // so no outbound work is lost.
-        loop {
-            let work = {
-                let mut outbound = pin!(self.hooks.next_outbound());
-
-                loop {
-                    match select(&mut outbound, self.removed_signal.wait()).await {
-                        Either::First(work) => break work,
-                        Either::Second(()) => self.end_removed_sessions().await,
-                    }
-                }
-            };
-
-            if let Err(err) = self.push_outbound(&ctx, work).await {
-                warn!("webrtc_prov: outbound push failed: {}", err);
-            }
-        }
-
-        #[allow(unreachable_code)]
-        Ok(())
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -917,11 +883,33 @@ impl<
         Ok(())
     }
 
-    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
-        // SAFETY: With feature `send-sync`, everything `run_outbound` keeps across an `.await` is
-        // `Send`, as `H` and `ctx` are `MaybeSendSync`. `rustc` cannot prove it for the futures
-        // of `ImClient<'a>`, because that trait is implemented for `Exchange<'a>` only.
-        unsafe { AssertSend::new(self.run_outbound(ctx)) }
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        // Drain loop: the hook parks in `next_outbound().await` until it
+        // has something to say, then we push it to the paired
+        // `WebRTCTransportRequestor` on the remote. Errors are logged
+        // (when a `log`/`defmt` feature is enabled) and the loop
+        // continues — a single failed push must not take down the whole
+        // cluster.
+        //
+        // While parked, the loop also ends the sessions dropped on fabric
+        // removal. `next_outbound` is only paused meanwhile, never dropped,
+        // so no outbound work is lost.
+        loop {
+            let work = {
+                let mut outbound = pin!(self.hooks.next_outbound());
+
+                loop {
+                    match select(&mut outbound, self.removed_signal.wait()).await {
+                        Either::First(work) => break work,
+                        Either::Second(()) => self.end_removed_sessions().await,
+                    }
+                }
+            };
+
+            if let Err(err) = self.push_outbound(&ctx, work).await {
+                warn!("webrtc_prov: outbound push failed: {}", err);
+            }
+        }
     }
 
     async fn current_sessions<P: TLVBuilderParent>(
