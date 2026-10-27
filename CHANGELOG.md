@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a CASE responder that rejects a Sigma1 ends the exchange, instead of waiting for a Sigma3 until it times out (#625)
+* New: `CaseInitiator` fails with `ErrorCode::NoSharedTrustRoots` when the responder has no fabric and node ID matching the Sigma1 (#625)
 * Fix: with feature `send-sync` (formerly `sync-mutex`), the futures of `rs-matter` are `Send`, so they can run on a work-stealing executor (#621)
   * Breaking: `DynBase` is renamed to `MaybeSendSync` and implemented for every type (with `send-sync`, for every `Send + Sync` type), so own impls of it have to be removed
   * Breaking: most public traits extend `MaybeSendSync` (the network traits `MaybeSend`), and their async methods return `MaybeSend` futures; the associated types of `Crypto` and the generic closures the traits take (e.g. in `NetCtl::scan` and the hooks' `run`) are `MaybeSend` too

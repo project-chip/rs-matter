@@ -64,6 +64,9 @@ pub enum ErrorCode {
     NoNodeId,
     NoMemory,
     NoSession,
+    /// The CASE responder has no fabric and node ID matching our Sigma1, e.g. because it is
+    /// no longer on our fabric, or because it is not the node we asked for.
+    NoSharedTrustRoots,
     // TODO: Rename to `TLVNoWriteSpace` or similar, so that it is clear
     // that this error code should _only_ be used when writing a TLV using
     // a `TLVWrite` instance which happens to run out of space

@@ -32,7 +32,7 @@ use rs_matter::crypto::{
     SigningSecretKey, AEAD_CANON_KEY_LEN,
 };
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM};
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::onboard::cac::RcacGenerator;
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::respond::Responder;
@@ -60,6 +60,7 @@ const CONTROLLER_NODE_ID: u64 = 100;
 const DEVICE_NODE_ID: u64 = 200;
 /// The SAT hinted on the handshake exchange; the device never advertises one.
 const HINT_SAT: u16 = 4321;
+const RESPONDER_HANDLERS: usize = 4;
 
 struct DropFirstSigma2<'a> {
     socket: &'a async_io::Async<std::net::UdpSocket>,
@@ -132,7 +133,7 @@ fn is_sigma2(data: &[u8]) -> bool {
 /// not advertise is inherited from that hint.
 #[test]
 fn test_case_handshake() {
-    run_case_handshake_test(false, 1);
+    run_case_handshake_test(false, 0, 1);
 }
 
 /// Test that retransmitting Sigma2 produces the same packet and still completes CASE.
@@ -141,16 +142,26 @@ fn test_case_handshake() {
 /// Dropping the responder's first Sigma2 forces that path.
 #[test]
 fn test_case_handshake_with_sigma2_retransmission() {
-    run_case_handshake_test(true, 1);
+    run_case_handshake_test(true, 0, 1);
 }
 
 /// Test that one-shot CASE sessions do not cause BUSY when they fill the session table of the device.
 #[test]
 fn test_case_one_shot_sessions_on_full_session_table() {
-    run_case_handshake_test(false, MAX_SESSIONS);
+    run_case_handshake_test(false, 0, MAX_SESSIONS);
 }
 
-fn run_case_handshake_test(drop_first_sigma2: bool, handshakes: usize) {
+/// Test that a Sigma1 for a node the device is not gets `NoSharedTrustRoots`, and that the
+/// device does not keep the exchange afterwards.
+///
+/// There are more rejected handshakes than the device has responder handlers, so the
+/// handshake after them only completes if no handler is left waiting for a Sigma3.
+#[test]
+fn test_case_no_shared_trust_roots() {
+    run_case_handshake_test(false, RESPONDER_HANDLERS + 1, 1);
+}
+
+fn run_case_handshake_test(drop_first_sigma2: bool, rejected: usize, handshakes: usize) {
     init_env_logger();
 
     futures_lite::future::block_on(async {
@@ -279,7 +290,7 @@ fn run_case_handshake_test(drop_first_sigma2: bool, handshakes: usize) {
                     &device_socket,
                     NoNetwork,
                 ),
-                responder.run::<4>(),
+                responder.run::<RESPONDER_HANDLERS>(),
             )
             .coalesce()
             .await
@@ -295,6 +306,21 @@ fn run_case_handshake_test(drop_first_sigma2: bool, handshakes: usize) {
                 NoNetwork,
             ));
             let mut test = pin!(async {
+                for _ in 0..rejected {
+                    // The device is on the fabric, but under another node ID.
+                    let err = run_case_handshake(
+                        &controller_matter,
+                        &crypto,
+                        peer_addr,
+                        controller_fab_idx,
+                        DEVICE_NODE_ID + 1,
+                    )
+                    .await
+                    .unwrap_err();
+
+                    assert_eq!(err.code(), ErrorCode::NoSharedTrustRoots);
+                }
+
                 for handshake in 1..=handshakes {
                     info!("CASE handshake {handshake} of {handshakes}");
 
