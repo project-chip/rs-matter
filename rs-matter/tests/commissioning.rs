@@ -42,6 +42,7 @@
 use core::pin::pin;
 use std::net::{TcpListener, UdpSocket};
 
+use embassy_futures::join::join;
 use embassy_futures::select::{select, select3, Either};
 use embassy_time::{Duration, Timer};
 
@@ -357,6 +358,16 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     )
     .await?;
 
+    info!("=== Phase 8: two initiates to a node without a session share one CASE handshake ===");
+    test_concurrent_initiates_share_case(
+        matter,
+        controller_fab_idx,
+        device_node_id,
+        peer_addr,
+        use_tcp,
+    )
+    .await?;
+
     info!("=== All commissioning test phases completed successfully! ===");
     Ok(())
 }
@@ -552,6 +563,67 @@ async fn test_open_pase_is_reused<C: Crypto, D: Crypto>(
             .map(Session::is_expired)
     });
     assert_eq!(expired, Some(true));
+
+    Ok(())
+}
+
+/// Two callers that initiate to a node without a session must share one CASE
+/// handshake, rather than run one each and leave two sessions to the node.
+async fn test_concurrent_initiates_share_case(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+    peer_addr: Address,
+    use_tcp: bool,
+) -> Result<(), Error> {
+    let case_to_device = move |sess: &Session| {
+        matches!(sess.get_session_mode(), SessionMode::Case { .. })
+            && sess.get_local_fabric_idx() == fab_idx.get()
+            && sess.get_peer_node_id() == Some(peer_node_id)
+            && !sess.is_expired()
+    };
+
+    // Forget the session to the device, so that both calls find none.
+    matter.with_state(|state| state.sessions.remove_where(case_to_device));
+
+    let (Address::Udp(SocketAddr::V6(peer_sock)) | Address::Tcp(SocketAddr::V6(peer_sock))) =
+        peer_addr
+    else {
+        panic!("expected an IPv6 device address");
+    };
+
+    let mdns_table = [(peer_node_id, peer_sock)];
+    let mdns = stub_mdns_resolver_txt(matter, &mdns_table, if use_tcp { "6" } else { "" });
+
+    let initiate = || {
+        Exchange::initiate_with_transport(
+            matter,
+            test_only_crypto(),
+            fab_idx,
+            peer_node_id,
+            transport(use_tcp),
+        )
+    };
+
+    let (first, second) = match select(pin!(join(initiate(), initiate())), pin!(mdns)).await {
+        Either::First(exchanges) => exchanges,
+        Either::Second(_) => unreachable!("the stub resolver never returns"),
+    };
+
+    drop((first?, second?));
+
+    let sessions = matter.with_state(|state| {
+        state
+            .sessions
+            .iter()
+            .filter(|sess| case_to_device(sess))
+            .count()
+    });
+    assert_eq!(sessions, 1, "the two initiates ran a handshake each");
+
+    // The shared session works.
+    let vendor_name = read_vendor_name_with_timeout(matter, fab_idx, peer_node_id).await?;
+    assert_eq!(vendor_name, TEST_DEV_DET.vendor_name);
 
     Ok(())
 }

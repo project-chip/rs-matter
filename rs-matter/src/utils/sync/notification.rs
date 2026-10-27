@@ -22,7 +22,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use crate::utils::init::{init, Init};
 
 use super::blocking::raw::MatterRawMutex;
-use super::signal::Signal;
+use super::signal::{MultiSignal, Signal};
 
 /// A notification primitive that allows for notifying a single waiter.
 pub struct Notification<M = MatterRawMutex> {
@@ -69,7 +69,7 @@ where
 /// A notification primitive that allows for notifying multiple waiters,
 /// as long as all waiters are scheduled from a single async task (or else the notification would busy-loop).
 pub(crate) struct MultiNotification<M = MatterRawMutex> {
-    signal: Signal<u32, M>,
+    signal: MultiSignal<u32, M>,
 }
 
 impl<M> Default for MultiNotification<M>
@@ -88,13 +88,13 @@ where
     /// Create a new `MultiNotification`.
     pub const fn new() -> Self {
         Self {
-            signal: Signal::new(0),
+            signal: MultiSignal::new(0),
         }
     }
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            signal <- Signal::init(0),
+            signal <- MultiSignal::init(0),
         })
     }
 

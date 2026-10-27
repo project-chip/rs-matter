@@ -26,7 +26,7 @@ use embassy_time::{Duration, Timer};
 
 use crate::utils::init::{init, Init, InitDefault, UnsafeCellInit};
 use crate::utils::sync::blocking::raw::MatterRawMutex;
-use crate::utils::sync::Signal;
+use crate::utils::sync::MultiSignal;
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
 pub trait Buffers<T>
@@ -75,7 +75,7 @@ pub const DEFAULT_BUFFER_POOL_SIZE: usize = 10;
 /// A concrete implementation of `Buffers` utilizing an internal pool of buffers.
 /// Accessing a buffer would fail when all buffers are still used elsewhere after a wait timeout expires.
 pub struct PooledBuffers<T, const N: usize = DEFAULT_BUFFER_POOL_SIZE, M = MatterRawMutex> {
-    available: Signal<[bool; N], M>, // TODO XXX FIXME: Needs multiple wakers for work-stealing executors
+    available: MultiSignal<[bool; N], M>,
     pool: UnsafeCell<crate::utils::storage::Vec<T, N>>,
     wait_timeout_ms: u32,
 }
@@ -98,7 +98,7 @@ where
     #[inline(always)]
     pub const fn new_with_timeout(wait_timeout_ms: u32) -> Self {
         Self {
-            available: Signal::new([true; N]),
+            available: MultiSignal::new([true; N]),
             pool: UnsafeCell::new(crate::utils::storage::Vec::new()),
             wait_timeout_ms,
         }
@@ -116,7 +116,7 @@ where
     /// before returning `None`.
     pub fn init_with_timeout(wait_timeout_ms: u32) -> impl Init<Self> {
         init!(Self {
-            available: Signal::new([true; N]),
+            available: MultiSignal::new([true; N]),
             pool <- UnsafeCell::init(crate::utils::storage::Vec::init()),
             wait_timeout_ms,
         })

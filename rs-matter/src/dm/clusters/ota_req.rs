@@ -414,6 +414,8 @@ impl Providers {
 
     /// Wait until the provider set changes (a `DefaultOTAProviders` write or an
     /// `AnnounceOTAProvider` command).
+    ///
+    /// Single waiter: the application's update loop.
     pub async fn wait_changed(&self) {
         self.changed.wait().await;
     }

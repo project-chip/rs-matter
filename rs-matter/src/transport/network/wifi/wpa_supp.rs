@@ -37,7 +37,7 @@ use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
-use crate::utils::sync::{blocking, DynBase, IfMutex};
+use crate::utils::sync::{blocking, DynBase, IfMultiMutex};
 use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
 use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
 use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;
@@ -57,7 +57,7 @@ where
     connection: &'a Connection,
     ifname: &'a str,
     ip_stack_ctl: T,
-    network: IfMutex<Option<OwnedObjectPath>>,
+    network: IfMultiMutex<Option<OwnedObjectPath>>,
     wifi_conn_info: blocking::Mutex<RefCell<Option<WifiConnInfo>>>,
 }
 
@@ -79,7 +79,7 @@ where
             connection,
             ifname,
             ip_stack_ctl,
-            network: IfMutex::new(None),
+            network: IfMultiMutex::new(None),
             wifi_conn_info: blocking::Mutex::new(RefCell::new(None)),
         }
     }

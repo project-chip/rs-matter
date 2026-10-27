@@ -43,7 +43,7 @@ use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 use crate::transport::network::wifi::wpa_supp::band::{band_and_channel, signal_strength_to_rssi};
-use crate::utils::sync::{blocking, DynBase, IfMutex};
+use crate::utils::sync::{blocking, DynBase, IfMultiMutex};
 use crate::utils::zbus_proxies::nm::access_point::AccessPointProxy;
 use crate::utils::zbus_proxies::nm::connection::ConnectionProxy;
 use crate::utils::zbus_proxies::nm::device::wireless::WirelessProxy;
@@ -57,7 +57,7 @@ use crate::utils::zbus_proxies::nm::{NM80211ApSecurityFlags, NM80211Mode, NMDevi
 pub struct NetMgrCtl<'a> {
     connection: &'a Connection,
     ifname: &'a str,
-    net_conn: IfMutex<Option<OwnedObjectPath>>,
+    net_conn: IfMultiMutex<Option<OwnedObjectPath>>,
     wifi_conn_info: blocking::Mutex<RefCell<Option<WifiConnInfo>>>,
 }
 
@@ -74,7 +74,7 @@ impl<'a> NetMgrCtl<'a> {
         Self {
             connection,
             ifname,
-            net_conn: IfMutex::new(None),
+            net_conn: IfMultiMutex::new(None),
             wifi_conn_info: blocking::Mutex::new(RefCell::new(None)),
         }
     }

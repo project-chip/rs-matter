@@ -58,7 +58,9 @@ use crate::utils::storage::Vec;
 use crate::utils::storage::{pooled::Buffers, ParseBuf, WriteBuf};
 
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{IfMutex, IfMutexGuard, MultiNotification, Notification, Signal};
+use crate::utils::sync::{
+    IfMultiMutex, IfMutex, IfMutexGuard, MultiNotification, MultiSignal, Notification,
+};
 use crate::{Matter, MATTER_PORT};
 
 use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
@@ -69,8 +71,12 @@ use proto_hdr::ProtoHdr;
 use session::PeerMrpParams;
 use session::{Session, Sessions, CASE_SESSIONS_PER_FABRIC, MAX_SESSIONS};
 
+#[cfg(not(feature = "case-responder-only"))]
+use self::case_setup::CaseSetupTurn;
+use self::case_setup::CaseSetups;
 use self::mrp::mrp_log;
 
+mod case_setup;
 mod dedup;
 
 pub mod exchange;
@@ -118,11 +124,11 @@ pub const MAX_TX_PAYLOAD_SIZE: usize =
 /// Represents the state of the transport layer of a `Matter` instance.
 pub struct Transport {
     /// Buffer for an incoming (RX) packet.
-    // TODO XXX FIXME: Needs multiple wakers for work-stealing executors
-    rx: IfMutex<Packet<MAX_RX_BUF_SIZE>>,
+    // TODO: A small queue of RX packets, so that an exchange slow to take its packet
+    // does not hold up the reception of all other packets.
+    rx: IfMultiMutex<Packet<MAX_RX_BUF_SIZE>>,
     /// Buffer for an outgoing (TX) packet.
-    // TODO XXX FIXME: Needs multiple wakers for work-stealing executors
-    tx: IfMutex<Packet<MAX_TX_BUF_SIZE>>,
+    tx: IfMultiMutex<Packet<MAX_TX_BUF_SIZE>>,
     /// List of currently joined group addresses, used for managing multicast group membership.
     /// Zero-capacity (and thus never populated) without the `groups` feature.
     group_addrs: IfMutex<Vec<Ipv6Addr, MAX_GROUP_ADDRS>>,
@@ -132,12 +138,17 @@ pub struct Transport {
     mdns_changed: Notification,
     /// The single in-flight mDNS resolve rendezvous, shared between [`Transport::resolve`]
     /// callers and the running mDNS responder.
-    mdns_resolve: Signal<MdnsResolveState>,
+    // TODO: A small queue of resolves, so that one that times out does not hold up
+    // all the others.
+    mdns_resolve: MultiSignal<MdnsResolveState>,
     /// The single in-flight mDNS browse rendezvous, shared between
     /// [`Transport::browse`] callers and the running mDNS responder.
-    mdns_browse: Signal<MdnsBrowseState>,
+    // TODO: A small queue of browses, as for the resolves.
+    mdns_browse: MultiSignal<MdnsBrowseState>,
     /// How many [`MdnsResponder`]s are registered.
-    mdns_responders: Signal<u8>,
+    mdns_responders: MultiSignal<u8>,
+    /// The CASE sessions being established by [`Transport::initiate`].
+    case_setups: CaseSetups,
     /// A notification that a session had been removed
     session_removed: MultiNotification,
     /// A notification that a Matter message was received or sent over a session -
@@ -175,14 +186,15 @@ impl Transport {
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self {
-            rx: IfMutex::new(Packet::new()),
-            tx: IfMutex::new(Packet::new()),
+            rx: IfMultiMutex::new(Packet::new()),
+            tx: IfMultiMutex::new(Packet::new()),
             group_addrs: IfMutex::new(Vec::new()),
             exchange_dropped: Notification::new(),
             mdns_changed: Notification::new(),
-            mdns_resolve: Signal::new(MdnsResolveState::Idle),
-            mdns_browse: Signal::new(MdnsBrowseState::Idle),
-            mdns_responders: Signal::new(0),
+            mdns_resolve: MultiSignal::new(MdnsResolveState::Idle),
+            mdns_browse: MultiSignal::new(MdnsBrowseState::Idle),
+            mdns_responders: MultiSignal::new(0),
+            case_setups: CaseSetups::new(),
             session_removed: MultiNotification::new(),
             activity: Notification::new(),
             comm_window_changed: MultiNotification::new(),
@@ -196,14 +208,15 @@ impl Transport {
     /// Initialize the transport state by initializing the RX and TX buffers, and setting up the exchange dropped notification.
     pub(crate) fn init() -> impl Init<Self> {
         init!(Self {
-            rx <- IfMutex::init(Packet::init()),
-            tx <- IfMutex::init(Packet::init()),
+            rx <- IfMultiMutex::init(Packet::init()),
+            tx <- IfMultiMutex::init(Packet::init()),
             group_addrs <- IfMutex::init(Vec::init()),
             exchange_dropped <- Notification::init(),
             mdns_changed <- Notification::init(),
-            mdns_resolve <- Signal::init(MdnsResolveState::Idle),
-            mdns_browse <- Signal::init(MdnsBrowseState::Idle),
-            mdns_responders <- Signal::init(0),
+            mdns_resolve <- MultiSignal::init(MdnsResolveState::Idle),
+            mdns_browse <- MultiSignal::init(MdnsBrowseState::Idle),
+            mdns_responders <- MultiSignal::init(0),
+            case_setups <- CaseSetups::init(),
             session_removed <- MultiNotification::init(),
             activity <- Notification::init(),
             comm_window_changed <- MultiNotification::init(),
@@ -256,6 +269,8 @@ impl Transport {
     ///
     /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
     /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
+    ///
+    /// Single waiter: the running mDNS responder, of which there is one at a time.
     pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
         self.mdns_changed.wait()
     }
@@ -866,6 +881,10 @@ impl Transport {
     /// [`CaseInitiator`]) before the exchange is opened on it; the peer's
     /// MRP/session parameters advertised in the mDNS TXT records seed the
     /// session.
+    ///
+    /// Callers that initiate to the same node while its session is being
+    /// established wait for that handshake instead of running their own, and
+    /// get its error if it fails.
     pub(crate) async fn initiate<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
@@ -896,6 +915,9 @@ impl Transport {
     /// its operational address over mDNS), then open an exchange on it. Called by
     /// [`initiate`](Self::initiate) only when no live session to the peer exists.
     ///
+    /// If another caller is already establishing the session, this waits for it
+    /// and uses its session, or returns its error.
+    ///
     /// With the `case-responder-only` feature this is compiled out and replaced
     /// by an immediate [`ErrorCode::NoSession`]: reporting (and every other
     /// on-demand initiator) then reuses an existing session or fails, and the
@@ -909,7 +931,47 @@ impl Transport {
         peer_node_id: NodeId,
         transport: TransportPreference,
     ) -> Result<Exchange<'a>, Error> {
-        // No CASE session: resolve the operational address and establish one.
+        loop {
+            match self.case_setups.enter(fabric_idx, peer_node_id) {
+                CaseSetupTurn::Wait(setup) => setup.wait().await?,
+                CaseSetupTurn::Establish(mut setup) => {
+                    let session_id = self
+                        .establish_case(matter, &crypto, fabric_idx, peer_node_id, transport)
+                        .await
+                        .inspect_err(|err| setup.fail(err))?;
+
+                    return self.initiate_for_session(matter, crypto, session_id);
+                }
+            }
+
+            // The handshake waited for succeeded, or its initiator gave it up
+            // and there is no session yet.
+            let existing = matter.with_state(|state| {
+                Ok::<_, Error>(
+                    state
+                        .sessions
+                        .get_for_node(fabric_idx, peer_node_id)
+                        .map(|s| s.id),
+                )
+            })?;
+
+            if let Some(session_id) = existing {
+                return self.initiate_for_session(matter, crypto, session_id);
+            }
+        }
+    }
+
+    /// Resolve the peer's operational address over mDNS and establish a CASE
+    /// session to it. Returns the ID of the new session.
+    #[cfg(not(feature = "case-responder-only"))]
+    async fn establish_case<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+        transport: TransportPreference,
+    ) -> Result<u32, Error> {
         let compressed_fabric_id = matter.with_state(|state| {
             Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
         })?;
@@ -992,16 +1054,14 @@ impl Transport {
             return Err(err);
         }
 
-        let session_id = matter.with_state(|state| {
+        matter.with_state(|state| {
             let session = state
                 .sessions
                 .get_for_node(fabric_idx, peer_node_id)
                 .ok_or(ErrorCode::NoSession)?;
 
             Ok::<_, Error>(session.id)
-        })?;
-
-        self.initiate_for_session(matter, crypto, session_id)
+        })
     }
 
     /// The `case-responder-only` variant: never establish a new CASE session.
@@ -1201,7 +1261,7 @@ impl Transport {
     }
 
     async fn get_if<'b, F, const N: usize>(
-        packet_mutex: &'b IfMutex<Packet<N>>,
+        packet_mutex: &'b IfMultiMutex<Packet<N>>,
         f: F,
     ) -> PacketAccess<'b, N>
     where
@@ -1346,7 +1406,7 @@ impl Drop for MdnsResponder<'_> {
 /// This guarantees that a dropped (cancelled or timed-out) [`Transport::resolve`]
 /// future does not leave the single-slot rendezvous occupied for other callers.
 struct MdnsResolveGuard<'a> {
-    signal: &'a Signal<MdnsResolveState>,
+    signal: &'a MultiSignal<MdnsResolveState>,
     armed: bool,
 }
 
@@ -1368,7 +1428,7 @@ impl Drop for MdnsResolveGuard<'_> {
 /// Resets the mDNS browse rendezvous to `Idle` on drop, unless disarmed (the
 /// browse analog of [`ResolveGuard`]).
 struct MdnsBrowseGuard<'a> {
-    signal: &'a Signal<MdnsBrowseState>,
+    signal: &'a MultiSignal<MdnsBrowseState>,
     armed: bool,
 }
 
@@ -1449,6 +1509,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         // start.
         info!("mDNS service published: (app started)");
 
+        // Its waiters are the RX and TX loops below, so they share one waker.
         let send = IfMutex::new(send);
 
         let mut rx = pin!(self.process_rx(recv, &send));
@@ -2783,7 +2844,7 @@ impl<const N: usize> DerefMut for PacketBuffer<N> {
 // RX or TX packet of the transport layer.
 //
 // At any point in time, either the `Transport` singleton, or exactly one `Exchange` instance, or nobody
-// holds a lock on the RX or TX packet. This is enforced by protecting the packets with an `IfMutex` asynchronous mutex.
+// holds a lock on the RX or TX packet. This is enforced by protecting the packets with an `IfMultiMutex` asynchronous mutex.
 //
 // This type is only known and used by the `transport` and the `exchange` modules
 pub(crate) struct PacketAccess<'a, const N: usize>(IfMutexGuard<'a, Packet<N>>, bool);
@@ -2826,7 +2887,7 @@ impl<const N: usize> Display for PacketAccess<'_, N> {
 // in case it needs temporary access to a `&mut [u8]`-shaped memory
 //
 // Used by the builtin mDNS responder, as well as by the QR code generator
-pub struct PacketBufferExternalAccess<'a, const N: usize>(pub(crate) &'a IfMutex<Packet<N>>);
+pub struct PacketBufferExternalAccess<'a, const N: usize>(pub(crate) &'a IfMultiMutex<Packet<N>>);
 
 impl<const N: usize> Buffers<[u8]> for PacketBufferExternalAccess<'_, N> {
     type Buffer<'b>

@@ -59,6 +59,12 @@ impl<S> State<S> {
 /// The generic nature of `Signal` allows for a wide range of use cases, including the implementation of:
 /// - the `Notification` primitive
 /// - the `IfMutex` primitive
+///
+/// A `Signal` keeps a single waker, so the code that uses it directly must never have
+/// waiters with different wakers at the same time: waiters from other tasks or threads,
+/// or from the futures of a `FuturesUnordered`, keep waking each other until their
+/// condition holds. Several waiters inside one future share one waker and are fine.
+/// Where waiters with different wakers are possible, use [`MultiSignal`] instead.
 pub struct Signal<S, M = MatterRawMutex> {
     inner: Mutex<RefCell<State<S>>, M>,
 }
@@ -150,3 +156,9 @@ where
         self.wait(|state| state.take()).await
     }
 }
+
+/// A [`Signal`] that waiters with different wakers may wait on at the same time.
+///
+/// It is the same type as `Signal`, and it marks the places that have to be revisited
+/// before `rs-matter` can run on a work-stealing executor.
+pub type MultiSignal<S, M = MatterRawMutex> = Signal<S, M>;
