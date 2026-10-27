@@ -31,6 +31,7 @@ use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::transport::mrp;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
+use crate::utils::sync::{DynBase, MaybeSend};
 use crate::Matter;
 
 use case::CaseResponder;
@@ -260,18 +261,26 @@ impl<'a> StatusReport<'a> {
 /// Both methods default to dropping the message (matching the accessory role),
 /// so `()` is a valid no-op handler. A controller overrides the verb(s) it cares
 /// about; the handler receives the [`Exchange`] to read the message from.
-pub trait AsyncScHandler {
+pub trait AsyncScHandler: DynBase {
     /// Handle an incoming Check-In message (Secure Channel opcode `CheckIn`).
-    async fn check_in(&self, _exchange: Exchange<'_>) -> Result<(), Error> {
+    fn check_in(
+        &self,
+        _exchange: Exchange<'_>,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
         warn!("Check-In: Unexpected Check-In message received; dropping");
-        Ok(())
+
+        core::future::ready(Ok(()))
     }
 
     /// Handle an unsolicited Message Counter Sync response
     /// (opcode `MsgCounterSyncResp`).
-    async fn mcsp_resp(&self, _exchange: Exchange<'_>) -> Result<(), Error> {
+    fn mcsp_resp(
+        &self,
+        _exchange: Exchange<'_>,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
         warn!("MCSP: Unsolicited MsgCounterSyncResp received; dropping");
-        Ok(())
+
+        core::future::ready(Ok(()))
     }
 }
 
@@ -367,11 +376,11 @@ impl<C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler> SecureChannel<C, N, H>
     }
 }
 
-impl<C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler> ExchangeHandler
+impl<C: Crypto, N: AttrChangeNotifier + DynBase, H: AsyncScHandler> ExchangeHandler
     for SecureChannel<C, N, H>
 {
     fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        SecureChannel::handle(self, exchange)
+        crate::utils::sync::TempAssertSend(SecureChannel::handle(self, exchange))
     }
 }
 

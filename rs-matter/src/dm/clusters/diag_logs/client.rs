@@ -24,8 +24,11 @@
 //! the mirror of the server-side
 //! [`OtaBdxHandler`](crate::dm::clusters::ota_prov::OtaBdxHandler).
 
+use core::future::Future;
+
 use crate::bdx::{BdxHandler, BdxReader, BdxResponder, BdxStatus};
 use crate::error::Error;
+use crate::utils::sync::{DynBase, MaybeSend};
 
 use super::MAX_FILE_DESIGNATOR;
 
@@ -36,16 +39,16 @@ use super::MAX_FILE_DESIGNATOR;
 /// [`DiagLogsBdxHandler`] calls [`receive`](Self::receive) once per incoming BDX
 /// log transfer; pull the bytes from `reader` yourself and store them however you
 /// like - there is no per-chunk callback.
-pub trait DiagLogsReceiver {
+pub trait DiagLogsReceiver: DynBase {
     /// Receive one diagnostic-log transfer. `file_designator` is the one the
     /// client named in its `RetrieveLogsRequest` (use it to correlate the
     /// transfer with that request). Read from `reader` until it returns `0`; the
     /// transfer is abandoned if the reader is dropped before end-of-stream.
-    async fn receive(
+    fn receive(
         &self,
         file_designator: &[u8],
         reader: &mut BdxReader<'_>,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }
 
 impl<T> DiagLogsReceiver for &T

@@ -73,6 +73,7 @@ use crate::crypto::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::utils::init::InitMaybeUninit;
+use crate::utils::sync::MaybeSend;
 
 /// A RustCrypto backend for the crypto traits
 pub struct RustCrypto<'s, T> {
@@ -99,7 +100,7 @@ impl<'s, T> RustCrypto<'s, T> {
 
 impl<T> Crypto for RustCrypto<'_, T>
 where
-    T: CryptoRng,
+    T: CryptoRng + MaybeSend,
 {
     type Rand<'a>
         = &'a SharedRand<T>

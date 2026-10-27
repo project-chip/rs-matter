@@ -141,15 +141,15 @@ mod mutex {
 
 pub mod raw {
     /// The raw mutex used throughout the `rs-matter` codebase
-    #[cfg(not(feature = "sync-mutex"))]
+    #[cfg(not(feature = "send-sync"))]
     pub type MatterRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     /// The raw mutex used throughout the `rs-matter` codebase
-    #[cfg(all(feature = "sync-mutex", not(feature = "std")))]
+    #[cfg(all(feature = "send-sync", not(feature = "std")))]
     pub type MatterRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     /// The raw mutex used throughout the `rs-matter` codebase
-    #[cfg(all(feature = "sync-mutex", feature = "std"))]
+    #[cfg(all(feature = "send-sync", feature = "std"))]
     pub type MatterRawMutex = StdRawMutex;
 
     #[cfg(feature = "std")]

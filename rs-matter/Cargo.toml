@@ -186,7 +186,7 @@ openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
 # This is a WIP feature and not yet fully supported.
-sync-mutex = []
+send-sync = []
 # Enable a small OTA DCL client.
 # TODO: We likely don't need this hidden behind a feature.
 ota-dcl = ["dep:serde", "dep:serde-json-core", "heapless/serde"]

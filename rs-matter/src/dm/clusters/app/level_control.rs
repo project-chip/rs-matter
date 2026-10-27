@@ -53,7 +53,7 @@ use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Signal;
+use crate::utils::sync::{DynBase, MaybeSend, Signal};
 
 /// Messages passed to the `notify` closure in `LevelControlHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1715,7 +1715,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterHandler for LevelControlHandle
     }
 }
 
-pub trait LevelControlHooks {
+pub trait LevelControlHooks: DynBase {
     const MIN_LEVEL: u8;
     const MAX_LEVEL: u8;
     const FASTEST_RATE: u8;
@@ -1765,7 +1765,10 @@ pub trait LevelControlHooks {
     ///
     /// # Panics
     /// The SDK will panic if this method returns.
-    fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
         pending::<()>()
     }
 }
@@ -1792,7 +1795,7 @@ where
         (*self).set_device_level(level)
     }
 
-    fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
     }
 }

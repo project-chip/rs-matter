@@ -79,6 +79,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVArray, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{DynBase, MaybeSend};
 use crate::with;
 
 pub use crate::dm::clusters::decl::camera_av_stream_management::AudioCodecEnum;
@@ -201,7 +202,7 @@ impl From<CamAvError> for Error {
 /// reference-count protection on deallocate) is done by
 /// [`CameraAvStreamHandler`] before any of these methods run. Implementors
 /// only need to interact with their actual encoder / camera.
-pub trait CameraAvStreamHooks {
+pub trait CameraAvStreamHooks: DynBase {
     /// Called when a new video stream has been validated and assigned a
     /// stable ID. The implementation should provision encoder resources;
     /// returning `Err` aborts the allocation (the stream is NOT added to
@@ -210,7 +211,10 @@ pub trait CameraAvStreamHooks {
     ///
     /// `stream` carries the just-assigned `video_stream_id` and the
     /// validated parameters. `reference_count` is always 0 here.
-    fn allocate_video(&self, stream: &VideoStream) -> impl Future<Output = Result<(), CamAvError>>;
+    fn allocate_video(
+        &self,
+        stream: &VideoStream,
+    ) -> impl Future<Output = Result<(), CamAvError>> + MaybeSend;
 
     /// Called when a controller requests `VideoStreamModify`.
     ///
@@ -224,14 +228,14 @@ pub trait CameraAvStreamHooks {
         video_stream_id: u16,
         watermark_enabled: Option<bool>,
         osd_enabled: Option<bool>,
-    ) -> impl Future<Output = Result<(), CamAvError>>;
+    ) -> impl Future<Output = Result<(), CamAvError>> + MaybeSend;
 
     /// Called when a controller requests `VideoStreamDeallocate` AND
     /// the handler has confirmed the stream's reference count is zero.
     fn deallocate_video(
         &self,
         video_stream_id: u16,
-    ) -> impl Future<Output = Result<(), CamAvError>>;
+    ) -> impl Future<Output = Result<(), CamAvError>> + MaybeSend;
 }
 
 impl<T> CameraAvStreamHooks for &T

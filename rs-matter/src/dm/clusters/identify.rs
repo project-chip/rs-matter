@@ -46,7 +46,7 @@ use crate::dm::types::EndptId;
 use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext};
 use crate::error::Error;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{DynBase, Notification};
 use crate::with;
 
 pub use crate::dm::clusters::decl::identify::*;
@@ -94,7 +94,7 @@ pub enum IdentifyAction {
 /// controller. The default `()` implementation is a no-op and is suitable
 /// for headless test fixtures or applications that observe identification
 /// state via attribute subscriptions instead.
-pub trait IdentifyHooks {
+pub trait IdentifyHooks: DynBase {
     /// Return the kind of identification mechanism this endpoint provides.
     /// Reported as the `IdentifyType` attribute (per App Cluster spec).
     fn identify_type(&self) -> IdentifyTypeEnum;
@@ -134,7 +134,7 @@ impl IdentifyHooks for () {
 ///
 /// Implemented by [`IdentifyHandler`]; couple it to the sibling handler
 /// serving the *same* endpoint (identification state is per-endpoint).
-pub trait IdentifyStatus {
+pub trait IdentifyStatus: DynBase {
     /// Whether the endpoint is currently identifying (`IdentifyTime > 0`).
     fn is_identifying(&self) -> bool;
 }

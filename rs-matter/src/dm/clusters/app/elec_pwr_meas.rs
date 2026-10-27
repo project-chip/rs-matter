@@ -41,6 +41,7 @@
 //! nor are `POLY`, `HARM` and `PWRQ`, each of which makes further attributes
 //! mandatory.
 
+use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select, Either};
@@ -56,7 +57,7 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::im::{AmperageMilliA, PowerMilliVA, PowerMilliVAR, PowerMilliW, VoltageMilliV};
 use crate::tlv::{Nullable, TLVBuilderParent};
-use crate::utils::sync::Signal;
+use crate::utils::sync::{DynBase, MaybeSend, Signal};
 
 use super::measurement::{write_accuracy, MeasurementAccuracy};
 
@@ -512,7 +513,7 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
 ///
 /// Every reading is optional: a device that cannot currently measure a
 /// quantity answers `None` rather than a stale or invented number.
-pub trait ElecPwrMeasHooks {
+pub trait ElecPwrMeasHooks: DynBase {
     /// The features and attributes this instance serves. See
     /// [`ElecPwrMeasHandler::validate`] for what a serveable configuration
     /// is.
@@ -599,8 +600,11 @@ pub trait ElecPwrMeasHooks {
     /// # Panics
     /// This future must not return; the SDK panics if it does. Loop forever,
     /// or await `core::future::pending::<()>()`.
-    async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
-        core::future::pending::<()>().await
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
+        core::future::pending::<()>()
     }
 }
 
@@ -660,7 +664,7 @@ where
         (*self).power_factor()
     }
 
-    async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
+    async fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) {
         (*self).run(notify).await
     }
 }

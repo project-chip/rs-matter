@@ -26,14 +26,14 @@ use embassy_time::{Duration, Timer};
 
 use crate::utils::init::{init, Init, InitDefault, UnsafeCellInit};
 use crate::utils::sync::blocking::raw::MatterRawMutex;
-use crate::utils::sync::MultiSignal;
+use crate::utils::sync::{DynBase, MaybeSend, MultiSignal};
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
-pub trait Buffers<T>
+pub trait Buffers<T>: DynBase
 where
     T: ?Sized,
 {
-    type Buffer<'a>: DerefMut<Target = T>
+    type Buffer<'a>: DerefMut<Target = T> + DynBase
     where
         Self: 'a;
 
@@ -43,7 +43,7 @@ where
     /// Depending on its internal implementation details, access to a buffer might also be denied
     /// immediately, or after a certain amount of time (subject to the concrete implementation of the method).
     /// In that case, the method will return `None`.
-    async fn get(&self) -> Option<Self::Buffer<'_>>;
+    fn get(&self) -> impl Future<Output = Option<Self::Buffer<'_>>> + MaybeSend;
 
     /// Get a reference to a buffer immediately, without waiting.
     /// If no buffer is available, return `None`.
@@ -195,8 +195,8 @@ where
 
 impl<T, const N: usize, M> Buffers<T> for PooledBuffers<T, N, M>
 where
-    T: InitDefault,
-    M: RawMutex,
+    T: InitDefault + DynBase,
+    M: RawMutex + DynBase,
 {
     type Buffer<'b>
         = PooledBuffer<'b, T, N, M>

@@ -19,6 +19,7 @@ use num_traits::ToBytes;
 
 use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
+use crate::utils::sync::MaybeSend;
 
 use super::{TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, ToTLV};
 
@@ -37,7 +38,7 @@ use super::{TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, ToTLV};
 ///
 /// For iterator-style TLV serialization look at the `ToTLVIter` trait.
 pub trait TLVWrite {
-    type Position: PartialEq + Copy;
+    type Position: PartialEq + Copy + MaybeSend;
 
     /// Write `value` under a context tag.
     ///

@@ -32,7 +32,7 @@ use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
-use crate::utils::sync::blocking;
+use crate::utils::sync::{blocking, DynBase, MaybeSend};
 
 use super::NetChangeNotif;
 
@@ -599,7 +599,7 @@ where
 
 impl<const N: usize, T> Networks for WirelessNetworks<N, T>
 where
-    T: WirelessNetwork,
+    T: WirelessNetwork + DynBase,
 {
     fn max_networks(&self) -> Result<u8, Error> {
         Ok(N as _)
@@ -954,7 +954,7 @@ where
 
     async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&net_comm::NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&net_comm::NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         self.net_ctl.scan(network, f).await
     }

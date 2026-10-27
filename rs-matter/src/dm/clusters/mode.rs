@@ -131,6 +131,7 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::TLVBuilderParent;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::DynBase;
 
 pub use crate::dm::clusters::decl::globals::{
     ModeOptionStruct, ModeOptionStructArrayBuilder, ModeOptionStructBuilder, ModeTagStruct,
@@ -417,7 +418,7 @@ impl ModeChangeError {
 /// `SupportedModes` encoding, the `ChangeToMode` decision tree, the ordering
 /// between "device agreed" and "`CurrentMode` updated". What is left here is
 /// what only the device knows.
-pub trait ModeHooks {
+pub trait ModeHooks: DynBase {
     /// The cluster metadata this handler exposes.
     ///
     /// This selects *which* derived cluster the handler serves, so it must

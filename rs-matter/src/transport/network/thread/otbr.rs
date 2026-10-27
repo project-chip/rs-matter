@@ -36,7 +36,7 @@ use crate::dm::clusters::thread_diag::{
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::Error;
-use crate::utils::sync::blocking;
+use crate::utils::sync::{blocking, MaybeSend};
 use crate::utils::zbus_proxies::openthread::border_router::{
     BorderRouterProxy, LeaderData, MacCounters, NeighborEntry,
 };
@@ -179,7 +179,7 @@ impl NetCtl for OtbrCtl<'_> {
 
     async fn scan<F>(&self, network: Option<&[u8]>, mut f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         let proxy = self.proxy().await.map_err(Error::from)?;
 

@@ -26,6 +26,7 @@ use crate::dm::clusters::net_comm::{
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
+use crate::utils::sync::MaybeSend;
 
 /// A fixed `Networks` trait implementation for Ethernet.
 ///
@@ -151,7 +152,7 @@ impl NetCtl for EthNetCtl<'_> {
 
     async fn scan<F>(&self, _network: Option<&[u8]>, _f: F) -> Result<(), NetCtlError>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         Err(NetCtlError::Other(ErrorCode::InvalidAction.into()))
     }

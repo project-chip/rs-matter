@@ -82,7 +82,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, TLVElement, TLVTag, ToTLV};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{DynBase, MaybeSend, Notification};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -175,7 +175,7 @@ pub struct PushAvStreamConfig<'a> {
 ///
 /// Implementors only need to interact with their actual upload
 /// pipeline (open the TLS connection, push CMAF segments, etc.).
-pub trait PushAvStreamHooks {
+pub trait PushAvStreamHooks: DynBase {
     /// Called when a new push connection has been validated and
     /// assigned a stable ID. The implementation should provision the
     /// upload pipeline; returning `Err` aborts the allocation (the
@@ -186,7 +186,7 @@ pub trait PushAvStreamHooks {
         connection_id: u16,
         fabric_index: FabricIndex,
         request: &AllocatePushTransportRequest<'_>,
-    ) -> impl core::future::Future<Output = Result<(), PushAvError>>;
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> + MaybeSend;
 
     /// Called when a controller requests `DeallocatePushTransport`
     /// AND the handler has confirmed the connection exists and is
@@ -195,7 +195,7 @@ pub trait PushAvStreamHooks {
     fn on_deallocate(
         &self,
         _connection_id: u16,
-    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> + MaybeSend {
         async { Ok(()) }
     }
 
@@ -206,7 +206,7 @@ pub trait PushAvStreamHooks {
         &self,
         _connection_id: u16,
         _request: &ModifyPushTransportRequest<'_>,
-    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> + MaybeSend {
         async { Ok(()) }
     }
 
@@ -220,7 +220,7 @@ pub trait PushAvStreamHooks {
         &self,
         _connection_id: Option<u16>,
         _status: TransportStatusEnum,
-    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> + MaybeSend {
         async { Ok(()) }
     }
 
@@ -236,7 +236,7 @@ pub trait PushAvStreamHooks {
         _activation_reason: TriggerActivationReasonEnum,
         _time_control: Option<TransportMotionTriggerTimeControlStruct<'_>>,
         _user_defined: Option<&[u8]>,
-    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> + MaybeSend {
         async { Ok(()) }
     }
 

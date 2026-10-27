@@ -16,7 +16,7 @@
  */
 
 //! A variation of the sample Ethernet Matter On/Off Light device
-//! where `rs-matter` is built with the `sync-mutex` feature enabled, which makes `rs-matter` futures
+//! where `rs-matter` is built with the `send-sync` feature enabled, which makes `rs-matter` futures
 //! `Send` and allows those to be scheduled in a work-stealing executor.
 //!
 //! NOTE: Work-stealing execution with `rs-matter` is NOT ready yet!
@@ -168,7 +168,7 @@ fn main() -> Result<(), Error> {
     // reached through the generic layers of the responder. This is likely
     // https://github.com/rust-lang/rust/issues/64552. `-Znext-solver`, `-Zhigher-ranked-assumptions`
     // and `-Zassumptions-on-binders` do not help.
-    //executor.spawn(respond).detach();
+    executor.spawn(respond).detach();
 
     futures_lite::future::block_on(executor.run(core::future::pending::<()>()));
 

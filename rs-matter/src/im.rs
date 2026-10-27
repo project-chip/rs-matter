@@ -25,9 +25,8 @@
 //! incoming IM requests.
 
 use core::cell::Cell;
+use core::future::Future;
 use core::num::NonZeroU8;
-
-use crate::utils::sync::blocking::Mutex;
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3};
@@ -56,6 +55,8 @@ use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::WriteBuf;
+use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{DynBase, MaybeSend};
 use crate::Matter;
 
 pub use encoding::*;
@@ -90,7 +91,7 @@ pub struct DeviceLoad {
 /// Interaction-Model state threaded down to cluster handlers via
 /// [`HandlerContext::im_stats`](crate::dm::HandlerContext::im_stats).
 ///
-pub trait ImStats {
+pub trait ImStats: DynBase {
     /// The node's resource-utilisation metrics, for
     /// `GeneralDiagnostics::DeviceLoadStatus`.
     ///
@@ -114,7 +115,7 @@ pub trait ImStats {
     /// than at its next wake-up.
     ///
     /// A single-waiter notification: exactly one task should wait on it.
-    async fn wait_report_failed(&self);
+    fn wait_report_failed(&self) -> impl Future<Output = ()> + MaybeSend;
 
     /// The earliest point at which a subscription needs a report to keep alive,
     /// or `None` without subscriptions.
@@ -1631,6 +1632,7 @@ where
 impl<C, B, T, K, R, const NS: usize, const NE: usize> ImStats
     for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
+    R: DynBase,
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
@@ -1662,6 +1664,7 @@ where
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
+    R: DynBase,
 {
     fn matter(&self) -> &Matter<'_> {
         self.matter

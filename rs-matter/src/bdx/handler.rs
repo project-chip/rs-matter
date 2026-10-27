@@ -27,7 +27,10 @@
 //! file-designator namespaces - e.g. an OTA Provider serving images alongside a
 //! Diagnostic Logs client receiving logs.
 
+use core::future::Future;
+
 use crate::respond::ExchangeHandler;
+use crate::utils::sync::{DynBase, MaybeSend};
 
 use super::nego::abort;
 use super::*;
@@ -67,18 +70,21 @@ impl BdxResponder<'_> {
 /// [`handles`](Self::handles) selects which transfers this handler owns; only a
 /// [`BdxResponder`] it claims is passed to [`handle`](Self::handle). The default
 /// `handle` rejects with `FileDesignatorUnknown`.
-pub trait BdxHandler {
+pub trait BdxHandler: DynBase {
     /// Whether this handler owns the transfer described by `responder` (by its
     /// direction and file designator). Consulted before [`handle`](Self::handle),
     /// so it must not consume the responder.
-    async fn handles(&self, _responder: &BdxResponder<'_>) -> bool {
-        false
+    fn handles(&self, _responder: &BdxResponder<'_>) -> impl Future<Output = bool> + MaybeSend {
+        core::future::ready(false)
     }
 
     /// Handle a transfer this handler [`handles`](Self::handles): reply on (and
     /// drive) the [`BdxResponder`], or [`reject`](BdxResponder::reject) it.
-    async fn handle(&self, responder: BdxResponder<'_>) -> Result<(), Error> {
-        responder.reject(BdxStatus::FileDesignatorUnknown).await
+    fn handle(
+        &self,
+        responder: BdxResponder<'_>,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        responder.reject(BdxStatus::FileDesignatorUnknown)
     }
 }
 

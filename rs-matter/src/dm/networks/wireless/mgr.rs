@@ -441,6 +441,7 @@ mod tests {
     use crate::dm::networks::NetChangeNotif;
     use crate::error::{Error, ErrorCode};
     use crate::utils::sync::blocking::Mutex;
+    use crate::utils::sync::MaybeSend;
 
     // ── Helper: create NetworksCell<WifiNetworks> with entries ──
 
@@ -506,7 +507,7 @@ mod tests {
 
         async fn scan<F>(&self, _network: Option<&[u8]>, _f: F) -> Result<(), NetCtlError>
         where
-            F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+            F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
         {
             Err(NetCtlError::Other(ErrorCode::InvalidAction.into()))
         }

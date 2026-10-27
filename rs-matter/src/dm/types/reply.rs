@@ -18,11 +18,12 @@
 use crate::error::Error;
 use crate::im::encoding::{AttrDataTag, AttrPath, AttrRespTag, CmdDataTag, CmdPath, CmdRespTag};
 use crate::tlv::{TLVTag, TLVWrite, TagType, ToTLV};
+use crate::utils::sync::MaybeSend;
 
 use super::{AttrDetails, CmdDetails};
 
 // A type for writing the outcome of an attribute-read or command-invoke operation.
-pub trait Reply {
+pub trait Reply: MaybeSend {
     /// The tag to use if writing the data "manually" by using the `writer` method.
     const TAG: TagType;
 
@@ -47,14 +48,14 @@ pub trait Reply {
 }
 
 /// A trait for encoding the attribute value for an attribute read operation.
-pub trait ReadReply {
+pub trait ReadReply: MaybeSend {
     /// Return the reply data writer for an attribute, if the given `dataver` is still the latest
     /// cluster dataver.
     fn with_dataver(self, dataver: u32) -> Result<Option<impl Reply>, Error>;
 }
 
 /// A trait for encoding the result from a command invoke operation.
-pub trait InvokeReply {
+pub trait InvokeReply: MaybeSend {
     /// Return the reply data writer for a command with the provided Command ID.
     fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
 }

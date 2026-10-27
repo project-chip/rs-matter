@@ -35,6 +35,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::DynBase;
 
 /// The default size of each event buffer in bytes.
 /// This is a tradeoff between memory use and the risk of evicting events before subscribers have had a chance to read them.
@@ -548,7 +549,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
 
 /// A dyn-compatible writer for event data
 /// Necessary so that we can implement `EventTLVWrite`, which is a `TLVWrite` with an erased `const N: usize` generic
-trait DynEventWriter {
+trait DynEventWriter: DynBase {
     fn write(&mut self, byte: u8) -> Result<(), Error>;
 
     fn get_tail(&self) -> usize;

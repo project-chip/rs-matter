@@ -58,7 +58,7 @@ use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Signal;
+use crate::utils::sync::{DynBase, MaybeSend, Signal};
 
 pub use crate::dm::clusters::decl::thermostat::*;
 
@@ -358,7 +358,7 @@ struct EventState {
 /// The three `SetpointChange*` attributes as a unit: they move together.
 ///
 /// One `Mutex<RefCell<_>>`, the way `on_off` keeps its cluster state: with
-/// `sync-mutex` the handler is `Sync`, and without it the mutex is a
+/// `send-sync` the handler is `Sync`, and without it the mutex is a
 /// `NoopRawMutex` and costs nothing.
 struct SetpointChangeRecord(Mutex<RefCell<SetpointChangeState>>);
 
@@ -2203,7 +2203,7 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
 /// the relays - drive the equipment through [`Self::apply`], and supply the
 /// initial value of each attribute the handler persists. Everything defaults,
 /// so a heating-only device implements only the heating side.
-pub trait ThermostatHooks {
+pub trait ThermostatHooks: DynBase {
     /// The features, attributes and commands this instance serves. See
     /// [`ThermostatHandler::validate`] for what a valid configuration is.
     const CLUSTER: Cluster<'static>;
@@ -2307,8 +2307,11 @@ pub trait ThermostatHooks {
     /// # Panics
     /// This future must not return; the SDK panics if it does. Loop forever,
     /// or await `core::future::pending::<()>()`.
-    async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
-        core::future::pending::<()>().await
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
+        core::future::pending::<()>()
     }
 }
 
@@ -2350,7 +2353,7 @@ where
         (*self).apply(system_mode, heating_setpoint, cooling_setpoint)
     }
 
-    fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
     }
 }
@@ -2363,6 +2366,7 @@ pub mod test {
 
     use crate::dm::clusters::decl::thermostat as thermostat_cluster;
     use crate::dm::Cluster;
+    use crate::utils::sync::MaybeSend;
     use crate::with;
 
     use super::{OutOfBandMessage, RelayStateBitmap, SystemModeEnum, ThermostatHooks};
@@ -2544,7 +2548,7 @@ pub mod test {
             });
         }
 
-        async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
+        async fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) {
             loop {
                 // In a real device we would wait on a temperature sensor.
                 Timer::after(TICK).await;

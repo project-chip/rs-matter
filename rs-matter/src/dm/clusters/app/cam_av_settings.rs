@@ -78,6 +78,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{DynBase, MaybeSend};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -184,14 +185,17 @@ pub struct CamAvSettingsConfig {
 /// Application hooks for the side-effecting pieces of the cluster.
 /// All hooks have a no-op default implementation.
 #[allow(unused_variables)]
-pub trait CamAvSettingsHooks {
+pub trait CamAvSettingsHooks: DynBase {
     /// Apply a mechanical pan/tilt/zoom target. Called after the
     /// handler has validated bounds against the configured ranges and
     /// the enabled feature set.
     ///
     /// On `Err` the handler rolls back its internal `MPTZPosition`
     /// snapshot to the prior value.
-    fn mptz_apply(&self, target: &Mptz) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+    fn mptz_apply(
+        &self,
+        target: &Mptz,
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> + MaybeSend {
         async { Ok(()) }
     }
 
@@ -199,7 +203,10 @@ pub trait CamAvSettingsHooks {
     /// handler has validated `x1<x2`, `y1<y2`. Hardware-specific
     /// per-stream bounds (resolution caps, aspect-ratio constraints)
     /// are the implementation's responsibility.
-    fn dptz_apply(&self, view: &DptzView) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+    fn dptz_apply(
+        &self,
+        view: &DptzView,
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> + MaybeSend {
         async { Ok(()) }
     }
 
@@ -210,7 +217,7 @@ pub trait CamAvSettingsHooks {
     fn preset_saved(
         &self,
         preset: &MptzPreset,
-    ) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> + MaybeSend {
         async { Ok(()) }
     }
 
@@ -218,7 +225,7 @@ pub trait CamAvSettingsHooks {
     fn preset_removed(
         &self,
         preset_id: u8,
-    ) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> + MaybeSend {
         async { Ok(()) }
     }
 }

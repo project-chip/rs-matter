@@ -189,7 +189,7 @@ impl<'a> Mode<'a> {
 }
 
 /// Device-specific logic behind the ModeSelect cluster.
-pub trait ModeSelectHooks {
+pub trait ModeSelectHooks: DynBase {
     /// The cluster metadata this handler exposes. See [`CLUSTER`].
     const CLUSTER: Cluster<'static>;
 

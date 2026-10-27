@@ -38,6 +38,7 @@
 //! [`OtaImageHeader`](crate::ota::OtaImageHeader)s.
 
 use core::fmt::Write as _;
+use core::future::Future;
 use core::num::NonZeroU8;
 
 use crate::bdx::{BdxHandler, BdxResponder, BdxStatus};
@@ -47,6 +48,7 @@ use crate::ota::MAX_SOFTWARE_VERSION_STR_LEN;
 use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
 use crate::utils::storage::pooled::Buffers;
+use crate::utils::sync::{DynBase, MaybeSend};
 use crate::with;
 
 /// The buffer an [`OtaBdxHandler`] stages each BDX block in.
@@ -171,7 +173,7 @@ pub enum OtaApplyOutcome {
 ///
 /// A common way to add consent on top of an existing registry (e.g. the [`dcl`]
 /// sample) is a thin proxy that wraps it and overrides these decisions.
-pub trait OtaImagesRegistry {
+pub trait OtaImagesRegistry: DynBase {
     /// Decide what to offer `requestor`, querying for an image newer than
     /// `current_version` for `(vendor_id, product_id)`: [`OtaQueryOutcome::Available`]
     /// with the image to offer, [`OtaQueryOutcome::Busy`] to retry later (e.g. consent
@@ -184,7 +186,7 @@ pub trait OtaImagesRegistry {
     ///
     /// The returned [`OtaImageMeta`] may borrow `buf` (at least 192 bytes) for
     /// its strings and update token, so they can be minted at runtime.
-    async fn query<'b>(
+    fn query<'b>(
         &self,
         requestor: OtaRequestorId,
         vendor_id: u16,
@@ -192,7 +194,7 @@ pub trait OtaImagesRegistry {
         current_version: u32,
         requestor_can_consent: bool,
         buf: &'b mut [u8],
-    ) -> OtaQueryOutcome<'b>;
+    ) -> impl Future<Output = OtaQueryOutcome<'b>> + MaybeSend;
 
     /// Authorize `requestor` to apply the already-downloaded image, upgrading to
     /// `new_version`. `update_token` is the exact [`OtaImageMeta::update_token`]
@@ -202,25 +204,26 @@ pub trait OtaImagesRegistry {
     /// The default authorizes an immediate apply. Override it to defer (e.g. until
     /// provider-side consent is granted, with [`OtaApplyOutcome::Await`]) or to rescind a
     /// previously offered image ([`OtaApplyOutcome::Discontinue`]).
-    async fn apply(
+    fn apply(
         &self,
         _requestor: OtaRequestorId,
         _update_token: &[u8],
         _new_version: u32,
-    ) -> OtaApplyOutcome {
-        OtaApplyOutcome::Proceed { delay_secs: 0 }
+    ) -> impl Future<Output = OtaApplyOutcome> + MaybeSend {
+        core::future::ready(OtaApplyOutcome::Proceed { delay_secs: 0 })
     }
 
     /// `requestor` reports with `NotifyUpdateApplied` that it now runs
     /// `software_version`, from the image of `update_token`.
     ///
     /// The default does nothing.
-    async fn applied(
+    fn applied(
         &self,
         _requestor: OtaRequestorId,
         _update_token: &[u8],
         _software_version: u32,
-    ) {
+    ) -> impl Future<Output = ()> + MaybeSend {
+        core::future::ready(())
     }
 }
 
@@ -269,21 +272,21 @@ where
 
 /// The image bytes behind a BDX file designator: looked up and streamed during a
 /// download. Used by [`OtaBdxHandler`].
-pub trait OtaImages {
+pub trait OtaImages: DynBase {
     /// The total size of the image identified by `file_designator`. `None` means
     /// the designator is unknown and the BDX transfer is rejected
     /// (`FileDesignatorUnknown`).
-    async fn size(&self, file_designator: &[u8]) -> Option<u64>;
+    fn size(&self, file_designator: &[u8]) -> impl Future<Output = Option<u64>> + MaybeSend;
 
     /// Read up to `buf.len()` bytes of the image identified by `file_designator`
     /// at `offset`, returning the number of bytes read (`0` marks the end). An
     /// unknown designator should return an error.
-    async fn read(
+    fn read(
         &self,
         file_designator: &[u8],
         offset: u64,
         buf: &mut [u8],
-    ) -> Result<usize, Error>;
+    ) -> impl Future<Output = Result<usize, Error>> + MaybeSend;
 }
 
 impl<T> OtaImages for &T

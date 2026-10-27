@@ -18,6 +18,7 @@
 //! Cryptographic abstractions and backend.
 
 use crate::error::Error;
+use crate::utils::sync::{DynBase, MaybeSend};
 
 pub use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
@@ -35,7 +36,7 @@ mod rand;
 /// The trait is designed in a way where it allows customizing a concrete implementation by
 /// swapping out its out of the box algorithms with custom (potentially HW-accelerated) ones,
 /// by decorating the original implementation and replacing only the required types and methods.
-pub trait Crypto {
+pub trait Crypto: DynBase {
     type Rand<'a>: CryptoRng + Copy
     where
         Self: 'a;
@@ -47,7 +48,7 @@ pub trait Crypto {
     /// Hasher type returned by `Crypto::hash`.
     ///
     /// As per the Matter spec, the hasher should be SHA-256.
-    type Hash<'a>: Digest<HASH_LEN>
+    type Hash<'a>: Digest<HASH_LEN> + MaybeSend
     where
         Self: 'a;
 
@@ -132,13 +133,13 @@ pub trait Crypto {
     /// The only requirement is that both should be possible to convert from/to
     /// the same canonical representation.
     type SecretKey<'a>: SecretKey<
-        'a,
-        PKC_CANON_SECRET_KEY_LEN,
-        PKC_CANON_PUBLIC_KEY_LEN,
-        PKC_SIGNATURE_LEN,
-        PKC_SHARED_SECRET_LEN,
-        PublicKey<'a> = Self::PublicKey<'a>,
-    >
+            'a,
+            PKC_CANON_SECRET_KEY_LEN,
+            PKC_CANON_PUBLIC_KEY_LEN,
+            PKC_SIGNATURE_LEN,
+            PKC_SHARED_SECRET_LEN,
+            PublicKey<'a> = Self::PublicKey<'a>,
+        > + MaybeSend
     where
         Self: 'a;
 
@@ -655,7 +656,7 @@ pub fn default_crypto<'s, R>(
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 ) -> impl Crypto + 's
 where
-    R: CryptoRng + 's,
+    R: CryptoRng + MaybeSend + 's,
 {
     #[cfg(feature = "openssl")]
     let crypto = backend::openssl::OpenSslCrypto::new(singleton_secret_key);

@@ -95,6 +95,7 @@ use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
+use rs_matter::utils::sync::MaybeSend;
 
 // Baremetal entry point macro depending on target
 #[cfg(all(target_arch = "arm", target_os = "none"))]
@@ -682,7 +683,7 @@ impl NetCtl for FakeWifi {
         _f: F,
     ) -> impl Future<Output = Result<(), NetCtlError>>
     where
-        F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
+        F: FnMut(&NetworkScanInfo) -> Result<(), Error> + MaybeSend,
     {
         core::future::pending()
     }

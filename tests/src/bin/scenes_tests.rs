@@ -63,6 +63,7 @@ use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
@@ -88,7 +89,7 @@ static SCENES_STATE: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new(
 
 // UnitTesting on EP1 is needed by the `TestScenes*` YAML suites,
 // which use `TestAddArguments` for in-test arithmetic.
-static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
+static UNIT_TESTING_DATA: StaticCell<Mutex<RefCell<UnitTestingHandlerData>>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     logging::init();
@@ -129,7 +130,7 @@ fn main() -> Result<(), Error> {
     // reference to it via `with_scene_invalidator`.
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
-        .init_with(RefCell::init(UnitTestingHandlerData::init()));
+        .init_with(Mutex::init(RefCell::init(UnitTestingHandlerData::init())));
 
     let scenes_state = SCENES_STATE.uninit().init_with(ScenesState::init());
 
@@ -293,7 +294,7 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks, 
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
     scenes: ScenesHandler<'a, SCENES_CAPACITY, R>,
-    unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
+    unit_testing_data: &'a Mutex<RefCell<UnitTestingHandlerData>>,
 ) -> impl DataModel + 'a
 where
     R: rs_matter::dm::clusters::scenes::SceneClusters + 'a,

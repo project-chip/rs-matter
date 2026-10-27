@@ -123,6 +123,7 @@ use crate::im::Percent;
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, ToTLV};
 use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{DynBase, MaybeSend};
 
 /// Messages passed to the `notify` closure of [`FanControlHooks::run`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -307,7 +308,7 @@ pub const fn percent_of_speed(speed_max: u8, speed: u8) -> Percent {
 }
 
 /// Device-specific logic behind the Fan Control cluster.
-pub trait FanControlHooks {
+pub trait FanControlHooks: DynBase {
     /// The cluster metadata this handler exposes: the features, and the
     /// attributes and commands that go with them. Checked at startup, see
     /// [`FanControlHandler`].
@@ -418,7 +419,10 @@ pub trait FanControlHooks {
     ///
     /// # Panics
     /// The SDK will panic if this method returns.
-    fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(
+        &self,
+        _notify: F,
+    ) -> impl Future<Output = ()> + MaybeSend {
         pending::<()>()
     }
 }
@@ -458,7 +462,7 @@ where
         (*self).set_airflow_direction(direction)
     }
 
-    fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
+    fn run<F: Fn(OutOfBandMessage) + MaybeSend>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
     }
 }
