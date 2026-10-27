@@ -967,7 +967,7 @@ impl Transport {
     async fn establish_case<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
-        crypto: C,
+        crypto: &C,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
         transport: TransportPreference,
@@ -1014,11 +1014,11 @@ impl Transport {
                 TransportPreference::LargePayload => Address::Tcp(addr),
             };
 
-            match self.initiate_plaintext(matter, &crypto, peer).await {
+            match self.initiate_plaintext(matter, crypto, peer).await {
                 Ok(exchange) => {
                     match CaseInitiator::perform(
                         exchange,
-                        &crypto,
+                        crypto,
                         fabric_idx,
                         peer_node_id,
                         Some(&peer_mrp),
@@ -1170,17 +1170,14 @@ impl Transport {
     async fn initiate_plaintext<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
-        crypto: C,
+        crypto: &C,
         peer_addr: Address,
     ) -> Result<Exchange<'a>, Error> {
-        match self.try_initiate_plaintext(matter, &crypto, peer_addr) {
+        match self.try_initiate_plaintext(matter, crypto, peer_addr) {
             Ok(exchange) => Ok(exchange),
             Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
-                matter
-                    .transport_runner(&crypto)
-                    .evict_some_session()
-                    .await?;
-                self.try_initiate_plaintext(matter, &crypto, peer_addr)
+                matter.transport_runner(crypto).evict_some_session().await?;
+                self.try_initiate_plaintext(matter, crypto, peer_addr)
             }
             Err(e) => Err(e),
         }

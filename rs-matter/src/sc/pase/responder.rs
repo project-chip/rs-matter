@@ -43,15 +43,15 @@ use super::{
 };
 
 /// The PASE Responder (device side) handler
-pub struct PaseResponder<C: Crypto, N> {
-    crypto: C,
-    notify: N,
+pub struct PaseResponder<'a, C: Crypto, N> {
+    crypto: &'a C,
+    notify: &'a N,
     spake2p: Spake2P,
 }
 
-impl<C: Crypto, N: AttrChangeNotifier> PaseResponder<C, N> {
+impl<'a, C: Crypto, N: AttrChangeNotifier> PaseResponder<'a, C, N> {
     /// Create a new PASE Responder handler
-    pub const fn new(crypto: C, notify: N) -> Self {
+    pub const fn new(crypto: &'a C, notify: &'a N) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
             crypto,
@@ -60,7 +60,7 @@ impl<C: Crypto, N: AttrChangeNotifier> PaseResponder<C, N> {
         }
     }
 
-    pub fn init(crypto: C, notify: N) -> impl Init<Self> {
+    pub fn init(crypto: &'a C, notify: &'a N) -> impl Init<Self> {
         init!(Self {
             crypto,
             notify,
@@ -102,7 +102,7 @@ impl<C: Crypto, N: AttrChangeNotifier> PaseResponder<C, N> {
     }
 
     async fn handle_inner(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
-        let mut session = ReservedSession::reserve(exchange.matter(), &self.crypto).await?;
+        let mut session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(true);
@@ -239,7 +239,7 @@ impl<C: Crypto, N: AttrChangeNotifier> PaseResponder<C, N> {
             };
 
             let mut context = Some(self.spake2p.start_context(
-                &self.crypto,
+                self.crypto,
                 local_sessid,
                 peer_sessid,
                 rx.payload(),
@@ -301,7 +301,7 @@ impl<C: Crypto, N: AttrChangeNotifier> PaseResponder<C, N> {
 
                 if let Some(comm_window) = state.pase.comm_window() {
                     self.spake2p.setup_verifier(
-                        &self.crypto,
+                        self.crypto,
                         &comm_window.verifier,
                         a_pt,
                         &mut b_pt,

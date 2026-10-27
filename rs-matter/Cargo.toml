@@ -326,6 +326,5 @@ name = "send_sync"
 required-features = ["send-sync", "os"]
 
 [lints.rust]
-# `cargo llvm-cov` sets the first two when measuring coverage (the second one only on nightly).
-# `rs_matter_check_send` makes `rustc` check the futures that `rs-matter` asserts to be `Send`.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)', 'cfg(rs_matter_check_send)'] }
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

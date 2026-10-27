@@ -1287,7 +1287,7 @@ impl<'a> Exchange<'a> {
     ) -> Result<Self, Error> {
         matter
             .transport
-            .initiate_plaintext(matter, crypto, peer_addr)
+            .initiate_plaintext(matter, &crypto, peer_addr)
             .await
     }
 

@@ -1350,8 +1350,11 @@ where
         // off) establish a fresh one on demand. A subscription is identified by
         // its id, not bound to the session it was accepted on.
         let ids = rctx.subscription().ids();
+        // The `impl Crypto` of `HandlerContext::crypto`, not the `&C` of `Self::crypto`: with
+        // `&C`, `rustc` cannot prove the future of `Self::run` `Send` (feature `send-sync`)
+        let crypto = HandlerContext::crypto(self);
         let mut exchange =
-            Exchange::initiate(matter, self.crypto(), ids.fab_idx, ids.peer_node_id).await?;
+            Exchange::initiate(matter, crypto, ids.fab_idx, ids.peer_node_id).await?;
 
         if let Some(mut tx) = self.buffers.get().await {
             // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`

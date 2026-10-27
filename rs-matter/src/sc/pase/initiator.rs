@@ -20,8 +20,6 @@
 //! This module implements the initiator side of the PASE (Passcode-Authenticated Session Establishment)
 //! protocol, used by commissioners to establish secure sessions with Matter devices.
 
-use core::future::Future;
-
 use rand_core::Rng;
 
 use crate::crypto::{
@@ -40,7 +38,6 @@ use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
-use crate::utils::sync::{AssertSend, MaybeSend};
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
@@ -52,8 +49,8 @@ use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_K
 /// 1. Create an exchange to the target device over a plaintext session
 /// 2. Call `PaseInitiator::initiate()` with the setup passcode
 /// 3. On success, the exchange's session is upgraded to a secure PASE session
-pub struct PaseInitiator<C: Crypto> {
-    crypto: C,
+pub struct PaseInitiator<'a, C: Crypto> {
+    crypto: &'a C,
     spake2p: Spake2P,
     initiator_random: Spake2pRandom,
     local_sessid: u16,
@@ -62,9 +59,9 @@ pub struct PaseInitiator<C: Crypto> {
     ca: HmacHash,
 }
 
-impl<C: Crypto> PaseInitiator<C> {
+impl<'a, C: Crypto> PaseInitiator<'a, C> {
     /// Create a new PASE initiator
-    const fn new(crypto: C) -> Self {
+    const fn new(crypto: &'a C) -> Self {
         Self {
             crypto,
             spake2p: Spake2P::new(),
@@ -100,25 +97,13 @@ impl<C: Crypto> PaseInitiator<C> {
     /// # Returns
     /// - `Ok(())` on successful session establishment
     /// - `Err(Error)` on failure
-    pub fn perform<'e, 'p>(
-        exchange: Exchange<'e>,
-        crypto: C,
-        password: u32,
-        peer_mrp: Option<&'p PeerMrpParams>,
-    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'e, 'p, C> {
-        // SAFETY: With feature `send-sync`, everything the handshake keeps across an `.await` is
-        // `Send`: `C` is `MaybeSendSync` and its associated types are `MaybeSend`. `rustc` cannot
-        // prove it because of the `where Self: 'a` bounds of these associated types.
-        unsafe { AssertSend::new(Self::perform_inner(exchange, crypto, password, peer_mrp)) }
-    }
-
-    async fn perform_inner(
+    pub async fn perform(
         mut exchange: Exchange<'_>,
-        crypto: C,
+        crypto: &'a C,
         password: u32,
         peer_mrp: Option<&PeerMrpParams>,
     ) -> Result<(), Error> {
-        let mut session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
+        let mut session = ReservedSession::reserve(exchange.matter(), crypto).await?;
         if let Some(peer_mrp) = peer_mrp {
             session.apply_peer_session_params(exchange.id(), &peer_mrp.into())?;
         }
@@ -188,7 +173,7 @@ impl<C: Crypto> PaseInitiator<C> {
                     req.to_tlv(&TagType::Anonymous, &mut *wb)?;
 
                     context = Some(self.spake2p.start_context(
-                        &self.crypto,
+                        self.crypto,
                         self.local_sessid,
                         0, // peer_sessid not known yet
                         wb.as_slice(),
@@ -281,7 +266,7 @@ impl<C: Crypto> PaseInitiator<C> {
 
         let prover_ctx =
             self.spake2p
-                .setup_prover(&self.crypto, password_ref, salt, iterations, &mut pa)?;
+                .setup_prover(self.crypto, password_ref, salt, iterations, &mut pa)?;
 
         // Send Pake1
         let pake1 = Pake1 {
@@ -331,7 +316,7 @@ impl<C: Crypto> PaseInitiator<C> {
         // Complete prover - this verifies cB and computes cA
         let mut ca = HMAC_HASH_ZEROED;
         self.spake2p
-            .complete_prover(&self.crypto, &prover_ctx, pa.reference(), pb, cb, &mut ca)
+            .complete_prover(self.crypto, &prover_ctx, pa.reference(), pb, cb, &mut ca)
             .map_err(|_| {
                 error!("PASE: cB verification failed (wrong password?)");
                 ErrorCode::Invalid

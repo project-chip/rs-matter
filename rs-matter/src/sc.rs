@@ -31,7 +31,7 @@ use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::transport::mrp;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
-use crate::utils::sync::{AssertSend, MaybeSend, MaybeSendSync};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
 
 use case::CaseResponder;
@@ -379,12 +379,11 @@ impl<C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler> SecureChannel<C, N, H>
 impl<C: Crypto, N: AttrChangeNotifier + MaybeSendSync, H: AsyncScHandler> ExchangeHandler
     for SecureChannel<C, N, H>
 {
-    fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        // SAFETY: With feature `send-sync`, everything the handshakes keep across an `.await` is
-        // `Send`: `C`, `N` and `H` are `MaybeSendSync`, and the `Crypto` associated types are
-        // `MaybeSend`. `rustc` cannot prove it because of the `where Self: 'a` bounds of these
-        // associated types.
-        unsafe { AssertSend::new(SecureChannel::handle(self, exchange)) }
+    fn handle(
+        &self,
+        exchange: Exchange<'_>,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        SecureChannel::handle(self, exchange)
     }
 }
 

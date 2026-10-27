@@ -20,7 +20,6 @@
 //! Can be used on any OS / platform, as long as the platform-specific mDNS implementation
 //! (if there is one) is stopped and not running on the mDNS port 5353.
 
-use core::future::Future;
 use core::net::IpAddr;
 use core::pin::pin;
 
@@ -45,7 +44,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::Vec;
-use crate::utils::sync::{AssertSend, IfMutex, MaybeSend};
+use crate::utils::sync::IfMutex;
 use crate::Matter;
 
 use super::{MatterLocalService, MdnsLocalService};
@@ -115,41 +114,7 @@ impl BuiltinMdns {
     /// * `matter` - The Matter instance whose services to publish / whose resolve+browse to service.
     /// * `crypto` - The crypto backend (used for randomized send delays).
     #[allow(clippy::too_many_arguments)]
-    pub fn run<'r, 'h, 'hh, 'm, 'mm, S, R, C>(
-        &'r mut self,
-        send: S,
-        recv: R,
-        host: &'h Host<'hh>,
-        ipv4_interface: Option<Ipv4Addr>,
-        ipv6_interface: Option<u32>,
-        matter: &'m Matter<'mm>,
-        crypto: C,
-    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'r, 'h, 'hh, 'm, 'mm, S, R, C>
-    where
-        S: NetworkSend,
-        R: NetworkReceive,
-        C: Crypto,
-    {
-        // SAFETY: With feature `send-sync`, everything `run_inner` keeps across an `.await` is
-        // `Send`: `S` and `R` are `MaybeSend` and so are their futures, and `C` is `MaybeSendSync`.
-        // `rustc` cannot prove it because the inner futures keep references whose lifetimes it
-        // erases (<https://github.com/rust-lang/rust/issues/64552>), not even a nightly one, so
-        // this is not checked with `--cfg rs_matter_check_send`.
-        unsafe {
-            AssertSend::new_unchecked(self.run_inner(
-                send,
-                recv,
-                host,
-                ipv4_interface,
-                ipv6_interface,
-                matter,
-                crypto,
-            ))
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn run_inner<S, R, C>(
+    pub async fn run<S, R, C>(
         &mut self,
         send: S,
         recv: R,
@@ -226,7 +191,7 @@ impl BuiltinMdns {
         ipv6_interface: Option<u32>,
         responder: &MdnsResponder<'_>,
         matter: &Matter<'_>,
-        crypto: C,
+        crypto: &C,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -242,7 +207,7 @@ impl BuiltinMdns {
             let name = NameSlice::new(service.query_name_labels(&mut label));
 
             // A small random delay before sending, as per spec (collision avoidance).
-            Self::rand_delay(&crypto).await?;
+            Self::rand_delay(crypto)?.await;
 
             let mut send_guard = send.lock().await;
             let send = &mut send_guard.0;
@@ -275,7 +240,7 @@ impl BuiltinMdns {
         ipv6_interface: Option<u32>,
         responder: &MdnsResponder<'_>,
         matter: &Matter<'_>,
-        crypto: C,
+        crypto: &C,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -285,7 +250,7 @@ impl BuiltinMdns {
             let query = responder.wait_browse_request().await;
 
             // A small random delay before sending, as per spec (collision avoidance).
-            Self::rand_delay(&crypto).await?;
+            Self::rand_delay(crypto)?.await;
 
             let mut send_guard = send.lock().await;
             let send = &mut send_guard.0;
@@ -346,7 +311,7 @@ impl BuiltinMdns {
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
-        crypto: C,
+        crypto: &C,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -387,7 +352,7 @@ impl BuiltinMdns {
                             ipv4_interface,
                             ipv6_interface,
                             matter,
-                            &crypto,
+                            crypto,
                         )
                         .await?;
                     }
@@ -404,7 +369,7 @@ impl BuiltinMdns {
                         ipv4_interface,
                         ipv6_interface,
                         matter,
-                        &crypto,
+                        crypto,
                     )
                     .await?;
                 }
@@ -433,14 +398,14 @@ impl BuiltinMdns {
 
     #[allow(clippy::too_many_arguments)]
     async fn broadcast_one<S, C>(
-        mut send: S,
+        send: &mut S,
         host: &Host<'_>,
         service: &MatterLocalService,
         service_remove: bool,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
-        crypto: C,
+        crypto: &C,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -461,7 +426,7 @@ impl BuiltinMdns {
                 ))
             }),
         ) {
-            Self::rand_delay(&crypto).await?;
+            Self::rand_delay(crypto)?.await;
 
             // Acquire the Matter transport TX buffer *per send-target*
             // rather than across the whole broadcast iteration. Holding
@@ -496,7 +461,7 @@ impl BuiltinMdns {
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
-        crypto: C,
+        crypto: &C,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -572,7 +537,7 @@ impl BuiltinMdns {
                         ipv4_interface,
                         ipv6_interface,
                         matter,
-                        &crypto,
+                        crypto,
                     )
                     .await?;
                 }
@@ -582,7 +547,7 @@ impl BuiltinMdns {
 
     #[allow(clippy::too_many_arguments)]
     async fn respond_one<S, C>(
-        mut send: S,
+        send: &mut S,
         addr: Address,
         query: &[u8],
         host: &Host<'_>,
@@ -590,7 +555,7 @@ impl BuiltinMdns {
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
-        crypto: C,
+        crypto: &C,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -629,7 +594,7 @@ impl BuiltinMdns {
             RespondMode::Unicast => Some(src_addr),
             RespondMode::Multicast { delay } => {
                 if delay {
-                    Self::rand_delay(&crypto).await?;
+                    Self::rand_delay(crypto)?.await;
                 }
 
                 let ipv4 = matches!(src_addr.ip().to_canonical(), IpAddr::V4(_));
@@ -666,7 +631,7 @@ impl BuiltinMdns {
         Ok(())
     }
 
-    async fn rand_delay<C: Crypto>(crypto: C) -> Result<(), Error> {
+    fn rand_delay<C: Crypto>(crypto: &C) -> Result<Timer, Error> {
         let mut b = [0];
 
         let mut rand = crypto.weak_rand()?;
@@ -676,9 +641,7 @@ impl BuiltinMdns {
         // Generate a delay between 20 and 120 ms, as per spec
         let delay_ms = 20 + (b[0] as u32 * 100 / 256);
 
-        Timer::after(Duration::from_millis(delay_ms as _)).await;
-
-        Ok(())
+        Ok(Timer::after(Duration::from_millis(delay_ms as _)))
     }
 }
 

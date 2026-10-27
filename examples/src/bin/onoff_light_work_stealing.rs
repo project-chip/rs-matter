@@ -18,10 +18,13 @@
 //! A variation of the sample Ethernet Matter On/Off Light device
 //! where `rs-matter` is built with the `send-sync` feature enabled, which makes `rs-matter` futures
 //! `Send` and allows those to be scheduled in a work-stealing executor.
+//!
+//! The futures are spawned on an `async-executor` executor, which runs on several threads.
 
 use std::net::UdpSocket;
 
-use rand::{Rng, TryCryptoRng, TryRng};
+use rand::rngs::StdRng;
+use rand::Rng;
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::Crypto;
@@ -50,6 +53,9 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
+/// The number of responder handlers, and of busy responder handlers.
+const HANDLERS: usize = 4;
+
 type AppDmHandler<'a> = handler_chain_type!(
     FnMatcher => Async<on_off::HandlerAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>>,
     FnMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
@@ -62,7 +68,7 @@ type AppDmHandler<'a> = handler_chain_type!(
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<InteractionModelState> = StaticCell::new();
-static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
+static CRYPTO: StaticCell<RustCrypto<'static, StdRng>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
@@ -92,7 +98,7 @@ fn main() -> Result<(), Error> {
     matter.startup(&kv)?;
 
     // Create the crypto instance
-    let crypto = &*CRYPTO.init(RustCrypto::new(FakeRng, DAC_PRIVKEY));
+    let crypto = &*CRYPTO.init(RustCrypto::new(rand::make_rng(), DAC_PRIVKEY));
 
     let mut rand = crypto.rand()?;
 
@@ -122,10 +128,6 @@ fn main() -> Result<(), Error> {
     // All other subscription requests will be turned down with "resource exhausted"
     let responder = DefaultResponder::new(&im);
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let respond = responder.run::<4, 4>();
-
     // Run the background job of the data model
     let im_job = im.run();
 
@@ -151,9 +153,35 @@ fn main() -> Result<(), Error> {
     executor.spawn(transport).detach();
     executor.spawn(mdns).detach();
     executor.spawn(im_job).detach();
-    executor.spawn(respond).detach();
 
-    futures_lite::future::block_on(executor.run(core::future::pending::<()>()));
+    // Each responder handler is a task of its own, so that the executor can run several of them at
+    // once on different threads: `HANDLERS` handlers answer the exchanges (i.e. that many exchanges
+    // can be handled simultaneously), and `HANDLERS` more answer "I'm busy, please try again later"
+    // to the exchanges the first ones do not take in time.
+    //
+    // TODO: The `Multi*` async primitives of `rs-matter` (`MultiSignal`, `MultiNotification`,
+    // `IfMultiMutex`) are not implemented yet: they are aliases of the primitives which keep a
+    // single waker. The handlers all wait for incoming packets on one `IfMultiMutex`, so they may
+    // keep waking each other, i.e. busy-loop from time to time.
+    for handler_id in 0..HANDLERS {
+        executor
+            .spawn(responder.responder().handle(handler_id))
+            .detach();
+        executor
+            .spawn(responder.busy_responder().handle(handler_id))
+            .detach();
+    }
+
+    // Run the executor on several threads, which take over each other's tasks when idle
+    let threads = std::thread::available_parallelism().map_or(2, |threads| threads.get());
+
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                futures_lite::future::block_on(executor.run(core::future::pending::<()>()))
+            });
+        }
+    });
 
     Ok(())
 }
@@ -188,25 +216,3 @@ fn data_model<'a>(
             Async(on_off::HandlerAdaptor(on_off)),
         )
 }
-
-// For now, as `thread_rng` is not `Send`
-struct FakeRng;
-
-impl TryRng for FakeRng {
-    type Error = std::convert::Infallible;
-
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(0)
-    }
-
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(0)
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-        dest.fill(0);
-        Ok(())
-    }
-}
-
-impl TryCryptoRng for FakeRng {}

@@ -16,8 +16,8 @@
  */
 
 //! Checks that with feature `send-sync` the futures a node runs - the transport, the mDNS
-//! responder, the data model job and the responder - are `Send + 'static`, so that they can be
-//! spawned on a work-stealing executor.
+//! responder, the data model job and the responder, or each of its handlers - are
+//! `Send + 'static`, so that they can be spawned on a work-stealing executor.
 //!
 //! The futures are only created, never run.
 
@@ -126,11 +126,16 @@ fn node_futures_are_send() -> Result<(), Error> {
     let mdns = mdns.run(socket, socket, &HOST, None, None, matter, crypto);
     let im_job = im.run();
     let respond = responder.run::<4, 4>();
+    // A single handler of the responder, and of the busy responder, as tasks of their own
+    let handle = responder.responder().handle(0);
+    let handle_busy = responder.busy_responder().handle(0);
 
     assert_spawnable(&transport);
     assert_spawnable(&mdns);
     assert_spawnable(&im_job);
     assert_spawnable(&respond);
+    assert_spawnable(&handle);
+    assert_spawnable(&handle_busy);
 
     Ok(())
 }
