@@ -38,7 +38,7 @@ use serde::Deserialize;
 
 use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
-use crate::utils::sync::IfMutex;
+use crate::utils::sync::IfMultiMutex;
 
 use super::{
     OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, OtaRequestorId,
@@ -102,11 +102,11 @@ pub struct DclImages<'a, H> {
     base_url: &'a str,
     /// The caller-injected scratch (for URL building + JSON parsing) and the
     /// resolution cache, behind one async mutex. A single scratch buffer means
-    /// concurrent transfers must serialize; [`IfMutex`] makes a contending caller
+    /// concurrent transfers must serialize; [`IfMultiMutex`] makes a contending caller
     /// *wait* for its turn (rather than fail) while another holds it across its
     /// HTTP round-trips - which also serializes the (typically single-connection)
     /// HTTP client.
-    locked: IfMutex<Locked<'a>>,
+    locked: IfMultiMutex<Locked<'a>>,
 }
 
 /// The mutex-guarded working state.
@@ -142,7 +142,7 @@ impl<'a, H> DclImages<'a, H> {
         Self {
             http,
             base_url,
-            locked: IfMutex::new(Locked {
+            locked: IfMultiMutex::new(Locked {
                 scratch,
                 cache: Cached {
                     designator: String::new(),

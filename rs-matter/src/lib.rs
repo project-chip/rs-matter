@@ -372,6 +372,8 @@ impl<'a> Matter<'a> {
     }
 
     /// Wait until the Trusted Time Source is set, changed or cleared.
+    ///
+    /// Single waiter: the [`TimeSyncClient`](crate::dm::clusters::time_sync::client::TimeSyncClient).
     pub async fn wait_trusted_time_source_changed(&self) {
         self.time_source_changed.wait().await
     }

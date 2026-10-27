@@ -1151,6 +1151,8 @@ where
 
     /// Process all valid subscriptions in an endless loop, checking for changes
     /// and reporting them to the peers.
+    // TODO: Report from a small pool of initiators (e.g. one per subscriber), so that
+    // a slow or unreachable subscriber does not hold up the reports to all others.
     async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
             // Sleep until the soonest subscription deadline: the end of a

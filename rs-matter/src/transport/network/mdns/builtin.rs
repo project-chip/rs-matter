@@ -138,6 +138,7 @@ impl BuiltinMdns {
                 .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
         })?;
 
+        // Its waiters are the branches of the `select4` below, so they share one waker.
         let send = IfMutex::new((send, &mut self.services_new));
 
         let responder = matter.transport().mdns_responder();

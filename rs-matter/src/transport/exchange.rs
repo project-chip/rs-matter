@@ -1098,6 +1098,9 @@ impl<'a> Exchange<'a> {
     /// mDNS TXT records seed the handshake, and the ones it advertises in the
     /// handshake itself take precedence.
     ///
+    /// Concurrent calls for a node that has no session share one handshake: the
+    /// later ones wait for it and use its session, or get its error.
+    ///
     /// Establishing requires a running mDNS responder (e.g.
     /// `BuiltinMdns::run`) to service the resolve; without one the
     /// resolve times out and this returns [`ErrorCode::NotFound`].

@@ -141,6 +141,7 @@ pub struct TcpNetwork<const N: usize = DEFAULT_MAX_TCP_CONNECTIONS> {
     /// Async mutex that serializes the entire send-side frame write (4-byte length prefix + payload).
     /// This prevents two concurrent `send_to` calls from interleaving their bytes on the same
     /// TCP stream when targeting the same remote address.
+    /// Only the transport loop of `Matter::run` sends, so its waiters share one waker.
     // TODO: This blocks all sends, even to different addresses.
     send_mutex: IfMutex<()>,
 }

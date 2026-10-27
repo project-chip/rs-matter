@@ -36,6 +36,11 @@ pub struct TryLockError;
 
 /// Async mutex with conditional locking based on the data inside the mutex.
 /// Check `embassy_sync::Mutex` for the original unconditional implementation.
+///
+/// An `IfMutex` keeps a single waker, so the code that uses it directly must never have
+/// waiters (futures waiting for the lock or for its condition) with different wakers at
+/// the same time. See [`Signal`] for why. Where such waiters are possible, use
+/// [`IfMultiMutex`] instead.
 pub struct IfMutex<T, M = MatterRawMutex>
 where
     T: ?Sized,
@@ -204,6 +209,12 @@ where
         self.inner.get_mut()
     }
 }
+
+/// An [`IfMutex`] that waiters with different wakers may wait on at the same time.
+///
+/// It is the same type as `IfMutex`, and it marks the places that have to be revisited
+/// before `rs-matter` can run on a work-stealing executor.
+pub type IfMultiMutex<T, M = MatterRawMutex> = IfMutex<T, M>;
 
 /// Async mutex guard.
 ///

@@ -838,7 +838,9 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
     }
 
     /// Wait until the store's contents (or the node's UTC time) may have
-    /// changed. Used by the transition timer.
+    /// changed.
+    ///
+    /// Single waiter: the transition timer.
     pub async fn wait_changed(&self) {
         self.changed.wait().await
     }
