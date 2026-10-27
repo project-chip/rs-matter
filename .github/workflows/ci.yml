@@ -109,6 +109,10 @@ jobs:
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build -p rs-matter-examples --bin onoff_light_work_stealing --features zbus,send-sync
 
+      - name: Test - Send Sync
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cd rs-matter; cargo test --features send-sync --test send_sync
+
       - name: Examples - WebRTC Camera
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,webrtc
