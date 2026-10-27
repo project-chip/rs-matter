@@ -526,13 +526,19 @@ impl ClusterHandler for GenCommHandler<'_> {
                 let pase_sess_id =
                     matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
 
+                let next_fab_idx = state.fabrics.next_fab_idx();
+
                 // Persist the fabric prior to sending the other party a "success" status,
                 // and to disarming: a fabric that cannot be persisted stays under the
-                // fail-safe, whose expiry reverts it
+                // fail-safe, whose expiry reverts it.
+                // The next fabric index goes first, as the expiry keeps a fabric found in storage
                 state.failsafe.disarm_with(
                     sess.get_session_mode(),
                     &mut state.fabrics,
-                    |fabric| persist.store(fabric),
+                    |fabric| {
+                        persist.store_next_fab_idx(next_fab_idx)?;
+                        persist.store(fabric)
+                    },
                 )?;
 
                 state.pase.close_comm_window(notify_mdns, notify_change)?;

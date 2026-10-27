@@ -156,13 +156,16 @@ pub const OPERATIONAL_HOURS_KEY: u16 = REBOOT_COUNT_KEY + 1;
 /// Requestor can tell a new one started: its `VersionApplied` event.
 pub const RUNNING_VERSION_KEY: u16 = OPERATIONAL_HOURS_KEY + 1;
 
+/// The key used for storing the first index tried for the next added fabric.
+pub const NEXT_FABRIC_INDEX_KEY: u16 = RUNNING_VERSION_KEY + 1;
+
 /// The first key past the singleton keys above - i.e. the next free slot for
 /// a *new* singleton key.
 ///
 /// Only used by [`SINGLETON_KEYS_FIT`] to prove that the singleton block has
 /// not grown into [`PERSISTENT_SUBSCRIPTIONS_START`]; bump the key it is
 /// derived from whenever a singleton is added.
-const SINGLETON_KEYS_END: u16 = RUNNING_VERSION_KEY + 1;
+const SINGLETON_KEYS_END: u16 = NEXT_FABRIC_INDEX_KEY + 1;
 
 /// The first key of the range reserved for persisted subscriptions.
 ///

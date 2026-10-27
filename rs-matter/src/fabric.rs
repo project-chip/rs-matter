@@ -30,7 +30,9 @@ use crate::crypto::{
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
-use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START};
+use crate::persist::{
+    load_logged, KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START, NEXT_FABRIC_INDEX_KEY,
+};
 #[cfg(feature = "groups")]
 use crate::tlv::Skippable;
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
@@ -39,6 +41,10 @@ use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
+
+/// The largest fabric index: 0 is reserved, and 255 would leave no room for
+/// nullable fabric index fields.
+const MAX_FAB_IDX: u8 = u8::MAX - 1;
 
 /// All multicast-group fabric state: the group key sets, the group→keyset
 /// mapping, and the group table. Gated as one inline module so the whole block
@@ -1129,6 +1135,10 @@ pub struct Fabrics {
     /// each. Never reallocated: state kept for them outside of the fabric (CASE
     /// resumption records, bindings, ...) would pass to the new fabric.
     unloaded: [u8; 32],
+    /// The first index tried for the next added fabric. Indices are handed out
+    /// in increasing order, wrapping around after [`MAX_FAB_IDX`], so that the
+    /// index of a removed fabric is not reused soon.
+    next_fab_idx: NonZeroU8,
 }
 
 impl Default for Fabrics {
@@ -1144,6 +1154,7 @@ impl Fabrics {
         Self {
             fabrics: Vec::new(),
             unloaded: [0; 32],
+            next_fab_idx: NonZeroU8::MIN,
         }
     }
 
@@ -1152,6 +1163,7 @@ impl Fabrics {
         init!(Self {
             fabrics <- Vec::init(),
             unloaded: [0; 32],
+            next_fab_idx: NonZeroU8::MIN,
         })
     }
 
@@ -1159,6 +1171,7 @@ impl Fabrics {
     pub(crate) fn reset(&mut self) {
         self.fabrics.clear();
         self.unloaded = [0; 32];
+        self.next_fab_idx = NonZeroU8::MIN;
     }
 
     /// Remove all fabrics from the provided BLOB store as well as from memory.
@@ -1178,6 +1191,8 @@ impl Fabrics {
         for idx in 1..=255u8 {
             result = result.and(store.remove(FABRIC_KEYS_START + idx as u16, buf));
         }
+
+        result = result.and(store.remove(NEXT_FABRIC_INDEX_KEY, buf));
 
         if result.is_ok() {
             info!("Removed all fabrics from storage");
@@ -1201,6 +1216,24 @@ impl Fabrics {
         for fab_idx in 1..=255u8 {
             self.add_load(fab_idx, &mut store, buf)?;
         }
+
+        let next_fab_idx = load_logged(&mut store, NEXT_FABRIC_INDEX_KEY, buf, |data| {
+            NonZeroU8::new(TLVElement::new(data).u8()?)
+                .filter(|fab_idx| fab_idx.get() <= MAX_FAB_IDX)
+                .ok_or(ErrorCode::Invalid.into())
+        });
+
+        self.next_fab_idx = match next_fab_idx {
+            Ok(Some(fab_idx)) => fab_idx,
+            // Not stored (e.g. by an older version), or unreadable: the one
+            // after the largest index taken
+            _ => Self::fab_idx_after(
+                (1..=MAX_FAB_IDX)
+                    .rev()
+                    .find(|fab_idx| self.is_taken(*fab_idx))
+                    .unwrap_or(0),
+            ),
+        };
 
         Ok(())
     }
@@ -1249,6 +1282,19 @@ impl Fabrics {
             || self.iter().any(|fabric| fabric.fab_idx().get() == fab_idx)
     }
 
+    /// The fabric index after `fab_idx` (or the first one, for 0).
+    fn fab_idx_after(fab_idx: u8) -> NonZeroU8 {
+        unwrap!(NonZeroU8::new(fab_idx % MAX_FAB_IDX + 1))
+    }
+
+    /// The first index tried for the next added fabric.
+    ///
+    /// To be persisted with [`FabricPersist::store_next_fab_idx`] whenever a
+    /// fabric is committed to or removed from storage.
+    pub fn next_fab_idx(&self) -> NonZeroU8 {
+        self.next_fab_idx
+    }
+
     /// Add a new fabric to the fabrics with the provided data and immediately updates it with the provided post-init updater.
     ///
     /// This method is unlikely to be useful outside of tests.
@@ -1258,21 +1304,15 @@ impl Fabrics {
     where
         F: FnOnce(&mut Fabric) -> Result<(), Error>,
     {
-        let max_fab_idx = (1..u8::MAX)
-            .rev()
-            .find(|fab_idx| self.is_taken(*fab_idx))
-            .unwrap_or(0);
-        let fab_idx = unwrap!(NonZeroU8::new(if max_fab_idx < u8::MAX - 1 {
-            // First try with the next available fabric index larger than all currently used
-            max_fab_idx + 1
-        } else {
-            // If there is already a fabric with index 254, try to find the first unused one
-            let Some(fab_idx) = (1..u8::MAX).find(|fab_idx| !self.is_taken(*fab_idx)) else {
-                return Err(ErrorCode::ResourceExhausted.into());
-            };
+        let mut fab_idx = self.next_fab_idx;
 
-            fab_idx
-        })); // We never use 0 as a fabric index, nor u8::MAX
+        while self.is_taken(fab_idx.get()) {
+            fab_idx = Self::fab_idx_after(fab_idx.get());
+
+            if fab_idx == self.next_fab_idx {
+                return Err(ErrorCode::ResourceExhausted.into());
+            }
+        }
 
         self.fabrics.push_init(
             Fabric::init(fab_idx)
@@ -1280,6 +1320,8 @@ impl Fabrics {
                 .chain(post_init),
             || ErrorCode::ResourceExhausted.into(),
         )?;
+
+        self.next_fab_idx = Self::fab_idx_after(fab_idx.get());
 
         let fabric = unwrap!(self.fabrics.last_mut());
 
@@ -1529,6 +1571,11 @@ where
         self.0.remove(FABRIC_KEYS_START + fab_idx.get() as u16)
     }
 
+    /// Save [`Fabrics::next_fab_idx`] in the persistent storage.
+    pub fn store_next_fab_idx(&mut self, next_fab_idx: NonZeroU8) -> Result<(), Error> {
+        self.0.store_tlv(NEXT_FABRIC_INDEX_KEY, next_fab_idx.get())
+    }
+
     /// Call at the end when finished with everything else
     /// No-op for now
     pub fn run(self) -> Result<(), Error> {
@@ -1559,12 +1606,16 @@ pub(crate) mod tests {
     use crate::error::{Error, ErrorCode};
     use crate::im::encoding::GenericPath;
     use crate::onboard::cac::IcacGenerator;
-    use crate::persist::{KvBlobStore, KvBlobStoreAccess, FABRIC_KEYS_START};
+    use crate::persist::{
+        KvBlobStore, KvBlobStoreAccess, FABRIC_KEYS_START, NEXT_FABRIC_INDEX_KEY,
+    };
     use crate::tlv::TLVElement;
     use crate::transport::network::MatterLocalService;
     use crate::utils::init::{Init, InitMaybeUninit, IntoFallibleInit};
 
-    use super::{Fabric, FabricPersist, Fabrics, MAX_FABRICS, VID_VERIFICATION_STATEMENT_LEN};
+    use super::{
+        Fabric, FabricPersist, Fabrics, MAX_FABRICS, MAX_FAB_IDX, VID_VERIFICATION_STATEMENT_LEN,
+    };
 
     /// The raw blob map shared between an in-memory store and the test that
     /// inspects it.
@@ -2156,7 +2207,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn remove_drops_fabric_and_next_add_uses_max_index_plus_one() {
+    fn remove_drops_fabric_and_next_add_uses_the_next_index() {
         let crypto = test_only_crypto();
         let mut fabrics = Fabrics::new();
 
@@ -2179,8 +2230,33 @@ pub(crate) mod tests {
         let order: std::vec::Vec<_> = fabrics.iter().map(|f| f.fab_idx().get()).collect();
         assert_eq!(order, [1, 3]);
 
-        // Freed indices are not reused while a larger one is in use
+        // Freed indices are not reused, the largest one included
         assert_eq!(add_fabric(&crypto, &mut fabrics, 0xd, 0x1d), idx(4));
+
+        fabrics.remove(idx(4)).unwrap();
+        assert_eq!(add_fabric(&crypto, &mut fabrics, 0xe, 0x1e), idx(5));
+    }
+
+    #[test]
+    fn indices_wrap_around_past_the_taken_ones() {
+        let mut store = MemKvBlobStore::default();
+        store
+            .store(FABRIC_KEYS_START + 1, &[0xff], &mut [])
+            .unwrap();
+
+        let kv = MemKv::new(store);
+        FabricPersist::new(&kv)
+            .store_next_fab_idx(idx(MAX_FAB_IDX))
+            .unwrap();
+
+        let mut fabrics = load_all(&kv);
+        assert_eq!(fabrics.next_fab_idx(), idx(MAX_FAB_IDX));
+
+        let mut add = || fabrics.add_with_post_init(|_| Ok(())).unwrap().fab_idx();
+
+        assert_eq!(add(), idx(MAX_FAB_IDX));
+        // Index 1 is kept by the fabric that could not be loaded
+        assert_eq!(add(), idx(2));
     }
 
     #[test]
@@ -2984,13 +3060,62 @@ pub(crate) mod tests {
         let store = MemKvBlobStore::default();
         let kv = MemKv::new(store.clone());
         store_all(&fabrics, &kv);
-        assert_eq!(store.len(), 2);
+        FabricPersist::new(&kv)
+            .store_next_fab_idx(fabrics.next_fab_idx())
+            .unwrap();
+        assert_eq!(store.len(), 3);
 
         kv.access(|kv, buf| fabrics.reset_persist(kv, buf)).unwrap();
 
         assert_eq!(fabrics.iter().count(), 0);
+        assert_eq!(fabrics.next_fab_idx(), idx(1));
         assert_eq!(store.len(), 0);
         assert_eq!(load_all(&kv).iter().count(), 0);
+    }
+
+    #[test]
+    fn next_fab_idx_is_loaded_back() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+
+        add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+        add_fabric(&crypto, &mut fabrics, 0xb, 0x1b);
+        fabrics.remove(idx(2)).unwrap();
+
+        let kv = MemKv::new(MemKvBlobStore::default());
+        store_all(&fabrics, &kv);
+        FabricPersist::new(&kv)
+            .store_next_fab_idx(fabrics.next_fab_idx())
+            .unwrap();
+
+        let mut loaded = load_all(&kv);
+        assert_eq!(loaded.next_fab_idx(), idx(3));
+        assert_eq!(add_fabric(&crypto, &mut loaded, 0xc, 0x1c), idx(3));
+    }
+
+    #[test]
+    fn missing_or_unreadable_next_fab_idx_follows_the_largest_index() {
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+
+        add_fabric(&crypto, &mut fabrics, 0xa, 0x1a);
+        add_fabric(&crypto, &mut fabrics, 0xb, 0x1b);
+        add_fabric(&crypto, &mut fabrics, 0xc, 0x1c);
+        fabrics.remove(idx(1)).unwrap();
+
+        let store = MemKvBlobStore::default();
+        let kv = MemKv::new(store.clone());
+        store_all(&fabrics, &kv);
+
+        assert_eq!(load_all(&kv).next_fab_idx(), idx(4));
+
+        for unreadable in [&[0xff][..], &[0x04, 0x00], &[0x04, 0xff]] {
+            let mut raw = store.clone();
+            raw.store(NEXT_FABRIC_INDEX_KEY, unreadable, &mut [])
+                .unwrap();
+
+            assert_eq!(load_all(&kv).next_fab_idx(), idx(4));
+        }
     }
 
     #[test]
