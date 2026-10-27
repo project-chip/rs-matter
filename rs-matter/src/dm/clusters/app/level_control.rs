@@ -53,7 +53,7 @@ use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 /// Messages passed to the `notify` closure in `LevelControlHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1715,7 +1715,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterHandler for LevelControlHandle
     }
 }
 
-pub trait LevelControlHooks: DynBase {
+pub trait LevelControlHooks: MaybeSendSync {
     const MIN_LEVEL: u8;
     const MAX_LEVEL: u8;
     const FASTEST_RATE: u8;

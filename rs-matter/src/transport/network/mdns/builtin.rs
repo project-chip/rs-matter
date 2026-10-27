@@ -20,6 +20,7 @@
 //! Can be used on any OS / platform, as long as the platform-specific mDNS implementation
 //! (if there is one) is stopped and not running on the mDNS port 5353.
 
+use core::future::Future;
 use core::net::IpAddr;
 use core::pin::pin;
 
@@ -44,7 +45,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::Vec;
-use crate::utils::sync::IfMutex;
+use crate::utils::sync::{AssertSend, IfMutex, MaybeSend};
 use crate::Matter;
 
 use super::{MatterLocalService, MdnsLocalService};
@@ -114,7 +115,40 @@ impl BuiltinMdns {
     /// * `matter` - The Matter instance whose services to publish / whose resolve+browse to service.
     /// * `crypto` - The crypto backend (used for randomized send delays).
     #[allow(clippy::too_many_arguments)]
-    pub async fn run<S, R, C>(
+    pub fn run<'r, 'h, 'hh, 'm, 'mm, S, R, C>(
+        &'r mut self,
+        send: S,
+        recv: R,
+        host: &'h Host<'hh>,
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
+        matter: &'m Matter<'mm>,
+        crypto: C,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'r, 'h, 'hh, 'm, 'mm, S, R, C>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+        C: Crypto,
+    {
+        // SAFETY: With feature `send-sync`, everything `run_inner` keeps across an `.await` is
+        // `Send`: `S` and `R` are `MaybeSend` and so are their futures, and `C` is `MaybeSendSync`.
+        // `rustc` cannot prove it because the inner futures keep references whose lifetimes it
+        // erases (<https://github.com/rust-lang/rust/issues/64552>).
+        unsafe {
+            AssertSend::new(self.run_inner(
+                send,
+                recv,
+                host,
+                ipv4_interface,
+                ipv6_interface,
+                matter,
+                crypto,
+            ))
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_inner<S, R, C>(
         &mut self,
         send: S,
         recv: R,

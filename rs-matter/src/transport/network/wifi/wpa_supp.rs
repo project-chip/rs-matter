@@ -38,7 +38,7 @@ use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
-use crate::utils::sync::{blocking, DynBase, IfMultiMutex, MaybeSend};
+use crate::utils::sync::{blocking, IfMultiMutex, MaybeSend, MaybeSendSync};
 use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
 use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
 use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;
@@ -501,7 +501,7 @@ where
 /// One possible implementation would be to just invoke the command line `dhclient` utility on the
 /// wireless interface. Another possibility would be to use the DHCP client in the `edge-mdns` crate for Ipv4
 /// and then additionally assign a pre-computed link-local IP address to the interface for Ipv6.
-pub trait IpStackCtl: DynBase {
+pub trait IpStackCtl: MaybeSendSync {
     /// Connect the IP stack by e.g. configuring the network interface via DHCP (for IPv4) and SLAAC (for IPv6).
     fn connect(&self) -> impl Future<Output = Result<(), NetCtlError>> + MaybeSend;
 

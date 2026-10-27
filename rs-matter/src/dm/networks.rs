@@ -19,7 +19,7 @@
 
 use core::future::Future;
 
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 pub mod eth;
 #[cfg(feature = "os")]
@@ -42,7 +42,7 @@ pub use generic::GenericNetifs as SysNetifs;
 pub use unix::UnixNetifs as SysNetifs;
 
 /// A generic trait for network change notifications.
-pub trait NetChangeNotif: DynBase {
+pub trait NetChangeNotif: MaybeSendSync {
     /// Wait until a change occurs.
     fn wait_changed(&self) -> impl Future<Output = ()> + MaybeSend;
 }

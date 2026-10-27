@@ -40,7 +40,7 @@ use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 pub use crate::dm::clusters::decl::color_control::*;
 
@@ -317,7 +317,7 @@ fn ct_mireds_to_xy_f32_pair(mireds: u16) -> (u16, u16) {
 /// static capabilities and initial values, (b) push the colour onto the
 /// hardware via [`Self::set_device_color`] and (c) report colour changes
 /// the device makes by itself from [`Self::run`].
-pub trait ColorControlHooks: DynBase {
+pub trait ColorControlHooks: MaybeSendSync {
     /// Cluster metadata for this device — typically `FULL_CLUSTER`
     /// passed through `.with_features(...).with_attrs(...).with_cmds(...)`.
     const CLUSTER: Cluster<'static>;

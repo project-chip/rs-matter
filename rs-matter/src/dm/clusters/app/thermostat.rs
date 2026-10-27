@@ -58,7 +58,7 @@ use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 pub use crate::dm::clusters::decl::thermostat::*;
 
@@ -2203,7 +2203,7 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
 /// the relays - drive the equipment through [`Self::apply`], and supply the
 /// initial value of each attribute the handler persists. Everything defaults,
 /// so a heating-only device implements only the heating side.
-pub trait ThermostatHooks: DynBase {
+pub trait ThermostatHooks: MaybeSendSync {
     /// The features, attributes and commands this instance serves. See
     /// [`ThermostatHandler::validate`] for what a valid configuration is.
     const CLUSTER: Cluster<'static>;

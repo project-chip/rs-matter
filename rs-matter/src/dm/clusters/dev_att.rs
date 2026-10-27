@@ -16,13 +16,13 @@
  */
 
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSecretKeyRef};
-use crate::utils::sync::DynBase;
+use crate::utils::sync::MaybeSendSync;
 
 /// The Device Attestation trait
 ///
 /// Objects that implement this trait allow the Matter subsystem to query the object
 /// for the Device Attestation data that is programmed in the Matter device.
-pub trait DeviceAttestation: DynBase {
+pub trait DeviceAttestation: MaybeSendSync {
     /// Get the Certificate Declaration
     fn cert_declaration(&self) -> &[u8];
 

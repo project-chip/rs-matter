@@ -20,6 +20,7 @@
 //! This module implements the initiator side of the CASE (Certificate Authenticated Session
 //! Establishment) protocol, used by controllers to establish secure sessions with Matter devices.
 
+use core::future::Future;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
@@ -40,6 +41,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{NocCatIds, PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::ReadBuf;
+use crate::utils::sync::{AssertSend, MaybeSend};
 
 #[cfg(feature = "case-resumption")]
 use super::casep::{
@@ -144,7 +146,28 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
     ///   its operational mDNS TXT record), if known. They pace the handshake
     ///   and seed the session, until the device advertises its own in Sigma2
     ///   (or Sigma2_Resume).
-    pub async fn perform(
+    pub fn perform<'e, 'p>(
+        exchange: Exchange<'e>,
+        crypto: &'a C,
+        fab_idx: NonZeroU8,
+        peer_node_id: u64,
+        peer_mrp: Option<&'p PeerMrpParams>,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'a, 'e, 'p, C> {
+        // SAFETY: With feature `send-sync`, everything the handshake keeps across an `.await` is
+        // `Send`: `C` is `MaybeSendSync` and its associated types are `MaybeSend`. `rustc` cannot
+        // prove it because of the `where Self: 'a` bounds of these associated types.
+        unsafe {
+            AssertSend::new(Self::perform_inner(
+                exchange,
+                crypto,
+                fab_idx,
+                peer_node_id,
+                peer_mrp,
+            ))
+        }
+    }
+
+    async fn perform_inner(
         mut exchange: Exchange<'_>,
         crypto: &'a C,
         fab_idx: NonZeroU8,

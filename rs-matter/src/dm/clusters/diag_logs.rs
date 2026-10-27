@@ -62,7 +62,7 @@ use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE};
 use crate::utils::cell::RefCell;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Notification, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification, Signal};
 use crate::with;
 
 pub use crate::dm::clusters::decl::diagnostic_logs::*;
@@ -85,7 +85,7 @@ const MAX_FILE_DESIGNATOR: usize = 32;
 /// inline response and the BDX stream, so a single implementation covers every
 /// flavor and both delivery paths - e.g. return a stored crash core dump for
 /// [`IntentEnum::CrashLogs`].
-pub trait DiagLogs: DynBase {
+pub trait DiagLogs: MaybeSendSync {
     /// The total size, in bytes, of the log for `intent`, or `None` if the node
     /// has no such log (the cluster answers `NoLogs`).
     ///
@@ -435,53 +435,47 @@ where
         reply_status(response, status)
     }
 
-    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
-        // TEMP-ASSERT-SEND
-        crate::utils::sync::TempAssertSend(async move {
-            loop {
-                self.job_posted.wait().await;
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        loop {
+            self.job_posted.wait().await;
 
-                // Take the posted job and mark the slot in-flight (so concurrent
-                // requests get `Busy` until the transfer finishes).
-                let job = self.bdx.lock(|cell| {
-                    let mut state = cell.borrow_mut();
-                    match core::mem::replace(&mut *state, Bdx::InProgress) {
-                        Bdx::Requested(job) => Some(job),
-                        // Spurious wakeup: restore and keep waiting.
-                        other => {
-                            *state = other;
-                            None
-                        }
+            // Take the posted job and mark the slot in-flight (so concurrent
+            // requests get `Busy` until the transfer finishes).
+            let job = self.bdx.lock(|cell| {
+                let mut state = cell.borrow_mut();
+                match core::mem::replace(&mut *state, Bdx::InProgress) {
+                    Bdx::Requested(job) => Some(job),
+                    // Spurious wakeup: restore and keep waiting.
+                    other => {
+                        *state = other;
+                        None
                     }
-                });
-
-                let Some(job) = job else {
-                    continue;
-                };
-
-                let result = self.run_transfer(&ctx, &job).await;
-
-                // Free the slot for the next request.
-                self.bdx.lock(|cell| *cell.borrow_mut() = Bdx::Idle);
-
-                // A failed transfer is, in practice, the requestor aborting it with a
-                // Secure Channel `StatusReport` (mid-handshake or mid-data); mirror the
-                // "StatusReport Error" wording CHIP uses, with the concrete error
-                // appended for diagnostics.
-                match result {
-                    Ok(()) => {
-                        info!("Diagnostic logs transfer: Success");
-                        // Fully delivered and acknowledged: let the provider release
-                        // the log (e.g. delete a one-shot crash dump from flash).
-                        self.logs.retrieved(job.intent).await;
-                    }
-                    Err(e) => warn!("Diagnostic logs transfer: StatusReport Error: {:?}", e),
                 }
-            }
+            });
 
-            #[allow(unreachable_code)]
-            Ok(())
-        })
+            let Some(job) = job else {
+                continue;
+            };
+
+            let result = self.run_transfer(&ctx, &job).await;
+
+            // Free the slot for the next request.
+            self.bdx.lock(|cell| *cell.borrow_mut() = Bdx::Idle);
+
+            // A failed transfer is, in practice, the requestor aborting it with a
+            // Secure Channel `StatusReport` (mid-handshake or mid-data); mirror the
+            // "StatusReport Error" wording CHIP uses, with the concrete error
+            // appended for diagnostics.
+            match result {
+                Ok(()) => {
+                    info!("Diagnostic logs transfer: Success");
+                    // Fully delivered and acknowledged: let the provider release
+                    // the log (e.g. delete a one-shot crash dump from flash).
+                    self.logs.retrieved(job.intent).await;
+                }
+                Err(e) => warn!("Diagnostic logs transfer: StatusReport Error: {:?}", e),
+            }
+        }
     }
 }
 

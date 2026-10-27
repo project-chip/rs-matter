@@ -26,7 +26,7 @@ use crate::error::{Error, ErrorCode};
 use crate::im::ImStats;
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
 use crate::utils::epoch::MATTER_EPOCH_SECS;
-use crate::utils::sync::DynBase;
+use crate::utils::sync::MaybeSendSync;
 use crate::with;
 
 pub use crate::dm::clusters::decl::general_diagnostics::*;
@@ -112,7 +112,7 @@ pub use crate::im::DeviceLoad;
 
 /// A trait to which the system implementation of the General Diagnostics Matter cluster
 /// delegates for information.
-pub trait GenDiag: DynBase {
+pub trait GenDiag: MaybeSendSync {
     /// Whether the test event triggers are enabled.
     /// Check the Matter Core spec for more info.
     fn test_event_triggers_enabled(&self) -> Result<bool, Error>;
@@ -152,7 +152,7 @@ impl GenDiag for () {
     }
 }
 
-pub trait NetifDiag: DynBase {
+pub trait NetifDiag: MaybeSendSync {
     /// Iterate over the network interfaces and call the given function for each of them.
     /// Call the function with `None` at the end.
     fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error>;

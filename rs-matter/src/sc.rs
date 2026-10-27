@@ -31,7 +31,7 @@ use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::transport::mrp;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{AssertSend, MaybeSend, MaybeSendSync};
 use crate::Matter;
 
 use case::CaseResponder;
@@ -261,7 +261,7 @@ impl<'a> StatusReport<'a> {
 /// Both methods default to dropping the message (matching the accessory role),
 /// so `()` is a valid no-op handler. A controller overrides the verb(s) it cares
 /// about; the handler receives the [`Exchange`] to read the message from.
-pub trait AsyncScHandler: DynBase {
+pub trait AsyncScHandler: MaybeSendSync {
     /// Handle an incoming Check-In message (Secure Channel opcode `CheckIn`).
     fn check_in(
         &self,
@@ -376,11 +376,15 @@ impl<C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler> SecureChannel<C, N, H>
     }
 }
 
-impl<C: Crypto, N: AttrChangeNotifier + DynBase, H: AsyncScHandler> ExchangeHandler
+impl<C: Crypto, N: AttrChangeNotifier + MaybeSendSync, H: AsyncScHandler> ExchangeHandler
     for SecureChannel<C, N, H>
 {
     fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        crate::utils::sync::TempAssertSend(SecureChannel::handle(self, exchange))
+        // SAFETY: With feature `send-sync`, everything the handshakes keep across an `.await` is
+        // `Send`: `C`, `N` and `H` are `MaybeSendSync`, and the `Crypto` associated types are
+        // `MaybeSend`. `rustc` cannot prove it because of the `where Self: 'a` bounds of these
+        // associated types.
+        unsafe { AssertSend::new(SecureChannel::handle(self, exchange)) }
     }
 }
 

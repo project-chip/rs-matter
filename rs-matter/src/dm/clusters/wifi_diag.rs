@@ -27,13 +27,13 @@ use bitflags::bitflags;
 use crate::dm::{Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext};
 use crate::error::Error;
 use crate::tlv::{Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent};
-use crate::utils::sync::DynBase;
+use crate::utils::sync::MaybeSendSync;
 
 pub use crate::dm::clusters::decl::wi_fi_network_diagnostics::*;
 
 /// A trait required by `WifiDiag` and `ThreadDiag` that provides information whether the
 /// device is connected to a wireless network
-pub trait WirelessDiag: DynBase {
+pub trait WirelessDiag: MaybeSendSync {
     /// Returns true if the device is connected to a wireless network
     fn connected(&self) -> Result<bool, Error> {
         Ok(false)

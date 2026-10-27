@@ -105,7 +105,7 @@ jobs:
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus
 
-      - name: Examples - Sync Mutex
+      - name: Examples - Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,send-sync
 

@@ -56,7 +56,7 @@ use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
 
 pub use encoding::*;
@@ -91,7 +91,7 @@ pub struct DeviceLoad {
 /// Interaction-Model state threaded down to cluster handlers via
 /// [`HandlerContext::im_stats`](crate::dm::HandlerContext::im_stats).
 ///
-pub trait ImStats: DynBase {
+pub trait ImStats: MaybeSendSync {
     /// The node's resource-utilisation metrics, for
     /// `GeneralDiagnostics::DeviceLoadStatus`.
     ///
@@ -529,16 +529,23 @@ where
     /// This drives the IM timeout checks, the data-model handler's own background
     /// job - which includes the operational connection managers of the Network
     /// Commissioning handlers - and the subscriptions reporting loop.
-    pub async fn run(&self) -> Result<(), Error> {
-        self.emit_boot_events_once();
+    // Not an `async fn`, so that the future is declared `MaybeSend`
+    #[allow(clippy::manual_async_fn)]
+    pub fn run<'r>(
+        &'r self,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'r, 'a, C, B, T, K, R, NS, NE>
+    {
+        async move {
+            self.emit_boot_events_once();
 
-        let mut timeouts = pin!(self.run_timeout_checks());
-        let mut handler = pin!(self.handler.run(self));
-        let mut subs = pin!(self.process_subscriptions(self.matter));
+            let mut timeouts = pin!(self.run_timeout_checks());
+            let mut handler = pin!(self.handler.run(self));
+            let mut subs = pin!(self.process_subscriptions(self.matter));
 
-        select3(&mut timeouts, &mut handler, &mut subs)
-            .coalesce()
-            .await
+            select3(&mut timeouts, &mut handler, &mut subs)
+                .coalesce()
+                .await
+        }
     }
 
     async fn run_timeout_checks(&self) -> Result<(), Error> {
@@ -1632,7 +1639,7 @@ where
 impl<C, B, T, K, R, const NS: usize, const NE: usize> ImStats
     for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
-    R: DynBase,
+    R: MaybeSendSync,
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
@@ -1664,7 +1671,7 @@ where
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
-    R: DynBase,
+    R: MaybeSendSync,
 {
     fn matter(&self) -> &Matter<'_> {
         self.matter

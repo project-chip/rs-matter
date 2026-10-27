@@ -18,8 +18,6 @@
 //! A variation of the sample Ethernet Matter On/Off Light device
 //! where `rs-matter` is built with the `send-sync` feature enabled, which makes `rs-matter` futures
 //! `Send` and allows those to be scheduled in a work-stealing executor.
-//!
-//! NOTE: Work-stealing execution with `rs-matter` is NOT ready yet!
 
 use std::net::UdpSocket;
 
@@ -126,18 +124,15 @@ fn main() -> Result<(), Error> {
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    #[allow(unused)]
     let respond = responder.run::<4, 4>();
 
     // Run the background job of the data model
-    #[allow(unused)]
     let im_job = im.run();
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter and mDNS transports
-    #[allow(unused)]
     let mdns = mdns::run_mdns(matter, crypto);
     let transport = matter.run(crypto, &socket, &socket, &socket);
 
@@ -154,20 +149,8 @@ fn main() -> Result<(), Error> {
     let executor = async_executor::Executor::new();
 
     executor.spawn(transport).detach();
-    // TODO: Now also fails with "lifetime not general enough"
-    // executor.spawn(mdns).detach();
-
-    // NOTE: Commented out because compiling this line blocks forever
-    //executor.spawn(im_job).detach();
-
-    // NOTE: Commented out because the compiler cannot prove that the responder's future is `Send`:
-    // "`impl Future<Output = Result<(), Error>>` cannot be sent between threads safely", pointing at
-    // the `AsyncHandler::read`, `write` and `invoke` calls in `rs-matter/src/im/invoker.rs`.
-    //
-    // These futures are `Send` when called directly (e.g. `im.handle(&mut exchange)`), but not when
-    // reached through the generic layers of the responder. This is likely
-    // https://github.com/rust-lang/rust/issues/64552. `-Znext-solver`, `-Zhigher-ranked-assumptions`
-    // and `-Zassumptions-on-binders` do not help.
+    executor.spawn(mdns).detach();
+    executor.spawn(im_job).detach();
     executor.spawn(respond).detach();
 
     futures_lite::future::block_on(executor.run(core::future::pending::<()>()));

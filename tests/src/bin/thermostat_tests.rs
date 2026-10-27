@@ -461,7 +461,7 @@ pub struct HeatingElement {
 ///
 /// It has to be a lock rather than a set of `Cell`s: the element is reachable
 /// from the `GenDiag` hook below, which the data model takes as a `dyn` trait
-/// object, and every `rs-matter` `dyn` trait extends `DynBase` - which under
+/// object, and every `rs-matter` `dyn` trait extends `MaybeSendSync` - which under
 /// the `send-sync` feature means `Send + Sync`. Without that feature the
 /// mutex is a `NoopRawMutex` and costs nothing.
 struct ElementState {

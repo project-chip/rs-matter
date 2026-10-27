@@ -15,6 +15,10 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
+
 pub use mutex::*;
 pub use notification::*;
 pub use signal::*;
@@ -25,24 +29,27 @@ mod mutex;
 mod notification;
 mod signal;
 
-/// A trait that all other `rs-matter` `dyn` traits should extend from.
+/// A bound on the types that `rs-matter` shares between its futures. Most `rs-matter` traits
+/// extend it.
 ///
-/// With feature `send-sync`, this trait extends `Send + Sync`, so that all `dyn` traits are
-/// `Send + Sync`, and it is implemented for every type that is `Send + Sync`.
+/// With feature `send-sync`, this trait extends `Send + Sync`, so that these types can be shared
+/// between the threads of a work-stealing executor, and it is implemented for every type that is
+/// `Send + Sync`.
 #[cfg(feature = "send-sync")]
-pub trait DynBase: Send + Sync {}
+pub trait MaybeSendSync: Send + Sync {}
 
 #[cfg(feature = "send-sync")]
-impl<T: ?Sized + Send + Sync> DynBase for T {}
+impl<T: ?Sized + Send + Sync> MaybeSendSync for T {}
 
-/// A trait that all other `rs-matter` `dyn` traits should extend from.
+/// A bound on the types that `rs-matter` shares between its futures. Most `rs-matter` traits
+/// extend it.
 ///
 /// Without feature `send-sync`, this trait is empty and implemented for every type.
 #[cfg(not(feature = "send-sync"))]
-pub trait DynBase {}
+pub trait MaybeSendSync {}
 
 #[cfg(not(feature = "send-sync"))]
-impl<T: ?Sized> DynBase for T {}
+impl<T: ?Sized> MaybeSendSync for T {}
 
 /// A bound on the futures returned by `rs-matter` traits.
 ///
@@ -63,15 +70,40 @@ pub trait MaybeSend {}
 #[cfg(not(feature = "send-sync"))]
 impl<T: ?Sized> MaybeSend for T {}
 
-// TEMP-ASSERT-SEND: experiment only, to be removed.
-pub(crate) struct TempAssertSend<F>(pub(crate) F);
-unsafe impl<F> Send for TempAssertSend<F> {}
-impl<F: core::future::Future> core::future::Future for TempAssertSend<F> {
+/// A future wrapper for futures which are `Send`, but for which `rustc` cannot prove it.
+///
+/// `rustc` sometimes fails to prove that a future is `Send` when the future holds, across an
+/// `.await`, a value whose type depends on a lifetime that the compiler erases
+/// (<https://github.com/rust-lang/rust/issues/64552>,
+/// <https://github.com/rust-lang/rust/issues/100013>). Examples are the associated types of
+/// `Crypto`, which have a `where Self: 'a` bound, and the futures of `ImClient<'a>`, which is
+/// implemented for `Exchange<'a>` only.
+///
+/// With feature `send-sync`, this wrapper is always `Send`. Without it, it is `Send` only when
+/// the wrapped future is.
+pub(crate) struct AssertSend<F>(F);
+
+impl<F> AssertSend<F> {
+    /// Wrap the provided future.
+    ///
+    /// # Safety
+    ///
+    /// With feature `send-sync`, the future must be `Send`, i.e. all values it holds across an
+    /// `.await` must be `Send`.
+    pub(crate) const unsafe fn new(fut: F) -> Self {
+        Self(fut)
+    }
+}
+
+// SAFETY: `AssertSend::new` requires the wrapped future to be `Send`.
+#[cfg(feature = "send-sync")]
+unsafe impl<F> Send for AssertSend<F> {}
+
+impl<F: Future> Future for AssertSend<F> {
     type Output = F::Output;
-    fn poll(
-        self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Self::Output> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: The wrapped future is never moved out of `self`.
+        unsafe { self.map_unchecked_mut(|this| &mut this.0) }.poll(cx)
     }
 }

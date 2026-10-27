@@ -28,7 +28,7 @@ use core::future::Future;
 
 use crate::bdx::{BdxHandler, BdxReader, BdxResponder, BdxStatus};
 use crate::error::Error;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 use super::MAX_FILE_DESIGNATOR;
 
@@ -39,7 +39,7 @@ use super::MAX_FILE_DESIGNATOR;
 /// [`DiagLogsBdxHandler`] calls [`receive`](Self::receive) once per incoming BDX
 /// log transfer; pull the bytes from `reader` yourself and store them however you
 /// like - there is no per-chunk callback.
-pub trait DiagLogsReceiver: DynBase {
+pub trait DiagLogsReceiver: MaybeSendSync {
     /// Receive one diagnostic-log transfer. `file_designator` is the one the
     /// client named in its `RetrieveLogsRequest` (use it to correlate the
     /// transfer with that request). Read from `reader` until it returns `0`; the

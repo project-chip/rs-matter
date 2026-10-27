@@ -24,7 +24,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder, Utf8StrBuilder};
-use crate::utils::sync::DynBase;
+use crate::utils::sync::MaybeSendSync;
 use crate::with;
 
 pub use crate::dm::clusters::decl::descriptor::*;
@@ -65,7 +65,7 @@ impl PartsMatcher for AggregatorPartsMatcher {
 /// For standard Matter devices, all endpoints should be returned as parts.
 /// However - for queries on aggregator endpoints (i.e. those present in Matter bridges) -
 /// only endpoints different from the aggregator and from the root endpoint should be returned.
-pub trait PartsMatcher: DynBase + Debug {
+pub trait PartsMatcher: MaybeSendSync + Debug {
     /// Return `true` if the endpoint should be returned as a part
     ///
     /// # Arguments

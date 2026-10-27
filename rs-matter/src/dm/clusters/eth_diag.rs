@@ -26,7 +26,7 @@ use bitflags::bitflags;
 use crate::dm::{Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext};
 use crate::error::Error;
 use crate::tlv::Nullable;
-use crate::utils::sync::DynBase;
+use crate::utils::sync::MaybeSendSync;
 
 pub use crate::dm::clusters::decl::ethernet_network_diagnostics::*;
 
@@ -53,7 +53,7 @@ bitflags! {
 /// The data source of the Ethernet Network Diagnostics cluster.
 ///
 /// Only the methods of the attributes advertised via [`Options`] are called.
-pub trait EthDiag: DynBase {
+pub trait EthDiag: MaybeSendSync {
     /// The PHY rate, or `None` if the interface is not configured or operational
     fn phy_rate(&self) -> Result<Option<PHYRateEnum>, Error> {
         Ok(None)

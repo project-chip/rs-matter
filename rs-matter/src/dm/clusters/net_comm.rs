@@ -40,7 +40,7 @@ use crate::tlv::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Notification};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
@@ -391,7 +391,7 @@ impl NetworkCommissioningStatusEnum {
 }
 
 /// Trait for managing networks' credentials storage
-pub trait Networks: DynBase {
+pub trait Networks: MaybeSendSync {
     /// Return the maximum number of networks supported by the implementation
     ///
     /// For `NetworkType::Ethernet` this method should always return 1
@@ -705,7 +705,7 @@ impl Networks for DummyNetworks {
 }
 
 /// Trait for managing network connectivity
-pub trait NetCtl: DynBase {
+pub trait NetCtl: MaybeSendSync {
     /// Return the network type of the implementation
     fn net_type(&self) -> NetworkType;
 

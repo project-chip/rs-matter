@@ -30,7 +30,7 @@
 use core::future::Future;
 
 use crate::respond::ExchangeHandler;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 use super::nego::abort;
 use super::*;
@@ -70,7 +70,7 @@ impl BdxResponder<'_> {
 /// [`handles`](Self::handles) selects which transfers this handler owns; only a
 /// [`BdxResponder`] it claims is passed to [`handle`](Self::handle). The default
 /// `handle` rejects with `FileDesignatorUnknown`.
-pub trait BdxHandler: DynBase {
+pub trait BdxHandler: MaybeSendSync {
     /// Whether this handler owns the transfer described by `responder` (by its
     /// direction and file designator). Consulted before [`handle`](Self::handle),
     /// so it must not consume the responder.

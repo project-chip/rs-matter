@@ -53,7 +53,7 @@ use crate::dm::{
 use crate::error::Error;
 use crate::im::EnergyMilliWh;
 use crate::tlv::{Nullable, NullableBuilder, TLVBuilderParent};
-use crate::utils::sync::{DynBase, MaybeSend, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 use super::measurement::{write_accuracy, MeasurementAccuracy};
 
@@ -562,7 +562,7 @@ where
 }
 
 /// Device-specific hooks for the Electrical Energy Measurement cluster.
-pub trait ElecEnergyMeasHooks: DynBase {
+pub trait ElecEnergyMeasHooks: MaybeSendSync {
     /// The features, attributes and events this instance serves. See
     /// [`ElecEnergyMeasHandler::validate`] for what a serveable configuration
     /// is.

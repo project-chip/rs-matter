@@ -6,11 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Fix: with `sync-mutex`, the data model and the default responder can be `Sync`: the `cluster_status` of `AttrDetails` and `CmdDetails` is kept in a blocking mutex, and the traits used as `dyn` extend `DynBase` (#621)
-  * Breaking: `DynBase` is implemented for every type (with `sync-mutex`, for every `Send + Sync` type), so own impls of it have to be removed
-  * Breaking: `EthDiag`, `SwDiag`, `NtpClient`, `NtpServer`, `TimeZones`, `OnModeApplier` and `SceneInvalidator` extend `DynBase`
+* Fix: with feature `send-sync` (formerly `sync-mutex`), the futures of `rs-matter` are `Send`, so they can run on a work-stealing executor (#621)
+  * Breaking: `DynBase` is renamed to `MaybeSendSync` and implemented for every type (with `send-sync`, for every `Send + Sync` type), so own impls of it have to be removed
+  * Breaking: most public traits extend `MaybeSendSync` (the network traits `MaybeSend`), and their async methods return `MaybeSend` futures; the associated types of `Crypto` and the generic closures the traits take (e.g. in `NetCtl::scan` and the hooks' `run`) are `MaybeSend` too
   * Breaking: `SecureChannel` and `PaseResponder` take the attribute change notifier as a type parameter (`SecureChannel<C, N, H>`, `PaseResponder<C, N>`) instead of a `&dyn AttrChangeNotifier`
   * Breaking: `AttrDetails::cluster_status` and `CmdDetails::cluster_status` are `Mutex<Cell<..>>`; use `cluster_status()` and `set_cluster_status()`
+  * Breaking: `UnitTestingHandler` takes its data as a `Mutex<RefCell<..>>`
 * New: the blocking `Mutex` implements `Clone`, `Debug` and `defmt::Format` when its contents do (#621)
 * Fix: callers that initiate to a node while its CASE session is being established wait for that handshake and use its session, or get its error, instead of each running a handshake of their own (#620)
 * New: `MultiSignal` and `IfMultiMutex`, aliases of `Signal` and `IfMutex` that mark the places where waiters from different tasks may wait at the same time (#620)

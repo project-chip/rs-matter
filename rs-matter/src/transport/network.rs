@@ -24,6 +24,7 @@ pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, Socket
 use embassy_futures::select::{select, Either};
 
 use crate::error::{Error, ErrorCode};
+use crate::utils::sync::MaybeSend;
 
 pub mod btp;
 pub mod mdns;
@@ -265,11 +266,15 @@ impl defmt::Format for Address {
 ///
 /// Data packetization is expected to be handled by the implementation of this trait, and is trivial
 /// for e.g. the UDP transport which is packetized by default, but more complex for e.g. the TCP transport and especially for BTP.
-pub trait NetworkSend {
+pub trait NetworkSend: MaybeSend {
     /// Send a Matter packet represented as a sequence of bytes (`data`) to the specified address.
     ///
     /// Might return an error if the address is not supported, or if there is a general error on the network interface.
-    async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error>;
+    fn send_to(
+        &mut self,
+        data: &[u8],
+        addr: Address,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }
 
 impl<T> NetworkSend for &mut T
@@ -288,18 +293,21 @@ where
 ///
 /// Data packetization is expected to be handled by the implementation of this trait, and is trivial
 /// for e.g. the UDP transport which is packetized by default, but more complex for e.g. the TCP transport and especially for BTP.
-pub trait NetworkReceive {
+pub trait NetworkReceive: MaybeSend {
     /// Wait until a data packet is available to be received.
     ///
     /// Allows the Matter transport layer to re-use a single RX buffer accross all network protocol implementatiins.
     ///
     /// Might return an error if there is a general error on the network interface.
-    async fn wait_available(&mut self) -> Result<(), Error>;
+    fn wait_available(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 
     /// Receive a single data packet from the network.
     ///
     /// Might return an error if there is a general error on the network interface.
-    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error>;
+    fn recv_from(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> impl Future<Output = Result<(usize, Address), Error>> + MaybeSend;
 }
 
 impl<T> NetworkReceive for &mut T
@@ -321,12 +329,12 @@ where
 /// A trait to listen for IPv6 multicast on supported network types
 ///
 /// This is used for listening to groupcast messages
-pub trait NetworkMulticast {
+pub trait NetworkMulticast: MaybeSend {
     /// Join a multicast group with the specified address.
-    async fn join(&mut self, addr: IpAddr) -> Result<(), Error>;
+    fn join(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 
     /// Leave a multicast group with the specified address.
-    async fn leave(&mut self, addr: IpAddr) -> Result<(), Error>;
+    fn leave(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }
 
 impl<T> NetworkMulticast for &mut T
@@ -421,6 +429,7 @@ impl<H, T, F> NetworkReceive for ChainedNetwork<H, T, F>
 where
     H: NetworkReceive,
     T: NetworkReceive,
+    F: MaybeSend,
 {
     async fn wait_available(&mut self) -> Result<(), Error> {
         let mut first = pin!(self.handler.wait_available());
@@ -454,7 +463,7 @@ impl<H, T, F> NetworkSend for ChainedNetwork<H, T, F>
 where
     H: NetworkSend,
     T: NetworkSend,
-    F: Fn(&Address) -> bool,
+    F: Fn(&Address) -> bool + MaybeSend,
 {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
         if (self.handler_can_send)(&addr) {
@@ -469,6 +478,7 @@ impl<H, T, F> NetworkMulticast for ChainedNetwork<H, T, F>
 where
     H: NetworkMulticast,
     T: NetworkMulticast,
+    F: MaybeSend,
 {
     async fn join(&mut self, addr: IpAddr) -> Result<(), Error> {
         self.handler.join(addr).await?;

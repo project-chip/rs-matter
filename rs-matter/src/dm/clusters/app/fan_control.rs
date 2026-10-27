@@ -123,7 +123,7 @@ use crate::im::Percent;
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, ToTLV};
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 /// Messages passed to the `notify` closure of [`FanControlHooks::run`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -308,7 +308,7 @@ pub const fn percent_of_speed(speed_max: u8, speed: u8) -> Percent {
 }
 
 /// Device-specific logic behind the Fan Control cluster.
-pub trait FanControlHooks: DynBase {
+pub trait FanControlHooks: MaybeSendSync {
     /// The cluster metadata this handler exposes: the features, and the
     /// attributes and commands that go with them. Checked at startup, see
     /// [`FanControlHandler`].

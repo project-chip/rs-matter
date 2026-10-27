@@ -32,7 +32,7 @@ use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
-use crate::utils::sync::{blocking, DynBase, MaybeSend};
+use crate::utils::sync::{blocking, MaybeSend, MaybeSendSync};
 
 use super::NetChangeNotif;
 
@@ -599,7 +599,7 @@ where
 
 impl<const N: usize, T> Networks for WirelessNetworks<N, T>
 where
-    T: WirelessNetwork + DynBase,
+    T: WirelessNetwork + MaybeSendSync,
 {
     fn max_networks(&self) -> Result<u8, Error> {
         Ok(N as _)

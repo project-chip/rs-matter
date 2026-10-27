@@ -57,7 +57,7 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::im::{AmperageMilliA, PowerMilliVA, PowerMilliVAR, PowerMilliW, VoltageMilliV};
 use crate::tlv::{Nullable, TLVBuilderParent};
-use crate::utils::sync::{DynBase, MaybeSend, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 use super::measurement::{write_accuracy, MeasurementAccuracy};
 
@@ -513,7 +513,7 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
 ///
 /// Every reading is optional: a device that cannot currently measure a
 /// quantity answers `None` rather than a stale or invented number.
-pub trait ElecPwrMeasHooks: DynBase {
+pub trait ElecPwrMeasHooks: MaybeSendSync {
     /// The features and attributes this instance serves. See
     /// [`ElecPwrMeasHandler::validate`] for what a serveable configuration
     /// is.

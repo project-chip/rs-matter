@@ -48,7 +48,7 @@ use crate::ota::MAX_SOFTWARE_VERSION_STR_LEN;
 use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
 use crate::utils::storage::pooled::Buffers;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::with;
 
 /// The buffer an [`OtaBdxHandler`] stages each BDX block in.
@@ -173,7 +173,7 @@ pub enum OtaApplyOutcome {
 ///
 /// A common way to add consent on top of an existing registry (e.g. the [`dcl`]
 /// sample) is a thin proxy that wraps it and overrides these decisions.
-pub trait OtaImagesRegistry: DynBase {
+pub trait OtaImagesRegistry: MaybeSendSync {
     /// Decide what to offer `requestor`, querying for an image newer than
     /// `current_version` for `(vendor_id, product_id)`: [`OtaQueryOutcome::Available`]
     /// with the image to offer, [`OtaQueryOutcome::Busy`] to retry later (e.g. consent
@@ -272,7 +272,7 @@ where
 
 /// The image bytes behind a BDX file designator: looked up and streamed during a
 /// download. Used by [`OtaBdxHandler`].
-pub trait OtaImages: DynBase {
+pub trait OtaImages: MaybeSendSync {
     /// The total size of the image identified by `file_designator`. `None` means
     /// the designator is unknown and the BDX transfer is rejected
     /// (`FileDesignatorUnknown`).

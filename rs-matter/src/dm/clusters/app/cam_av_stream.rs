@@ -79,7 +79,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVArray, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::with;
 
 pub use crate::dm::clusters::decl::camera_av_stream_management::AudioCodecEnum;
@@ -202,7 +202,7 @@ impl From<CamAvError> for Error {
 /// reference-count protection on deallocate) is done by
 /// [`CameraAvStreamHandler`] before any of these methods run. Implementors
 /// only need to interact with their actual encoder / camera.
-pub trait CameraAvStreamHooks: DynBase {
+pub trait CameraAvStreamHooks: MaybeSendSync {
     /// Called when a new video stream has been validated and assigned a
     /// stable ID. The implementation should provision encoder resources;
     /// returning `Err` aborts the allocation (the stream is NOT added to

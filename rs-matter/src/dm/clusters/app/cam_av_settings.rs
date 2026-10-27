@@ -78,7 +78,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -185,7 +185,7 @@ pub struct CamAvSettingsConfig {
 /// Application hooks for the side-effecting pieces of the cluster.
 /// All hooks have a no-op default implementation.
 #[allow(unused_variables)]
-pub trait CamAvSettingsHooks: DynBase {
+pub trait CamAvSettingsHooks: MaybeSendSync {
     /// Apply a mechanical pan/tilt/zoom target. Called after the
     /// handler has validated bounds against the configured ranges and
     /// the enabled feature set.

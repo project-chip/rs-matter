@@ -56,7 +56,7 @@ pub use crate::dm::clusters::decl::on_off::*;
 use crate::tlv::Nullable;
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Signal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 /// Messages passed to the `notify` closure in `OnOffHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1192,7 +1192,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H
     }
 }
 
-pub trait OnOffHooks: DynBase {
+pub trait OnOffHooks: MaybeSendSync {
     const CLUSTER: Cluster<'static>;
 
     /// The initial value of the `OnOff` attribute, used until the handler has

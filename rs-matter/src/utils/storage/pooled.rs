@@ -26,14 +26,14 @@ use embassy_time::{Duration, Timer};
 
 use crate::utils::init::{init, Init, InitDefault, UnsafeCellInit};
 use crate::utils::sync::blocking::raw::MatterRawMutex;
-use crate::utils::sync::{DynBase, MaybeSend, MultiSignal};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, MultiSignal};
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
-pub trait Buffers<T>: DynBase
+pub trait Buffers<T>: MaybeSendSync
 where
     T: ?Sized,
 {
-    type Buffer<'a>: DerefMut<Target = T> + DynBase
+    type Buffer<'a>: DerefMut<Target = T> + MaybeSendSync
     where
         Self: 'a;
 
@@ -195,8 +195,8 @@ where
 
 impl<T, const N: usize, M> Buffers<T> for PooledBuffers<T, N, M>
 where
-    T: InitDefault + DynBase,
-    M: RawMutex + DynBase,
+    T: InitDefault + MaybeSendSync,
+    M: RawMutex + MaybeSendSync,
 {
     type Buffer<'b>
         = PooledBuffer<'b, T, N, M>

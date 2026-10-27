@@ -82,7 +82,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, TLVElement, TLVTag, ToTLV};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Notification};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -175,7 +175,7 @@ pub struct PushAvStreamConfig<'a> {
 ///
 /// Implementors only need to interact with their actual upload
 /// pipeline (open the TLS connection, push CMAF segments, etc.).
-pub trait PushAvStreamHooks: DynBase {
+pub trait PushAvStreamHooks: MaybeSendSync {
     /// Called when a new push connection has been validated and
     /// assigned a stable ID. The implementation should provision the
     /// upload pipeline; returning `Err` aborts the allocation (the

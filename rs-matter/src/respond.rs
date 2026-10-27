@@ -34,7 +34,7 @@ use crate::sc::SecureChannel;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
-use crate::utils::sync::{DynBase, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
 
 /// Send a busy response if - after that many ms - the exchange
@@ -45,7 +45,7 @@ const RESPOND_BUSY_MS: u32 = 500;
 ///
 /// The handler takes ownership of the exchange: once handling is done, the only
 /// thing left to do with the exchange is to drop it (which ends it).
-pub trait ExchangeHandler: DynBase {
+pub trait ExchangeHandler: MaybeSendSync {
     fn handle(&self, exchange: Exchange<'_>)
         -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }

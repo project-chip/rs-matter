@@ -123,7 +123,7 @@ pub fn handler(
 
         quote!(
             #[doc = "The handler trait for the cluster."]
-            pub trait #handler_name: #krate::utils::sync::DynBase {
+            pub trait #handler_name: #krate::utils::sync::MaybeSendSync {
                 #[doc = "The cluster-metadata corresponding to this handler trait."]
                 const CLUSTER: #krate::dm::Cluster<'static>;
 
@@ -1329,7 +1329,7 @@ mod tests {
             &handler(false, false, cluster, &idl.globals, &context),
             &quote!(
                 #[doc = "The handler trait for the cluster."]
-                pub trait ClusterHandler {
+                pub trait ClusterHandler: rs_matter_crate::utils::sync::MaybeSendSync {
                     #[doc = "The cluster-metadata corresponding to this handler trait."]
                     const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
                     fn dataver(&self) -> u32;
@@ -1345,7 +1345,7 @@ mod tests {
                         &self,
                         _ctx: impl rs_matter_crate::dm::HandlerContext,
                     ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
-                    {
+                           + rs_matter_crate::utils::sync::MaybeSend {
                         core::future::pending::<Result<(), rs_matter_crate::error::Error>>()
                     }
                     fn on_off(

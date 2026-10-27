@@ -20,6 +20,8 @@
 //! This module implements the initiator side of the PASE (Passcode-Authenticated Session Establishment)
 //! protocol, used by commissioners to establish secure sessions with Matter devices.
 
+use core::future::Future;
+
 use rand_core::Rng;
 
 use crate::crypto::{
@@ -38,6 +40,7 @@ use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
+use crate::utils::sync::{AssertSend, MaybeSend};
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
@@ -97,7 +100,19 @@ impl<C: Crypto> PaseInitiator<C> {
     /// # Returns
     /// - `Ok(())` on successful session establishment
     /// - `Err(Error)` on failure
-    pub async fn perform(
+    pub fn perform<'e, 'p>(
+        exchange: Exchange<'e>,
+        crypto: C,
+        password: u32,
+        peer_mrp: Option<&'p PeerMrpParams>,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'e, 'p, C> {
+        // SAFETY: With feature `send-sync`, everything the handshake keeps across an `.await` is
+        // `Send`: `C` is `MaybeSendSync` and its associated types are `MaybeSend`. `rustc` cannot
+        // prove it because of the `where Self: 'a` bounds of these associated types.
+        unsafe { AssertSend::new(Self::perform_inner(exchange, crypto, password, peer_mrp)) }
+    }
+
+    async fn perform_inner(
         mut exchange: Exchange<'_>,
         crypto: C,
         password: u32,

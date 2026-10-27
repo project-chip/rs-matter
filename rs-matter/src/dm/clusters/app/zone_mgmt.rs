@@ -64,7 +64,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{DynBase, MaybeSend, Notification};
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -127,7 +127,7 @@ pub struct Trigger {
 /// lifecycle. Each method has a no-op default body — implementors only
 /// need to override the events they actually care about.
 #[allow(unused_variables)]
-pub trait ZoneMgmtHooks<const NV: usize>: DynBase {
+pub trait ZoneMgmtHooks<const NV: usize>: MaybeSendSync {
     fn zone_created(
         &self,
         zone: &Zone<NV>,
