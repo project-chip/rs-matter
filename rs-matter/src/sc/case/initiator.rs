@@ -284,7 +284,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 "CASE Sigma1 failed: general={:?}, proto_code={}",
                 status.general_code, status.proto_code
             );
-            return Err(ErrorCode::Invalid.into());
+            return Err(sigma1_status_error(&status));
         }
 
         // We only ever offer resumption when `case-resumption` is on, so a
@@ -775,5 +775,58 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         );
 
         Ok(())
+    }
+}
+
+/// The error for a StatusReport received in answer to Sigma1: `NoSharedTrustRoots` when the
+/// responder says it holds no fabric of ours, so a caller can tell "removed from the fabric" from
+/// any other refusal; `Invalid` otherwise, as before.
+fn sigma1_status_error(status: &StatusReport<'_>) -> Error {
+    if status.proto_id == crate::sc::PROTO_ID_SECURE_CHANNEL as u32
+        && status.proto_code == SCStatusCodes::NoSharedTrustRoots as u16
+    {
+        ErrorCode::NoSharedTrustRoots.into()
+    } else {
+        ErrorCode::Invalid.into()
+    }
+}
+
+#[cfg(test)]
+mod sigma1_status_tests {
+    use super::*;
+
+    fn report(proto_id: u32, code: SCStatusCodes) -> StatusReport<'static> {
+        StatusReport {
+            general_code: GeneralCode::Failure,
+            proto_id,
+            proto_code: code as u16,
+            proto_data: &[],
+        }
+    }
+
+    #[test]
+    fn no_shared_trust_roots_is_its_own_error() {
+        let r = report(
+            crate::sc::PROTO_ID_SECURE_CHANNEL as u32,
+            SCStatusCodes::NoSharedTrustRoots,
+        );
+        assert_eq!(
+            sigma1_status_error(&r).code(),
+            ErrorCode::NoSharedTrustRoots
+        );
+    }
+
+    #[test]
+    fn any_other_refusal_is_still_invalid() {
+        let sc = crate::sc::PROTO_ID_SECURE_CHANNEL as u32;
+        assert_eq!(
+            sigma1_status_error(&report(sc, SCStatusCodes::InvalidParameter)).code(),
+            ErrorCode::Invalid
+        );
+        // The same code under another protocol id is not the Secure Channel status.
+        assert_eq!(
+            sigma1_status_error(&report(sc + 1, SCStatusCodes::NoSharedTrustRoots)).code(),
+            ErrorCode::Invalid
+        );
     }
 }

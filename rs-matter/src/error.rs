@@ -64,6 +64,9 @@ pub enum ErrorCode {
     NoNodeId,
     NoMemory,
     NoSession,
+    /// A CASE responder answered Sigma1 with the Secure Channel status `NoSharedTrustRoots`: it has
+    /// no fabric matching ours (Matter Core spec 4.14.2.3), e.g. because it was removed from it.
+    NoSharedTrustRoots,
     // TODO: Rename to `TLVNoWriteSpace` or similar, so that it is clear
     // that this error code should _only_ be used when writing a TLV using
     // a `TLVWrite` instance which happens to run out of space
