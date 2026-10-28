@@ -138,7 +138,9 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
 
         let mut session = session;
 
-        self.handle_casesigma1(&mut exchange, &mut session).await?;
+        if !self.handle_casesigma1(&mut exchange, &mut session).await? {
+            return Ok(());
+        }
 
         exchange.recv_fetch().await?;
 
@@ -156,11 +158,13 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     /// - `session` - The reserved CASE session slot that receives the
     ///   peer's MRP `session_parameters` from Sigma1 so they're in place
     ///   before it transitions to the established CASE session.
+    ///
+    /// Returns `false` if Sigma1 was rejected with a status report, which ends the handshake.
     async fn handle_casesigma1(
         &mut self,
         exchange: &mut Exchange<'_>,
         session: &mut ReservedSession<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         check_opcode(exchange, OpCode::CASESigma1)?;
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
@@ -173,7 +177,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             error!("Sigma1 has mismatched resumptionID/initiatorResumeMIC presence; rejecting");
             complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
 
-            return Ok(());
+            return Ok(false);
         }
 
         let local_fabric_idx = exchange.with_state(|state| {
@@ -184,10 +188,10 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         })?;
 
         if local_fabric_idx.is_none() {
-            error!("Fabric Index mismatch");
+            error!("No fabric and node ID match the CASE Sigma1 destination ID");
             complete_with_status(exchange, SCStatusCodes::NoSharedTrustRoots, &[]).await?;
 
-            return Ok(());
+            return Ok(false);
         }
 
         let local_sessid = exchange.with_state(|state| Ok(state.sessions.get_next_sess_id()))?;
@@ -236,6 +240,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         let signature = signature.init_with(CanonPkcSignature::init());
         let mut signature_generated = false;
         let mut tt_updated = false;
+        let mut no_fabric = false;
         let session_params = SessionParameters::local(exchange.matter());
         exchange
             .send_with(|exchange, tw| {
@@ -244,6 +249,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         .and_then(|fabric_idx| state.fabrics.get(fabric_idx));
 
                     let Some(fabric) = fabric else {
+                        no_fabric = true;
                         return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
                     };
 
@@ -291,7 +297,9 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     Ok(Some(OpCode::CASESigma2.into()))
                 })
             })
-            .await
+            .await?;
+
+        Ok(!no_fabric)
     }
 
     /// Handle the CASE Sigma3 message
