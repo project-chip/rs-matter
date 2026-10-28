@@ -417,10 +417,12 @@ impl Transport {
             })
             .await;
 
-        // 2. Ensure the slot is released if this future is dropped (or times out).
-        let mut guard = MdnsResolveGuard {
+        // `wait` wakes nobody, so wake the responder waiting for a request.
+        self.mdns_resolve.modify(|_| (true, ()));
+
+        // 2. Ensure the slot is released however this future ends.
+        let _guard = MdnsResolveGuard {
             signal: &self.mdns_resolve,
-            armed: true,
         };
 
         // 3. Wait for the responder to deposit our answer, or time out.
@@ -449,7 +451,6 @@ impl Transport {
                     ));
                 }
 
-                *state = MdnsResolveState::Idle;
                 Some(node)
             }
             _ => None,
@@ -458,12 +459,7 @@ impl Transport {
         let mut timer = pin!(Timer::after(Duration::from_millis(timeout_ms as u64)));
 
         match select(&mut wait, &mut timer).await {
-            Either::First(node) => {
-                // The `wait` above already reset the slot to `Idle`.
-                guard.armed = false;
-
-                Ok(node)
-            }
+            Either::First(node) => Ok(node),
             Either::Second(_) => Err(ErrorCode::NotFound.into()),
         }
     }
@@ -749,6 +745,9 @@ impl Transport {
                 }
             })
             .await;
+
+        // `wait` wakes nobody, so wake the responder waiting for a request.
+        self.mdns_browse.modify(|_| (true, ()));
 
         MdnsBrowseGuard {
             signal: &self.mdns_browse,
@@ -1398,27 +1397,26 @@ impl Drop for MdnsResponder<'_> {
     }
 }
 
-/// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.
+/// Resets the mDNS resolve rendezvous to `Idle` on drop, waking the resolvers
+/// waiting for it.
 ///
-/// This guarantees that a dropped (cancelled or timed-out) [`Transport::resolve`]
-/// future does not leave the single-slot rendezvous occupied for other callers.
+/// This guarantees that a [`Transport::resolve`] future, whether it is answered,
+/// times out or is dropped, does not leave the single-slot rendezvous occupied
+/// for other callers.
 struct MdnsResolveGuard<'a> {
     signal: &'a MultiSignal<MdnsResolveState>,
-    armed: bool,
 }
 
 impl Drop for MdnsResolveGuard<'_> {
     fn drop(&mut self) {
-        if self.armed {
-            self.signal.modify(|state| {
-                if matches!(state, MdnsResolveState::Idle) {
-                    (false, ())
-                } else {
-                    *state = MdnsResolveState::Idle;
-                    (true, ())
-                }
-            });
-        }
+        self.signal.modify(|state| {
+            if matches!(state, MdnsResolveState::Idle) {
+                (false, ())
+            } else {
+                *state = MdnsResolveState::Idle;
+                (true, ())
+            }
+        });
     }
 }
 
@@ -3031,9 +3029,9 @@ mod tests {
 mod resolve_tests {
     use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
-    use embassy_time::{Duration, Timer};
+    use embassy_time::{with_timeout, Duration, Timer};
 
-    use futures_lite::future::{block_on, zip};
+    use futures_lite::future::{block_on, yield_now, zip};
 
     use crate::error::ErrorCode;
     use crate::test::test_matter;
@@ -3264,6 +3262,11 @@ mod resolve_tests {
     ) {
         assert_eq!(&responder.wait_resolve_request().await, service);
 
+        deposit(matter, service);
+    }
+
+    /// Deposit an answer for `service`.
+    fn deposit(matter: &Matter<'_>, service: &MatterRemoteService) {
         let mut name = heapless::String::<128>::new();
         service.instance_name(&mut name);
 
@@ -3327,12 +3330,76 @@ mod resolve_tests {
         })
         .unwrap();
     }
+
+    /// A responder already waiting when the request is placed is woken by it,
+    /// and not only when something else wakes the task (here: the resolve
+    /// timing out, too late for a query that takes a while).
+    #[test]
+    fn resolve_wakes_the_waiting_responder() {
+        let matter = test_matter();
+        let service = op_service();
+
+        let responder = matter.transport().mdns_responder();
+
+        block_on(async {
+            // Polled first, so it waits before the request is placed.
+            let responder = async {
+                assert_eq!(responder.wait_resolve_request().await, service);
+
+                // The query.
+                Timer::after(Duration::from_millis(10)).await;
+
+                deposit(&matter, &service);
+            };
+
+            let resolver = matter.transport().resolve(service.clone(), 1_000);
+
+            let ((), node) = zip(responder, resolver).await;
+            node
+        })
+        .unwrap();
+    }
+
+    /// A resolver waiting for the slot is woken when the resolve before it gets
+    /// its answer.
+    #[test]
+    fn answered_resolve_wakes_the_next_resolver() {
+        let matter = test_matter();
+        let service = op_service();
+
+        let responder = matter.transport().mdns_responder();
+
+        let (first, second) = block_on(with_timeout(Duration::from_secs(1), async {
+            // Polled first, but places its request after the other resolver.
+            let second = async {
+                yield_now().await;
+
+                matter.transport().resolve(service.clone(), 5_000).await
+            };
+
+            let first = matter.transport().resolve(service.clone(), 5_000);
+
+            let responder = async {
+                answer(&matter, &responder, &service).await;
+                answer(&matter, &responder, &service).await;
+            };
+
+            let ((second, first), ()) = zip(zip(second, first), responder).await;
+            (first, second)
+        }))
+        .unwrap();
+
+        first.unwrap();
+        second.unwrap();
+    }
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod browse_tests {
     use core::net::{IpAddr, Ipv4Addr};
+
+    use embassy_time::{Duration, Timer};
 
     use futures_lite::future::{block_on, zip};
 
@@ -3445,6 +3512,44 @@ mod browse_tests {
         .unwrap();
 
         assert_eq!(found.as_slice(), &[node(0xAA, 1), node(0xAA, 2)]);
+    }
+
+    /// A responder already waiting when the request is placed is woken by it,
+    /// and not only when something else wakes the task (here: the window
+    /// closing, too late for a query that takes a while).
+    #[test]
+    fn browse_wakes_the_waiting_responder() {
+        let matter = test_matter();
+        let query = MdnsBrowseQuery::Operational {
+            compressed_fabric_id: Some(0xAA),
+        };
+        let responder = matter.transport().mdns_responder();
+        let mut found = Vec::<_, 16>::new();
+
+        block_on(async {
+            // Polled first, so it waits before the request is placed.
+            let responder = async {
+                assert_eq!(responder.wait_browse_request().await, query);
+
+                // The query.
+                Timer::after(Duration::from_millis(10)).await;
+
+                matter.transport().try_deposit_mdns_browse(&answer(
+                    "00000000000000AA-0000000000000001._matter._tcp.local",
+                    &[],
+                ));
+            };
+
+            let browser = matter.transport().browse(&query, 100, |id| {
+                found.push(id).unwrap();
+            });
+
+            let ((), result) = zip(responder, browser).await;
+            result
+        })
+        .unwrap();
+
+        assert_eq!(found.as_slice(), &[node(0xAA, 1)]);
     }
 
     /// Operational node `node_id` of fabric `fabric`, as a browse finds it.

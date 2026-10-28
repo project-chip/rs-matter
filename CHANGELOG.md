@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: placing an mDNS resolve or browse request wakes the responder waiting for it, and an answered resolve wakes the next resolver, so that a resolve does not time out when nothing else wakes the task (#628)
 * Fix: a CASE responder that rejects a Sigma1 ends the exchange, instead of waiting for a Sigma3 until it times out (#625)
 * New: `CaseInitiator` fails with `ErrorCode::NoSharedTrustRoots` when the responder has no fabric and node ID matching the Sigma1 (#625)
 * Fix: fabric indices are handed out in increasing order, wrapping around from 254 to 1, as the spec has it, so that the index of a removed fabric is not reused soon; the next one is persisted under `NEXT_FABRIC_INDEX_KEY` (#624)
