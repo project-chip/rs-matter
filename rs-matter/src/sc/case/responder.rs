@@ -566,19 +566,21 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         };
 
         // ---- Look up the cached resumption record. ---------------------
+        // A record whose fabric is gone cannot be resumed
         let record = exchange.with_state(|state| {
             Ok::<_, Error>(
                 state
                     .resumption
                     .find_by_resumption_id(incoming_rid.reference().access())
+                    .filter(|record| state.fabrics.get(record.fab_idx).is_some())
                     .cloned(),
             )
         })?;
 
         let Some(record) = record else {
             debug!(
-                "CASE Sigma1 resumption: no cached record for the requested resumption id; \
-                 falling back to full handshake"
+                "CASE Sigma1 resumption: no cached record with a fabric for the requested \
+                 resumption id; falling back to full handshake"
             );
             return Ok(Some(session));
         };

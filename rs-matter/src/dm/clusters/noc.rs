@@ -743,8 +743,11 @@ impl ClusterHandler for NocHandler {
                 // will terminate with a "NoSession" error, but that's OK and handled properly
 
                 // The fabric is gone from memory already, so a failure to remove
-                // it from storage too is reported only once the removal is complete
-                let mut persisted = persist.remove(fab_idx);
+                // it from storage too is reported only once the removal is complete.
+                // The next fabric index is saved too, so that the removed one is not reused
+                let mut persisted = persist
+                    .store_next_fab_idx(state.fabrics.next_fab_idx())
+                    .and(persist.remove(fab_idx));
 
                 // Matter Core spec: if the removed fabric is the
                 // one that installed the TrustedTimeSource, the device SHALL
