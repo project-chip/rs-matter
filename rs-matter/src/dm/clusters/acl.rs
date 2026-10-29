@@ -29,6 +29,7 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
 use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::utils::init::stack_try_pin_init;
+use crate::utils::storage::Vec;
 use crate::with;
 
 pub use crate::dm::clusters::decl::access_control::*;
@@ -340,8 +341,7 @@ impl ClusterHandler for AclHandler {
                     // (Matter Core spec mandates one event per entry change,
                     // with `LatestValue` populated). `MAX_ACL_ENTRIES_PER_FABRIC` is small
                     // (default 4), so a stack-allocated snapshot is cheap.
-                    let mut old_entries: heapless::Vec<AclEntry, MAX_ACL_ENTRIES_PER_FABRIC> =
-                        heapless::Vec::new();
+                    let mut old_entries: Vec<AclEntry, MAX_ACL_ENTRIES_PER_FABRIC> = Vec::new();
                     for e in fabric.acl_iter() {
                         let _ = old_entries.push(e.clone());
                     }

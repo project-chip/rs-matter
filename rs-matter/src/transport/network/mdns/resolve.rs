@@ -25,8 +25,6 @@ use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 use domain::base::Name;
-use embassy_futures::select::select3;
-use embassy_time::{Duration, Timer};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
@@ -34,7 +32,9 @@ use crate::error::Error;
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::transport::MdnsResponder;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select3, Coalesce};
+use crate::utils::storage;
+use crate::utils::timers::{Duration, Timer};
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
 use crate::Matter;
 
@@ -191,7 +191,7 @@ impl ResolveMdns {
         loop {
             let service = responder.wait_resolve_request().await;
 
-            let mut name_buf: heapless::String<128> = heapless::String::new();
+            let mut name_buf: storage::String<128> = storage::String::new();
             service.instance_name(&mut name_buf);
             let label = name_buf.split('.').next().unwrap_or("").to_string();
             let service_type = service.service_type();

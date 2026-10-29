@@ -32,8 +32,6 @@ use std::net::{TcpListener, UdpSocket};
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::select3;
-
 use futures_lite::StreamExt;
 
 use rand::Rng;
@@ -88,8 +86,8 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVArray, TLVBuilderParent};
 use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::utils::futures::{select3, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::{clusters, devices, Matter};
 
 use static_cell::StaticCell;

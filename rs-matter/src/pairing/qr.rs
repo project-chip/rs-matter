@@ -25,7 +25,7 @@ use crate::error::ErrorCode;
 use crate::tlv::{EitherIter, TLVElement, TLVTag, TLV};
 use crate::transport::network::mdns::CommissionableFilter;
 use crate::utils::codec::base38;
-use crate::utils::storage::WriteBuf;
+use crate::utils::storage::{String, WriteBuf};
 
 use super::*;
 
@@ -665,7 +665,7 @@ impl<'a> QrPayload<'a, ()> {
         const LONG_CODE_LEN: usize = 21;
 
         // Strip the separators of the "pretty" form (e.g. `3497-011-2332`).
-        let mut digits: heapless::String<LONG_CODE_LEN> = heapless::String::new();
+        let mut digits: String<LONG_CODE_LEN> = String::new();
         for ch in code.chars() {
             if matches!(ch, '-' | ' ') {
                 continue;

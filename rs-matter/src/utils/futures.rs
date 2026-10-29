@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2023-2024 Project CHIP Authors
+ *    Copyright (c) 2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -15,19 +15,26 @@
  *    limitations under the License.
  */
 
+//! Future combinators used by `rs-matter`.
+//!
+//! These are currently re-exported from the `embassy-futures` crate. The rest of the code
+//! uses them from here, so that the implementation can be changed in a single place.
+
 use core::future::Future;
 
-use embassy_futures::{
-    join::{Join, Join3, Join4, Join5},
-    select::{Either, Either3, Either4, Select, Select3, Select4},
+pub use embassy_futures::block_on;
+pub use embassy_futures::join::{join, Join, Join3, Join4, Join5};
+pub use embassy_futures::select::{
+    select, select3, select4, select_slice, Either, Either3, Either4, Select, Select3, Select4,
 };
+pub use embassy_futures::yield_now;
 
-/// A trait for coalescing the outputs of `embassy_futures::Select*` and `embassy_futures::Join*` futures.
+/// A trait for coalescing the outputs of the `Select*` and `Join*` futures.
 ///
-/// - The outputs of the `embassy_futures::Select*` future can be coalesced only
+/// - The outputs of the `Select*` future can be coalesced only
 ///   if all legs of the `Select*` future return the same type
 ///
-/// - The outputs of the `embassy_futures::Join*` future can be coalesced only if
+/// - The outputs of the `Join*` future can be coalesced only if
 ///   all legs of the `Join*` future return `Result<(), T>` where T is the same error type.
 ///   Note that in the case when multiple legs of the `Join*` future resulted in an error,
 ///   only the error of the leftmost leg is returned, while the others are discarded.

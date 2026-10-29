@@ -34,9 +34,6 @@
 
 use core::num::NonZeroU8;
 
-use embassy_futures::select::select;
-use embassy_time::{Duration, Instant, Timer};
-
 use crate::acl::AccessReq;
 use crate::dm::clusters::acl::notify_auxiliary_access_updated;
 use crate::dm::{
@@ -49,10 +46,12 @@ use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
 use crate::im::{FabricIndex, GenericPath};
 use crate::tlv::TLVBuilderParent;
 use crate::utils::cell::RefCell;
+use crate::utils::futures::select;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::with;
 
 pub use crate::dm::clusters::decl::groupcast::*;

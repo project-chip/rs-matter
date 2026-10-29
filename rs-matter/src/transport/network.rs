@@ -21,9 +21,8 @@ use core::pin::pin;
 
 pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use embassy_futures::select::{select, Either};
-
 use crate::error::{Error, ErrorCode};
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::MaybeSend;
 
 pub mod btp;

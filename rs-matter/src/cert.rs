@@ -26,6 +26,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
 use crate::utils::epoch::MATTER_CERT_DOESNT_EXPIRE;
 use crate::utils::iter::TryFindIterator;
+use crate::utils::storage::String;
 
 use self::printer::CertPrinter;
 
@@ -281,7 +282,7 @@ impl<'a> Extension<'a> {
         w.end_seq()
     }
 
-    fn get_print_str(key_usage: u16) -> heapless::String<256> {
+    fn get_print_str(key_usage: u16) -> String<256> {
         const KEY_USAGE_DIGITAL_SIGN: u16 = 0x0001;
         const KEY_USAGE_NON_REPUDIATION: u16 = 0x0002;
         const KEY_USAGE_KEY_ENCIPHERMENT: u16 = 0x0004;
@@ -302,7 +303,7 @@ impl<'a> Extension<'a> {
             };
         }
 
-        let mut string = heapless::String::new();
+        let mut string = String::new();
         write_unwrap!(
             &mut string,
             "{}{}{}{}{}{}{}{}{}",
@@ -535,12 +536,12 @@ impl<'a> DN<'a> {
         match self.value()? {
             DNValue::Uint(v) => match expected_len {
                 Some(IntToStringLen::Len16) => {
-                    let mut string = heapless::String::<32>::new();
+                    let mut string = String::<32>::new();
                     write_unwrap!(&mut string, "{:016X}", v);
                     w.utf8str("", &string)?
                 }
                 Some(IntToStringLen::Len8) => {
-                    let mut string = heapless::String::<32>::new();
+                    let mut string = String::<32>::new();
                     write_unwrap!(&mut string, "{:08X}", v);
                     w.utf8str("", &string)?
                 }
@@ -1184,7 +1185,7 @@ mod tests {
     use crate::dm::clusters::time_sync::UtcTime;
     use crate::error::ErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
-    use crate::utils::storage::WriteBuf;
+    use crate::utils::storage::{Vec, WriteBuf};
 
     use super::CertRef;
 
@@ -1346,12 +1347,12 @@ mod tests {
         assert!(unwrap!(der_blob_has_critical_extension(CRITICAL)));
 
         // The walker must scan ALL sub-extensions, not just the first.
-        let mut two_noncritical = heapless::Vec::<u8, 64>::new();
+        let mut two_noncritical = Vec::<u8, 64>::new();
         unwrap!(two_noncritical.extend_from_slice(NON_CRITICAL));
         unwrap!(two_noncritical.extend_from_slice(DEFAULTED));
         assert!(!unwrap!(der_blob_has_critical_extension(&two_noncritical)));
 
-        let mut second_is_critical = heapless::Vec::<u8, 64>::new();
+        let mut second_is_critical = Vec::<u8, 64>::new();
         unwrap!(second_is_critical.extend_from_slice(NON_CRITICAL));
         unwrap!(second_is_critical.extend_from_slice(CRITICAL));
         assert!(unwrap!(der_blob_has_critical_extension(

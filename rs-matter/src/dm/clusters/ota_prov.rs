@@ -48,6 +48,7 @@ use crate::ota::MAX_SOFTWARE_VERSION_STR_LEN;
 use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
 use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::{String, Vec};
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::with;
 
@@ -409,7 +410,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
             .exchange()
             .with_state(|state| Ok(state.fabrics.fabric(requestor.fab_idx)?.node_id()))?;
 
-        let mut uri = heapless::String::<200>::new();
+        let mut uri = String::<200>::new();
         write!(uri, "bdx://{:016X}/{}", node_id, image.file_designator)
             .map_err(|_| ErrorCode::NoSpace)?;
 
@@ -565,7 +566,7 @@ where
 
         // Copy the requested designator out (the held init is released by
         // `reply`/`reject`), and reject anything we don't have.
-        let mut fd = heapless::Vec::<u8, MAX_FILE_DESIGNATOR>::new();
+        let mut fd = Vec::<u8, MAX_FILE_DESIGNATOR>::new();
         if fd.extend_from_slice(responder.fd()).is_err() {
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         }

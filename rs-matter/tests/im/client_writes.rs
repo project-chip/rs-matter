@@ -17,13 +17,10 @@
 
 //! Client-side write tests exercising the `WriteSender` API.
 
-use embassy_futures::block_on;
-use embassy_futures::select::select;
-
 use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::{AttrDataTag, IMStatusCode};
 use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{block_on, select, Coalesce};
 
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;

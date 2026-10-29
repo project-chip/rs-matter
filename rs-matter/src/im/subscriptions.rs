@@ -17,8 +17,6 @@
 
 use core::num::NonZeroU8;
 
-use embassy_time::Instant;
-
 #[cfg(feature = "persistent-subscriptions")]
 use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
@@ -35,6 +33,7 @@ use crate::utils::storage::Vec;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::{Duration, Instant};
 
 /// The maximum number of subscriptions that can be tracked at the same time by default.
 ///
@@ -1186,7 +1185,7 @@ impl Subscription {
     /// Return `true` if the subscription is expired and should be removed, or `false` if it is still active.
     pub fn is_expired(&self, now: Instant) -> bool {
         self.reported_at
-            .checked_add(embassy_time::Duration::from_secs(self.max_int_secs as _))
+            .checked_add(Duration::from_secs(self.max_int_secs as _))
             .map(|expiry| expiry <= now)
             .unwrap_or(false)
     }
@@ -1251,7 +1250,7 @@ impl Subscription {
             Instant::MIN
         } else {
             self.reported_at
-                .checked_add(embassy_time::Duration::from_secs(self.min_int_secs as _))
+                .checked_add(Duration::from_secs(self.min_int_secs as _))
                 .unwrap_or(Instant::MIN)
         };
 
@@ -1281,7 +1280,7 @@ impl Subscription {
         }
 
         self.reported_at
-            .checked_add(embassy_time::Duration::from_secs(
+            .checked_add(Duration::from_secs(
                 keep_alive.due_after_secs(self.max_int_secs) as _,
             ))
             .unwrap_or(Instant::MIN)
@@ -1942,7 +1941,7 @@ where
         self.next_fail_count = fail_count;
         let backoff_secs = Subscription::retry_backoff_secs(fail_count, max_int_secs);
         self.next_retry_at = now
-            .checked_add(embassy_time::Duration::from_secs(backoff_secs as _))
+            .checked_add(Duration::from_secs(backoff_secs as _))
             .unwrap_or(Instant::MAX);
 
         self.keep = true;
@@ -2007,11 +2006,11 @@ pub(crate) fn icd_max_int_secs(idle_mode_duration_s: u32, min_int_floor_secs: u1
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use crate::utils::futures::block_on;
     use crate::utils::storage::pooled::PooledBuffers;
+    use crate::utils::timers::Duration;
 
     use super::*;
-
-    use embassy_time::Duration;
 
     type TestPool<const N: usize> = PooledBuffers<IMBuffer, N>;
 
@@ -3828,8 +3827,8 @@ mod tests {
 
     #[test]
     fn subscription_added_notification_wakes_reporter_to_recompute_deadline() {
+        use crate::utils::futures::{select, Either};
         use core::pin::pin;
-        use embassy_futures::select::{select, Either};
 
         let subs: Subscriptions<2> = Subscriptions::new();
         let pool = TestPool::<3>::new();
@@ -3854,7 +3853,7 @@ mod tests {
         }
         subs.notification.notify();
 
-        let notified = embassy_futures::block_on(async {
+        let notified = block_on(async {
             match select(waiter, pin!(core::future::ready(()))).await {
                 Either::First(_) => true,
                 Either::Second(_) => false,

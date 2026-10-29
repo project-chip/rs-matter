@@ -24,8 +24,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
-
 use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
@@ -50,7 +48,7 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVBuilderParent, Utf8StrBuilder};
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select4, Coalesce};
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 pub use rs_matter::dm::clusters::decl::bridged_device_basic_information::{
@@ -173,7 +171,7 @@ const NODE: Node<'static> = Node {
         // The Matter Bridge needs to declare as many endpoints as there are bridged devices.
         // If the bridged devices can vary over time, rather than using a static `Node`
         // definition, one could use an `(Async)MetaData` implementation that returns a node
-        // which references the endpoints off from a `Vec` or a `heapless::Vec`.
+        // which references the endpoints off from a `Vec` or a `rs_matter::utils::storage::Vec`.
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),

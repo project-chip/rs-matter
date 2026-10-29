@@ -24,6 +24,7 @@ use crate::error::Error;
 use crate::im::events::{EventTLVWrite, Events};
 use crate::im::{EventData, EventNumber, EventPriority};
 use crate::persist::{DummyKvBlobStore, SharedKvBlobStore};
+use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 
 /// An [`AttrChangeNotifier`] that records what it was told about, so that a
@@ -36,16 +37,16 @@ use crate::utils::sync::blocking::Mutex;
 /// precisely so that this can drive them. A `HandlerContext` can only be built
 /// around a live `Matter` instance.
 #[derive(Default)]
-pub struct RecordingNotifier(RefCell<heapless::Vec<(EndptId, ClusterId, AttrId), 16>>);
+pub struct RecordingNotifier(RefCell<Vec<(EndptId, ClusterId, AttrId), 16>>);
 
 impl RecordingNotifier {
     /// Take the recorded notifications, leaving the notifier empty.
-    pub fn take(&self) -> heapless::Vec<(EndptId, ClusterId, AttrId), 16> {
+    pub fn take(&self) -> Vec<(EndptId, ClusterId, AttrId), 16> {
         core::mem::take(&mut self.0.borrow_mut())
     }
 
     /// The attribute IDs recorded so far, in the order they arrived.
-    pub fn attrs(&self) -> heapless::Vec<AttrId, 16> {
+    pub fn attrs(&self) -> Vec<AttrId, 16> {
         self.take().iter().map(|(_, _, attr)| *attr).collect()
     }
 }
@@ -77,7 +78,7 @@ impl RecordingEvents {
     /// The events emitted so far, oldest first.
     pub fn with_events<R>(&self, f: impl FnOnce(&[EventData<'_>]) -> R) -> R {
         self.0.fetch(|iter| {
-            let mut events: heapless::Vec<EventData<'_>, 32> = iter.collect();
+            let mut events: Vec<EventData<'_>, 32> = iter.collect();
             events.sort_unstable_by_key(|e| e.event_number);
             f(&events)
         })

@@ -38,8 +38,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select3;
-
 use async_signal::{Signal, Signals};
 use log::{error, info, warn};
 
@@ -76,9 +74,10 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
+use rs_matter::utils::futures::{select3, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::utils::timers::{Duration, Instant, Timer};
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
@@ -319,7 +318,7 @@ fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHook
 // Implementing the Thermostat business logic
 
 /// How often the simulated room temperature is recomputed.
-const TICK: embassy_time::Duration = embassy_time::Duration::from_secs(5);
+const TICK: Duration = Duration::from_secs(5);
 
 /// How fast the room warms towards the setpoint while heating, in 0.01degC per
 /// [`TICK`].
@@ -331,7 +330,7 @@ const COOLING_RATE: i16 = 10;
 
 /// How often the electrical readings are resampled. Faster than [`TICK`] so
 /// that closing the relay shows up promptly in `ActivePower`.
-const METER_TICK: embassy_time::Duration = embassy_time::Duration::from_secs(1);
+const METER_TICK: Duration = Duration::from_secs(1);
 
 /// The temperature the simulated room drifts to with the heating off, in
 /// 0.01degC.
@@ -537,7 +536,7 @@ impl ElementState {
     /// sample, which is the same thing as long as the power only changes at a
     /// sample boundary - and every path that changes it does this first.
     fn integrate(&mut self) {
-        let now = embassy_time::Instant::now().as_millis();
+        let now = Instant::now().as_millis();
         let elapsed_ms = now.saturating_sub(self.mark_ms) as i64;
 
         self.mark_ms = now;
@@ -567,7 +566,7 @@ impl HeatingElement {
                 _ => (0, true),
             };
 
-        let now = embassy_time::Instant::now().as_millis();
+        let now = Instant::now().as_millis();
 
         Self {
             state: Mutex::new(RefCell::new(ElementState {
@@ -618,7 +617,7 @@ impl HeatingElement {
             state.integrate();
             state.fake = fake;
 
-            state.restart_period(embassy_time::Instant::now().as_millis());
+            state.restart_period(Instant::now().as_millis());
         });
     }
 
@@ -705,7 +704,7 @@ impl HeatingElement {
                 PERIOD_MS
             };
 
-            let end = embassy_time::Instant::now().as_millis();
+            let end = Instant::now().as_millis();
 
             if end - state.period_start_ms < length {
                 return None;
@@ -895,7 +894,7 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
     async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
         loop {
             // In a real device we would wait on a temperature sensor.
-            embassy_time::Timer::after(TICK).await;
+            Timer::after(TICK).await;
 
             let heating = self.element.heating();
 
@@ -1099,7 +1098,7 @@ impl ElecPwrMeasHooks for ElecPwrDeviceLogic<'_> {
 
     async fn run<F: Fn(elec_pwr_meas::OutOfBandMessage)>(&self, notify: F) {
         loop {
-            embassy_time::Timer::after(METER_TICK).await;
+            Timer::after(METER_TICK).await;
 
             // This loop is the meter's sample clock: it integrates the energy
             // drawn since the last sample and advances a fake load's sweep.
@@ -1178,7 +1177,7 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
         // which is conformant.
         Some(EnergyMeasurement::cumulative(
             self.element.energy_mwh(),
-            Timestamp::systime(embassy_time::Instant::now().as_millis()),
+            Timestamp::systime(Instant::now().as_millis()),
         ))
     }
 
@@ -1202,7 +1201,7 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
         loop {
             // Woken on the meter's sample clock, but a period only closes
             // once it has run its course.
-            embassy_time::Timer::after(METER_TICK).await;
+            Timer::after(METER_TICK).await;
 
             let Some(moved) = self.element.close_period_if_due() else {
                 continue;

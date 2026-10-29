@@ -51,20 +51,17 @@
 use core::cell::{Cell, RefCell};
 use core::future::Future;
 
-use embassy_futures::select::select;
-use embassy_time::{Duration, Instant, Timer};
-
-use heapless::String as HString;
-
 use crate::dm::{
     ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext,
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
-use crate::utils::storage::Vec;
+use crate::utils::futures::select;
+use crate::utils::storage::{String as HString, Vec};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::with;
 
 #[allow(unused_imports)]
@@ -989,7 +986,7 @@ fn write_trigger<P: TLVBuilderParent>(
 
 #[cfg(test)]
 mod tests {
-    use embassy_time::Instant;
+    use crate::utils::timers::Instant;
 
     use super::{State, Trigger, ZoneEventStoppedReasonEnum, ZoneEventTriggeredReasonEnum};
 

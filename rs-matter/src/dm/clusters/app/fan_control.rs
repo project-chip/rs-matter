@@ -110,8 +110,6 @@
 use core::cell::Cell;
 use core::future::{pending, Future};
 
-use embassy_futures::select::{select, Either};
-
 use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 pub use crate::dm::clusters::decl::fan_control::*;
 use crate::dm::{
@@ -122,6 +120,7 @@ use crate::error::{Error, ErrorCode};
 use crate::im::Percent;
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, ToTLV};
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 

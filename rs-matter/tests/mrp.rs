@@ -48,9 +48,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
-use embassy_time::{Duration, Timer};
 
 use log::info;
 
@@ -74,9 +72,10 @@ use rs_matter::transport::network::{
 };
 use rs_matter::transport::packet::PacketHdr;
 use rs_matter::transport::session::{NocCatIds, PeerMrpParams, ReservedSession, SessionMode};
-use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::ParseBuf;
+use rs_matter::utils::futures::{select, select3, Coalesce, Either, Either3};
+use rs_matter::utils::storage::{self, ParseBuf};
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::{Matter, MATTER_PORT};
 
 use crate::common::e2e::im::attributes::TestAttrData;
@@ -231,11 +230,11 @@ fn decode_hdr(data: &[u8], sender_nodeid: u64) -> Option<(u32, u16, u8)> {
     Some((hdr.plain.ctr, hdr.proto.proto_id, hdr.proto.proto_opcode))
 }
 
-type Pipe<'a, const N: usize> = Channel<'a, MatterRawMutex, heapless::Vec<u8, N>>;
+type Pipe<'a, const N: usize> = Channel<'a, MatterRawMutex, storage::Vec<u8, N>>;
 
 /// The sending half of a pipe, with a loss policy in front of it.
 struct LossySend<'a, const N: usize> {
-    pipe: Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>,
+    pipe: Sender<'a, MatterRawMutex, storage::Vec<u8, N>>,
     stats: &'a LinkStats,
 }
 
@@ -280,7 +279,7 @@ impl<const N: usize> NetworkSend for LossySend<'_, N> {
 }
 
 /// The receiving half of a pipe.
-struct PipeRecv<'a, const N: usize>(Receiver<'a, MatterRawMutex, heapless::Vec<u8, N>>);
+struct PipeRecv<'a, const N: usize>(Receiver<'a, MatterRawMutex, storage::Vec<u8, N>>);
 
 impl<const N: usize> NetworkReceive for PipeRecv<'_, N> {
     async fn wait_available(&mut self) -> Result<(), Error> {
@@ -384,8 +383,8 @@ where
     device_link.1.mode.set(device_link.0);
     client_link.1.mode.set(client_link.0);
 
-    let mut to_client_buf = [heapless::Vec::new(); 1];
-    let mut to_device_buf = [heapless::Vec::new(); 1];
+    let mut to_client_buf = [storage::Vec::new(); 1];
+    let mut to_device_buf = [storage::Vec::new(); 1];
 
     let mut to_client = Pipe::<MAX_RX_PACKET_SIZE>::new(&mut to_client_buf);
     let mut to_device = Pipe::<MAX_TX_PACKET_SIZE>::new(&mut to_device_buf);
@@ -689,7 +688,7 @@ fn spawn_with_large_stack(f: impl FnOnce() + Send + 'static) {
 /// Unlike [`LossySend`] it does not decode headers: a raw count is all the
 /// scenario below needs.
 struct CountingSend<'a, const N: usize> {
-    pipe: Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>,
+    pipe: Sender<'a, MatterRawMutex, storage::Vec<u8, N>>,
     count: &'a Cell<u32>,
 }
 
@@ -727,8 +726,8 @@ fn message_on_a_session_the_peer_does_not_have_goes_unanswered() {
         let device_count = Cell::new(0u32);
         let client_count = Cell::new(0u32);
 
-        let mut to_client_buf = [heapless::Vec::new(); 1];
-        let mut to_device_buf = [heapless::Vec::new(); 1];
+        let mut to_client_buf = [storage::Vec::new(); 1];
+        let mut to_device_buf = [storage::Vec::new(); 1];
 
         let mut to_client = Pipe::<MAX_RX_PACKET_SIZE>::new(&mut to_client_buf);
         let mut to_device = Pipe::<MAX_TX_PACKET_SIZE>::new(&mut to_device_buf);

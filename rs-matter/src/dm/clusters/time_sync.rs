@@ -55,10 +55,6 @@ use core::num::NonZeroU8;
 
 use bitflags::bitflags;
 
-use heapless::String;
-
-use embassy_futures::select::select;
-
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     ArrayAttributeRead, AttrChangeNotifier, Attribute, Cluster, Command, Dataver, EndptId,
@@ -74,10 +70,12 @@ use crate::tlv::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::FIRMWARE_BUILD_MATTER_US;
+use crate::utils::futures::select;
 use crate::utils::init::{init, into_init, try_init, Init};
-use crate::utils::storage::Vec;
+use crate::utils::storage::{String, Vec};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSendSync, Notification};
+use crate::utils::timers::{Duration, Instant, Timer};
 
 pub use crate::dm::clusters::decl::time_synchronization::*;
 
@@ -162,7 +160,7 @@ pub struct Rtc {
     source: TimeSourceEnum,
     /// `Instant::now()` captured at the last `set_utc_time` call.
     /// Volatile — `None` after reboot until next set.
-    anchor: Option<embassy_time::Instant>,
+    anchor: Option<Instant>,
     /// Configured Trusted Time Source for the device (Matter Core spec).
     /// At most one entry; the fabric that
     /// installed it owns it and is cleared on fabric removal.
@@ -310,7 +308,7 @@ impl Rtc {
     /// Return the current UTC time if available, or the persisted Last-Known-Good UTC Time otherwise.
     pub fn utc_time(&self) -> UtcTime {
         if let Some(anchor) = self.anchor {
-            let elapsed_us = embassy_time::Instant::now()
+            let elapsed_us = Instant::now()
                 .checked_duration_since(anchor)
                 .map(|d| d.as_micros())
                 .unwrap_or(0);
@@ -384,7 +382,7 @@ impl Rtc {
             self.utc_us = utc_us;
             self.granularity = stepped;
             self.source = source;
-            self.anchor = Some(embassy_time::Instant::now());
+            self.anchor = Some(Instant::now());
 
             change_notifier.notify_attr_changed(
                 ROOT_ENDPOINT_ID,
@@ -1627,8 +1625,7 @@ impl ClusterHandler for TimeSyncHandler<'_> {
                     (Some(at), Some(now)) => {
                         let delta_us = at.saturating_sub(now).saturating_add(100_000);
 
-                        embassy_time::Timer::after(embassy_time::Duration::from_micros(delta_us))
-                            .await
+                        Timer::after(Duration::from_micros(delta_us)).await
                     }
                     _ => core::future::pending().await,
                 }

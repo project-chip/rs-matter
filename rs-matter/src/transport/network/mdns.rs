@@ -27,7 +27,7 @@ use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
 use crate::transport::mrp;
-use crate::utils::storage::{write_split, Vec, WriteBuf};
+use crate::utils::storage::{write_split, String, Vec, WriteBuf};
 use crate::Matter;
 
 use super::{MatterLocalService, MatterRemoteService};
@@ -285,7 +285,7 @@ impl MatterRemoteService {
     /// Write the fully-qualified mDNS instance name for this service into `buf`.
     ///
     /// This is the name to issue SRV/TXT/A/AAAA queries against when resolving.
-    pub fn instance_name(&self, buf: &mut heapless::String<128>) {
+    pub fn instance_name(&self, buf: &mut String<128>) {
         buf.clear();
 
         match self {
@@ -320,7 +320,7 @@ impl MatterRemoteService {
     /// (written into `buf`) followed by the static service-type labels. Used to
     /// build a query name directly from labels (via `NameSlice`), avoiding a
     /// full-name buffer + re-parse.
-    pub(crate) fn query_name_labels<'b>(&self, buf: &'b mut heapless::String<33>) -> [&'b str; 4] {
+    pub(crate) fn query_name_labels<'b>(&self, buf: &'b mut String<33>) -> [&'b str; 4] {
         buf.clear();
 
         match self {
@@ -574,11 +574,11 @@ impl CommissionableFilter {
     /// # Arguments
     /// * `buf` - A mutable string buffer to write the service type into
     /// * `include_local` - Whether to append `.local` suffix (needed for raw DNS queries)
-    pub fn service_type(&self, buf: &mut heapless::String<64>, include_local: bool) {
+    pub fn service_type(&self, buf: &mut String<64>, include_local: bool) {
         buf.clear();
         let suffix = if include_local { ".local" } else { "" };
 
-        let mut sbuf = heapless::String::<24>::new();
+        let mut sbuf = String::<24>::new();
         if let Some(sub) = self.subtype(&mut sbuf) {
             write_unwrap!(buf, "{}._sub._matterc._udp{}", sub, suffix);
         } else {
@@ -591,7 +591,7 @@ impl CommissionableFilter {
     /// `_CM` (see [`CommissionableFilter::service_type`]), or `None` for an
     /// unfiltered browse. Used to build the browse query name directly from
     /// labels (via `NameSlice`), and as the single source of the priority logic.
-    pub(crate) fn subtype<'b>(&self, buf: &'b mut heapless::String<24>) -> Option<&'b str> {
+    pub(crate) fn subtype<'b>(&self, buf: &'b mut String<24>) -> Option<&'b str> {
         buf.clear();
 
         if let Some(disc) = self.discriminator {
@@ -967,11 +967,11 @@ impl MdnsBrowseQuery {
 
     /// The service type to browse, narrowed to the most selective subtype (see
     /// [`Self::subtype`]), with `.local` appended if `include_local`.
-    pub fn service_type(&self, buf: &mut heapless::String<64>, include_local: bool) {
+    pub fn service_type(&self, buf: &mut String<64>, include_local: bool) {
         buf.clear();
         let suffix = if include_local { ".local" } else { "" };
 
-        let mut sbuf = heapless::String::<24>::new();
+        let mut sbuf = String::<24>::new();
         if let Some(sub) = self.subtype(&mut sbuf) {
             write_unwrap!(buf, "{}._sub.{}{}", sub, self.base_service_type(), suffix);
         } else {
@@ -982,7 +982,7 @@ impl MdnsBrowseQuery {
     /// The most selective browse subtype label, written into `buf`: that of the
     /// [`CommissionableFilter`], or `_I<compressed fabric id>` for an operational
     /// browse of one fabric. `None` for an unfiltered browse.
-    pub(crate) fn subtype<'b>(&self, buf: &'b mut heapless::String<24>) -> Option<&'b str> {
+    pub(crate) fn subtype<'b>(&self, buf: &'b mut String<24>) -> Option<&'b str> {
         match self {
             Self::Commissionable(filter) => filter.subtype(buf),
             Self::Operational {
@@ -1372,7 +1372,7 @@ mod tests {
     #[test]
     fn service_type_no_filter() {
         let filter = CommissionableFilter::default();
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         filter.service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_matterc._udp");
@@ -1387,7 +1387,7 @@ mod tests {
             discriminator: Some(1234),
             ..Default::default()
         };
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         filter.service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_L1234._sub._matterc._udp");
@@ -1402,7 +1402,7 @@ mod tests {
             short_discriminator: Some(3),
             ..Default::default()
         };
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         filter.service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_S3._sub._matterc._udp");
@@ -1414,7 +1414,7 @@ mod tests {
             vendor_id: Some(0xFFF1),
             ..Default::default()
         };
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         filter.service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_V65521._sub._matterc._udp");
@@ -1426,7 +1426,7 @@ mod tests {
             device_type: Some(257),
             ..Default::default()
         };
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         filter.service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_T257._sub._matterc._udp");
@@ -1438,7 +1438,7 @@ mod tests {
             commissioning_mode_only: true,
             ..Default::default()
         };
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         filter.service_type(&mut buf, false);
         assert_eq!(buf.as_str(), "_CM._sub._matterc._udp");
@@ -1447,7 +1447,7 @@ mod tests {
     #[test]
     fn service_type_priority_order() {
         // discriminator > short_discriminator > vendor_id > device_type > CM
-        let mut buf = heapless::String::<64>::new();
+        let mut buf = String::<64>::new();
 
         CommissionableFilter {
             discriminator: Some(1234),
@@ -1499,7 +1499,7 @@ mod tests {
             compressed_fabric_id: Some(0xEADD_BAEB_88C4_1C26),
         };
 
-        let mut buf = heapless::String::new();
+        let mut buf = String::new();
         query.service_type(&mut buf, true);
         assert_eq!(buf.as_str(), "_IEADDBAEB88C41C26._sub._matter._tcp.local");
         assert_eq!(query.base_service_type(), "_matter._tcp");
@@ -1511,7 +1511,7 @@ mod tests {
             compressed_fabric_id: None,
         };
 
-        let mut buf = heapless::String::new();
+        let mut buf = String::new();
         query.service_type(&mut buf, true);
         assert_eq!(buf.as_str(), "_matter._tcp.local");
     }

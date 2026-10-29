@@ -17,10 +17,9 @@
 
 //! This module contains types related to the Timed Request feature in the Matter Interaction Model.
 
-use embassy_time::{Duration, Instant};
-
 use crate::im::IM_REVISION;
 use crate::tlv::{FromTLV, ToTLV};
+use crate::utils::timers::{Duration, Instant};
 
 /// A structure representing a timed request in the Interaction Model.
 ///

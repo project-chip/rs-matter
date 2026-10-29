@@ -45,9 +45,6 @@ use core::pin::pin;
 use std::net::{SocketAddr, UdpSocket};
 use std::process::ExitCode;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use log::{error, info};
 
 use rs_matter::cert::gen::VALID_FOREVER;
@@ -61,7 +58,9 @@ use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::transport::network::{Address, NoNetwork};
+use rs_matter::utils::futures::{select, Either};
 use rs_matter::utils::init::InitMaybeUninit;
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::Matter;
 
 use static_cell::StaticCell;

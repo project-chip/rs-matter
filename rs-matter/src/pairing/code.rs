@@ -19,6 +19,7 @@ use core::fmt::Write;
 
 use verhoeff::Verhoeff;
 
+use crate::utils::storage::String;
 use crate::BasicCommData;
 
 impl BasicCommData {
@@ -26,8 +27,8 @@ impl BasicCommData {
     ///
     /// Implies the standard commissioning flow; other flows need
     /// [`Self::compute_pairing_code_long`].
-    pub fn compute_pairing_code(&self) -> heapless::String<11> {
-        let mut digits = heapless::String::new();
+    pub fn compute_pairing_code(&self) -> String<11> {
+        let mut digits = String::new();
 
         self.write_pairing_code_digits(&mut digits, None);
 
@@ -36,8 +37,8 @@ impl BasicCommData {
 
     /// Compute the 21-digit manual pairing code, which carries the vendor and
     /// product IDs; required for non-standard commissioning flows
-    pub fn compute_pairing_code_long(&self, vid: u16, pid: u16) -> heapless::String<21> {
-        let mut digits = heapless::String::new();
+    pub fn compute_pairing_code_long(&self, vid: u16, pid: u16) -> String<21> {
+        let mut digits = String::new();
 
         self.write_pairing_code_digits(&mut digits, Some((vid, pid)));
 
@@ -45,10 +46,10 @@ impl BasicCommData {
     }
 
     /// The 11-digit manual pairing code grouped for display: `XXXX-XXX-XXXX`
-    pub fn compute_pretty_pairing_code(&self) -> heapless::String<13> {
+    pub fn compute_pretty_pairing_code(&self) -> String<13> {
         let pairing_code = self.compute_pairing_code();
 
-        let mut pretty = heapless::String::new();
+        let mut pretty = String::new();
         Self::write_groups(&mut pretty, &pairing_code, &[4, 3, 4]);
 
         pretty
@@ -56,10 +57,10 @@ impl BasicCommData {
 
     /// The 21-digit manual pairing code grouped for display:
     /// `XXXX-XXX-XXXX-XXXXX-XXXXX` (the spec prescribes no grouping)
-    pub fn compute_pretty_pairing_code_long(&self, vid: u16, pid: u16) -> heapless::String<25> {
+    pub fn compute_pretty_pairing_code_long(&self, vid: u16, pid: u16) -> String<25> {
         let pairing_code = self.compute_pairing_code_long(vid, pid);
 
-        let mut pretty = heapless::String::new();
+        let mut pretty = String::new();
         Self::write_groups(&mut pretty, &pairing_code, &[4, 3, 4, 5, 5]);
 
         pretty
@@ -69,7 +70,7 @@ impl BasicCommData {
     /// variant if `vid_pid` is present.
     fn write_pairing_code_digits<const N: usize>(
         &self,
-        digits: &mut heapless::String<N>,
+        digits: &mut String<N>,
         vid_pid: Option<(u16, u16)>,
     ) {
         let BasicCommData {
@@ -103,11 +104,7 @@ impl BasicCommData {
     }
 
     /// Write `digits` into `pretty` in dash-separated groups of the given sizes.
-    fn write_groups<const N: usize>(
-        pretty: &mut heapless::String<N>,
-        digits: &str,
-        groups: &[usize],
-    ) {
+    fn write_groups<const N: usize>(pretty: &mut String<N>, digits: &str, groups: &[usize]) {
         let mut offset = 0;
 
         for (index, group) in groups.iter().enumerate() {

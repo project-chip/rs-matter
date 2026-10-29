@@ -31,9 +31,6 @@ use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
 use bluer::gatt::{CharacteristicWriter, WriteOp};
 use bluer::{Adapter, AdapterEvent, Address, DiscoveryFilter, DiscoveryTransport, Uuid};
 
-use embassy_futures::select::{select, select3, select4, Either};
-use embassy_time::{Duration, Instant, Timer};
-
 use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
 
@@ -41,7 +38,9 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::Btp;
 use crate::transport::network::mdns::CommissionableFilter;
 use crate::transport::network::BtAddr;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select, select3, select4, Coalesce, Either};
+use crate::utils::storage;
+use crate::utils::timers::{Duration, Instant, Timer};
 
 use super::{AdvData, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID, MATTER_BLE_SERVICE_UUID};
 
@@ -272,7 +271,7 @@ where
     // Note this only suppresses re-reporting a device we already *matched*: one that
     // does not match yet (e.g. no service data so far) is left out, so a later
     // `DeviceAdded` for it gets another look.
-    let mut reported: heapless::Vec<BtAddr, 16> = heapless::Vec::new();
+    let mut reported: storage::Vec<BtAddr, 16> = storage::Vec::new();
 
     let scan_fut = async {
         while let Some(event) = device_events.next().await {
@@ -311,7 +310,7 @@ async fn try_match_device<F, R>(
     adapter: &Adapter,
     addr: Address,
     filter: &CommissionableFilter,
-    reported: &mut heapless::Vec<BtAddr, 16>,
+    reported: &mut storage::Vec<BtAddr, 16>,
     on_found: &mut F,
 ) -> Result<Option<R>, Error>
 where

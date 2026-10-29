@@ -32,16 +32,13 @@
 //! ```ignore
 //! let client = TimeSyncClient::new(&matter, &crypto);
 //! let _ = client.run(
-//!     embassy_time::Duration::from_secs(60 * 60),
+//!     rs_matter::utils::timers::Duration::from_secs(60 * 60),
 //!     persist_access,
 //!     &dm,
 //! ).await;
 //! ```
 
 use core::cell::Cell;
-
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Instant, Timer};
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::decl::time_synchronization::{
@@ -54,6 +51,8 @@ use crate::error::Error;
 use crate::im::client::ImClient as _;
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::transport::exchange::Exchange;
+use crate::utils::futures::{select, Either};
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::Matter;
 
 /// How soon [`TimeSyncClient::run`] first retries a refresh getting no time;
@@ -346,9 +345,10 @@ fn back_off(retry: &mut Duration, period: Duration) -> Duration {
 mod tests {
     use core::cell::Cell;
 
-    use embassy_time::Duration;
+    use crate::utils::timers::Duration;
 
     use super::{back_off, hourly, RETRY_MIN};
+    use crate::utils::storage::Vec;
 
     #[test]
     fn time_failures_are_reported_hourly_at_most() {
@@ -363,7 +363,7 @@ mod tests {
         let period = Duration::from_secs(10 * 60);
         let mut retry = RETRY_MIN;
 
-        let waits: heapless::Vec<u64, 6> = (0..6)
+        let waits: Vec<u64, 6> = (0..6)
             .map(|_| back_off(&mut retry, period).as_secs())
             .collect();
         assert_eq!(waits.as_slice(), [60, 120, 240, 480, 600, 600]);

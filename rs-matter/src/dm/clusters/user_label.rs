@@ -57,7 +57,7 @@ use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::Vec;
+use crate::utils::storage::{String, Vec};
 use crate::utils::sync::blocking::Mutex;
 use crate::with;
 
@@ -91,8 +91,8 @@ pub const MAX_VALUE_LEN: usize = 16;
 /// (`label` at tag 0, `value` at tag 1).
 #[derive(Debug, Clone, PartialEq, Eq, FromTLV, ToTLV)]
 pub struct LabelEntry {
-    pub label: heapless::String<MAX_LABEL_LEN>,
-    pub value: heapless::String<MAX_VALUE_LEN>,
+    pub label: String<MAX_LABEL_LEN>,
+    pub value: String<MAX_VALUE_LEN>,
 }
 
 /// One slot in the persisted [`UserLabels`] blob: the `LabelList` for a
@@ -349,8 +349,8 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     /// Push a `(label, value)` pair into a bounded vec. Returns
     /// `ResourceExhausted` when the vec is full.
     fn push_into(list: &mut Vec<LabelEntry, N>, label: &str, value: &str) -> Result<(), Error> {
-        let label = heapless::String::try_from(label).map_err(|_| ErrorCode::ConstraintError)?;
-        let value = heapless::String::try_from(value).map_err(|_| ErrorCode::ConstraintError)?;
+        let label = String::try_from(label).map_err(|_| ErrorCode::ConstraintError)?;
+        let value = String::try_from(value).map_err(|_| ErrorCode::ConstraintError)?;
         list.push(LabelEntry { label, value })
             .map_err(|_| ErrorCode::ResourceExhausted)?;
         Ok(())

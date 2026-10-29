@@ -15,6 +15,9 @@
  *    limitations under the License.
  */
 
+#[cfg(feature = "groups")]
+use crate::utils::storage::Vec;
+
 const MSG_RX_STATE_BITMAP_LEN: u32 = 16;
 
 #[derive(Debug)]
@@ -152,7 +155,7 @@ struct GroupCtrEntry {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupCtrStore {
-    entries: heapless::Vec<GroupCtrEntry, MAX_GROUP_CTR_ENTRIES>,
+    entries: Vec<GroupCtrEntry, MAX_GROUP_CTR_ENTRIES>,
     clock: u32,
 }
 
@@ -160,7 +163,7 @@ pub struct GroupCtrStore {
 impl GroupCtrStore {
     pub const fn new() -> Self {
         Self {
-            entries: heapless::Vec::new(),
+            entries: Vec::new(),
             clock: 0,
         }
     }

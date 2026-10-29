@@ -72,6 +72,11 @@ jobs:
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo clippy --no-deps --all-targets -- -Dwarnings
 
+      # Also covers the optional features that no other step builds (e.g. `ota-dcl`)
+      - name: Clippy - Optional features
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cd rs-matter; cargo clippy --no-deps --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,zbus,bluer,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
+
       - name: Clippy - baremetal
         if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
         run: cd rs-matter; cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt --target riscv32imac-unknown-none-elf -- -Dwarnings

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 
 pub use parsebuf::*;
 pub use ringbuf::*;
+pub use string::*;
 pub use vec::*;
 pub use writebuf::*;
 
@@ -24,5 +25,6 @@ pub mod pooled;
 
 mod parsebuf;
 mod ringbuf;
+mod string;
 mod vec;
 mod writebuf;

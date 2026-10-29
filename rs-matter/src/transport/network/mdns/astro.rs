@@ -21,11 +21,6 @@
 
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService, ServiceBrowserBuilder};
 
-use embassy_futures::select::select3;
-use embassy_time::Timer;
-
-use crate::utils::select::Coalesce;
-
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
@@ -34,6 +29,9 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::transport::MdnsResponder;
+use crate::utils::futures::{select3, Coalesce};
+use crate::utils::storage;
+use crate::utils::timers::Timer;
 use crate::Matter;
 
 /// mDNS interval (ms) between non-blocking polls of the OS browser while a
@@ -109,7 +107,7 @@ impl AstroMdns {
         loop {
             let service = responder.wait_resolve_request().await;
 
-            let mut name_buf: heapless::String<128> = heapless::String::new();
+            let mut name_buf: storage::String<128> = storage::String::new();
             service.instance_name(&mut name_buf);
             let label = name_buf.split('.').next().unwrap_or("").to_string();
 
@@ -160,7 +158,7 @@ impl AstroMdns {
                     Err(e) => debug!("Browse error: {:?}", e),
                 }
 
-                Timer::after(embassy_time::Duration::from_millis(BROWSE_POLL_INTERVAL_MS)).await;
+                Timer::after_millis(BROWSE_POLL_INTERVAL_MS).await;
             }
         }
     }
@@ -223,7 +221,7 @@ impl AstroMdns {
                     Err(e) => debug!("Browse error: {:?}", e),
                 }
 
-                Timer::after(embassy_time::Duration::from_millis(BROWSE_POLL_INTERVAL_MS)).await;
+                Timer::after_millis(BROWSE_POLL_INTERVAL_MS).await;
             }
         }
     }

@@ -37,9 +37,6 @@
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use log::info;
 
 use rs_matter::cert::gen::VALID_FOREVER;
@@ -58,7 +55,8 @@ use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork};
 
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select, Coalesce, Either};
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::Matter;
 
 use crate::common::{

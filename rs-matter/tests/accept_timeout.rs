@@ -22,8 +22,6 @@ mod common;
 
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Instant, Timer};
 use log::info;
 
 use rs_matter::crypto::test_only_crypto;
@@ -34,6 +32,8 @@ use rs_matter::sc::{OpCode, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::tlv::{OctetStr, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
 use rs_matter::transport::network::{Address, NoNetwork};
+use rs_matter::utils::futures::{select, Either};
+use rs_matter::utils::timers::{Duration, Instant, Timer};
 use rs_matter::Matter;
 
 use crate::common::{create_localhost_socket_pair, init_env_logger, run_with_transport};

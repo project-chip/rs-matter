@@ -36,9 +36,6 @@
 
 use core::num::NonZeroU8;
 
-use embassy_futures::block_on;
-use embassy_futures::select::{select, Either};
-
 use rs_matter::crypto::test_only_crypto;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
@@ -47,6 +44,7 @@ use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend, NoNetw
 use rs_matter::transport::session::{
     NocCatIds, ReservedSession, SessionMode, MAX_EXCHANGES, MAX_SESSIONS,
 };
+use rs_matter::utils::futures::{block_on, select, Either};
 use rs_matter::Matter;
 
 use crate::common::init_env_logger;

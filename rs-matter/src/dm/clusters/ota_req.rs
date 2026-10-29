@@ -1022,7 +1022,7 @@ mod tests {
     }
 
     /// The event ID of `event`, and its fields `0..fields`.
-    fn event(event: &EventData<'_>, fields: u8) -> (u32, heapless::Vec<Option<i64>, 4>) {
+    fn event(event: &EventData<'_>, fields: u8) -> (u32, Vec<Option<i64>, 4>) {
         (
             event.path.event.unwrap(),
             (0..fields).map(|tag| field(event, tag)).collect(),
@@ -1060,25 +1060,29 @@ mod tests {
                 event(&emitted[0], 4),
                 (
                     transition,
-                    [Some(IDLE), Some(QUERYING), Some(SUCCESS), None].into()
+                    Vec::from_slice(&[Some(IDLE), Some(QUERYING), Some(SUCCESS), None]).unwrap()
                 )
             );
             assert_eq!(
                 event(&emitted[1], 4),
                 (
                     transition,
-                    [Some(QUERYING), Some(DOWNLOADING), Some(SUCCESS), Some(7)].into()
+                    Vec::from_slice(&[Some(QUERYING), Some(DOWNLOADING), Some(SUCCESS), Some(7)])
+                        .unwrap()
                 )
             );
             assert_eq!(
                 event(&emitted[2], 4),
-                (error, [Some(7), Some(1024), Some(50), Some(-3)].into())
+                (
+                    error,
+                    Vec::from_slice(&[Some(7), Some(1024), Some(50), Some(-3)]).unwrap()
+                )
             );
             assert_eq!(
                 event(&emitted[3], 4),
                 (
                     transition,
-                    [Some(DOWNLOADING), Some(IDLE), Some(FAILURE), None].into()
+                    Vec::from_slice(&[Some(DOWNLOADING), Some(IDLE), Some(FAILURE), None]).unwrap()
                 )
             );
         });

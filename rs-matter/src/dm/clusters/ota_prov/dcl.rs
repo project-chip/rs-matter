@@ -31,14 +31,14 @@
 //! - `GET {base}/dcl/model/versions/{vid}/{pid}/{version}` -> `{ modelVersion: { otaUrl, otaFileSize, .. } }`
 
 use core::fmt::Write as _;
+use core::future::Future;
 
-use heapless::String;
-
-use serde::Deserialize;
+use serde::de::{Error as _, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 
 use crate::error::{Error, ErrorCode};
-use crate::utils::storage::WriteBuf;
-use crate::utils::sync::IfMultiMutex;
+use crate::utils::storage::{String, Vec, WriteBuf};
+use crate::utils::sync::{IfMultiMutex, MaybeSend, MaybeSendSync};
 
 use super::{
     OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, OtaRequestorId,
@@ -370,8 +370,8 @@ struct VersionsResponse {
 
 #[derive(Deserialize)]
 struct VersionList {
-    #[serde(rename = "softwareVersions")]
-    software_versions: heapless::Vec<u32, MAX_VERSIONS>,
+    #[serde(rename = "softwareVersions", deserialize_with = "deserialize_versions")]
+    software_versions: Vec<u32, MAX_VERSIONS>,
 }
 
 #[derive(Deserialize)]
@@ -396,6 +396,39 @@ struct ModelVersion<'a> {
     min_applicable: u32,
     #[serde(rename = "maxApplicableSoftwareVersion")]
     max_applicable: u32,
+}
+
+/// Deserialize a JSON array of software versions into a fixed-capacity `Vec`.
+fn deserialize_versions<'de, D>(deserializer: D) -> Result<Vec<u32, MAX_VERSIONS>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct VersionsVisitor;
+
+    impl<'de> Visitor<'de> for VersionsVisitor {
+        type Value = Vec<u32, MAX_VERSIONS>;
+
+        fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+            write!(f, "an array of at most {MAX_VERSIONS} versions")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut versions = Vec::new();
+
+            while let Some(version) = seq.next_element()? {
+                versions
+                    .push(version)
+                    .map_err(|_| A::Error::invalid_length(MAX_VERSIONS + 1, &self))?;
+            }
+
+            Ok(versions)
+        }
+    }
+
+    deserializer.deserialize_seq(VersionsVisitor)
 }
 
 // --- Pure helpers (unit-tested without networking) ---
@@ -511,7 +544,7 @@ mod tests {
     /// URL from in-memory data, so the whole `query`/`size`/`read` flow can be
     /// exercised without networking.
     struct MockHttp {
-        firmware: heapless::Vec<u8, 4096>,
+        firmware: Vec<u8, 4096>,
     }
 
     impl OtaHttp for MockHttp {
@@ -567,7 +600,7 @@ mod tests {
 
     #[test]
     fn end_to_end_query_then_download() {
-        let firmware: heapless::Vec<u8, 4096> = (0..2500).map(|i| (i % 251) as u8).collect();
+        let firmware: Vec<u8, 4096> = (0..2500).map(|i| (i % 251) as u8).collect();
         let mut scratch = [0u8; 2048];
         let dcl = DclImages::new(
             MockHttp {
@@ -596,7 +629,7 @@ mod tests {
             let fd = b"1234-5678-10";
             assert_eq!(dcl.size(fd).await, Some(2500));
 
-            let mut out: heapless::Vec<u8, 4096> = heapless::Vec::new();
+            let mut out: Vec<u8, 4096> = Vec::new();
             let mut rbuf = [0u8; 300];
             let mut offset = 0u64;
             loop {

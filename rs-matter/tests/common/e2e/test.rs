@@ -17,17 +17,13 @@
 
 #![allow(unused)]
 
-use embassy_futures::block_on;
-use embassy_futures::select::select;
-
-use embassy_time::{Duration, Timer};
-
 use rs_matter::crypto::Crypto;
 use rs_matter::dm::DataModel;
 use rs_matter::error::Error;
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{block_on, select, Coalesce};
 use rs_matter::utils::storage::WriteBuf;
+use rs_matter::utils::timers::{Duration, Timer};
 
 use super::E2eRunner;
 

@@ -19,7 +19,6 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use cfg_if::cfg_if;
-use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
@@ -38,7 +37,7 @@ use crate::tlv::Skippable;
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
-use crate::utils::storage::Vec;
+use crate::utils::storage::{String, Vec};
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
@@ -57,14 +56,12 @@ mod groups {
 
     use cfg_if::cfg_if;
 
-    use heapless::String;
-
     use crate::dm::clusters::decl::groupcast::MulticastAddrPolicyEnum;
     use crate::error::{Error, ErrorCode};
     use crate::group_keys::GroupKeySet;
     use crate::tlv::{FromTLV, ToTLV};
     use crate::utils::init::{init, Init, InitDefault};
-    use crate::utils::storage::Vec;
+    use crate::utils::storage::{String, Vec};
 
     cfg_if! {
         if #[cfg(feature = "max-group-keys-per-fabric-5")] {
@@ -898,7 +895,7 @@ impl Fabric {
     /// The caller is responsible for spec-level validation (size limits,
     /// VVSC vs ICAC mutual exclusion, "all fields absent" → INVALID_COMMAND,
     /// VendorID range, …); this method only enforces the storage
-    /// invariants (heapless `Vec` capacity).
+    /// invariants (`Vec` capacity).
     pub fn set_vid_verification(
         &mut self,
         vendor_id: Option<u16>,

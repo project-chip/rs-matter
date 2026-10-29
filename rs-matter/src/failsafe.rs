@@ -17,8 +17,6 @@
 
 use core::num::NonZeroU8;
 
-use embassy_time::{Duration, Instant};
-
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
     CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, SecretKey,
@@ -37,6 +35,7 @@ use crate::transport::session::SessionMode;
 use crate::utils::bitflags::bitflags;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
+use crate::utils::timers::{Duration, Instant};
 
 bitflags! {
     #[repr(transparent)]
@@ -1080,7 +1079,7 @@ mod tests {
     /// the commissioning window's while open.
     #[test]
     fn expiry_deadlines() {
-        use embassy_time::{Duration, Instant};
+        use crate::utils::timers::{Duration, Instant};
 
         let mut fs = FailSafe::new();
         assert_eq!(fs.expires_at(), None);

@@ -29,9 +29,6 @@ mod common;
 use core::future::Future;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use rs_matter::bdx::{
     self, Bdx, BdxDownloadInitiator, BdxDownloadResponder, BdxHandler, BdxReader, BdxResponder,
     BdxUploadInitiator, BdxUploadResponder, BdxWriter, ChainedBdxHandler, EmptyBdxHandler,
@@ -40,7 +37,8 @@ use rs_matter::error::Error;
 use rs_matter::respond::ExchangeHandler;
 use rs_matter::sc::OpCode as ScOpCode;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select, Coalesce, Either};
+use rs_matter::utils::timers::{Duration, Timer};
 
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;

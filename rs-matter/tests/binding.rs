@@ -57,9 +57,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select3, Either};
-use embassy_time::{Duration, Timer};
-
 use log::info;
 
 use rand_core::Rng;
@@ -99,7 +96,6 @@ use rs_matter::tlv::{Nullable, OctetStr, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 // IM-client extension traits: `.on_off()` on `Exchange`, and the
@@ -108,6 +104,8 @@ use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
 use rs_matter::dm::clusters::decl::access_control::AccessControlAttrWrites as _;
 use rs_matter::dm::clusters::decl::binding::BindingAttrWrites as _;
+use rs_matter::utils::futures::{select, select3, Coalesce, Either};
+use rs_matter::utils::timers::{Duration, Instant, Timer};
 
 use static_cell::StaticCell;
 
@@ -459,13 +457,13 @@ async fn run_flow<C: Crypto, AC: Crypto>(
     info!("=== Phase 9: Verify the light toggled via the group message ===");
     // The groupcast Toggle flips the (currently ON) light OFF. Poll: the
     // multicast delivery is asynchronous to the (fire-and-forget) send.
-    let deadline = embassy_time::Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if !read_light_on_off(ctrl_matter, ctrl_crypto, ctrl_fab_idx).await? {
             break;
         }
 
-        if embassy_time::Instant::now() > deadline {
+        if Instant::now() > deadline {
             panic!("light did not toggle OFF on the groupcast Toggle");
         }
 

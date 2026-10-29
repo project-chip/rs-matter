@@ -20,7 +20,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.87"
+rust-version = "1.92"
 
 [profile.dev]
 debug = true

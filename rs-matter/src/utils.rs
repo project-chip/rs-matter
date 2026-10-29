@@ -19,13 +19,15 @@ pub mod bitflags;
 pub mod cell;
 pub mod codec;
 pub mod epoch;
+pub mod futures;
 pub mod init;
+pub mod io;
 pub mod ipv6;
 pub mod iter;
 pub mod maybe;
-pub mod select;
 pub mod storage;
 pub mod sync;
+pub mod timers;
 #[cfg(feature = "zbus")]
 pub mod zbus;
 #[cfg(feature = "zbus")]

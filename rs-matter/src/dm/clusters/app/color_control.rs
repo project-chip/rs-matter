@@ -21,9 +21,6 @@ use core::cell::Cell;
 use core::future::{pending, Future};
 use core::pin::pin;
 
-use embassy_futures::select::{select3, select4, Either3, Either4};
-use embassy_time::{Duration, Instant, Timer};
-
 use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::dm::clusters::app::level_control::{LevelControlHooks, NoOnOff};
 use crate::dm::clusters::app::on_off::{NoLevelControl, OnOffHandler, OnOffHooks};
@@ -39,8 +36,10 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
+use crate::utils::futures::{select3, select4, Either3, Either4};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
+use crate::utils::timers::{Duration, Instant, Timer};
 
 pub use crate::dm::clusters::decl::color_control::*;
 

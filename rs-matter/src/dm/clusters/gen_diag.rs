@@ -27,6 +27,7 @@ use crate::im::ImStats;
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
 use crate::utils::epoch::MATTER_EPOCH_SECS;
 use crate::utils::sync::MaybeSendSync;
+use crate::utils::timers::Instant;
 use crate::with;
 
 pub use crate::dm::clusters::decl::general_diagnostics::*;
@@ -138,7 +139,7 @@ where
 /// A default implementation of the `GenDiag` trait, suitable as a stand-in
 /// for devices that don't have a more sophisticated diagnostics source.
 ///
-/// `uptime_ms` is backed by `embassy_time::Instant::now()`, which by
+/// `uptime_ms` is backed by `crate::utils::timers::Instant::now()`, which by
 /// construction counts ticks since system boot — exactly the "uptime"
 /// semantics the spec asks for, and what `TimeSnapshot::SystemTimeMs` needs
 /// to advance with real wall time between calls.
@@ -277,7 +278,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
     }
 
     fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(embassy_time::Instant::now().as_secs())
+        Ok(Instant::now().as_secs())
     }
 
     fn total_operational_hours(&self, ctx: impl ReadContext) -> Result<u32, Error> {
@@ -329,7 +330,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
         ctx: impl InvokeContext,
         response: TimeSnapshotResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let system_time_ms = embassy_time::Instant::now().as_millis();
+        let system_time_ms = Instant::now().as_millis();
 
         // `PosixTimeMs` (Matter Core spec): SHALL be null only
         // when the device doesn't support the TimeSynchronization cluster

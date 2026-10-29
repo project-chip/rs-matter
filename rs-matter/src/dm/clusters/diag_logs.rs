@@ -61,6 +61,7 @@ use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE};
 use crate::utils::cell::RefCell;
 use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::String;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification, Signal};
 use crate::with;
@@ -141,7 +142,7 @@ struct Job {
     fab_idx: NonZeroU8,
     node_id: u64,
     /// The BDX file designator the requestor named for the transfer.
-    fd: heapless::String<MAX_FILE_DESIGNATOR>,
+    fd: String<MAX_FILE_DESIGNATOR>,
     /// Which log to stream.
     intent: IntentEnum,
 }
@@ -396,7 +397,7 @@ where
             })?
             .ok_or(ErrorCode::Invalid)?;
 
-        let mut fd_str = heapless::String::new();
+        let mut fd_str = String::new();
         // Length already bounded to `MAX_FILE_DESIGNATOR` above.
         unwrap!(fd_str.push_str(fd));
 

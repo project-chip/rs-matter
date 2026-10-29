@@ -39,14 +39,13 @@
 use core::cell::Cell;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Instant, Timer};
-
 use crate::dm::types::EndptId;
 use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext};
 use crate::error::Error;
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSendSync, Notification};
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::with;
 
 pub use crate::dm::clusters::decl::identify::*;

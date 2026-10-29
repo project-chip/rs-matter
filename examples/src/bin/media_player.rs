@@ -27,8 +27,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
-
 use log::info;
 
 use rand::Rng;
@@ -70,7 +68,7 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select4, Coalesce};
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]

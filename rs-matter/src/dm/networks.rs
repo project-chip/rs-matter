@@ -20,6 +20,8 @@
 use core::future::Future;
 
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
+#[cfg(feature = "os")]
+use crate::utils::timers::{Duration, Timer};
 
 pub mod eth;
 #[cfg(feature = "os")]
@@ -59,7 +61,7 @@ where
 /// Polling interval used by the polling-based [`NetChangeNotif`]
 /// implementations of [`unix::UnixNetifs`] and [`generic::GenericNetifs`].
 #[cfg(feature = "os")]
-pub const NETIF_POLL_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(5);
+pub const NETIF_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// A polling-based [`NetChangeNotif::wait_changed`] helper that simply waits
 /// for [`NETIF_POLL_INTERVAL`] and then unconditionally reports a change.
@@ -79,5 +81,5 @@ pub const NETIF_POLL_INTERVAL: embassy_time::Duration = embassy_time::Duration::
 /// enough to keep that overhead negligible.
 #[cfg(feature = "os")]
 pub(crate) async fn poll_netifs_changed() {
-    embassy_time::Timer::after(NETIF_POLL_INTERVAL).await;
+    Timer::after(NETIF_POLL_INTERVAL).await;
 }

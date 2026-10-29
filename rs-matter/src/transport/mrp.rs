@@ -15,11 +15,10 @@
  *    limitations under the License.
  */
 
-use embassy_time::Instant;
-
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::clusters::icd_mgmt::{IcdAdvertisement, OperatingModeEnum};
 use crate::error::{Error, ErrorCode};
+use crate::utils::timers::{Duration, Instant};
 
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
@@ -280,8 +279,7 @@ impl ReliableMessage {
     pub fn has_rx_timed_out(&self, timeout_ms: u64) -> bool {
         self.received_at
             .map(|received_at| {
-                let deadline =
-                    received_at.saturating_add(embassy_time::Duration::from_millis(timeout_ms));
+                let deadline = received_at.saturating_add(Duration::from_millis(timeout_ms));
                 Instant::now() >= deadline
             })
             .unwrap_or(false)

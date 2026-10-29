@@ -20,8 +20,6 @@ use core::num::NonZeroU8;
 use core::pin::pin;
 
 use either::Either as EitherIo;
-use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_time::{Duration, Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::bdx::{self, PROTO_ID_BDX};
@@ -32,8 +30,10 @@ use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::transport::session::Sessions;
 use crate::transport::{TransportPreference, TxPayloadState};
+use crate::utils::futures::{select, select3, Either, Either3};
 use crate::utils::storage::pooled::{PooledBuffers, DEFAULT_BUFFER_POOL_SIZE};
 use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::{Matter, MatterState};
 
 use super::mrp::{self, ReliableMessage};
@@ -1340,7 +1340,7 @@ impl<'a> Exchange<'a> {
                     exch.mrp.has_rx_timed_out(received_timeout_ms as _)
                 }));
 
-                let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(
+                let mut timer = pin!(Timer::after(Duration::from_millis(
                     received_timeout_ms as u64
                 )));
 

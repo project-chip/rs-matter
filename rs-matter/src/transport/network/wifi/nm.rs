@@ -25,9 +25,6 @@ use core::cell::RefCell;
 
 use std::collections::HashMap;
 
-use embassy_futures::select::{select, select3, Either, Either3};
-
-use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
 use uuid::Uuid;
@@ -43,7 +40,10 @@ use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 use crate::transport::network::wifi::wpa_supp::band::{band_and_channel, signal_strength_to_rssi};
+use crate::utils::futures::{select, select3, Either, Either3};
+use crate::utils::storage;
 use crate::utils::sync::{blocking, IfMultiMutex, MaybeSend};
+use crate::utils::timers::{Duration, Timer};
 use crate::utils::zbus_proxies::nm::access_point::AccessPointProxy;
 use crate::utils::zbus_proxies::nm::connection::ConnectionProxy;
 use crate::utils::zbus_proxies::nm::device::wireless::WirelessProxy;
@@ -221,7 +221,7 @@ impl<'a> NetMgrCtl<'a> {
             let bssid = {
                 let bssid_str = bss_info.hw_address().await?;
 
-                let result: Result<heapless::Vec<_, 8>, _> = bssid_str
+                let result: Result<storage::Vec<_, 8>, _> = bssid_str
                     .split(':')
                     .map(|s| u8::from_str_radix(s, 16))
                     .collect();

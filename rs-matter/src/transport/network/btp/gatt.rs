@@ -525,6 +525,7 @@ impl<'a> Iterator for AdStructures<'a> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod test {
     use crate::transport::network::mdns::CommissionableFilter;
+    use crate::utils::storage::Vec;
 
     use super::{AdvData, RecoveryAdvData};
 
@@ -541,7 +542,7 @@ mod test {
 
     /// The parsed form of [`sample`], via the service-data payload round-trip.
     fn sample_parsed() -> AdvData {
-        let payload: heapless::Vec<u8, 16> = sample().service_payload_iter().collect();
+        let payload: Vec<u8, 16> = sample().service_payload_iter().collect();
         AdvData::parse_service_data(&payload).unwrap()
     }
 
@@ -563,7 +564,7 @@ mod test {
             additional_data: true,
             ..sample()
         };
-        let payload: heapless::Vec<u8, 16> = adv.service_payload_iter().collect();
+        let payload: Vec<u8, 16> = adv.service_payload_iter().collect();
         let parsed = AdvData::parse_service_data(&payload).unwrap();
 
         assert!(parsed.additional_data());
@@ -576,7 +577,7 @@ mod test {
 
         // The full AD blob is the AD1 (Flags) record chained with the AD2
         // (UUID16 + Service Data) record.
-        let blob: heapless::Vec<u8, 32> = adv.iter().collect();
+        let blob: Vec<u8, 32> = adv.iter().collect();
 
         let parsed = AdvData::parse_adv(&blob).unwrap();
 
@@ -589,7 +590,7 @@ mod test {
         // and finally the Matter one - the parser must skip to the Matter one.
         let adv = sample();
 
-        let mut blob: heapless::Vec<u8, 64> = heapless::Vec::new();
+        let mut blob: Vec<u8, 64> = Vec::new();
         // Flags
         blob.extend([0x02, 0x01, 0x06]);
         // Unrelated Service Data - UUID16 (0x1234), 3 payload bytes
@@ -607,7 +608,7 @@ mod test {
         // Matter one. It must be skipped rather than abandoning the whole scan.
         let adv = sample();
 
-        let mut blob: heapless::Vec<u8, 64> = heapless::Vec::new();
+        let mut blob: Vec<u8, 64> = Vec::new();
         // Service Data - UUID16 with a 1-byte payload: not even a full UUID.
         blob.extend([0x02, 0x16, 0x34]);
         // The Matter one.
@@ -619,7 +620,7 @@ mod test {
 
     #[test]
     fn parse_service_data_rejects_non_commissionable_opcode() {
-        let mut payload: heapless::Vec<u8, 16> = sample().service_payload_iter().collect();
+        let mut payload: Vec<u8, 16> = sample().service_payload_iter().collect();
         payload[0] = 0x01; // Not "Commissionable"
 
         assert!(AdvData::parse_service_data(&payload).is_none());
@@ -639,7 +640,7 @@ mod test {
     #[test]
     fn parse_adv_tolerates_truncated_trailing_record() {
         let adv = sample();
-        let mut blob: heapless::Vec<u8, 64> = adv.iter().collect();
+        let mut blob: Vec<u8, 64> = adv.iter().collect();
         // Append a malformed record claiming more bytes than are present.
         blob.extend([0x05, 0x16, 0x00]);
 
@@ -668,7 +669,7 @@ mod test {
     #[test]
     fn recovery_serialize_matches_spec_example() {
         let adv = RecoveryAdvData::new(SPEC_RECOVERY_ID);
-        let blob: heapless::Vec<u8, 32> = adv.iter().collect();
+        let blob: Vec<u8, 32> = adv.iter().collect();
 
         assert_eq!(&blob[..], &SPEC_RECOVERY_ADV[..]);
     }
@@ -676,7 +677,7 @@ mod test {
     #[test]
     fn recovery_parse_service_data_round_trips() {
         let adv = RecoveryAdvData::new(SPEC_RECOVERY_ID);
-        let payload: heapless::Vec<u8, 16> = adv.service_payload_iter().collect();
+        let payload: Vec<u8, 16> = adv.service_payload_iter().collect();
 
         let parsed = RecoveryAdvData::parse_service_data(&payload).unwrap();
 
@@ -699,7 +700,7 @@ mod test {
             additional_data: true,
             ..RecoveryAdvData::new(SPEC_RECOVERY_ID)
         };
-        let payload: heapless::Vec<u8, 16> = adv.service_payload_iter().collect();
+        let payload: Vec<u8, 16> = adv.service_payload_iter().collect();
 
         let parsed = RecoveryAdvData::parse_service_data(&payload).unwrap();
 
@@ -727,11 +728,11 @@ mod test {
     #[test]
     fn recovery_and_commissionable_payloads_are_disjoint() {
         // A commissionable payload (OpCode 0) is not a Recovery advertisement...
-        let comm: heapless::Vec<u8, 16> = sample().service_payload_iter().collect();
+        let comm: Vec<u8, 16> = sample().service_payload_iter().collect();
         assert!(RecoveryAdvData::parse_service_data(&comm).is_none());
 
         // ...and a Recovery payload (OpCode 1) is not a commissionable one.
-        let recovery: heapless::Vec<u8, 16> = RecoveryAdvData::new(SPEC_RECOVERY_ID)
+        let recovery: Vec<u8, 16> = RecoveryAdvData::new(SPEC_RECOVERY_ID)
             .service_payload_iter()
             .collect();
         assert!(AdvData::parse_service_data(&recovery).is_none());

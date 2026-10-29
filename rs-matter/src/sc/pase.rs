@@ -22,8 +22,6 @@
 
 use core::num::NonZeroU8;
 
-use embassy_time::{Duration, Instant};
-
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::error::{Error, ErrorCode};
@@ -37,6 +35,7 @@ use crate::tlv::{FromTLV, OctetStr, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
+use crate::utils::timers::{Duration, Instant};
 use crate::MatterLocalService;
 
 pub use initiator::PaseInitiator;

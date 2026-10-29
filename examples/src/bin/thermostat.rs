@@ -49,8 +49,6 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 
-use embassy_futures::select::select3;
-
 use async_signal::{Signal, Signals};
 use log::{error, info, trace};
 
@@ -87,8 +85,9 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select3, Coalesce};
 use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::utils::timers::{Duration, Instant, Timer};
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
@@ -295,11 +294,11 @@ fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHook
 // Implementing the simulated heating element
 
 /// How often the simulated room temperature is recomputed.
-const TICK: embassy_time::Duration = embassy_time::Duration::from_secs(5);
+const TICK: Duration = Duration::from_secs(5);
 
 /// How often the electrical readings are resampled. Faster than [`TICK`] so
 /// that closing the relay shows up promptly in `ActivePower`.
-const METER_TICK: embassy_time::Duration = embassy_time::Duration::from_secs(1);
+const METER_TICK: Duration = Duration::from_secs(1);
 
 /// How fast the room warms towards the setpoint while heating, in 0.01degC per
 /// [`TICK`].
@@ -448,7 +447,7 @@ impl ElementState {
     /// the energy of a relay that opened mid-tick and invents energy for one
     /// that closed late.
     fn integrate(&mut self) {
-        let now = embassy_time::Instant::now().as_millis();
+        let now = Instant::now().as_millis();
         let elapsed_ms = now.saturating_sub(self.mark_ms) as i64;
 
         self.mark_ms = now;
@@ -463,7 +462,7 @@ impl ElementState {
 impl HeatingElement {
     /// Create the element, restoring its lifetime energy counter.
     pub fn new() -> Self {
-        let now = embassy_time::Instant::now().as_millis();
+        let now = Instant::now().as_millis();
 
         let (energy_mws, reset_at_boot) = Self::load_state();
 
@@ -585,7 +584,7 @@ impl HeatingElement {
 
             state.integrate();
 
-            let end = embassy_time::Instant::now().as_millis();
+            let end = Instant::now().as_millis();
             let start = state.period_start_ms;
             let drawn_mws = state.period_mws;
 
@@ -833,7 +832,7 @@ impl ThermostatHooks for ThermostatDeviceLogic<'_> {
     async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
         loop {
             // In a real device we would wait on a temperature sensor.
-            embassy_time::Timer::after(TICK).await;
+            Timer::after(TICK).await;
 
             let heating = self.element.heating();
 
@@ -987,7 +986,7 @@ impl ElecPwrMeasHooks for ElecPwrDeviceLogic<'_> {
         loop {
             // In a real device we would wait on the metering chip rather than
             // poll a simulation.
-            embassy_time::Timer::after(METER_TICK).await;
+            Timer::after(METER_TICK).await;
 
             let power = self.element.active_power_mw();
 
@@ -1046,7 +1045,7 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
         // which is conformant.
         Some(EnergyMeasurement::cumulative(
             self.element.energy_mwh(),
-            Timestamp::systime(embassy_time::Instant::now().as_millis()),
+            Timestamp::systime(Instant::now().as_millis()),
         ))
     }
 
@@ -1068,7 +1067,7 @@ impl ElecEnergyMeasHooks for ElecEnergyDeviceLogic<'_> {
 
     async fn run<F: Fn(elec_energy_meas::OutOfBandMessage)>(&self, notify: F) {
         loop {
-            embassy_time::Timer::after(TICK).await;
+            Timer::after(TICK).await;
 
             // Closing the period here rather than in the thermostat's own tick
             // keeps the energy counter owned by the cluster that reports it.

@@ -18,6 +18,7 @@
 //! Base38 encoding and decoding functions.
 
 use crate::error::{Error, ErrorCode};
+use crate::utils::storage::{String, Vec};
 
 const BASE38_CHARS: [char; 38] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
@@ -83,8 +84,8 @@ const RADIX: u32 = BASE38_CHARS.len() as u32;
 ///
 /// # Arguments
 /// * `bytes` - byte array to encode
-pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<heapless::String<N>, Error> {
-    let mut string = heapless::String::new();
+pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<String<N>, Error> {
+    let mut string = String::new();
     for c in encode(bytes) {
         string.push(c).map_err(|_| ErrorCode::BufferTooSmall)?;
     }
@@ -144,8 +145,8 @@ fn encode_base38(mut value: u32, repeat: usize) -> impl Iterator<Item = char> {
     })
 }
 
-pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<heapless::Vec<u8, N>, Error> {
-    let mut vec = heapless::Vec::new();
+pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<Vec<u8, N>, Error> {
+    let mut vec = Vec::new();
 
     for byte in decode(base38_str) {
         vec.push(byte?).map_err(|_| ErrorCode::BufferTooSmall)?;

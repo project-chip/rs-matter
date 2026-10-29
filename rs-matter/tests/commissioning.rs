@@ -42,10 +42,6 @@
 use core::pin::pin;
 use std::net::{TcpListener, UdpSocket};
 
-use embassy_futures::join::join;
-use embassy_futures::select::{select, select3, Either};
-use embassy_time::{Duration, Timer};
-
 use log::{debug, info, warn};
 
 use rand_core::Rng;
@@ -78,8 +74,9 @@ use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::session::{Session, SessionMode};
 use rs_matter::transport::{TransportPreference, MATTER_SOCKET_BIND_ADDR};
+use rs_matter::utils::futures::{join, select, select3, Coalesce, Either};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use socket2::{Domain, Protocol, Socket, Type};

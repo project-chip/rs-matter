@@ -32,8 +32,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
-
 use log::info;
 
 use rand::Rng;
@@ -64,7 +62,7 @@ use rs_matter::tlv::Nullable;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select4, Coalesce};
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 

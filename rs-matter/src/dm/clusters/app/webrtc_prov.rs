@@ -77,8 +77,6 @@ use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-
 use crate::dm::clusters::decl::globals::{
     ICECandidateStruct, StreamUsageEnum, WebRTCEndReasonEnum, WebRTCSessionStructArrayBuilder,
     WebRTCSessionStructBuilder,
@@ -90,7 +88,8 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::transport::exchange::Exchange;
-use crate::utils::storage::Vec;
+use crate::utils::futures::{select, Either};
+use crate::utils::storage::{String, Vec};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
 use crate::with;
@@ -250,18 +249,18 @@ pub trait IceCandidateSink {
 }
 
 /// Default `IceCandidateSink` backed by a `crate::utils::storage::Vec`
-/// of bounded-length `heapless::String`s. `WebRtcProvHandler::push_outbound`
+/// of bounded-length `crate::utils::storage::String`s. `WebRtcProvHandler::push_outbound`
 /// stack-allocates one of these per outbound `IceCandidates` invoke and
 /// passes a `&mut` to the hook.
 struct VecCandidateSink<'a, const CAND_LEN: usize, const MAX_CAND: usize> {
-    buf: &'a mut Vec<heapless::String<CAND_LEN>, MAX_CAND>,
+    buf: &'a mut Vec<String<CAND_LEN>, MAX_CAND>,
 }
 
 impl<const CAND_LEN: usize, const MAX_CAND: usize> IceCandidateSink
     for VecCandidateSink<'_, CAND_LEN, MAX_CAND>
 {
     fn push(&mut self, candidate: &str) -> Result<(), WebRtcError> {
-        let mut s = heapless::String::<CAND_LEN>::new();
+        let mut s = String::<CAND_LEN>::new();
         s.push_str(candidate)
             .map_err(|_| WebRtcError::ResourceExhausted)?;
         self.buf
@@ -804,7 +803,7 @@ impl<
                 // the bound are dropped by `IceCandidateSink::push`
                 // and will not be sent this round (or any future one,
                 // since the hook consumed them).
-                let mut ice_buf: crate::utils::storage::Vec<heapless::String<CAND_LEN>, MAX_CAND> =
+                let mut ice_buf: crate::utils::storage::Vec<String<CAND_LEN>, MAX_CAND> =
                     crate::utils::storage::Vec::new();
                 {
                     let mut sink = VecCandidateSink { buf: &mut ice_buf };

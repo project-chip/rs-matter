@@ -25,8 +25,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
@@ -36,7 +34,9 @@ use crate::error::Error;
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::transport::MdnsResponder;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select, select3, Coalesce, Either, Either3};
+use crate::utils::storage;
+use crate::utils::timers::{Duration, Timer};
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::record_browser::RecordBrowserProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
@@ -207,7 +207,7 @@ impl AvahiMdns {
 
             // The label we're looking for (e.g. `<compressed-fabric>-<node-id>`),
             // and the full instance name to deposit under.
-            let mut name_buf: heapless::String<128> = heapless::String::new();
+            let mut name_buf: storage::String<128> = storage::String::new();
             service.instance_name(&mut name_buf);
             let target_label = name_buf
                 .split('.')
@@ -305,7 +305,7 @@ impl AvahiMdns {
         loop {
             let query = responder.wait_browse_request().await;
 
-            let mut service_type: heapless::String<64> = heapless::String::new();
+            let mut service_type: storage::String<64> = storage::String::new();
             query.service_type(&mut service_type, false);
 
             let avahi = Server2Proxy::new(connection).await?;

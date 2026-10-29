@@ -19,8 +19,6 @@ use core::fmt::Display;
 use core::future::Future;
 use core::pin::{pin, Pin};
 
-use embassy_futures::select::{select, select_slice};
-
 use crate::crypto::Crypto;
 use crate::dm::{DataModel, ReportDataHandler};
 use crate::error::Error;
@@ -32,8 +30,9 @@ use crate::persist::KvBlobStoreAccess;
 use crate::sc::busy::BusySecureChannel;
 use crate::sc::SecureChannel;
 use crate::transport::exchange::Exchange;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select, select_slice, Coalesce};
 use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::Vec;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
 
@@ -178,7 +177,7 @@ where
     pub async fn run<const N: usize>(&self) -> Result<(), Error> {
         info!("{}: Creating {} handlers", self.name, N);
 
-        let mut handlers = heapless::Vec::<_, N>::new();
+        let mut handlers = Vec::<_, N>::new();
         debug!(
             "{}: Handlers size: {}B",
             self.name,

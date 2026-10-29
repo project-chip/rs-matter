@@ -18,14 +18,13 @@
 use core::cmp::min;
 use core::num::Wrapping;
 
-use embassy_time::{Duration, Instant};
-
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::packet::{HandshakeReq, HandshakeResp};
 use crate::transport::network::btp::{GATT_HEADER_SIZE, MAX_MTU, MIN_MTU};
 use crate::transport::network::{BtAddr, MAX_RX_PACKET_SIZE};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{RingBuf, WriteBuf};
+use crate::utils::timers::{Duration, Instant};
 
 use self::packet::BtpHdr;
 

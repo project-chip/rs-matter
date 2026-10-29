@@ -19,12 +19,11 @@
 
 use core::cell::Cell;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use crate::error::Error;
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::{Duration, Timer};
 
 /// Saves the state of a cluster handler once it has not changed for a while.
 ///
