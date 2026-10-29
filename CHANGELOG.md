@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Breaking: the MSRV is 1.92
-* New: `utils::futures`, `utils::timers`, `utils::io` and `utils::storage::String`, which re-export what `rs-matter` uses from `embassy-futures`, `embassy-time`, `embedded-io-async` and `heapless`
+* Fix: dropping the last mDNS responder wakes those waiting for there being none (the ICD management cluster) (#632)
+* Fix: a fail-safe expiry wakes the waiters on the PASE sessions it removes (#632)
+* Fix: an exchange whose session is gone no longer clears the packet of another exchange from the RX or TX buffer (#632)
+* Fix: on Windows, the `async-io` UDP adapter ignores the "connection reset" a receive reports for an earlier send to a closed port, instead of failing the transport or the mDNS responder (#632)
+* Fix: `Btp::send` fails once the packet before it has waited the connection idle timeout without a GATT Peripheral or Central to take it, instead of blocking the transport's sending for good (#632)
+* Fix: `ChainedNetwork` receives from its other network when that one has a packet first, instead of waiting for good on a packet the first one reported but no longer has; `NetworkReceive::recv_from` must be cancel-safe (#632)
+* Breaking: the MSRV is 1.92 (#631)
+* New: `utils::futures`, `utils::timers`, `utils::io` and `utils::storage::String`, which re-export what `rs-matter` uses from `embassy-futures`, `embassy-time`, `embedded-io-async` and `heapless` (#631)
   * Breaking: `utils::select` is renamed to `utils::futures`
   * Breaking: `utils::codec::base38::decode_vec` returns a `utils::storage::Vec`
 * New: `MultiSignal` and `IfMultiMutex` (with `IfMultiMutexGuard`) are types of their own, which keep a waker per waiter in an intrusive list, so that waiters from different tasks do not wake each other (#630)

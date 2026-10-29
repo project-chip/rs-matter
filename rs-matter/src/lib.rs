@@ -853,6 +853,7 @@ impl<'a> Matter<'a> {
                 notify_mdns,
                 |_, _| {},
             )?;
+            self.transport().notify_session_removed();
 
             net_comm::load_networks(&mut networks, networks_key, &kv)?;
 
@@ -966,6 +967,7 @@ impl<'a> Matter<'a> {
                     || {},
                     |_, _| {},
                 );
+                self.transport().notify_session_removed();
 
                 let _ = net_comm::load_networks(&mut networks, networks_key, &kv);
 

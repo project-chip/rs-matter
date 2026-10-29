@@ -158,6 +158,10 @@ impl ExchangeId {
 
             match select3(&mut recv, &mut session_removed, &mut timeout).await {
                 Either3::First(mut packet) => {
+                    // Taken because our session is gone: the packet is someone else's,
+                    // so leave it in place.
+                    self.with_state(matter, |_| Ok(()))?;
+
                     packet.clear_on_drop(true);
 
                     self.check_no_pending_retrans(matter)?;
@@ -200,20 +204,20 @@ impl ExchangeId {
             })
             .await;
 
+        // Taken because our session is gone: the slot may still hold someone
+        // else's unsent packet, so leave it in place.
+        self.with_state(matter, |_| Ok(()))?;
+
         // TODO: Resizing might be a bit expensive with large buffers
         unwrap!(packet.buf.resize_default(MAX_TX_BUF_SIZE));
 
         packet.clear_on_drop(true);
 
-        let tx = TxMessage {
+        Ok(TxMessage {
             exchange_id: *self,
             matter,
             packet,
-        };
-
-        self.with_state(matter, |_| Ok(()))?;
-
-        Ok(tx)
+        })
     }
 
     /// Waits until the other side acknowledges the last message sent on this exchange,
@@ -1785,5 +1789,44 @@ mod tests {
             Err(err) => assert!(matches!(err.code(), ErrorCode::NoSpaceSessions)),
             Ok(_) => panic!("expected NoSpaceSessions error"),
         }
+    }
+
+    /// An exchange whose session goes while it waits to receive fails, and leaves
+    /// the packet of another peer in the RX buffer.
+    #[test]
+    fn test_recv_after_session_removal_leaves_others_packet() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Poll, Waker};
+
+        let matter = test_matter();
+        let crypto = test_only_crypto();
+
+        let mut exchange = block_on(Exchange::initiate_plaintext(
+            &matter,
+            &crypto,
+            network::Address::new(),
+        ))
+        .unwrap();
+        let session_id = exchange.id().session_id();
+
+        {
+            let mut packet = block_on(matter.transport().get_if_rx(|packet| packet.buf.is_empty()));
+            packet.peer = network::Address::Udp(([192, 0, 2, 1], 5540).into());
+            unwrap!(packet.buf.extend_from_slice(&[1, 2, 3]));
+        }
+
+        let mut cx = Context::from_waker(Waker::noop());
+
+        let mut recv = pin!(exchange.recv());
+        assert!(recv.as_mut().poll(&mut cx).is_pending());
+
+        matter.with_state(|state| state.sessions.remove(session_id));
+        matter.transport().notify_session_removed();
+
+        assert!(matches!(recv.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+
+        let packet = matter.transport().rx.try_lock().ok().unwrap();
+        assert_eq!(&packet.buf[..], &[1, 2, 3]);
     }
 }

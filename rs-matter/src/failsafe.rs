@@ -96,11 +96,14 @@ pub struct Expiry {
 
 impl Expiry {
     /// Broadcast the expiry to the handlers of `ctx`: `LifecycleOp::FailSafeExpiry`,
-    /// then the removal of the fabric the rollback dropped, if any.
+    /// then the removal of the fabric the rollback dropped, if any. Also tells
+    /// the waiters on the PASE sessions the expiry removed.
     ///
     /// The broadcasts run the handlers inline, so this must NOT be called
     /// while holding the Matter state lock.
     pub fn notify(&self, ctx: impl HandlerContext) {
+        ctx.matter().transport().notify_session_removed();
+
         if let Err(e) = ctx.broadcast_lifecycle(LifecycleOp::FailSafeExpiry) {
             warn!("Failed to broadcast the fail-safe expiry: {:?}", e);
         }
