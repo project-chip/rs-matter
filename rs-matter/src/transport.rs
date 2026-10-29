@@ -59,7 +59,7 @@ use crate::utils::storage::{pooled::Buffers, ParseBuf, WriteBuf};
 
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{
-    IfMultiMutex, IfMutex, IfMutexGuard, MultiNotification, MultiSignal, Notification,
+    IfMultiMutex, IfMultiMutexGuard, IfMutex, MultiNotification, MultiSignal, Notification,
 };
 use crate::{Matter, MATTER_PORT};
 
@@ -2842,7 +2842,7 @@ impl<const N: usize> DerefMut for PacketBuffer<N> {
 // holds a lock on the RX or TX packet. This is enforced by protecting the packets with an `IfMultiMutex` asynchronous mutex.
 //
 // This type is only known and used by the `transport` and the `exchange` modules
-pub(crate) struct PacketAccess<'a, const N: usize>(IfMutexGuard<'a, Packet<N>>, bool);
+pub(crate) struct PacketAccess<'a, const N: usize>(IfMultiMutexGuard<'a, Packet<N>>, bool);
 
 impl<const N: usize> PacketAccess<'_, N> {
     pub fn clear_on_drop(&mut self, clear: bool) {
@@ -2915,7 +2915,7 @@ impl<const N: usize> Buffers<[u8]> for PacketBufferExternalAccess<'_, N> {
 }
 
 // Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8]` buffer.
-pub struct ExternalPacketBuffer<'a, const N: usize>(IfMutexGuard<'a, Packet<N>>);
+pub struct ExternalPacketBuffer<'a, const N: usize>(IfMultiMutexGuard<'a, Packet<N>>);
 
 impl<const N: usize> Deref for ExternalPacketBuffer<'_, N> {
     type Target = [u8];
