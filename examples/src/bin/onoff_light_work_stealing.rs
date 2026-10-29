@@ -158,11 +158,6 @@ fn main() -> Result<(), Error> {
     // once on different threads: `HANDLERS` handlers answer the exchanges (i.e. that many exchanges
     // can be handled simultaneously), and `HANDLERS` more answer "I'm busy, please try again later"
     // to the exchanges the first ones do not take in time.
-    //
-    // TODO: The `Multi*` async primitives of `rs-matter` (`MultiSignal`, `MultiNotification`,
-    // `IfMultiMutex`) are not implemented yet: they are aliases of the primitives which keep a
-    // single waker. The handlers all wait for incoming packets on one `IfMultiMutex`, so they may
-    // keep waking each other, i.e. busy-loop from time to time.
     for handler_id in 0..HANDLERS {
         executor
             .spawn(responder.responder().handle(handler_id))

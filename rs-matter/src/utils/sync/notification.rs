@@ -66,8 +66,7 @@ where
     }
 }
 
-/// A notification primitive that allows for notifying multiple waiters,
-/// as long as all waiters are scheduled from a single async task (or else the notification would busy-loop).
+/// A notification primitive that notifies all its waiters, which may wait from different tasks.
 pub(crate) struct MultiNotification<M = MatterRawMutex> {
     signal: MultiSignal<u32, M>,
 }
