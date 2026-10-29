@@ -58,6 +58,17 @@ impl NetworkReceive for &Async<UdpSocket> {
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+        // Windows reports an ICMP "port unreachable" for an earlier send as an error of
+        // the next receive; the socket itself is fine
+        #[cfg(windows)]
+        let (len, addr) = loop {
+            match Async::<UdpSocket>::recv_from(self, buffer).await {
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => continue,
+                result => break result?,
+            }
+        };
+
+        #[cfg(not(windows))]
         let (len, addr) = Async::<UdpSocket>::recv_from(self, buffer).await?;
 
         Ok((len, Address::Udp(addr)))

@@ -18,6 +18,7 @@
 //! An implementation of the Matter BTP protocol over BLE, using GATT as the underlying transport.
 
 use core::future::Future;
+use core::pin::pin;
 
 use session::{BTP_ACK_SEND_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
@@ -25,7 +26,7 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::Session;
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend, MAX_TX_PACKET_SIZE};
 use crate::utils::cell::RefCell;
-use crate::utils::futures::select;
+use crate::utils::futures::{select, Either};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
@@ -297,7 +298,16 @@ impl Btp {
     }
 
     /// Send a Matter (a.k.a. BTP SDU) packet to the specified BLE peer.
+    ///
+    /// Fails if the packet buffered before it is not taken within the connection idle
+    /// timeout: no GATT Peripheral or Central serves a session then. That packet is
+    /// dropped, so that the sends after this one do not wait for it too.
     pub async fn send(&self, data: &[u8], addr: BtAddr) -> Result<(), Error> {
+        let timeout_secs = self
+            .inner
+            .lock(|inner| inner.borrow().conn_idle_timeout_secs);
+        let mut timeout = pin!(Timer::after_secs(timeout_secs as u64));
+
         loop {
             let sent = self.inner.lock(|inner| {
                 let sent = inner.borrow_mut().send(data, addr)?;
@@ -313,7 +323,17 @@ impl Btp {
                 break Ok(());
             }
 
-            self.send_notif.wait().await;
+            if let Either::Second(()) = select(self.send_notif.wait(), &mut timeout).await {
+                warn!(
+                    "BTP: the packet before was not taken in {}s, dropping it",
+                    timeout_secs
+                );
+
+                self.inner
+                    .lock(|inner| inner.borrow_mut().outgoing_sdu.reset());
+
+                break Err(ErrorCode::TxTimeout.into());
+            }
         }
     }
 }
@@ -589,6 +609,21 @@ mod test {
 
         assert_eq!(addr, PEER_ADDR);
         assert_eq!(&buf[..len], data);
+    }
+
+    /// A send waits for the packet before it to be taken for at most the connection
+    /// idle timeout; then that packet is dropped, and the next send goes through.
+    #[test]
+    fn test_send_without_a_session_times_out() {
+        let btp = Btp::new();
+        btp.set_timeouts(1, 1);
+
+        send(&btp, &[1, 2, 3]);
+
+        let err = block_on(btp.send(&[4, 5, 6], PEER_ADDR)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::TxTimeout));
+
+        send(&btp, &[7, 8, 9]);
     }
 
     #[test]

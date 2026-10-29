@@ -1361,7 +1361,7 @@ impl Drop for MdnsResponder<'_> {
         transport.mdns_responders.modify(|count| {
             *count -= 1;
 
-            (false, ())
+            (*count == 0, ())
         });
 
         // Hand back what is in flight: nobody may be serving it any more. When
@@ -3388,6 +3388,40 @@ mod resolve_tests {
 
         first.unwrap();
         second.unwrap();
+    }
+
+    /// Dropping the last responder wakes a waiter for there being none.
+    #[test]
+    fn dropping_the_last_responder_wakes_its_waiter() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Poll};
+
+        use std::sync::{Arc, Mutex};
+        use std::task::Wake;
+
+        struct Woken(Mutex<bool>);
+
+        impl Wake for Woken {
+            fn wake(self: Arc<Self>) {
+                *self.0.lock().unwrap() = true;
+            }
+        }
+
+        let matter = test_matter();
+        let responder = matter.transport().mdns_responder();
+
+        let woken = Arc::new(Woken(Mutex::new(false)));
+        let waker = woken.clone().into();
+        let mut cx = Context::from_waker(&waker);
+
+        let mut none = pin!(matter.transport().wait_mdns_responder(false));
+        assert!(none.as_mut().poll(&mut cx).is_pending());
+
+        drop(responder);
+
+        assert!(*woken.0.lock().unwrap());
+        assert_eq!(none.as_mut().poll(&mut cx), Poll::Ready(()));
     }
 }
 
