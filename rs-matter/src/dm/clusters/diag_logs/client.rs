@@ -28,6 +28,7 @@ use core::future::Future;
 
 use crate::bdx::{BdxHandler, BdxReader, BdxResponder, BdxStatus};
 use crate::error::Error;
+use crate::utils::storage::Vec;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 use super::MAX_FILE_DESIGNATOR;
@@ -98,7 +99,7 @@ impl<R: DiagLogsReceiver> BdxHandler for DiagLogsBdxHandler<R> {
         };
 
         // Copy the file designator out before `reply` releases the held init.
-        let mut fd = heapless::Vec::<u8, MAX_FILE_DESIGNATOR>::new();
+        let mut fd = Vec::<u8, MAX_FILE_DESIGNATOR>::new();
         if fd.extend_from_slice(responder.fd()).is_err() {
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         }

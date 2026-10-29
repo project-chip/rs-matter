@@ -17,7 +17,6 @@
 
 use core::fmt;
 use core::num::NonZeroU8;
-use embassy_time::{Duration, Instant};
 
 use cfg_if::cfg_if;
 
@@ -42,6 +41,7 @@ use crate::transport::mrp::{self, ReliableMessage};
 use crate::transport::TransportRunner;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::{ParseBuf, Vec, WriteBuf};
+use crate::utils::timers::{Duration, Instant};
 use crate::{Matter, MatterState};
 
 #[cfg(feature = "groups")]

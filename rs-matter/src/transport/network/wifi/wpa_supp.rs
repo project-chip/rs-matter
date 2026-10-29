@@ -22,9 +22,6 @@ use core::future::Future;
 
 use std::collections::HashMap;
 
-use embassy_futures::select::{select, Either};
-
-use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
@@ -38,7 +35,9 @@ use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::{blocking, IfMultiMutex, MaybeSend, MaybeSendSync};
+use crate::utils::timers::{Duration, Timer};
 use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
 use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
 use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;

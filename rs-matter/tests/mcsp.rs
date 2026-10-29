@@ -32,9 +32,6 @@ mod common;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use log::info;
 
 use rs_matter::cert::gen::VALID_FOREVER;
@@ -55,8 +52,9 @@ use rs_matter::sc::{OpCode, SecureChannel, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::transport::packet::PacketHdr;
 use rs_matter::transport::session::derive_group_session_id;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select, Coalesce, Either};
 use rs_matter::utils::storage::{ParseBuf, Vec, WriteBuf};
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::Matter;
 
 use crate::common::{create_localhost_socket_pair, init_env_logger, run_device_controller};

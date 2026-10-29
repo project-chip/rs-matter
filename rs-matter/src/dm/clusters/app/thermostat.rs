@@ -44,9 +44,6 @@ use core::cell::Cell;
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select4, Either4};
-use embassy_time::{Duration, Instant, Timer};
-
 use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::dm::types::EndptId;
 use crate::dm::{
@@ -57,8 +54,11 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
+use crate::utils::futures::{select4, Either4};
+use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
+use crate::utils::timers::{Duration, Instant, Timer};
 
 pub use crate::dm::clusters::decl::thermostat::*;
 
@@ -901,8 +901,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// unit-testable. Commits as it goes: a field advances only when an event
     /// for it is produced, or a slow sub-threshold drift would climb forever
     /// unreported.
-    fn take_events(&self, now: Instant) -> heapless::Vec<ThermostatEvent, 6> {
-        let mut events = heapless::Vec::new();
+    fn take_events(&self, now: Instant) -> Vec<ThermostatEvent, 6> {
+        let mut events = Vec::new();
 
         let current = self.snapshot();
 
@@ -2362,11 +2362,10 @@ pub mod test {
     use crate::utils::cell::RefCell;
     use crate::utils::sync::blocking::Mutex;
 
-    use embassy_time::{Duration, Timer};
-
     use crate::dm::clusters::decl::thermostat as thermostat_cluster;
     use crate::dm::Cluster;
     use crate::utils::sync::MaybeSend;
+    use crate::utils::timers::{Duration, Timer};
     use crate::with;
 
     use super::{OutOfBandMessage, RelayStateBitmap, SystemModeEnum, ThermostatHooks};
@@ -2580,8 +2579,6 @@ mod tests {
     //! whereas the helpers need nothing but an [`AttrChangeNotifier`] - and
     //! `()` is a no-op one.
 
-    use embassy_futures::block_on;
-
     use crate::dm::clusters::app::test_util::RecordingNotifier;
     use crate::dm::clusters::decl::thermostat as thermostat_cluster;
     use crate::dm::{
@@ -2590,10 +2587,11 @@ mod tests {
     };
     use crate::error::{Error, ErrorCode};
     use crate::utils::cell::RefCell;
+    use crate::utils::futures::block_on;
+    use crate::utils::storage::Vec;
     use crate::utils::sync::blocking::Mutex;
+    use crate::utils::timers::{Duration, Instant};
     use crate::with;
-
-    use embassy_time::{Duration, Instant};
 
     use super::test::TestThermostatDeviceLogic;
     use super::{
@@ -3394,7 +3392,7 @@ mod tests {
         assert_eq!(cluster.revision, 11);
         assert_eq!(cluster.feature_map, HEAT_EVT);
 
-        let attrs: heapless::Vec<_, 12> = cluster
+        let attrs: Vec<_, 12> = cluster
             .attributes()
             .map(|attr| attr.id)
             .filter(|id| *id < 0xF000) // skip the global attributes
@@ -3418,11 +3416,11 @@ mod tests {
             ]
         );
 
-        let cmds: heapless::Vec<_, 1> = cluster.commands().map(|cmd| cmd.id).collect();
+        let cmds: Vec<_, 1> = cluster.commands().map(|cmd| cmd.id).collect();
 
         assert_eq!(cmds, [CommandId::SetpointRaiseLower as CmdId]);
 
-        let events: heapless::Vec<_, 4> = cluster.events().map(|event| event.id).collect();
+        let events: Vec<_, 4> = cluster.events().map(|event| event.id).collect();
 
         assert_eq!(
             events,
@@ -3441,7 +3439,7 @@ mod tests {
     fn serves_the_auto_element_set() {
         let cluster = <MockHooks<AUTO> as ThermostatHooks>::CLUSTER;
 
-        let attrs: heapless::Vec<_, 16> = cluster
+        let attrs: Vec<_, 16> = cluster
             .attributes()
             .map(|attr| attr.id)
             .filter(|id| *id < 0xF000)
@@ -3887,7 +3885,7 @@ mod tests {
             cluster
                 .events()
                 .map(|event| event.id)
-                .collect::<heapless::Vec<RawEventId, 8>>()
+                .collect::<Vec<RawEventId, 8>>()
         };
 
         assert!(ids(<MockHooks<HEAT> as ThermostatHooks>::CLUSTER).is_empty());

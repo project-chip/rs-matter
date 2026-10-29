@@ -25,9 +25,6 @@ use core::pin::pin;
 
 use domain::base::Message;
 
-use embassy_futures::select::{select, select4, Either};
-use embassy_time::{Duration, Timer};
-
 use rand_core::Rng;
 
 use crate::crypto::Crypto;
@@ -40,11 +37,12 @@ use crate::transport::network::{
     Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4, SocketAddrV6,
 };
 use crate::transport::MdnsResponder;
+use crate::utils::futures::{select, select4, Coalesce, Either};
 use crate::utils::init::{init, Init};
-use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
-use crate::utils::storage::Vec;
+use crate::utils::storage::{String, Vec};
 use crate::utils::sync::IfMutex;
+use crate::utils::timers::{Duration, Timer};
 use crate::Matter;
 
 use super::{MatterLocalService, MdnsLocalService};
@@ -203,7 +201,7 @@ impl BuiltinMdns {
             // Compose the instance name straight from labels (a tiny buffer for
             // the variable hex label; the rest are static `&str`s) - no full-name
             // buffer + re-parse.
-            let mut label = heapless::String::<33>::new();
+            let mut label = String::<33>::new();
             let name = NameSlice::new(service.query_name_labels(&mut label));
 
             // A small random delay before sending, as per spec (collision avoidance).
@@ -263,7 +261,7 @@ impl BuiltinMdns {
             // subtype (a tiny buffer) under `_sub.<service>.local`, or the bare
             // service type for an unfiltered browse - no full-name buffer.
             let [service, protocol] = query.base_service_labels();
-            let mut sbuf = heapless::String::<24>::new();
+            let mut sbuf = String::<24>::new();
             let len = if let Some(sub) = query.subtype(&mut sbuf) {
                 build_browse_query(
                     NameSlice::new([sub, "_sub", service, protocol, "local"]),

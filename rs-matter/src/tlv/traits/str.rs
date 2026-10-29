@@ -18,14 +18,13 @@
 //! TLV support for octets representing valid utf8 sequences (i.e. utf8 strings).
 //!
 //! - `&str` is used for serializing and deserializing borrowed utf8 strings
-//! - `String<N>` (from `heapless`) is used for serializing and deserializing owned strings of fixed length N
+//! - `String<N>` (from `crate::utils::storage`) is used for serializing and deserializing owned strings of fixed length N
 //!
 //! Note that (for now) `String<N>` has no efficient in-place initialization, so it should not be used for
 //! holding large strings, or else a stack overflow might occur.
 
-use heapless::String;
-
 use crate::error::{Error, ErrorCode};
+use crate::utils::storage::String;
 
 use super::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 

@@ -57,8 +57,6 @@ use std::sync::Mutex;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select3, select4};
-
 use futures_lite::StreamExt;
 
 use async_signal::{Signal, Signals};
@@ -94,8 +92,8 @@ use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::btp::{bluez, AdvData, Btp};
 use rs_matter::transport::network::thread::otbr::OtbrCtl;
 use rs_matter::transport::network::NoNetwork;
+use rs_matter::utils::futures::{select, select3, select4, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::MaybeSend;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, root_endpoint, Matter};

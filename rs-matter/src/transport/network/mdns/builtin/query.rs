@@ -242,12 +242,13 @@ mod tests {
     use crate::transport::network::mdns::builtin::types::NameSlice;
     use crate::transport::network::mdns::MdnsLocalService;
     use crate::transport::network::Ipv6Addr;
+    use crate::utils::storage::String;
 
     use domain::base::Message;
 
     /// Render a parsed instance name to a `String` for comparison.
-    fn name_str(name: ParsedName<&[u8]>) -> heapless::String<64> {
-        let mut s = heapless::String::new();
+    fn name_str(name: ParsedName<&[u8]>) -> String<64> {
+        let mut s = String::new();
         write!(s, "{}", name).unwrap();
         while s.ends_with('.') {
             s.pop();

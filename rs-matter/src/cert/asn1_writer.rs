@@ -22,6 +22,7 @@ use time::OffsetDateTime;
 use super::{CertConsumer, MAX_DEPTH};
 use crate::error::{Error, ErrorCode};
 use crate::utils::epoch::MATTER_EPOCH_SECS;
+use crate::utils::storage::String;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -272,7 +273,7 @@ impl CertConsumer for ASN1Writer<'_> {
             "DateTimeError"
         );
 
-        let mut time_str: heapless::String<32> = heapless::String::<32>::new();
+        let mut time_str: String<32> = String::<32>::new();
 
         if dt.year() >= 2050 {
             // If year is >= 2050, ASN.1 requires it to be Generalised Time

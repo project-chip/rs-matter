@@ -35,8 +35,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select3, select4};
-
 use async_signal::{Signal, Signals};
 use log::{error, info, trace};
 
@@ -81,7 +79,6 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
@@ -90,6 +87,8 @@ use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 // `Exchange`; `ImClient` brings `group_invoke_with`.
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
 use rs_matter::im::client::ImClient as _;
+use rs_matter::utils::futures::{select3, select4, Coalesce};
+use rs_matter::utils::timers::{Duration, Timer};
 
 use static_cell::StaticCell;
 
@@ -657,17 +656,14 @@ async fn run_switch_simulation(
                     error!("InitialPress emit failed: {e:?}");
                 }
 
-                embassy_time::Timer::after(embassy_time::Duration::from_millis(delay_ms)).await;
+                Timer::after(Duration::from_millis(delay_ms)).await;
                 if let Err(e) = LongPress::emit_for(notifier, GENERIC_SWITCH_ENDPOINT, |b| {
                     b.new_position(button)?.end()
                 }) {
                     error!("LongPress emit failed: {e:?}");
                 }
 
-                embassy_time::Timer::after(embassy_time::Duration::from_millis(
-                    duration_ms.saturating_sub(delay_ms),
-                ))
-                .await;
+                Timer::after(Duration::from_millis(duration_ms.saturating_sub(delay_ms))).await;
                 set_position(notifier, position, 0);
                 if let Err(e) = LongRelease::emit_for(notifier, GENERIC_SWITCH_ENDPOINT, |b| {
                     b.previous_position(button)?.end()

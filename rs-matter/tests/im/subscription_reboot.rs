@@ -27,9 +27,6 @@
 
 use core::cell::Cell;
 
-use embassy_futures::block_on;
-use embassy_futures::select::{select, Either};
-
 use rs_matter::dm::{EmptyHandler, Node, ReportContext, ReportDataHandler, SubscriptionCtx};
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::encoding::ReportDataResp;
@@ -40,8 +37,9 @@ use rs_matter::im::{
 use rs_matter::persist::{DummyKvBlobStore, PERSISTENT_SUBSCRIPTIONS_START};
 use rs_matter::respond::Responder;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{block_on, select, Coalesce, Either};
 use rs_matter::utils::sync::Notification;
+use rs_matter::utils::timers::{Duration, Timer};
 
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::{new_default_runner, E2E_EVENTS_BUF_SIZE};
@@ -104,7 +102,7 @@ fn test_subscription_survives_reboot() {
                 // `SubscribeResponse`, but the server persists the subscription
                 // slightly *after* sending that response. Give the server task a
                 // moment to run to completion before we tear boot 1 down.
-                embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
+                Timer::after(Duration::from_millis(200)).await;
 
                 Ok(())
             },
@@ -251,7 +249,7 @@ fn test_report_data_handler_catches_server_report() {
 
                 assert_ne!(established.subscription_id, 0);
 
-                embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
+                Timer::after(Duration::from_millis(200)).await;
 
                 Ok(())
             },

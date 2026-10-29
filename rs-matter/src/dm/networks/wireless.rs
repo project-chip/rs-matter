@@ -33,6 +33,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::{blocking, MaybeSend, MaybeSendSync};
+use crate::utils::timers::Timer;
 
 use super::NetChangeNotif;
 
@@ -886,7 +887,7 @@ impl NetCtlState {
             // Provisioning over BTP is considered complete when there is no longer an active connection
             // and the network ID is set (i.e. method `NetCtl::connect` was called successfully)
 
-            embassy_time::Timer::after_secs(1).await;
+            Timer::after_secs(1).await;
         }
     }
 }
@@ -1216,6 +1217,7 @@ where
 mod tests {
     use crate::dm::clusters::net_comm::{NetworksCell, NetworksError, WirelessCreds};
     use crate::dm::networks::NetChangeNotif;
+    use crate::utils::futures::block_on;
 
     use super::wifi::{Wifi, WifiNetworks};
     use super::WirelessNetwork;
@@ -1793,8 +1795,8 @@ mod tests {
 
     #[test]
     fn networks_cell_save_does_not_trigger_change() {
+        use crate::utils::futures::{select, Either};
         use core::pin::pin;
-        use embassy_futures::select::{select, Either};
 
         let shared = NetworksCell::new(WifiNetworks::<4>::new());
 
@@ -1802,7 +1804,7 @@ mod tests {
         shared.access(|n| n.add_or_update(&wifi_creds(b"A", b"p")).unwrap());
 
         // Consume the notification
-        embassy_futures::block_on(shared.wait_changed());
+        block_on(shared.wait_changed());
 
         // Save (should NOT trigger notification)
         shared.access(|n| {
@@ -1814,7 +1816,7 @@ mod tests {
         // `select` is biased towards the first future, so if the notification was
         // triggered, it would resolve first. `ready(())` resolves immediately so
         // if the notification was NOT triggered, the second branch wins.
-        let notified = embassy_futures::block_on(async {
+        let notified = block_on(async {
             match select(pin!(shared.wait_changed()), pin!(core::future::ready(()))).await {
                 Either::First(_) => true,
                 Either::Second(_) => false,

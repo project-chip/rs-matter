@@ -28,6 +28,7 @@
 
 use rs_matter::transport::network::mdns::{DottedName, MdnsRemoteService};
 use rs_matter::transport::network::{IpAddr, MatterRemoteService, SocketAddrV6};
+use rs_matter::utils::storage::String;
 use rs_matter::Matter;
 use rs_matter::{crypto::Crypto, error::Error};
 
@@ -220,7 +221,7 @@ pub async fn stub_mdns_resolver_txt(
             continue;
         };
 
-        let mut name = heapless::String::<128>::new();
+        let mut name = String::<128>::new();
         service.instance_name(&mut name);
 
         matter.transport().try_deposit_mdns_resolve(

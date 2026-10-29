@@ -32,8 +32,6 @@ use core::cell::Cell;
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select3, select4, Either3, Either4};
-
 use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::dm::clusters::app::level_control::{LevelControlHandler, LevelControlHooks};
 use crate::dm::clusters::decl::scenes_management::{
@@ -50,6 +48,7 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, ToTLV};
+use crate::utils::futures::{select3, select4, Either3, Either4};
 
 pub use crate::dm::clusters::decl::on_off::*;
 
@@ -57,6 +56,7 @@ use crate::tlv::Nullable;
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
+use crate::utils::timers::Timer;
 
 /// Messages passed to the `notify` closure in `OnOffHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -860,7 +860,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             match outcome {
                 Outcome::Done => break,
                 Outcome::Continue => (),
-                Outcome::Delay => embassy_time::Timer::after_millis(100).await,
+                Outcome::Delay => Timer::after_millis(100).await,
                 Outcome::OffWithEffect {
                     effect_variant,
                     final_state,
@@ -1339,7 +1339,6 @@ where
 }
 
 pub mod test {
-    use embassy_time::{Duration, Timer};
 
     use crate::dm::clusters::app::on_off::{EffectVariantEnum, OnOffHooks, OutOfBandMessage};
     use crate::dm::clusters::decl::on_off as on_off_cluster;
@@ -1348,6 +1347,7 @@ pub mod test {
     use crate::utils::cell::RefCell;
     use crate::utils::sync::blocking::Mutex;
     use crate::utils::sync::MaybeSend;
+    use crate::utils::timers::{Duration, Timer};
     use crate::with;
 
     struct TestOnOffState {

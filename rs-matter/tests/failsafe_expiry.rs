@@ -37,9 +37,6 @@ use core::future::Future;
 use core::pin::pin;
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select3, Either};
-use embassy_time::{Duration, Instant, Timer};
-
 use log::info;
 
 use rand_core::Rng;
@@ -71,7 +68,8 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NetworkSend, NoNetwork, SocketAddr, SocketAddrV6};
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select, select3, Coalesce, Either};
+use rs_matter::utils::timers::{Duration, Instant, Timer};
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
 use crate::common::mdns::stub_mdns_resolver_txt;

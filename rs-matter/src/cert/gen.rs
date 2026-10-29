@@ -29,7 +29,7 @@ use crate::cert::CertRef;
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignature, Crypto, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
-use crate::utils::storage::WriteBuf;
+use crate::utils::storage::{Vec, WriteBuf};
 
 use super::{x509::key_usage_tlv, CertTag, DNTag};
 
@@ -95,7 +95,7 @@ pub const VALID_FOREVER: Validity = Validity {
 /// [`CertGenerator::validate_serial_number`] rejects the encoding; without the
 /// pad, the certificate states a negative serial number, which RFC 5280 4.1.2.2
 /// forbids.
-pub(crate) fn encode_serial_asn1(serial: u64) -> heapless::Vec<u8, 9> {
+pub(crate) fn encode_serial_asn1(serial: u64) -> Vec<u8, 9> {
     let serial_bytes_full = serial.to_be_bytes();
     let start = serial_bytes_full
         .iter()
@@ -103,7 +103,7 @@ pub(crate) fn encode_serial_asn1(serial: u64) -> heapless::Vec<u8, 9> {
         .unwrap_or(serial_bytes_full.len() - 1);
     let stripped = &serial_bytes_full[start..];
 
-    let mut vec = heapless::Vec::<u8, 9>::new();
+    let mut vec = Vec::<u8, 9>::new();
     if !stripped.is_empty() && (stripped[0] & 0x80) != 0 {
         vec.push(0).unwrap();
     }

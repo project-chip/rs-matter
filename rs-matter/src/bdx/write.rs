@@ -19,6 +19,8 @@
 //! two ways to obtain one - [`BdxUploadInitiator`] (initiate an upload) and
 //! [`BdxDownloadResponder`] (respond to a peer's download).
 
+use crate::utils::io;
+
 use super::nego::*;
 use super::*;
 
@@ -28,7 +30,7 @@ use super::*;
 /// from [`BdxDownloadResponder::reply`] on the responding side. [`write`](Self::write)
 /// stages and sends the data, driving the protocol as needed;
 /// [`finish`](Self::finish) flushes the final block and completes the transfer.
-/// It also implements [`embedded_io_async::Write`] (delegating to the inherent
+/// It also implements [`io::Write`] (delegating to the inherent
 /// `write`).
 ///
 /// The caller supplies the staging buffer `buf`, which doubles as the upper bound
@@ -71,7 +73,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// Stage and send `data`, returning the number of bytes accepted (`< data.len()`
     /// only when the current block fills; call again with the remainder).
     ///
-    /// This is also the [`embedded_io_async::Write`] implementation; the inherent
+    /// This is also the [`io::Write`] implementation; the inherent
     /// method is kept so callers need not import the trait.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
         if data.is_empty() {
@@ -212,11 +214,11 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     }
 }
 
-impl embedded_io_async::ErrorType for BdxWriter<'_, '_> {
+impl io::ErrorType for BdxWriter<'_, '_> {
     type Error = Error;
 }
 
-impl embedded_io_async::Write for BdxWriter<'_, '_> {
+impl io::Write for BdxWriter<'_, '_> {
     async fn write(&mut self, data: &[u8]) -> Result<usize, Self::Error> {
         BdxWriter::write(self, data).await
     }

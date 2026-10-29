@@ -22,10 +22,9 @@
 //! [`ota_prov`](crate::dm::clusters::ota_prov) and
 //! [`ota_req`](crate::dm::clusters::ota_req).
 
-use embedded_io_async::{Read, ReadExactError};
-
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, ToTLV, Utf8Str};
+use crate::utils::io::{Read, ReadExactError};
 use crate::utils::storage::WriteBuf;
 
 /// The `ImageDigestType` of SHA-256 (its IANA hash algorithm ID).
@@ -253,6 +252,7 @@ mod tests {
 
     use crate::crypto::{test_only_crypto, Crypto, CryptoSensitive, Digest, HASH_LEN};
     use crate::tlv::Octets;
+    use crate::utils::io::ErrorType;
 
     /// The payload of both reference images.
     const PAYLOAD: &[u8] = b"rs-matter OTA image test payload\n";
@@ -296,7 +296,7 @@ mod tests {
         chunk: usize,
     }
 
-    impl embedded_io_async::ErrorType for ChunkedReader<'_> {
+    impl ErrorType for ChunkedReader<'_> {
         type Error = Error;
     }
 

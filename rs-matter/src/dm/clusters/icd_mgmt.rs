@@ -45,16 +45,15 @@
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select, select4, Either, Either4};
-use embassy_time::{Duration, Instant, Timer};
-
 use crate::dm::HandlerContext;
 use crate::error::Error;
 use crate::im::ImStats;
 use crate::utils::cell::RefCell;
+use crate::utils::futures::{select, select4, Either, Either4};
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::Matter;
 
 pub use crate::dm::clusters::decl::icd_management::*;
@@ -915,6 +914,7 @@ impl Icd {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::utils::futures::{block_on, join};
 
     pub(super) fn mode() -> IcdModeConfig {
         IcdModeConfig {
@@ -1254,7 +1254,7 @@ mod tests {
         icd.request_active();
 
         let keep_alive_at = Instant::now() + Duration::from_secs(5);
-        embassy_futures::block_on(icd.run_active(|| false, || Some(keep_alive_at)));
+        block_on(icd.run_active(|| false, || Some(keep_alive_at)));
 
         assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
         assert_eq!(icd.idle_until(), Some(keep_alive_at));
@@ -1263,9 +1263,7 @@ mod tests {
         icd.request_active();
 
         let start = Instant::now();
-        embassy_futures::block_on(
-            icd.run_active(|| false, || Some(start + Duration::from_secs(3600))),
-        );
+        block_on(icd.run_active(|| false, || Some(start + Duration::from_secs(3600))));
 
         let idle_until = icd.idle_until().expect("idle");
         assert!(idle_until <= Instant::now() + Duration::from_secs(60));
@@ -1289,7 +1287,7 @@ mod tests {
         icd.request_active();
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
 
-        embassy_futures::block_on(icd.run_active(|| false, || None));
+        block_on(icd.run_active(|| false, || None));
 
         assert_eq!(icd.power_mode(), IcdPowerMode::Idle);
         assert!(start.elapsed() >= Duration::from_millis(50));
@@ -1297,7 +1295,7 @@ mod tests {
         assert!(idle_until >= start + Duration::from_secs(1));
 
         // Idle mode ends by itself after `IdleModeDuration`: a scheduled wake-up.
-        let woke = embassy_futures::block_on(icd.run_idle());
+        let woke = block_on(icd.run_idle());
 
         assert!(woke);
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
@@ -1306,7 +1304,7 @@ mod tests {
         // A nudge during idle mode ends it early, and is *not* a scheduled wake-up.
         force_idle(&icd);
         icd.network_activity();
-        let woke = embassy_futures::block_on(icd.run_idle());
+        let woke = block_on(icd.run_idle());
 
         assert!(!woke);
         assert_eq!(icd.power_mode(), IcdPowerMode::Active);
@@ -1330,13 +1328,10 @@ mod tests {
         let start = Instant::now();
         icd.request_active();
 
-        embassy_futures::block_on(embassy_futures::join::join(
-            icd.run_active(|| busy.get(), || None),
-            async {
-                Timer::after(Duration::from_millis(250)).await;
-                busy.set(false);
-            },
-        ));
+        block_on(join(icd.run_active(|| busy.get(), || None), async {
+            Timer::after(Duration::from_millis(250)).await;
+            busy.set(false);
+        }));
 
         // Idle only after the work ended, well past the 50 ms deadline.
         assert_eq!(icd.power_mode(), IcdPowerMode::Idle);

@@ -29,6 +29,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::CASE_SESSIONS_PER_FABRIC;
 use crate::utils::bitflags::bitflags;
 use crate::utils::init::{init, Init};
+use crate::utils::storage::String;
 use crate::{except, with};
 
 pub use crate::dm::clusters::decl::basic_information::*;
@@ -384,7 +385,7 @@ impl Default for ProductAppearance {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceLocation {
     /// Free-form location description, at most 128 bytes.
-    pub location_name: heapless::String<128>,
+    pub location_name: String<128>,
     /// Floor number, when applicable; `Null` on the wire when `None`.
     pub floor_number: Option<i16>,
     /// Area type from the common Area namespace; `Null` on the wire when
@@ -397,7 +398,7 @@ impl DeviceLocation {
     /// number, no area type).
     pub const fn new() -> Self {
         Self {
-            location_name: heapless::String::new(),
+            location_name: String::new(),
             floor_number: None,
             area_type: None,
         }
@@ -414,8 +415,8 @@ impl Default for DeviceLocation {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, ToTLV, FromTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicInfoSettings {
-    pub node_label: heapless::String<32>, // Max node-label as per the spec
-    pub location: Option<heapless::String<2>>, // Max location as per the spec
+    pub node_label: String<32>,      // Max node-label as per the spec
+    pub location: Option<String<2>>, // Max location as per the spec
     /// The regulatory location type, as set via
     /// `GeneralCommissioning::SetRegulatoryConfig`.
     pub location_type: Option<RegulatoryLocationTypeEnum>,
@@ -444,7 +445,7 @@ impl BasicInfoSettings {
     /// Create a new instance of `BasicInfoSettings`
     pub const fn new() -> Self {
         Self {
-            node_label: heapless::String::new(),
+            node_label: String::new(),
             location: None,
             location_type: None,
             local_config_disabled: false,
@@ -459,7 +460,7 @@ impl BasicInfoSettings {
     /// Return an in-place initializer for `BasicInfoSettings`
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            node_label: heapless::String::new(),
+            node_label: String::new(),
             location: None,
             location_type: None,
             local_config_disabled: false,
@@ -500,7 +501,7 @@ impl BasicInfoSettings {
 
     /// Set the location (country code) to the given (2-character) value.
     pub fn set_location(&mut self, location: &str) {
-        self.location = Some(unwrap!(heapless::String::<2>::from_str(location)));
+        self.location = Some(unwrap!(String::<2>::from_str(location)));
     }
 
     /// Remove all basic info settings from the provided BLOB store as well as from memory

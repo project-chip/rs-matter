@@ -36,14 +36,12 @@ use core::cell::RefCell;
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use rs_matter::bdx::{Bdx, BdxReader, BdxUploadInitiator, BdxWriter};
 use rs_matter::dm::clusters::diag_logs::client::{DiagLogsBdxHandler, DiagLogsReceiver};
 use rs_matter::error::Error;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select, Coalesce, Either};
 use rs_matter::utils::sync::Notification;
+use rs_matter::utils::timers::{Duration, Timer};
 
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;

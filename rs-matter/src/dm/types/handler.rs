@@ -19,8 +19,6 @@ use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::select;
-
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
 use crate::dm::{EventId, EventNumber, Metadata};
@@ -31,7 +29,7 @@ use crate::im::ImStats;
 use crate::persist::KvBlobStoreAccess;
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select, Coalesce};
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::Matter;
@@ -1796,11 +1794,10 @@ mod asynch {
     use core::pin::pin;
 
     use either::Either;
-    use embassy_futures::select::select;
 
     use crate::dm::{HandlerContext, InvokeReply, MatchContext, Matcher, ReadReply};
     use crate::error::{Error, ErrorCode};
-    use crate::utils::select::Coalesce;
+    use crate::utils::futures::{select, Coalesce};
 
     use crate::im::encoding::{IMStatusCode, ReportDataResp};
     use crate::utils::sync::{MaybeSend, MaybeSendSync};

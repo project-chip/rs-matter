@@ -17,9 +17,6 @@
 
 use std::collections::BTreeSet;
 
-use embassy_futures::block_on;
-use embassy_futures::select::select;
-
 use rs_matter::dm::clusters::app::on_off;
 use rs_matter::dm::clusters::{
     acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc, time_sync,
@@ -29,7 +26,7 @@ use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::AttrPath;
 use rs_matter::im::AttrResp;
 use rs_matter::im::GenericPath;
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{block_on, select, Coalesce};
 
 use crate::common::e2e::im::attributes::TestAttrResp;
 use crate::common::e2e::im::echo_cluster as echo;

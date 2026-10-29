@@ -415,24 +415,23 @@ mod tests {
 
     use crate::acl::{AuthMode, Target};
     use crate::dm::Privilege;
+    use crate::utils::storage::Vec;
     use crate::utils::storage::WriteBuf;
 
-    fn collect_acl<const N: usize>(
-        acl: &TLVArrayOrSlice<'_, AclEntry>,
-    ) -> heapless::Vec<AclEntry, N> {
+    fn collect_acl<const N: usize>(acl: &TLVArrayOrSlice<'_, AclEntry>) -> Vec<AclEntry, N> {
         acl.iter().unwrap().map(|item| item.unwrap()).collect()
     }
 
     /// The network IDs of all networks, in order.
     fn collect_network_ids<T: HandoverNetwork, const N: usize>(
         networks: &HandoverNetworks<'_, T>,
-    ) -> heapless::Vec<heapless::Vec<u8, 64>, N> {
-        let mut collected = heapless::Vec::new();
+    ) -> Vec<Vec<u8, 64>, N> {
+        let mut collected = Vec::new();
 
         networks
             .for_each(&mut |creds| {
                 collected
-                    .push(heapless::Vec::from_slice(creds.id()?).unwrap())
+                    .push(Vec::from_slice(creds.id()?).unwrap())
                     .map_err(|_| ErrorCode::ResourceExhausted)?;
                 Ok(())
             })

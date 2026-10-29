@@ -78,14 +78,13 @@ use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 
 use async_io::Async;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::Address;
 use crate::utils::cell::RefCell;
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{IfMutex, Notification};
+use crate::utils::timers::{Duration, Timer};
 
 use super::{NetworkReceive, NetworkSend, MAX_RX_LARGE_PACKET_SIZE};
 

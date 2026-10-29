@@ -33,9 +33,6 @@ use core::future::{pending, Future};
 use core::ops::Mul;
 use core::pin::pin;
 
-use embassy_futures::select::{select3, select4, Either3, Either4};
-use embassy_time::{Duration, Instant};
-
 use crate::dm::clusters::app::deferred_persist::DeferredPersist;
 use crate::dm::clusters::app::on_off::{OnOffHooks, FULL_CLUSTER as ON_OFF_FULL_CLUSTER};
 use crate::dm::clusters::app::{level_control, on_off::OnOffHandler};
@@ -52,8 +49,10 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
+use crate::utils::futures::{select3, select4, Either3, Either4};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
+use crate::utils::timers::{Duration, Instant, Timer};
 
 /// Messages passed to the `notify` closure in `LevelControlHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1063,11 +1062,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             }
 
             let latency = match is_transition_start {
-                false => embassy_time::Instant::now() - event_start_time,
-                true => (embassy_time::Instant::now() - event_start_time) + startup_latency,
+                false => Instant::now() - event_start_time,
+                true => (Instant::now() - event_start_time) + startup_latency,
             };
             match event_duration.checked_sub(latency) {
-                Some(wait_time) => embassy_time::Timer::after(wait_time).await,
+                Some(wait_time) => Timer::after(wait_time).await,
                 None => warn!("no wait time. Consider dynamically adjusting the step size?"),
             }
         }
@@ -1192,9 +1191,9 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 return Ok(());
             }
 
-            let latency = embassy_time::Instant::now() - event_start_time;
+            let latency = Instant::now() - event_start_time;
             match event_duration.checked_sub(latency) {
-                Some(wait_time) => embassy_time::Timer::after(wait_time).await,
+                Some(wait_time) => Timer::after(wait_time).await,
                 None => warn!("no wait time. Consider dynamically adjusting the step size?"),
             }
         }

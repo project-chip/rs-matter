@@ -19,6 +19,8 @@
 //! the two ways to obtain one - [`BdxDownloadInitiator`] (initiate a download) and
 //! [`BdxUploadResponder`] (respond to a peer's upload).
 
+use crate::utils::io;
+
 use super::nego::*;
 use super::*;
 
@@ -28,7 +30,7 @@ use super::*;
 /// from [`BdxUploadResponder::reply`] on the responding side. [`read`](Self::read)
 /// drives the protocol as needed and copies the next bytes of the transfer into
 /// the caller's buffer, returning `0` at the end of the transfer. It also
-/// implements [`embedded_io_async::Read`] (delegating to the inherent method).
+/// implements [`io::Read`] (delegating to the inherent method).
 pub struct BdxReader<'a> {
     exchange: Exchange<'a>,
     drive: Drive,
@@ -75,7 +77,7 @@ impl<'a> BdxReader<'a> {
     /// Read the next bytes of the transfer into `buf`, returning the number of
     /// bytes read. Returns `0` once the whole transfer has been received.
     ///
-    /// This is also the [`embedded_io_async::Read`] implementation; the inherent
+    /// This is also the [`io::Read`] implementation; the inherent
     /// method is kept so callers need not import the trait.
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         if buf.is_empty() {
@@ -212,11 +214,11 @@ impl<'a> BdxReader<'a> {
     }
 }
 
-impl embedded_io_async::ErrorType for BdxReader<'_> {
+impl io::ErrorType for BdxReader<'_> {
     type Error = Error;
 }
 
-impl embedded_io_async::Read for BdxReader<'_> {
+impl io::Read for BdxReader<'_> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         BdxReader::read(self, buf).await
     }

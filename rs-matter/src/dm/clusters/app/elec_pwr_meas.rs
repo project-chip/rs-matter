@@ -44,8 +44,6 @@
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-
 use crate::dm::clusters::decl::globals::{
     MeasurementAccuracyStructArrayBuilder, MeasurementAccuracyStructBuilder, MeasurementTypeEnum,
 };
@@ -57,6 +55,7 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::im::{AmperageMilliA, PowerMilliVA, PowerMilliVAR, PowerMilliW, VoltageMilliV};
 use crate::tlv::{Nullable, TLVBuilderParent};
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 use super::measurement::{write_accuracy, MeasurementAccuracy};
@@ -678,12 +677,12 @@ mod tests {
     //! lifecycle op: the op only exists to pick a moment to run these checks,
     //! and a `HandlerContext` can only be built around a live `Matter`.
 
-    use embassy_futures::block_on;
-
     use crate::dm::clusters::app::test_util::RecordingNotifier;
     use crate::dm::clusters::decl::electrical_power_measurement as cluster;
     use crate::dm::{AttrId, Dataver};
     use crate::im::PowerMilliW;
+    use crate::utils::futures::block_on;
+    use crate::utils::storage::Vec;
     use crate::with;
 
     use super::super::measurement::{MeasurementAccuracy, MeasurementAccuracyRange};
@@ -818,7 +817,7 @@ mod tests {
     fn cluster_serves_the_expected_attributes() {
         let cluster = <MockHooks<AC> as ElecPwrMeasHooks>::CLUSTER;
 
-        let attrs: heapless::Vec<_, 16> = cluster
+        let attrs: Vec<_, 16> = cluster
             .attributes()
             .map(|attr| attr.id)
             .filter(|id| *id < 0xF000)

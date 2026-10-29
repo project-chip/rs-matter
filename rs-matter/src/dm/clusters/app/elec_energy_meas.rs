@@ -43,8 +43,6 @@
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-
 use crate::dm::clusters::decl::globals::{MeasurementAccuracyStructBuilder, MeasurementTypeEnum};
 use crate::dm::types::EndptId;
 use crate::dm::{
@@ -53,6 +51,7 @@ use crate::dm::{
 use crate::error::Error;
 use crate::im::EnergyMilliWh;
 use crate::tlv::{Nullable, NullableBuilder, TLVBuilderParent};
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Signal};
 
 use super::measurement::{write_accuracy, MeasurementAccuracy};
@@ -639,11 +638,11 @@ mod tests {
     //! and whether a cluster configuration is serveable at all. Both are
     //! context-free, so neither needs a live `Matter`.
 
-    use embassy_futures::block_on;
-
     use crate::dm::clusters::app::test_util::RecordingNotifier;
     use crate::dm::clusters::decl::electrical_energy_measurement as cluster;
     use crate::dm::{AttrId, Dataver, EventId as RawEventId};
+    use crate::utils::futures::block_on;
+    use crate::utils::storage::Vec;
     use crate::with;
 
     use super::super::measurement::{MeasurementAccuracy, MeasurementAccuracyRange};
@@ -783,7 +782,7 @@ mod tests {
     fn cluster_serves_the_expected_elements() {
         let cluster = <NoEventHooks as ElecEnergyMeasHooks>::CLUSTER;
 
-        let attrs: heapless::Vec<_, 8> = cluster
+        let attrs: Vec<_, 8> = cluster
             .attributes()
             .map(|attr| attr.id)
             .filter(|id| *id < 0xF000)
@@ -799,7 +798,7 @@ mod tests {
 
         // The `PERE` half of the cluster stays out of the served set.
         let with_event = <MockHooks<{ IMPE | CUME }> as ElecEnergyMeasHooks>::CLUSTER;
-        let events: heapless::Vec<_, 4> = with_event.events().map(|event| event.id).collect();
+        let events: Vec<_, 4> = with_event.events().map(|event| event.id).collect();
 
         assert!(events.contains(&(EventId::CumulativeEnergyMeasured as RawEventId)));
     }

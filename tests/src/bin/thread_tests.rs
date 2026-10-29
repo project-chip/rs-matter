@@ -31,8 +31,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select3;
-
 use async_signal::{Signal, Signals};
 
 use futures_lite::StreamExt;
@@ -64,8 +62,8 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::thread::otbr::OtbrCtl;
+use rs_matter::utils::futures::{select3, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, Matter};
 

@@ -26,9 +26,6 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use embassy_futures::select::select3;
-use embassy_time::Timer;
-
 use zeroconf::browser::TMdnsBrowser;
 use zeroconf::prelude::TEventLoop;
 use zeroconf::service::TMdnsService;
@@ -39,7 +36,9 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::transport::MdnsResponder;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select3, Coalesce};
+use crate::utils::storage;
+use crate::utils::timers::Timer;
 use crate::Matter;
 
 /// Interval (ms) at which the async side drains discovered services from the
@@ -119,7 +118,7 @@ impl ZeroconfMdns {
         loop {
             let service = responder.wait_resolve_request().await;
 
-            let mut name_buf: heapless::String<128> = heapless::String::new();
+            let mut name_buf: storage::String<128> = storage::String::new();
             service.instance_name(&mut name_buf);
             let label = name_buf.split('.').next().unwrap_or("").to_string();
 
@@ -159,7 +158,7 @@ impl ZeroconfMdns {
                     }
                 });
 
-                Timer::after(embassy_time::Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+                Timer::after_millis(QUERY_POLL_INTERVAL_MS).await;
             }
         }
     }
@@ -199,7 +198,7 @@ impl ZeroconfMdns {
                     }
                 });
 
-                Timer::after(embassy_time::Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+                Timer::after_millis(QUERY_POLL_INTERVAL_MS).await;
             }
         }
     }

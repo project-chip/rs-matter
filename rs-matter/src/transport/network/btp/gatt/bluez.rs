@@ -30,9 +30,6 @@ use std::os::unix::net::UnixDatagram;
 use async_channel::{Receiver, Sender};
 use async_io::Async;
 
-use embassy_futures::select::{select, select3, Either};
-use embassy_time::{Duration, Instant, Timer};
-
 use futures_lite::StreamExt;
 
 use uuid::Uuid;
@@ -47,7 +44,9 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::Btp;
 use crate::transport::network::mdns::CommissionableFilter;
 use crate::transport::network::BtAddr;
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select, select3, Coalesce, Either};
+use crate::utils::storage;
+use crate::utils::timers::{Duration, Instant, Timer};
 use crate::utils::zbus_proxies::bluez::adapter::AdapterProxy;
 use crate::utils::zbus_proxies::bluez::device::DeviceProxy;
 use crate::utils::zbus_proxies::bluez::gatt_characteristic::GattCharacteristicProxy;
@@ -371,7 +370,7 @@ where
         + Duration::from_secs(scan_timeout.unwrap_or(DEFAULT_SCAN_TIMEOUT_SECS) as u64);
 
     // Devices already reported to `on_found`, so we report each at most once.
-    let mut reported: heapless::Vec<BtAddr, 16> = heapless::Vec::new();
+    let mut reported: storage::Vec<BtAddr, 16> = storage::Vec::new();
 
     // NOTE: the polling loop is wrapped so that discovery is stopped on *every* way
     // out, errors included. A leaked discovery does more than waste power: BlueZ
@@ -569,7 +568,7 @@ async fn report_matching_devices<F, R>(
     om: &ObjectManagerProxy<'_>,
     adapter_path: &OwnedObjectPath,
     filter: &CommissionableFilter,
-    reported: &mut heapless::Vec<BtAddr, 16>,
+    reported: &mut storage::Vec<BtAddr, 16>,
     on_found: &mut F,
 ) -> Result<Option<R>, Error>
 where
@@ -782,7 +781,7 @@ fn bt_addr_from_device_path(path: &ObjectPath<'_>) -> Result<BtAddr, Error> {
     let bt_addr = bt_addr_str
         .split('_')
         .map(|s| u8::from_str_radix(s, 16).map_err(|_| Error::from(ErrorCode::InvalidData)))
-        .collect::<Result<heapless::Vec<_, 6>, _>>()?;
+        .collect::<Result<storage::Vec<_, 6>, _>>()?;
 
     bt_addr
         .into_array()
@@ -1068,7 +1067,7 @@ impl ServiceObj {
         let bt_addr = bt_addr_str
             .split('_')
             .map(|s| u8::from_str_radix(s, 16).map_err(|_| err()))
-            .collect::<Result<heapless::Vec<_, 6>, _>>()?;
+            .collect::<Result<storage::Vec<_, 6>, _>>()?;
 
         bt_addr.into_array().map(BtAddr).map_err(|_| err())
     }

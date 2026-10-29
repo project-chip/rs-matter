@@ -19,8 +19,6 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use embassy_futures::select::{select3, select4};
-
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use rs_matter::acl::{AclEntry, AuthMode};
@@ -38,7 +36,8 @@ use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
-use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::futures::{select3, select4, Coalesce};
+use rs_matter::utils::storage::Vec;
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;
 use rs_matter::{Matter, MATTER_PORT};
 
@@ -268,8 +267,8 @@ impl<C: Crypto> E2eRunner<C> {
         // deterministic unit expectations here.
         state.suppress_start_up_event();
 
-        let mut buf1 = [heapless::Vec::new(); 1];
-        let mut buf2 = [heapless::Vec::new(); 1];
+        let mut buf1 = [Vec::new(); 1];
+        let mut buf2 = [Vec::new(); 1];
 
         let mut pipe1 = NetworkPipe::<MAX_RX_PACKET_SIZE>::new(&mut buf1);
         let mut pipe2 = NetworkPipe::<MAX_TX_PACKET_SIZE>::new(&mut buf2);
@@ -336,8 +335,8 @@ impl<C: Crypto> E2eRunner<C> {
     {
         self.init()?;
 
-        let mut buf1 = [heapless::Vec::new(); 1];
-        let mut buf2 = [heapless::Vec::new(); 1];
+        let mut buf1 = [Vec::new(); 1];
+        let mut buf2 = [Vec::new(); 1];
 
         let mut pipe1 = NetworkPipe::<MAX_RX_PACKET_SIZE>::new(&mut buf1);
         let mut pipe2 = NetworkPipe::<MAX_TX_PACKET_SIZE>::new(&mut buf2);
@@ -414,9 +413,9 @@ impl<C: Crypto> E2eRunner<C> {
     }
 }
 
-type NetworkPipe<'a, const N: usize> = Channel<'a, MatterRawMutex, heapless::Vec<u8, N>>;
+type NetworkPipe<'a, const N: usize> = Channel<'a, MatterRawMutex, Vec<u8, N>>;
 
-struct NetworkReceiveImpl<'a, const N: usize>(Receiver<'a, MatterRawMutex, heapless::Vec<u8, N>>);
+struct NetworkReceiveImpl<'a, const N: usize>(Receiver<'a, MatterRawMutex, Vec<u8, N>>);
 
 impl<const N: usize> NetworkSend for NetworkSendImpl<'_, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
@@ -431,7 +430,7 @@ impl<const N: usize> NetworkSend for NetworkSendImpl<'_, N> {
     }
 }
 
-struct NetworkSendImpl<'a, const N: usize>(Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>);
+struct NetworkSendImpl<'a, const N: usize>(Sender<'a, MatterRawMutex, Vec<u8, N>>);
 
 /// A [`NetworkSend`] that drops (and counts) every packet while `lose` is set.
 struct LossyNetworkSend<'a, S> {

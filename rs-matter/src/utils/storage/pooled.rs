@@ -20,13 +20,13 @@ use core::future::Future;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_time::{Duration, Timer};
 
+use crate::utils::futures::{select, Either};
 use crate::utils::init::{init, Init, InitDefault, UnsafeCellInit};
 use crate::utils::sync::blocking::raw::MatterRawMutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, MultiSignal};
+use crate::utils::timers::{Duration, Timer};
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
 pub trait Buffers<T>: MaybeSendSync

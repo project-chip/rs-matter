@@ -30,6 +30,7 @@
 use log::{info, warn};
 
 use rs_matter::error::Error;
+use rs_matter::utils::timers::{Duration, Timer};
 
 /// Read command lines from the `--app-pipe` FIFO (creating it if necessary)
 /// and dispatch each to `action`. Pends forever when no pipe path is given.
@@ -62,7 +63,7 @@ pub async fn run_app_pipe_actions(
             Ok(f) => f,
             Err(e) => {
                 warn!("Failed to open app pipe {}: {}", path, e);
-                embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
+                Timer::after(Duration::from_secs(1)).await;
                 continue;
             }
         };

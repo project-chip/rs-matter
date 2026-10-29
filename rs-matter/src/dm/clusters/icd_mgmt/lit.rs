@@ -21,9 +21,6 @@
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{with_timeout, Duration};
-
 use crate::acl::AccessReq;
 use crate::crypto::{CanonAeadKey, Crypto, Rng};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -42,10 +39,12 @@ use crate::persist::{
 use crate::sc::checkin::{CheckIn, CheckInCounter};
 use crate::tlv::{FromTLV, TLVBuilderParent, ToTLV};
 use crate::utils::cell::RefCell;
+use crate::utils::futures::{select, Either};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::{with_timeout, Duration};
 use crate::with;
 use crate::Matter;
 

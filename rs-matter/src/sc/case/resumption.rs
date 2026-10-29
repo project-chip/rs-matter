@@ -211,7 +211,7 @@ impl ResumableSessions {
 
         if self.records.is_full() {
             // Evict the oldest record. `remove(0)` is O(N) on
-            // `heapless::Vec` but N is bounded by
+            // `Vec` but N is bounded by
             // [`MAX_RESUMPTION_RECORDS`] (≤ 16) so the shuffle is
             // negligible against the cost of a fresh CASE handshake.
             self.records.remove(0);
@@ -300,6 +300,7 @@ mod tests {
     use core::num::NonZeroU8;
 
     use crate::crypto::CanonPkcSharedSecret;
+    use crate::utils::storage::Vec;
 
     use super::super::casep::CaseResumptionId;
     use super::{ResumableSession, ResumableSessions, MAX_RESUMPTION_RECORDS};
@@ -330,7 +331,7 @@ mod tests {
         cache.insert_or_update(rec(1, 100, 0xC0));
         assert_eq!(cache.len(), 2);
 
-        let ids: heapless::Vec<u8, 4> = cache
+        let ids: Vec<u8, 4> = cache
             .iter()
             .map(|r| r.resumption_id.reference().access()[0])
             .collect();

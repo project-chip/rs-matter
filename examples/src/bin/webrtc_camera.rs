@@ -78,7 +78,6 @@ use std::time::{Duration, Instant};
 use async_channel::{Receiver, Sender};
 use async_executor::LocalExecutor;
 use async_io::Async;
-use embassy_futures::select::{select, select4};
 
 use log::{info, warn};
 
@@ -119,8 +118,8 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::TLVArray;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::utils::futures::{select, select4, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -157,7 +156,7 @@ const SDP_LEN: usize = 8 * 1024;
 // i.e. the full SDP plus TLV framing overhead.
 const OUT_LEN: usize = SDP_LEN + 1024;
 // Bounds for the per-invoke ICE candidate snapshot — `WebRtcProvHandler`
-// stack-allocates `Vec<heapless::String<CAND_LEN>, MAX_CAND>` for each
+// stack-allocates `Vec<String<CAND_LEN>, MAX_CAND>` for each
 // outbound `IceCandidates` invoke and hands a `&mut` sink view to the
 // hook. SDP candidate strings are typically <100 bytes; trickle rounds
 // rarely exceed a handful of candidates.

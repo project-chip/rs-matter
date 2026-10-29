@@ -35,7 +35,7 @@
 //! on the smallest targets:
 //! ```ignore
 //! let mut buf = [0; 512];
-//! let mut s = heapless::String::<4096>::new();
+//! let mut s = rs_matter::utils::storage::String::<4096>::new();
 //! matter.write_pics_json(&node, &mut buf, &mut s)?;
 //! info!("{}", s);
 //! ```
@@ -243,6 +243,7 @@ mod tests {
     use crate::dm::clusters::identify;
     use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
     use crate::dm::{Endpoint, Node};
+    use crate::utils::storage::String;
     use crate::Matter;
 
     static NODE: Node = Node::new(&[Endpoint::new(1, &[], &[identify::CLUSTER])]);
@@ -261,7 +262,7 @@ mod tests {
         let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         let mut buf = [0u8; 512];
-        let mut out = heapless::String::<4096>::new();
+        let mut out = String::<4096>::new();
         matter.write_pics_json(&NODE, &mut buf, &mut out).unwrap();
         let json = out.as_str();
 

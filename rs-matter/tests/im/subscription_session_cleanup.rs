@@ -22,10 +22,6 @@
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 
-use embassy_futures::block_on;
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::error::Error;
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
@@ -36,6 +32,8 @@ use rs_matter::tlv::{FromTLV, TLVElement};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, MatterRemoteService};
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use rs_matter::utils::futures::{block_on, select, Either};
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::Matter;
 
 use crate::common::e2e::im::echo_cluster;

@@ -26,8 +26,6 @@ use std::net::UdpSocket;
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::{select, select4};
-
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 use futures_lite::StreamExt;
@@ -73,6 +71,7 @@ use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
 use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSourceHandler};
+use rs_matter::utils::futures::{select, select4, Coalesce};
 
 /// A second wired supply, modeled as powering EP1 specifically. Exists so the
 /// fixture mirrors upstream `all-clusters-app`'s shape of a PowerSource
@@ -120,7 +119,6 @@ use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, Matter};

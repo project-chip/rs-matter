@@ -19,19 +19,18 @@
 
 use core::future::Future;
 
-use embassy_futures::select::select;
-use embassy_time::{Instant, Timer};
-
 use session::{BTP_ACK_SEND_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::Session;
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend, MAX_TX_PACKET_SIZE};
 use crate::utils::cell::RefCell;
+use crate::utils::futures::select;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::{Instant, Timer};
 
 pub use gatt::*;
 
@@ -552,6 +551,7 @@ impl OutgoingSdu {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod test {
     use super::*;
+    use crate::utils::futures::block_on;
 
     const PEER_ADDR: BtAddr = BtAddr([1, 2, 3, 4, 5, 6]);
 
@@ -579,13 +579,13 @@ mod test {
     }
 
     fn send(btp: &Btp, data: &[u8]) {
-        embassy_futures::block_on(btp.send(data, PEER_ADDR)).unwrap();
+        block_on(btp.send(data, PEER_ADDR)).unwrap();
     }
 
     fn expect_recv(btp: &Btp, data: &[u8]) {
         let mut buf = [0; 2048];
 
-        let (len, addr) = embassy_futures::block_on(btp.recv(&mut buf)).unwrap();
+        let (len, addr) = block_on(btp.recv(&mut buf)).unwrap();
 
         assert_eq!(addr, PEER_ADDR);
         assert_eq!(&buf[..len], data);
@@ -616,7 +616,7 @@ mod test {
         // Expected MTU in response is 0xc8 - 3 = 0xc5
         expect_outgoing(&btp, &[0x65, 0x6c, 0x05, 0xc5, 0x00, 0x05]);
 
-        embassy_futures::block_on(Timer::after_secs(3));
+        block_on(Timer::after_secs(3));
 
         assert!(btp.timeout());
 
@@ -788,7 +788,7 @@ mod test {
         // The peripheral should send the first ACK for the handshake response
         incoming(&btp, &[8, 0, 0]);
 
-        embassy_futures::block_on(Timer::after_secs(1));
+        block_on(Timer::after_secs(1));
 
         // BTP should - in X seconds - ACK our message so that the session does not timeout
         expect_outgoing(&btp, &[8, 0, 1]);
@@ -796,7 +796,7 @@ mod test {
         // The peripheral should ACK it
         incoming(&btp, &[8, 1, 1]);
 
-        embassy_futures::block_on(Timer::after_secs(1));
+        block_on(Timer::after_secs(1));
 
         // BTP should - in X seconds - ACK again
         expect_outgoing(&btp, &[8, 1, 2]);
@@ -854,7 +854,7 @@ mod test {
         }
 
         let mut buf = [0u8; 512];
-        let (len, addr) = embassy_futures::block_on(responder.recv(&mut buf)).unwrap();
+        let (len, addr) = block_on(responder.recv(&mut buf)).unwrap();
         assert_eq!(addr, INITIATOR_ADDR);
         assert_eq!(&buf[..len], sdu);
 
@@ -872,13 +872,13 @@ mod test {
             }
         }
 
-        let (len, addr) = embassy_futures::block_on(initiator.recv(&mut buf)).unwrap();
+        let (len, addr) = block_on(initiator.recv(&mut buf)).unwrap();
         assert_eq!(addr, RESPONDER_ADDR);
         assert_eq!(&buf[..len], reply);
     }
 
     fn send_to(btp: &Btp, addr: BtAddr, data: &[u8]) {
-        embassy_futures::block_on(btp.send(data, addr)).unwrap();
+        block_on(btp.send(data, addr)).unwrap();
     }
 
     /// An initiator must survive a peer/stack reporting a nonsensically small GATT

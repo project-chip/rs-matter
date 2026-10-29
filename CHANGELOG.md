@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Breaking: the MSRV is 1.92
+* New: `utils::futures`, `utils::timers`, `utils::io` and `utils::storage::String`, which re-export what `rs-matter` uses from `embassy-futures`, `embassy-time`, `embedded-io-async` and `heapless`
+  * Breaking: `utils::select` is renamed to `utils::futures`
+  * Breaking: `utils::codec::base38::decode_vec` returns a `utils::storage::Vec`
 * New: `MultiSignal` and `IfMultiMutex` (with `IfMultiMutexGuard`) are types of their own, which keep a waker per waiter in an intrusive list, so that waiters from different tasks do not wake each other (#630)
 * Fix: on Windows, the `async-io` UDP adapter sends to an IPv4 peer through an IPv6 socket in IPv4-mapped form, as Windows does not accept a plain IPv4 address there (#629)
 * Fix: placing an mDNS resolve or browse request wakes the responder waiting for it, and an answered resolve wakes the next resolver, so that a resolve does not time out when nothing else wakes the task (#628)

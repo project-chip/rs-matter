@@ -19,15 +19,13 @@
 
 use core::pin::pin;
 
-use embassy_futures::select::select;
-use embassy_time::Timer;
-
 use crate::dm::clusters::net_comm::{
     self, NetCtlError, Networks, NetworksCell, NetworksError, WirelessCreds,
 };
 use crate::dm::clusters::wifi_diag;
 use crate::error::{Error, ErrorCode};
-use crate::utils::select::Coalesce;
+use crate::utils::futures::{select, Coalesce};
+use crate::utils::timers::Timer;
 
 use super::thread::Thread;
 use super::{NetChangeNotif, OwnedWirelessNetworkId};
@@ -440,6 +438,8 @@ mod tests {
     use crate::dm::networks::wireless::wifi::WifiNetworks;
     use crate::dm::networks::NetChangeNotif;
     use crate::error::{Error, ErrorCode};
+    use crate::utils::futures::{block_on, yield_now};
+    use crate::utils::storage::Vec;
     use crate::utils::sync::blocking::Mutex;
     use crate::utils::sync::MaybeSend;
 
@@ -475,7 +475,7 @@ mod tests {
         /// `NetCtlWithStatusImpl` would report as `LastNetworkID`. Seedable
         /// by tests to model a device attached to a network the manager did
         /// not connect itself (e.g. via the cluster's `ConnectNetwork`).
-        last_network_id: Mutex<core::cell::RefCell<heapless::Vec<u8, 32>>>,
+        last_network_id: Mutex<core::cell::RefCell<Vec<u8, 32>>>,
     }
 
     impl FakeNetCtl {
@@ -484,7 +484,7 @@ mod tests {
                 connected: Mutex::new(Cell::new(false)),
                 connect_fails_remaining: Mutex::new(Cell::new(0)),
                 connect_calls: Mutex::new(Cell::new(0)),
-                last_network_id: Mutex::new(core::cell::RefCell::new(heapless::Vec::new())),
+                last_network_id: Mutex::new(core::cell::RefCell::new(Vec::new())),
             }
         }
 
@@ -697,7 +697,7 @@ mod tests {
             pass: b"Pass",
         };
 
-        embassy_futures::block_on(async {
+        block_on(async {
             let result = connect_with_retries(&net_ctl, &creds).await;
             assert!(result.is_ok());
             assert!(net_ctl.connected.lock(Cell::get));
@@ -710,7 +710,7 @@ mod tests {
     fn wait_while_inactive_returns_when_managed() {
         let networks = make_networks(&[], true);
 
-        embassy_futures::block_on(async {
+        block_on(async {
             let result = TestMgr::wait_while_inactive(&networks).await;
             assert!(result.is_ok());
         });
@@ -722,7 +722,7 @@ mod tests {
     fn wait_while_connected_returns_when_disconnected() {
         let net_ctl = FakeNetCtl::new();
 
-        embassy_futures::block_on(async {
+        block_on(async {
             // wait_while_connected_status(net_ctl, true) breaks when connected() != true
             // Since FakeNetCtl starts disconnected, this should return immediately.
             let result = TestMgr::wait_while_connected_status(&net_ctl, true).await;
@@ -735,11 +735,11 @@ mod tests {
     /// Run `fut` until `done` reports completion, panicking if `fut` exits
     /// first. `fut` is the (never-ending) manager future under test.
     async fn drive_until<F: core::future::Future + Unpin>(fut: F, done: impl Fn() -> bool) {
-        use embassy_futures::select::{select, Either};
+        use crate::utils::futures::{select, Either};
 
         let watcher = async {
             while !done() {
-                embassy_futures::yield_now().await;
+                yield_now().await;
             }
         };
 
@@ -761,7 +761,7 @@ mod tests {
         let mut buf = [0u8; MAX_CREDS_SIZE];
         let reported = Cell::new(None);
 
-        embassy_futures::block_on(async {
+        block_on(async {
             let connect = pin!(TestMgr::run_connect(
                 &networks,
                 &net_ctl,
@@ -790,7 +790,7 @@ mod tests {
         let net_ctl = FakeNetCtl::with_connected_to(b"Stored");
         let mut buf = [0u8; MAX_CREDS_SIZE];
 
-        embassy_futures::block_on(async {
+        block_on(async {
             let connect = pin!(TestMgr::run_connect(&networks, &net_ctl, &mut buf, |_| ()));
 
             // Give the manager a bounded number of polls to (wrongly) act.
@@ -847,7 +847,7 @@ mod tests {
         let net_ctl = FakeNetCtl::new();
         let mut buf = [0u8; MAX_CREDS_SIZE];
 
-        embassy_futures::block_on(async {
+        block_on(async {
             assert!(connect_once(&mut networks, &net_ctl, b"MySSID", &mut buf)
                 .await
                 .is_ok());
@@ -862,7 +862,7 @@ mod tests {
         let net_ctl = FakeNetCtl::new();
         let mut buf = [0u8; MAX_CREDS_SIZE];
 
-        embassy_futures::block_on(async {
+        block_on(async {
             // No matching network -> a deferred connect can't proceed.
             let err = connect_once(&mut networks, &net_ctl, b"MySSID", &mut buf)
                 .await

@@ -29,9 +29,6 @@ use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3};
-use embassy_time::{Instant, Timer};
-
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
 use crate::dm::{
@@ -51,12 +48,13 @@ use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
+use crate::utils::futures::{select, select3, Coalesce};
 use crate::utils::init::{init, Init};
-use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
+use crate::utils::timers::{Instant, Timer};
 use crate::Matter;
 
 pub use encoding::*;

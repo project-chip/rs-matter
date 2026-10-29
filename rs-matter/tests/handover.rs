@@ -26,9 +26,6 @@ use core::num::NonZeroU8;
 use core::pin::pin;
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select3, Either};
-use embassy_time::{Duration, Timer};
-
 use log::info;
 
 use rand_core::Rng;
@@ -59,9 +56,10 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
+use rs_matter::utils::futures::{select, select3, Coalesce, Either};
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::WriteBuf;
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
 use static_cell::StaticCell;

@@ -17,8 +17,6 @@
 
 use core::fmt::Debug;
 
-use embassy_time::Instant;
-
 use crate::acl::Accessor;
 use crate::dm::{ClusterId, EndptId, EventId, Node};
 use crate::error::{Error, ErrorCode};
@@ -36,6 +34,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::MaybeSendSync;
+use crate::utils::timers::Instant;
 
 /// The default size of each event buffer in bytes.
 /// This is a tradeoff between memory use and the risk of evicting events before subscribers have had a chance to read them.
@@ -916,6 +915,7 @@ impl EventReader {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::tlv::ToTLV;
+    use crate::utils::storage::Vec;
 
     use super::*;
 
@@ -1014,10 +1014,8 @@ mod tests {
             }
         }
 
-        fn vec_from<const N: usize>(
-            buf: &EventsBuf<N>,
-        ) -> Result<heapless::Vec<TestEvent, N>, Error> {
-            let mut out = heapless::Vec::new();
+        fn vec_from<const N: usize>(buf: &EventsBuf<N>) -> Result<Vec<TestEvent, N>, Error> {
+            let mut out = Vec::new();
             for tr in buf.iter() {
                 let e = EventData::from_tlv(&tr?)?;
                 out.push(TestEvent {

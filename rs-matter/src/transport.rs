@@ -23,11 +23,6 @@ use core::pin::pin;
 
 use domain::base::name::ToLabelIter;
 
-#[cfg(feature = "groups")]
-use embassy_futures::select::select4;
-use embassy_futures::select::{select, select3, Either};
-use embassy_time::{with_timeout, Duration, Timer};
-
 use rand_core::Rng;
 
 use crate::crypto::Crypto;
@@ -50,12 +45,14 @@ use crate::transport::network::mdns::{
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::cell::RefCell;
+#[cfg(feature = "groups")]
+use crate::utils::futures::select4;
+use crate::utils::futures::{select, select3, Coalesce, Either};
 use crate::utils::init::{init, Init};
 #[cfg(feature = "groups")]
 use crate::utils::ipv6::compute_group_multicast_addr;
-use crate::utils::select::Coalesce;
-use crate::utils::storage::Vec;
-use crate::utils::storage::{pooled::Buffers, ParseBuf, WriteBuf};
+use crate::utils::storage::{pooled::Buffers, ParseBuf, Vec, WriteBuf};
+use crate::utils::timers::{with_timeout, Duration, Timer};
 
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{
@@ -1731,7 +1728,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             rx.clear_on_drop(true); // In case of error, or if the future is dropped
 
             // TODO: Resizing might be a bit expensive with large buffers
-            // Resizing to `MAX_RX_BUF_SIZE` is always safe because the size of the `buf` heapless vec `MAX_RX_BUF_SIZE`
+            // Resizing to `MAX_RX_BUF_SIZE` is always safe because the size of the `buf` vec `MAX_RX_BUF_SIZE`
             unwrap!(rx.buf.resize_default(MAX_RX_BUF_SIZE));
 
             let (len, peer) = Self::netw_recv(&mut recv, &mut rx.buf).await?;
@@ -1786,7 +1783,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 .rx
                 .with(|packet| { self.handle_accept_timeout_rx_packet(packet).then_some(()) }));
 
-            let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(50)));
+            let mut timer = pin!(Timer::after(Duration::from_millis(50)));
 
             select(&mut accept_timeout, &mut timer).await;
         }
@@ -2400,7 +2397,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
     {
         // TODO: Resizing might be a bit expensive with large buffers
         // Resizing to `N` is always safe because it is a responsibility of the caller to ensure that N is <= `MAX_RX_BUF_SIZE`,
-        // which is the size of `buf` heapless vec
+        // which is the size of `buf` vec
         unwrap!(packet.buf.resize_default(N));
 
         let mut wb = WriteBuf::new_with(
@@ -2894,7 +2891,7 @@ impl<const N: usize> Buffers<[u8]> for PacketBufferExternalAccess<'_, N> {
         let mut packet = self.0.lock_if(|packet| packet.buf.is_empty()).await;
 
         // TODO: Resizing might be a bit expensive with large buffers
-        // Resizing to `N` is always safe because the size of `buf` heapless vec is `N`
+        // Resizing to `N` is always safe because the size of `buf` vec is `N`
         unwrap!(packet.buf.resize_default(N));
 
         Some(ExternalPacketBuffer(packet))
@@ -2906,7 +2903,7 @@ impl<const N: usize> Buffers<[u8]> for PacketBufferExternalAccess<'_, N> {
             .ok()
             .map(|mut packet| {
                 // TODO: Resizing might be a bit expensive with large buffers
-                // Resizing to `N` is always safe because the size of `buf` heapless vec is `N`
+                // Resizing to `N` is always safe because the size of `buf` vec is `N`
                 unwrap!(packet.buf.resize_default(N));
 
                 ExternalPacketBuffer(packet)
@@ -3029,8 +3026,6 @@ mod tests {
 mod resolve_tests {
     use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
-    use embassy_time::{with_timeout, Duration, Timer};
-
     use futures_lite::future::{block_on, yield_now, zip};
 
     use crate::error::ErrorCode;
@@ -3038,6 +3033,8 @@ mod resolve_tests {
     use crate::transport::network::mdns::{DottedName, MdnsRemoteService, MAX_RESOLVE_CANDIDATES};
     use crate::transport::network::MatterRemoteService;
     use crate::transport::MdnsResponder;
+    use crate::utils::storage::String;
+    use crate::utils::timers::{with_timeout, Duration, Timer};
     use crate::Matter;
 
     fn op_service() -> MatterRemoteService {
@@ -3064,7 +3061,7 @@ mod resolve_tests {
                 let picked = responder.wait_resolve_request().await;
                 assert_eq!(picked, service);
 
-                let mut name = heapless::String::<128>::new();
+                let mut name = String::<128>::new();
                 service.instance_name(&mut name);
 
                 let answer = MdnsRemoteService {
@@ -3116,7 +3113,7 @@ mod resolve_tests {
             let responder = async {
                 responder.wait_resolve_request().await;
 
-                let mut name = heapless::String::<128>::new();
+                let mut name = String::<128>::new();
                 service.instance_name(&mut name);
 
                 // Deposited worst-first and in packet order.
@@ -3171,7 +3168,7 @@ mod resolve_tests {
             let responder = async {
                 responder.wait_resolve_request().await;
 
-                let mut name = heapless::String::<128>::new();
+                let mut name = String::<128>::new();
                 service.instance_name(&mut name);
 
                 // First callback: the routable address, carrying the TXT. Both
@@ -3240,7 +3237,7 @@ mod resolve_tests {
         let matter = test_matter();
         let _responder = matter.transport().mdns_responder();
 
-        let mut name = heapless::String::<128>::new();
+        let mut name = String::<128>::new();
         op_service().instance_name(&mut name);
         let answer = MdnsRemoteService {
             instance_name: DottedName(name.as_str()),
@@ -3267,7 +3264,7 @@ mod resolve_tests {
 
     /// Deposit an answer for `service`.
     fn deposit(matter: &Matter<'_>, service: &MatterRemoteService) {
-        let mut name = heapless::String::<128>::new();
+        let mut name = String::<128>::new();
         service.instance_name(&mut name);
 
         matter.transport().try_deposit_mdns_resolve(
@@ -3399,8 +3396,6 @@ mod resolve_tests {
 mod browse_tests {
     use core::net::{IpAddr, Ipv4Addr};
 
-    use embassy_time::{Duration, Timer};
-
     use futures_lite::future::{block_on, zip};
 
     use crate::test::test_matter;
@@ -3408,6 +3403,7 @@ mod browse_tests {
         CommissionableFilter, DottedName, MdnsBrowseMatch, MdnsBrowseQuery, MdnsRemoteService,
     };
     use crate::utils::storage::Vec;
+    use crate::utils::timers::{Duration, Timer};
 
     /// Without a responder, a browse finds nothing and frees the slot for the next.
     #[test]

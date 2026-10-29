@@ -31,7 +31,7 @@ use crate::tlv::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
-use crate::utils::storage::Vec;
+use crate::utils::storage::{String, Vec};
 use crate::utils::sync::blocking::Mutex;
 
 pub use crate::dm::clusters::decl::globals::*;
@@ -52,7 +52,7 @@ struct SimpleStructOwned {
     b: bool,
     c: SimpleEnum,
     d: Vec<u8, 10>,
-    e: heapless::String<10>,
+    e: String<10>,
     f: SimpleBitmap,
     g: f32,
     h: f64,
@@ -66,7 +66,7 @@ impl SimpleStructOwned {
             b: false,
             c: SimpleEnum::ValueA,
             d <- Vec::init(),
-            e: heapless::String::new(),
+            e: String::new(),
             f: SimpleBitmap::empty(),
             g: 0.0,
             h: 0.0,
@@ -78,7 +78,7 @@ impl SimpleStructOwned {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct TestGlobalStructOwned {
-    name: heapless::String<10>,
+    name: String<10>,
     my_bitmap: Nullable<TestGlobalBitmap>,
     my_enum: Option<Nullable<TestGlobalEnum>>,
 }
@@ -86,7 +86,7 @@ struct TestGlobalStructOwned {
 impl TestGlobalStructOwned {
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            name: heapless::String::new(),
+            name: String::new(),
             my_bitmap <- Nullable::init_none(),
             my_enum: None,
         })
@@ -99,9 +99,9 @@ struct NullablesAndOptionalsStructOwned {
     nullable_int: Nullable<u16>,
     optional_int: Option<u16>,
     nullable_optional_int: Option<Nullable<u16>>,
-    nullable_string: Nullable<heapless::String<10>>,
-    optional_string: Option<heapless::String<10>>,
-    nullable_optional_string: Option<Nullable<heapless::String<10>>>,
+    nullable_string: Nullable<String<10>>,
+    optional_string: Option<String<10>>,
+    nullable_optional_string: Option<Nullable<String<10>>>,
     nullable_struct: Nullable<SimpleStructOwned>,
     optional_struct: Option<SimpleStructOwned>,
     nullable_optional_struct: Option<Nullable<SimpleStructOwned>>,
@@ -240,9 +240,9 @@ struct TestFabricScopedOwned {
     optional_fabric_sensitive_int8u: Option<u8>,
     nullable_fabric_sensitive_int8u: Nullable<u8>,
     optional_nullable_fabric_sensitive_int8u: Option<Nullable<u8>>,
-    fabric_sensitive_char_string: heapless::String<32>,
+    fabric_sensitive_char_string: String<32>,
     fabric_sensitive_struct: SimpleStructOwned,
-    fabric_sensitive_int8u_list: heapless::Vec<u8, 32>,
+    fabric_sensitive_int8u_list: Vec<u8, 32>,
 }
 
 impl TestFabricScopedOwned {
@@ -252,9 +252,9 @@ impl TestFabricScopedOwned {
             optional_fabric_sensitive_int8u: None,
             nullable_fabric_sensitive_int8u <- Nullable::init_none(),
             optional_nullable_fabric_sensitive_int8u: None,
-            fabric_sensitive_char_string: heapless::String::new(),
+            fabric_sensitive_char_string: String::new(),
             fabric_sensitive_struct <- SimpleStructOwned::init(),
-            fabric_sensitive_int8u_list: heapless::Vec::new(),
+            fabric_sensitive_int8u_list: Vec::new(),
         })
     }
 
@@ -338,8 +338,8 @@ pub struct UnitTestingHandlerData {
     list_octet_string: Vec<Vec<u8, 10>, 16>,
     list_struct_octet_string: Vec<TestListStructOctetOwned, 16>,
     long_octet_string: Vec<u8, 1000>,
-    char_string: heapless::String<10>,
-    long_char_string: heapless::String<1000>,
+    char_string: String<10>,
+    long_char_string: String<1000>,
     epoch_us: u64,
     epoch_s: u32,
     vendor_id: u16,
@@ -379,7 +379,7 @@ pub struct UnitTestingHandlerData {
     nullable_float_single: Nullable<f32>,
     nullable_float_double: Nullable<f64>,
     nullable_octet_string: Nullable<Vec<u8, 10>>,
-    nullable_char_string: Nullable<heapless::String<10>>,
+    nullable_char_string: Nullable<String<10>>,
     nullable_enum_attr: Nullable<SimpleEnum>,
     nullable_struct: Nullable<SimpleStructOwned>,
     nullable_range_restricted_int_8_u: Nullable<u8>,
@@ -426,8 +426,8 @@ impl UnitTestingHandlerData {
             list_octet_string <- Vec::init(),
             list_struct_octet_string <- Vec::init(),
             long_octet_string <- Vec::init(),
-            char_string: heapless::String::new(),
-            long_char_string: heapless::String::new(),
+            char_string: String::new(),
+            long_char_string: String::new(),
             epoch_us: 0,
             epoch_s: 0,
             vendor_id: 0,
@@ -486,7 +486,7 @@ impl UnitTestingHandlerData {
             nullable_float_single <- Nullable::init_none(),
             nullable_float_double <- Nullable::init_none(),
             nullable_octet_string <- Nullable::init_some(Vec::init()),
-            nullable_char_string: Nullable::some(heapless::String::new()),
+            nullable_char_string: Nullable::some(String::new()),
             nullable_enum_attr <- Nullable::init_none(),
             nullable_struct <- Nullable::init_none(),
             nullable_range_restricted_int_8_u: Nullable::some(70),
@@ -2673,7 +2673,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         // so for once here we'll on-stack allocate a temp buffer
 
         let l = request.arg_1()?;
-        let mut tmp = heapless::Vec::<u8, 16>::new();
+        let mut tmp = Vec::<u8, 16>::new();
         for i in l.iter() {
             unwrap!(tmp.push(i?));
         }

@@ -24,14 +24,13 @@ use core::pin::pin;
 
 use std::collections::HashMap;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::devices::test::TEST_DEV_DET;
 use rs_matter::error::Error;
 use rs_matter::persist::KvBlobStore;
 use rs_matter::transport::session::SessionMode;
+use rs_matter::utils::futures::{select, Either};
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::Matter;
 
 /// A simple in-memory multi-key [`KvBlobStore`] for tests.

@@ -22,9 +22,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use zbus::Connection;
 
 use crate::dm::clusters::net_comm::{
@@ -36,7 +33,9 @@ use crate::dm::clusters::thread_diag::{
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::networks::NetChangeNotif;
 use crate::error::Error;
+use crate::utils::futures::{select, Either};
 use crate::utils::sync::{blocking, MaybeSend};
+use crate::utils::timers::{Duration, Timer};
 use crate::utils::zbus_proxies::openthread::border_router::{
     BorderRouterProxy, LeaderData, MacCounters, NeighborEntry,
 };

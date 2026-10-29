@@ -71,12 +71,10 @@
 use core::cell::RefCell;
 use core::future::Future;
 
-use heapless::String as HString;
-
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, EndptId, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, Utf8Str};
-use crate::utils::storage::Vec;
+use crate::utils::storage::{String as HString, Vec};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::with;
@@ -896,8 +894,8 @@ where
                 // Allocate the lowest free id within
                 // 1..=max_presets.
                 let max_id = self.config.max_presets.min(NP as u8);
-                let used: heapless::Vec<u8, NP> = self.state.lock(|cell| {
-                    let mut v: heapless::Vec<u8, NP> = heapless::Vec::new();
+                let used: Vec<u8, NP> = self.state.lock(|cell| {
+                    let mut v: Vec<u8, NP> = Vec::new();
                     for p in cell.borrow().presets.iter() {
                         let _ = v.push(p.preset_id);
                     }

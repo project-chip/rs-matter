@@ -39,8 +39,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select4};
-
 use futures_lite::io::{AsyncBufReadExt, BufReader};
 
 use log::{info, warn};
@@ -68,11 +66,11 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 // `OnOffClient` brings the `.on_off()` IM-client method into scope on `Exchange`.
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
+use rs_matter::utils::futures::{select, select4, Coalesce};
 
 #[path = "../common/mdns.rs"]
 mod mdns;

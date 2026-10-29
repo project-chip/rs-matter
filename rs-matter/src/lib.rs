@@ -72,6 +72,9 @@ use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+use crate::utils::timers::Instant;
+#[cfg(feature = "case-resumption")]
+use crate::utils::timers::{Duration, Timer};
 
 use rand_core::Rng;
 
@@ -353,7 +356,7 @@ impl<'a> Matter<'a> {
     /// Reset only by [`Matter::factory_reset`].
     pub fn total_operational_hours(&self) -> u32 {
         let recorded = self.with_state(|state| state.operational_hours);
-        let current = embassy_time::Instant::now().as_secs() / (60 * 60);
+        let current = Instant::now().as_secs() / (60 * 60);
 
         recorded.saturating_add(current.min(u32::MAX as u64) as u32)
     }
@@ -1113,7 +1116,7 @@ impl<'a> Matter<'a> {
     ///   is the same fallback any resumption failure produces.
     ///
     /// Intended to be spawned alongside [`Matter::run`], for example
-    /// via `embassy_futures::select` or a dedicated executor task. It
+    /// via `crate::utils::futures::select` or a dedicated executor task. It
     /// never returns on the happy path — a `Result` is only produced
     /// if the KV backend errors.
     ///
@@ -1127,11 +1130,11 @@ impl<'a> Matter<'a> {
     pub async fn run_persist_resumption<K: KvBlobStoreAccess>(
         &self,
         kv: K,
-        min_interval: embassy_time::Duration,
+        min_interval: Duration,
     ) -> Result<(), Error> {
         loop {
             self.transport().wait_resumption_dirty().await;
-            embassy_time::Timer::after(min_interval).await;
+            Timer::after(min_interval).await;
 
             self.with_state(|state| state.resumption.store_persist(&kv))?;
 
