@@ -22,6 +22,8 @@
 use crate::error::*;
 
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+#[cfg(windows)]
+use std::net::{SocketAddr, SocketAddrV6};
 
 use async_io::Async;
 
@@ -31,8 +33,18 @@ use super::{NetworkMulticast, NetworkReceive, NetworkSend};
 
 impl NetworkSend for &Async<UdpSocket> {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
-        Async::<UdpSocket>::send_to(self, data, addr.udp().ok_or(ErrorCode::NoNetworkInterface)?)
-            .await?;
+        let addr = addr.udp().ok_or(ErrorCode::NoNetworkInterface)?;
+
+        // Windows only accepts IPv4 destinations in IPv4-mapped form on an IPv6 socket
+        #[cfg(windows)]
+        let addr = match addr {
+            SocketAddr::V4(v4) if self.get_ref().local_addr()?.is_ipv6() => {
+                SocketAddr::V6(SocketAddrV6::new(v4.ip().to_ipv6_mapped(), v4.port(), 0, 0))
+            }
+            other => other,
+        };
+
+        Async::<UdpSocket>::send_to(self, data, addr).await?;
 
         Ok(())
     }
