@@ -53,9 +53,12 @@ use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::persist::{KvBlobStoreAccess, FABRIC_KEYS_START, NETWORKS_KEY};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
-use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
+use rs_matter::transport::network::{
+    Address, MatterLocalService, NoNetwork, SocketAddr, SocketAddrV6,
+};
 use rs_matter::utils::futures::{select, select3, Coalesce, Either};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::storage::WriteBuf;
@@ -101,6 +104,7 @@ const NODE: Node<'static> = Node {
 };
 
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl DataModel + 'a {
@@ -108,7 +112,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -168,7 +172,7 @@ async fn run() -> Result<(), Error> {
         device_a,
         &crypto,
         buffers_a,
-        data_model(crypto.rand()?, &on_off_a),
+        data_model(device_a, crypto.rand()?, &on_off_a),
         &kv_a,
         state_a,
     );
@@ -197,7 +201,7 @@ async fn run() -> Result<(), Error> {
         device_b,
         &crypto,
         buffers_b,
-        data_model(crypto.rand()?, &on_off_b),
+        data_model(device_b, crypto.rand()?, &on_off_b),
         &kv_b,
         state_b,
     );
@@ -437,6 +441,14 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
         device_b.matter.has_fabrics(),
         "B should hold the resumed fabric"
     );
+
+    let mut advertised = false;
+    device_b.matter.mdns_services(|service| {
+        advertised |= matches!(service, MatterLocalService::Commissioned { .. });
+
+        Ok(())
+    })?;
+    assert!(advertised, "B should advertise the resumed fabric");
     assert!(
         device_b
             .matter

@@ -67,7 +67,7 @@ fn test_pase_handshake() {
             .unwrap();
 
         // Device side: transport + SecureChannel responder
-        let sc = SecureChannel::new(&crypto, &());
+        let sc = SecureChannel::new(&device_matter, &crypto, &());
         let responder = Responder::new("device", sc, &device_matter, 0);
 
         let device_fut = async {
@@ -114,12 +114,14 @@ async fn run_pase_handshake<C: Crypto>(
 ) -> Result<(), Error> {
     info!("Creating unsecured session and initiating PASE handshake...");
 
-    let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
+    let exchange = Exchange::initiate_plaintext(matter.transport(), crypto, peer_addr).await?;
     info!("Exchange initiated: {}", exchange.id());
 
     info!("Starting PASE handshake...");
 
-    let mut pase_fut = pin!(PaseInitiator::perform(exchange, crypto, 20202021, None));
+    let mut pase_fut = pin!(PaseInitiator::perform(
+        matter, exchange, crypto, 20202021, None
+    ));
     let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
     let result = match select(&mut pase_fut, &mut timeout).await {

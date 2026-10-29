@@ -1,0 +1,127 @@
+[package]
+name = "rs-matter-transport"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the transport: exchanges, sessions, MRP, UDP, TCP, BTP, mDNS"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["os", "log"]
+
+# Sizing
+
+# Number of exchanges per session.
+max-exchanges-per-session-16 = []
+max-exchanges-per-session-8 = []
+max-exchanges-per-session-7 = []
+max-exchanges-per-session-6 = []
+# Default number of exchanges per session (Matter requires a minimum of 5 exchanges per session).
+max-exchanges-per-session-5 = []
+max-exchanges-per-session-4 = []
+max-exchanges-per-session-3 = []
+
+# Number of BTP sessions.
+max-btp-sessions-8 = []
+max-btp-sessions-4 = []
+max-btp-sessions-2 = []
+# Default number of BTP sessions (Matter accessories typically need just 1 BTP session).
+max-btp-sessions-1 = []
+
+# Number of candidate peer addresses kept per mDNS resolve, for CASE failover.
+max-resolve-candidates-8 = []
+max-resolve-candidates-6 = []
+max-resolve-candidates-5 = []
+# Default number of resolve candidates: enough to hold the largest address set a
+# conformant peer can advertise on Wi-Fi / Ethernet - its link-local address plus
+# the three routable ones the Matter Core Specification requires it to support.
+max-resolve-candidates-4 = []
+max-resolve-candidates-3 = []
+max-resolve-candidates-2 = []
+# No failover: only the best-scored address is ever tried.
+max-resolve-candidates-1 = []
+
+# General
+
+# mDNS support for MacOSX.
+astro-dnssd = ["os", "dep:astro-dnssd"]
+# mDNS support for Linux and Windows (via Avahi or Bonjour).
+# Prefer the Avahi and Resolved mDNS implementations over Zeroconf for production deployments, via `zbus`.
+zeroconf = ["os", "dep:zeroconf"]
+# The transports which use the zBus proxies of `rs-matter-utils` (BlueZ, Avahi, systemd-resolved).
+zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel", "rs-matter-utils/zbus"]
+# BLE suppport for Linux (via BlueZ).
+# Prefer the BlueZ implementation over Bluer for production deployments, via `zbus`.
+bluer = ["dep:bluer", "dep:tokio", "dep:tokio-stream", "os", "rs-matter-utils/bluer"]
+# Umbrella set of features for typical OS-based non-baremetal deployments.
+os = ["std", "async-io", "rs-matter-utils/backtrace", "rs-matter-utils/os", "rs-matter-node-core/os"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-node-core/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-pairing/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-node-core/alloc"]
+# Multicast groups support.
+groups = ["rs-matter-crypto/groups", "rs-matter-node-core/groups"]
+# Extends the transport and the IM buffers to 1MB (from 1500 B), for Matter over TCP.
+large-buffers = ["rs-matter-dm-core/large-buffers"]
+# CASE session resumption (Sigma2-Resume fast-path + its persisted cache).
+case-resumption = []
+# Never initiate a new CASE session. Keeps no state for the CASE setups in progress.
+case-responder-only = []
+# Enable `debug`-level logging of TLV payloads.
+log-tlv-payload = []
+# Promote MRP-diagnostic logs from `debug` to `warn`.
+log-mrp = []
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt", "rs-matter-pairing/defmt", "rs-matter-im-core/defmt", "rs-matter-dm-core/defmt", "rs-matter-node-core/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-pairing/log", "rs-matter-im-core/log", "rs-matter-dm-core/log", "rs-matter-node-core/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-tlv = { workspace = true }
+rs-matter-crypto = { workspace = true }
+rs-matter-pairing = { workspace = true }
+rs-matter-im-core = { workspace = true }
+rs-matter-dm-core = { workspace = true }
+rs-matter-node-core = { workspace = true }
+bitflags = { workspace = true }
+cfg-if = { workspace = true }
+domain = { workspace = true }
+either = { workspace = true }
+num = { workspace = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
+rand_core = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+# STD
+async-io = { workspace = true, optional = true }
+
+# OS
+zbus = { workspace = true, optional = true }
+async-channel = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v4"], optional = true }
+libc = { workspace = true, optional = true }
+futures-lite = { workspace = true, optional = true }
+astro-dnssd = { workspace = true, optional = true }
+zeroconf = { workspace = true, optional = true }
+
+[target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
+nix = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync"], optional = true }
+tokio-stream = { workspace = true, optional = true }
+
+[dev-dependencies]
+rs-matter-crypto = { workspace = true, features = ["rustcrypto"] }
+embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
+env_logger = { workspace = true }
+futures-lite = { workspace = true }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

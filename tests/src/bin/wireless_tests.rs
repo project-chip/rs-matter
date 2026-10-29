@@ -187,7 +187,7 @@ fn run_wifi() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        data_model_wifi(rand, &on_off, networks, &net_ctl, &net_ctl),
+        data_model_wifi(matter, rand, &on_off, networks, &net_ctl, &net_ctl),
         &kv,
         state,
     );
@@ -288,7 +288,7 @@ fn run_thread() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        data_model_thread(rand, &on_off, networks, &net_ctl, &net_ctl),
+        data_model_thread(matter, rand, &on_off, networks, &net_ctl, &net_ctl),
         &kv,
         state,
     );
@@ -363,6 +363,7 @@ const NODE_THREAD: Node<'static> = Node {
 };
 
 fn data_model_wifi<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     networks: &'a mut WifiNetworks<MAX_NETWORKS>,
@@ -376,14 +377,14 @@ where
         NODE_WIFI,
         endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
@@ -393,6 +394,7 @@ where
 }
 
 fn data_model_thread<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     networks: &'a mut ThreadNetworks<MAX_NETWORKS>,
@@ -406,14 +408,14 @@ where
         NODE_THREAD,
         endpoints::ThreadSysHandlerBuilder::new(networks, net_ctl, thread_diag)
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,

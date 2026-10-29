@@ -105,7 +105,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &on_off_handler, &level_control_handler),
+        data_model(&matter, rand, &on_off_handler, &level_control_handler),
         &kv,
         &state,
     );
@@ -168,6 +168,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Speaker handler.
 fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a OnOffHandler<'a, OH, LH>,
     level_control: &'a LevelControlHandler<'a, LH, OH>,
@@ -176,7 +177,7 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

@@ -205,11 +205,8 @@ pub fn handler_adaptor(
             match AttributeId::try_from(ctx.attr().attr_id)? {
                 #(#handler_adaptor_attribute_match)*
                 #[allow(unreachable_code)]
-                other => {
-                    #[cfg(feature = "defmt")]
-                    #krate::reexport::defmt::error!("Attribute {:?} not supported", other);
-                    #[cfg(feature = "log")]
-                    #krate::reexport::log::error!("Attribute {:?} not supported", other);
+                _ => {
+                    #krate::dm::log_attr_not_supported(ctx.attr());
 
                     Err(#krate::error::ErrorCode::AttributeNotFound.into())
                 }
@@ -217,10 +214,7 @@ pub fn handler_adaptor(
         )
     } else {
         quote!(
-            #[cfg(feature = "defmt")]
-            #krate::reexport::defmt::error!("No cluster-specific attributes");
-            #[cfg(feature = "log")]
-            #krate::reexport::log::error!("No cluster-specific attributes");
+            #krate::dm::log_attr_not_supported(ctx.attr());
 
             Err(#krate::error::ErrorCode::AttributeNotFound.into())
         )
@@ -230,11 +224,8 @@ pub fn handler_adaptor(
         quote!(
             match AttributeId::try_from(ctx.attr().attr_id)? {
                 #(#handler_adaptor_attribute_write_match)*
-                other => {
-                    #[cfg(feature = "defmt")]
-                    #krate::reexport::defmt::error!("Attribute {:?} not supported", other);
-                    #[cfg(feature = "log")]
-                    #krate::reexport::log::error!("Attribute {:?} not supported", other);
+                _ => {
+                    #krate::dm::log_attr_not_supported(ctx.attr());
 
                     return Err(#krate::error::ErrorCode::AttributeNotFound.into());
                 }
@@ -242,10 +233,7 @@ pub fn handler_adaptor(
         )
     } else {
         quote!(
-            #[cfg(feature = "defmt")]
-            #krate::reexport::defmt::error!("No cluster-specific attributes");
-            #[cfg(feature = "log")]
-            #krate::reexport::log::error!("No cluster-specific attributes");
+            #krate::dm::log_attr_not_supported(ctx.attr());
 
             return Err(#krate::error::ErrorCode::AttributeNotFound.into());
         )
@@ -255,11 +243,8 @@ pub fn handler_adaptor(
         quote!(
             match CommandId::try_from(ctx.cmd().cmd_id)? {
                 #(#handler_adaptor_command_match)*
-                other => {
-                    #[cfg(feature = "defmt")]
-                    #krate::reexport::defmt::error!("Command {:?} not supported", other);
-                    #[cfg(feature = "log")]
-                    #krate::reexport::log::error!("Command {:?} not supported", other);
+                _ => {
+                    #krate::dm::log_cmd_not_supported(ctx.cmd());
 
                     return Err(#krate::error::ErrorCode::CommandNotFound.into());
                 }
@@ -267,10 +252,7 @@ pub fn handler_adaptor(
         )
     } else {
         quote!(
-            #[cfg(feature = "defmt")]
-            #krate::reexport::defmt::error!("No cluster-specific commands");
-            #[cfg(feature = "log")]
-            #krate::reexport::log::error!("No cluster-specific commands");
+            #krate::dm::log_cmd_not_supported(ctx.cmd());
 
             return Err(#krate::error::ErrorCode::CommandNotFound.into());
         )
@@ -872,24 +854,15 @@ fn handler_adaptor_attribute_match(
     );
 
     let attr_read_debug_build_start = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> (build) +", #attr_debug_id);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} -> (build) +", #attr_debug_id);
+        #krate::dm::log_build_start(&#attr_debug_id);
     );
 
     let attr_read_debug_build_end = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
+        #krate::dm::log_build_end(&#attr_debug_id, &attr_read_result.as_ref().map(|_| ()));
     );
 
     let attr_read_debug = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+        #krate::dm::log_result(&#attr_debug_id, &attr_read_result);
     );
 
     if builder {
@@ -985,10 +958,7 @@ fn handler_adaptor_attribute_write_match(
     let sawait = if asynch { quote!(.await) } else { quote!() };
 
     let attr_write_debug = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+        #krate::dm::log_data_result(&#attr_debug_id, &attr_data, &attr_write_result);
     );
 
     if attr.field.field.data_type.is_list {
@@ -1041,38 +1011,23 @@ fn handler_adaptor_command_match(
     let sawait = if asynch { quote!(.await) } else { quote!() };
 
     let cmd_invoke_debug_build_start = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+        #krate::dm::log_data_build_start(&#cmd_debug_id, &cmd_data);
     );
 
     let cmd_invoke_debug_noarg_build_start = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> (build) +", #cmd_debug_id);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} -> (build) +", #cmd_debug_id);
+        #krate::dm::log_build_start(&#cmd_debug_id);
     );
 
     let cmd_invoke_debug_build_end = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
+        #krate::dm::log_build_end(&#cmd_debug_id, &cmd_invoke_result.as_ref().map(|_| ()));
     );
 
     let cmd_invoke_debug = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+        #krate::dm::log_data_result(&#cmd_debug_id, &cmd_data, &cmd_invoke_result);
     );
 
     let cmd_invoke_debug_noarg = quote!(
-        #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
-        #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+        #krate::dm::log_result(&#cmd_debug_id, &cmd_invoke_result);
     );
 
     let field_req = cmd.input.as_ref().map(|id| {
@@ -1592,142 +1547,70 @@ mod tests {
                                 match AttributeId::try_from(ctx.attr().attr_id)? {
                                     AttributeId::OnOff => {
                                         let attr_read_result = self.0.on_off(&ctx);
-                                        #[cfg(feature = "defmt")]
-                                        rs_matter_crate::reexport::defmt::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
+                                        rs_matter_crate::dm::log_result(
+                                            &MetadataDebug((
                                                 ctx.attr().endpoint_id,
                                                 self,
-                                                MetadataDebug((AttributeId::OnOff, false))
+                                                MetadataDebug((AttributeId::OnOff, false)),
                                             )),
-                                            attr_read_result
-                                        );
-                                        #[cfg(feature = "log")]
-                                        rs_matter_crate::reexport::log::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::OnOff, false))
-                                            )),
-                                            attr_read_result
+                                            &attr_read_result,
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::GlobalSceneControl => {
                                         let attr_read_result = self.0.global_scene_control(&ctx);
-                                        #[cfg(feature = "defmt")]
-                                        rs_matter_crate::reexport::defmt::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
+                                        rs_matter_crate::dm::log_result(
+                                            &MetadataDebug((
                                                 ctx.attr().endpoint_id,
                                                 self,
                                                 MetadataDebug((
                                                     AttributeId::GlobalSceneControl,
-                                                    false
-                                                ))
+                                                    false,
+                                                )),
                                             )),
-                                            attr_read_result
-                                        );
-                                        #[cfg(feature = "log")]
-                                        rs_matter_crate::reexport::log::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::GlobalSceneControl,
-                                                    false
-                                                ))
-                                            )),
-                                            attr_read_result
+                                            &attr_read_result,
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::OnTime => {
                                         let attr_read_result = self.0.on_time(&ctx);
-                                        #[cfg(feature = "defmt")]
-                                        rs_matter_crate::reexport::defmt::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
+                                        rs_matter_crate::dm::log_result(
+                                            &MetadataDebug((
                                                 ctx.attr().endpoint_id,
                                                 self,
-                                                MetadataDebug((AttributeId::OnTime, false))
+                                                MetadataDebug((AttributeId::OnTime, false)),
                                             )),
-                                            attr_read_result
-                                        );
-                                        #[cfg(feature = "log")]
-                                        rs_matter_crate::reexport::log::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::OnTime, false))
-                                            )),
-                                            attr_read_result
+                                            &attr_read_result,
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::OffWaitTime => {
                                         let attr_read_result = self.0.off_wait_time(&ctx);
-                                        #[cfg(feature = "defmt")]
-                                        rs_matter_crate::reexport::defmt::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
+                                        rs_matter_crate::dm::log_result(
+                                            &MetadataDebug((
                                                 ctx.attr().endpoint_id,
                                                 self,
-                                                MetadataDebug((AttributeId::OffWaitTime, false))
+                                                MetadataDebug((AttributeId::OffWaitTime, false)),
                                             )),
-                                            attr_read_result
-                                        );
-                                        #[cfg(feature = "log")]
-                                        rs_matter_crate::reexport::log::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::OffWaitTime, false))
-                                            )),
-                                            attr_read_result
+                                            &attr_read_result,
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::StartUpOnOff => {
                                         let attr_read_result = self.0.start_up_on_off(&ctx);
-                                        #[cfg(feature = "defmt")]
-                                        rs_matter_crate::reexport::defmt::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
+                                        rs_matter_crate::dm::log_result(
+                                            &MetadataDebug((
                                                 ctx.attr().endpoint_id,
                                                 self,
-                                                MetadataDebug((AttributeId::StartUpOnOff, false))
+                                                MetadataDebug((AttributeId::StartUpOnOff, false)),
                                             )),
-                                            attr_read_result
-                                        );
-                                        #[cfg(feature = "log")]
-                                        rs_matter_crate::reexport::log::debug!(
-                                            "{:?} -> {:?}",
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::StartUpOnOff, false))
-                                            )),
-                                            attr_read_result
+                                            &attr_read_result,
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     #[allow(unreachable_code)]
-                                    other => {
-                                        #[cfg(feature = "defmt")]
-                                        rs_matter_crate::reexport::defmt::error!(
-                                            "Attribute {:?} not supported",
-                                            other
-                                        );
-                                        #[cfg(feature = "log")]
-                                        rs_matter_crate::reexport::log::error!(
-                                            "Attribute {:?} not supported",
-                                            other
-                                        );
+                                    _ => {
+                                        rs_matter_crate::dm::log_attr_not_supported(ctx.attr());
                                         Err(rs_matter_crate::error::ErrorCode::AttributeNotFound
                                             .into())
                                     }
@@ -1751,27 +1634,14 @@ mod tests {
                                 let attr_data: u16 =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result = self.0.set_on_time(&ctx, attr_data.clone());
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_data_result(
+                                    &MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
-                                        MetadataDebug((AttributeId::OnTime, false))
+                                        MetadataDebug((AttributeId::OnTime, false)),
                                     )),
-                                    attr_data,
-                                    attr_write_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
-                                        ctx.attr().endpoint_id,
-                                        self,
-                                        MetadataDebug((AttributeId::OnTime, false))
-                                    )),
-                                    attr_data,
-                                    attr_write_result
+                                    &attr_data,
+                                    &attr_write_result,
                                 );
                                 attr_write_result?;
                             }
@@ -1780,27 +1650,14 @@ mod tests {
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result =
                                     self.0.set_off_wait_time(&ctx, attr_data.clone());
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_data_result(
+                                    &MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
-                                        MetadataDebug((AttributeId::OffWaitTime, false))
+                                        MetadataDebug((AttributeId::OffWaitTime, false)),
                                     )),
-                                    attr_data,
-                                    attr_write_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
-                                        ctx.attr().endpoint_id,
-                                        self,
-                                        MetadataDebug((AttributeId::OffWaitTime, false))
-                                    )),
-                                    attr_data,
-                                    attr_write_result
+                                    &attr_data,
+                                    &attr_write_result,
                                 );
                                 attr_write_result?;
                             }
@@ -1809,41 +1666,19 @@ mod tests {
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result =
                                     self.0.set_start_up_on_off(&ctx, attr_data.clone());
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_data_result(
+                                    &MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
-                                        MetadataDebug((AttributeId::StartUpOnOff, false))
+                                        MetadataDebug((AttributeId::StartUpOnOff, false)),
                                     )),
-                                    attr_data,
-                                    attr_write_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
-                                        ctx.attr().endpoint_id,
-                                        self,
-                                        MetadataDebug((AttributeId::StartUpOnOff, false))
-                                    )),
-                                    attr_data,
-                                    attr_write_result
+                                    &attr_data,
+                                    &attr_write_result,
                                 );
                                 attr_write_result?;
                             }
-                            other => {
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::error!(
-                                    "Attribute {:?} not supported",
-                                    other
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::error!(
-                                    "Attribute {:?} not supported",
-                                    other
-                                );
+                            _ => {
+                                rs_matter_crate::dm::log_attr_not_supported(ctx.attr());
                                 return Err(
                                     rs_matter_crate::error::ErrorCode::AttributeNotFound.into()
                                 );
@@ -1860,73 +1695,37 @@ mod tests {
                         match CommandId::try_from(ctx.cmd().cmd_id)? {
                             CommandId::Off => {
                                 let cmd_invoke_result = self.0.handle_off(&ctx);
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_result(
+                                    &MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
-                                        MetadataDebug(CommandId::Off)
+                                        MetadataDebug(CommandId::Off),
                                     )),
-                                    cmd_invoke_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::Off)
-                                    )),
-                                    cmd_invoke_result
+                                    &cmd_invoke_result,
                                 );
                                 cmd_invoke_result?;
                             }
                             CommandId::On => {
                                 let cmd_invoke_result = self.0.handle_on(&ctx);
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_result(
+                                    &MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
-                                        MetadataDebug(CommandId::On)
+                                        MetadataDebug(CommandId::On),
                                     )),
-                                    cmd_invoke_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::On)
-                                    )),
-                                    cmd_invoke_result
+                                    &cmd_invoke_result,
                                 );
                                 cmd_invoke_result?;
                             }
                             CommandId::Toggle => {
                                 let cmd_invoke_result = self.0.handle_toggle(&ctx);
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_result(
+                                    &MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
-                                        MetadataDebug(CommandId::Toggle)
+                                        MetadataDebug(CommandId::Toggle),
                                     )),
-                                    cmd_invoke_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::Toggle)
-                                    )),
-                                    cmd_invoke_result
+                                    &cmd_invoke_result,
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1935,52 +1734,27 @@ mod tests {
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let cmd_invoke_result =
                                     self.0.handle_off_with_effect(&ctx, cmd_data.clone());
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_data_result(
+                                    &MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
-                                        MetadataDebug(CommandId::OffWithEffect)
+                                        MetadataDebug(CommandId::OffWithEffect),
                                     )),
-                                    cmd_data,
-                                    cmd_invoke_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::OffWithEffect)
-                                    )),
-                                    cmd_data,
-                                    cmd_invoke_result
+                                    &cmd_data,
+                                    &cmd_invoke_result,
                                 );
                                 cmd_invoke_result?;
                             }
                             CommandId::OnWithRecallGlobalScene => {
                                 let cmd_invoke_result =
                                     self.0.handle_on_with_recall_global_scene(&ctx);
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_result(
+                                    &MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
-                                        MetadataDebug(CommandId::OnWithRecallGlobalScene)
+                                        MetadataDebug(CommandId::OnWithRecallGlobalScene),
                                     )),
-                                    cmd_invoke_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?} -> {:?}",
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::OnWithRecallGlobalScene)
-                                    )),
-                                    cmd_invoke_result
+                                    &cmd_invoke_result,
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1989,41 +1763,19 @@ mod tests {
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let cmd_invoke_result =
                                     self.0.handle_on_with_timed_off(&ctx, cmd_data.clone());
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
+                                rs_matter_crate::dm::log_data_result(
+                                    &MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
-                                        MetadataDebug(CommandId::OnWithTimedOff)
+                                        MetadataDebug(CommandId::OnWithTimedOff),
                                     )),
-                                    cmd_data,
-                                    cmd_invoke_result
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::OnWithTimedOff)
-                                    )),
-                                    cmd_data,
-                                    cmd_invoke_result
+                                    &cmd_data,
+                                    &cmd_invoke_result,
                                 );
                                 cmd_invoke_result?;
                             }
-                            other => {
-                                #[cfg(feature = "defmt")]
-                                rs_matter_crate::reexport::defmt::error!(
-                                    "Command {:?} not supported",
-                                    other
-                                );
-                                #[cfg(feature = "log")]
-                                rs_matter_crate::reexport::log::error!(
-                                    "Command {:?} not supported",
-                                    other
-                                );
+                            _ => {
+                                rs_matter_crate::dm::log_cmd_not_supported(ctx.cmd());
                                 return Err(
                                     rs_matter_crate::error::ErrorCode::CommandNotFound.into()
                                 );

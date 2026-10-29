@@ -25,7 +25,7 @@ use syn::{DeriveInput, Lifetime, LifetimeParam, LitInt, LitStr, Type};
 
 #[derive(PartialEq, Debug)]
 struct TlvArgs {
-    rs_matter_crate: String,
+    tlv_crate: String,
     start: u8,
     datatype: String,
     /// If `true`, the derived `FromTLV` implementation assumes incoming
@@ -49,7 +49,7 @@ impl Default for TlvArgs {
     fn default() -> Self {
         Self {
             start: 0,
-            rs_matter_crate: "".to_string(),
+            tlv_crate: "".to_string(),
             datatype: "struct".to_string(),
             assume_ordered: false,
             lifetime: Lifetime::new("'_", Span::call_site()),
@@ -82,9 +82,14 @@ impl TlvArgs {
     }
 }
 
-fn parse_tlvargs(ast: &DeriveInput, rs_matter_crate: String) -> TlvArgs {
+/// Parse the path to the TLV crate, for use in the generated code
+fn krate(tlv_crate: &str) -> syn::Path {
+    syn::parse_str(tlv_crate).expect("a valid path to the TLV crate")
+}
+
+fn parse_tlvargs(ast: &DeriveInput, tlv_crate: String) -> TlvArgs {
     let mut tlvargs = TlvArgs {
-        rs_matter_crate,
+        tlv_crate,
         ..Default::default()
     };
 
@@ -191,16 +196,16 @@ fn gen_totlv_for_struct_unnamed(
         panic!("Only a single unnamed field supported for unnamed structures");
     }
 
-    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+    let krate = krate(&tlvargs.tlv_crate);
 
     quote! {
-        impl #generics #krate::tlv::ToTLV for #struct_name #generics {
-            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
-                #krate::tlv::ToTLV::to_tlv(&self.0, tag, &mut tw)
+        impl #generics #krate::ToTLV for #struct_name #generics {
+            fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+                #krate::ToTLV::to_tlv(&self.0, tag, &mut tw)
             }
 
-            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
-                #krate::tlv::ToTLV::tlv_iter(&self.0, tag)
+            fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                #krate::ToTLV::tlv_iter(&self.0, tag)
             }
         }
     }
@@ -236,17 +241,17 @@ fn gen_totlv_for_struct_named(
         }
     }
 
-    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+    let krate = krate(&tlvargs.tlv_crate);
 
     quote! {
-        impl #generics #krate::tlv::ToTLV for #struct_name #generics {
-            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
+        impl #generics #krate::ToTLV for #struct_name #generics {
+            fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
                 let anchor = tw.get_tail();
 
                 if let Err(err) = (|| {
                     tw.#datatype(tag)?;
                     #(
-                        #krate::tlv::ToTLV::to_tlv(&self.#idents, &#krate::tlv::TLVTag::Context(#tags), &mut tw)?;
+                        #krate::ToTLV::to_tlv(&self.#idents, &#krate::TLVTag::Context(#tags), &mut tw)?;
                     )*
                     tw.end_container()
                 })() {
@@ -257,12 +262,12 @@ fn gen_totlv_for_struct_named(
                 }
             }
 
-            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
-                let iter = #krate::tlv::TLV::#container(tag).into_tlv_iter();
+            fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                let iter = #krate::TLV::#container(tag).into_tlv_iter();
 
-                #(let iter = Iterator::chain(iter, #krate::tlv::ToTLV::tlv_iter(&self.#idents, #krate::tlv::TLVTag::Context(#tags)));)*
+                #(let iter = Iterator::chain(iter, #krate::ToTLV::tlv_iter(&self.#idents, #krate::TLVTag::Context(#tags)));)*
 
-                Iterator::chain(iter, #krate::tlv::TLV::end_container().into_tlv_iter())
+                Iterator::chain(iter, #krate::TLV::end_container().into_tlv_iter())
             }
         }
     }
@@ -319,7 +324,7 @@ fn gen_totlv_for_enum(
         }
     }
 
-    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+    let krate = krate(&tlvargs.tlv_crate);
 
     if variant_types.contains(&FieldTypes::Unit) {
         let datatype = Ident::new(
@@ -335,8 +340,8 @@ fn gen_totlv_for_enum(
             get_unit_enum_func_and_tags(enum_name, tlvargs.datatype.as_str(), tags);
 
         quote! {
-            impl #generics #krate::tlv::ToTLV for #enum_name #generics {
-                fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
+            impl #generics #krate::ToTLV for #enum_name #generics {
+                fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
                     let anchor = tw.get_tail();
 
                     if let Err(err) = (|| {
@@ -351,25 +356,25 @@ fn gen_totlv_for_enum(
                     }
                 }
 
-                fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
+                fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
                     match self {
-                        #( Self::#variant_names => #krate::tlv::TLV::#write_func(tag, #tags).into_tlv_iter(), )*
+                        #( Self::#variant_names => #krate::TLV::#write_func(tag, #tags).into_tlv_iter(), )*
                     }
                 }
 
-                fn nullable_to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
+                fn nullable_to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
                     if *self as #datatype != #datatype::MAX {
                         Self::to_tlv(self, tag, tw)
                     } else {
-                        Err(#krate::error::ErrorCode::ConstraintError.into())
+                        Err(#krate::__private::ErrorCode::ConstraintError.into())
                     }
                 }
 
-                fn nullable_tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
+                fn nullable_tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
                     if *self as #datatype != #datatype::MAX {
-                        #krate::tlv::EitherIter::First(Self::tlv_iter(self, tag))
+                        #krate::EitherIter::First(Self::tlv_iter(self, tag))
                     } else {
-                        #krate::tlv::EitherIter::Second(core::iter::once(Err(#krate::error::ErrorCode::ConstraintError.into())))
+                        #krate::EitherIter::Second(core::iter::once(Err(#krate::__private::ErrorCode::ConstraintError.into())))
                     }
                 }
             }
@@ -410,14 +415,14 @@ fn gen_totlv_for_enum(
 
         if tlvargs.datatype == "naked" {
             quote! {
-                impl #generics #krate::tlv::ToTLV for #enum_name #generics {
-                    fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
+                impl #generics #krate::ToTLV for #enum_name #generics {
+                    fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
                         let anchor = tw.get_tail();
 
                         if let Err(err) = (|| {
                             match self {
                                 #(
-                                    Self::#variant_names(c) => { #krate::tlv::ToTLV::to_tlv(c, &#krate::tlv::TLVTag::Context(#tags), &mut tw) }
+                                    Self::#variant_names(c) => { #krate::ToTLV::to_tlv(c, &#krate::TLVTag::Context(#tags), &mut tw) }
                                 )*
                             }
                         })() {
@@ -428,10 +433,10 @@ fn gen_totlv_for_enum(
                         }
                     }
 
-                    fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
+                    fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
                         match self {
                             #(
-                                Self::#variant_names(c) => #krate::tlv::#either_ident::#either_variants(#krate::tlv::ToTLV::tlv_iter(c, #krate::tlv::TLVTag::Context(#tags))),
+                                Self::#variant_names(c) => #krate::#either_ident::#either_variants(#krate::ToTLV::tlv_iter(c, #krate::TLVTag::Context(#tags))),
                             )*
                         }
                     }
@@ -439,15 +444,15 @@ fn gen_totlv_for_enum(
             }
         } else {
             quote! {
-                impl #generics #krate::tlv::ToTLV for #enum_name #generics {
-                    fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
+                impl #generics #krate::ToTLV for #enum_name #generics {
+                    fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
                         let anchor = tw.get_tail();
 
                         if let Err(err) = (|| {
                             tw.start_struct(tag)?;
                             match self {
                                 #(
-                                    Self::#variant_names(c) => #krate::tlv::ToTLV::to_tlv(c, &#krate::tlv::TLVTag::Context(#tags), &mut tw),
+                                    Self::#variant_names(c) => #krate::ToTLV::to_tlv(c, &#krate::TLVTag::Context(#tags), &mut tw),
                                 )*
                             }?;
                             tw.end_container()
@@ -459,16 +464,16 @@ fn gen_totlv_for_enum(
                         }
                     }
 
-                    fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
-                        let iter = #krate::tlv::TLV::structure(tag).into_tlv_iter();
+                    fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                        let iter = #krate::TLV::structure(tag).into_tlv_iter();
 
                         let iter = Iterator::chain(iter, match self {
                             #(
-                                Self::#variant_names(c) => #krate::tlv::#either_ident::#either_variants(#krate::tlv::ToTLV::tlv_iter(c, #krate::tlv::TLVTag::Context(#tags))),
+                                Self::#variant_names(c) => #krate::#either_ident::#either_variants(#krate::ToTLV::tlv_iter(c, #krate::TLVTag::Context(#tags))),
                             )*
                         });
 
-                        Iterator::chain(iter, #krate::tlv::TLV::end_container().into_tlv_iter())
+                        Iterator::chain(iter, #krate::TLV::end_container().into_tlv_iter())
                     }
                 }
             }
@@ -501,10 +506,10 @@ fn gen_totlv_for_enum(
 ///
 /// Enumeration values can use `enumval` attribute to specify what numeric
 /// value a specific element corresponds to.
-pub fn derive_totlv(ast: DeriveInput, rs_matter_crate: String) -> TokenStream {
+pub fn derive_totlv(ast: DeriveInput, tlv_crate: String) -> TokenStream {
     let name = &ast.ident;
 
-    let tlvargs = parse_tlvargs(&ast, rs_matter_crate);
+    let tlvargs = parse_tlvargs(&ast, tlv_crate);
     let generics = ast.generics;
 
     match &ast.data {
@@ -546,22 +551,22 @@ fn gen_fromtlv_for_struct_unnamed(
         panic!("Only a single unnamed field supported for unnamed structures");
     }
 
-    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+    let krate = krate(&tlvargs.tlv_crate);
     let lifetime = tlvargs.lifetime;
     let ty = normalize_fromtlv_type(&fields.unnamed[0].ty);
 
     quote! {
-        impl #generics #krate::tlv::FromTLV<#lifetime> for #struct_name #generics {
-            fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
+        impl #generics #krate::FromTLV<#lifetime> for #struct_name #generics {
+            fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
                 Ok(Self(#ty::from_tlv(element)?))
             }
         }
 
-        impl #generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #struct_name #generics {
-            type Error = #krate::error::Error;
+        impl #generics TryFrom<&#krate::TLVElement<#lifetime>> for #struct_name #generics {
+            type Error = #krate::__private::Error;
 
-            fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
-                use #krate::tlv::FromTLV;
+            fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
+                use #krate::FromTLV;
 
                 Self::from_tlv(element)
             }
@@ -620,7 +625,7 @@ fn gen_fromtlv_for_struct_named(
         types.push(normalize_fromtlv_type(&field.ty));
     }
 
-    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+    let krate = krate(&tlvargs.tlv_crate);
     let seq_method = format_ident!(
         "{}_ctx",
         if tlvargs.assume_ordered {
@@ -631,8 +636,8 @@ fn gen_fromtlv_for_struct_named(
     );
 
     quote! {
-        impl #impl_generics #krate::tlv::FromTLV<#lifetime> for #struct_name #generics {
-            fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
+        impl #impl_generics #krate::FromTLV<#lifetime> for #struct_name #generics {
+            fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
                 #[allow(unused_mut)]
                 let mut seq = element.#datatype()?;
 
@@ -642,26 +647,26 @@ fn gen_fromtlv_for_struct_named(
                 })
             }
 
-            fn init_from_tlv(element: #krate::tlv::TLVElement<#lifetime>) -> impl #krate::utils::init::Init<Self, #krate::error::Error> {
-                #krate::utils::init::into_init(move || {
+            fn init_from_tlv(element: #krate::TLVElement<#lifetime>) -> impl #krate::__private::Init<Self, #krate::__private::Error> {
+                #krate::__private::into_init(move || {
                     #[allow(unused_mut)]
                     let mut seq = element.#datatype()?;
 
-                    let init = #krate::utils::init::try_init!(Self {
+                    let init = #krate::__private::try_init!(Self {
                         #(#idents <- #types::init_from_tlv(seq.#seq_method(#tags)?),
                         )*
-                    }? #krate::error::Error);
+                    }? #krate::__private::Error);
 
                     Ok(init)
                 })
             }
         }
 
-        impl #impl_generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #struct_name #generics {
-            type Error = #krate::error::Error;
+        impl #impl_generics TryFrom<&#krate::TLVElement<#lifetime>> for #struct_name #generics {
+            type Error = #krate::__private::Error;
 
-            fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
-                use #krate::tlv::FromTLV;
+            fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
+                use #krate::FromTLV;
 
                 Self::from_tlv(element)
             }
@@ -722,7 +727,7 @@ fn gen_fromtlv_for_enum(
         }
     }
 
-    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+    let krate = krate(&tlvargs.tlv_crate);
     if variant_types.contains(&FieldTypes::Unit) {
         let datatype = Ident::new(
             if tlvargs.datatype.as_str() == "struct" {
@@ -737,35 +742,35 @@ fn gen_fromtlv_for_enum(
             get_unit_enum_func_and_tags(enum_name, tlvargs.datatype.as_str(), tags);
 
         quote! {
-            impl #generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {
-                fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
+            impl #generics #krate::FromTLV<#lifetime> for #enum_name #generics {
+                fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
                     Ok(match element.#elem_read_method()? {
                         #(#tags => Self::#variant_names,
                         )*
-                        _ => Err(#krate::error::ErrorCode::Invalid)?,
+                        _ => Err(#krate::__private::ErrorCode::Invalid)?,
                     })
                 }
 
-                fn nullable_from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
+                fn nullable_from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
                     let value = element.#elem_read_method()?;
 
                     if value != #datatype::MAX {
                         Ok(match value {
                             #(#tags => Self::#variant_names,
                             )*
-                            _ => Err(#krate::error::ErrorCode::Invalid)?,
+                            _ => Err(#krate::__private::ErrorCode::Invalid)?,
                         })
                     } else {
-                        Err(#krate::error::ErrorCode::ConstraintError.into())
+                        Err(#krate::__private::ErrorCode::ConstraintError.into())
                     }
                 }
             }
 
-            impl #generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #enum_name #generics {
-                type Error = #krate::error::Error;
+            impl #generics TryFrom<&#krate::TLVElement<#lifetime>> for #enum_name #generics {
+                type Error = #krate::__private::Error;
 
-                fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
-                    use #krate::tlv::FromTLV;
+                fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
+                    use #krate::FromTLV;
 
                     Self::from_tlv(element)
                 }
@@ -801,34 +806,34 @@ fn gen_fromtlv_for_enum(
                     .r#struct()?
                     .iter()
                     .next()
-                    .ok_or(#krate::error::ErrorCode::TLVTypeMismatch)??;
+                    .ok_or(#krate::__private::ErrorCode::TLVTypeMismatch)??;
             }
         } else {
             TokenStream::new()
         };
 
         quote! {
-            impl #generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {
-                fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
+            impl #generics #krate::FromTLV<#lifetime> for #enum_name #generics {
+                fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
                     #enter
 
                     let tag = element
                         .try_ctx()?
-                        .ok_or(#krate::error::ErrorCode::TLVTypeMismatch)?;
+                        .ok_or(#krate::__private::ErrorCode::TLVTypeMismatch)?;
 
                     Ok(match tag {
                         #(#tags => Self::#variant_names(#types::from_tlv(&element)?),
                         )*
-                        _ => Err(#krate::error::ErrorCode::Invalid)?,
+                        _ => Err(#krate::__private::ErrorCode::Invalid)?,
                     })
                 }
             }
 
-            impl #generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #enum_name #generics {
-                type Error = #krate::error::Error;
+            impl #generics TryFrom<&#krate::TLVElement<#lifetime>> for #enum_name #generics {
+                type Error = #krate::__private::Error;
 
-                fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
-                    use #krate::tlv::FromTLV;
+                fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
+                    use #krate::FromTLV;
 
                     Self::from_tlv(element)
                 }
@@ -888,10 +893,10 @@ fn normalize_fromtlv_type(ty: &syn::Type) -> TokenStream {
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
-pub fn derive_fromtlv(ast: DeriveInput, rs_matter_crate: String) -> TokenStream {
+pub fn derive_fromtlv(ast: DeriveInput, tlv_crate: String) -> TokenStream {
     let name = &ast.ident;
 
-    let tlvargs = parse_tlvargs(&ast, rs_matter_crate);
+    let tlvargs = parse_tlvargs(&ast, tlv_crate);
 
     let generics = ast.generics;
 
@@ -920,7 +925,7 @@ mod tests {
         assert_eq!(
             parse_tlvargs(&ast, "test".to_string()),
             TlvArgs {
-                rs_matter_crate: "test".to_string(),
+                tlv_crate: "test".to_string(),
                 datatype: "list".to_string(),
                 ..Default::default()
             }
@@ -934,7 +939,7 @@ mod tests {
         assert_eq!(
             parse_tlvargs(&ast, "crate".to_string()),
             TlvArgs {
-                rs_matter_crate: "crate".to_string(),
+                tlv_crate: "crate".to_string(),
                 assume_ordered: true,
                 ..Default::default()
             }
@@ -948,7 +953,7 @@ mod tests {
         assert_eq!(
             parse_tlvargs(&ast, "crate".to_string()),
             TlvArgs {
-                rs_matter_crate: "crate".to_string(),
+                tlv_crate: "crate".to_string(),
                 start: 123,
                 ..Default::default()
             }
@@ -973,14 +978,14 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_totlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::ToTLV for TestS {
                     fn to_tlv<W: rs_matter_maybe_renamed::tlv::TLVWrite>(
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             tw.start_struct(tag)?;
@@ -998,7 +1003,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
                         let iter = rs_matter_maybe_renamed::tlv::TLV::structure(tag).into_tlv_iter();
 
                         let iter = Iterator::chain(
@@ -1031,12 +1036,13 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_fromtlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl<'__from_tlv> rs_matter_maybe_renamed::tlv::FromTLV<'__from_tlv> for TestS {
                     fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error>
+                    {
                         #[allow(unused_mut)]
                         let mut seq = element.r#struct()?;
 
@@ -1052,20 +1058,20 @@ mod tests {
 
                     fn init_from_tlv(
                         element: rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
-                    ) -> impl rs_matter_maybe_renamed::utils::init::Init<
+                    ) -> impl rs_matter_maybe_renamed::tlv::__private::Init<
                         Self,
-                        rs_matter_maybe_renamed::error::Error,
+                        rs_matter_maybe_renamed::tlv::__private::Error,
                     > {
-                        rs_matter_maybe_renamed::utils::init::into_init(move || {
+                        rs_matter_maybe_renamed::tlv::__private::into_init(move || {
                             #[allow(unused_mut)]
                             let mut seq = element.r#struct()?;
 
-                            let init = rs_matter_maybe_renamed::utils::init::try_init!(Self {
+                            let init = rs_matter_maybe_renamed::tlv::__private::try_init!(Self {
                                 field1 <- u8::init_from_tlv(seq.find_ctx(0u8)?),
                                 field2 <- u32::init_from_tlv(seq.find_ctx(1u8)?),
                                 field_opt <- Option::init_from_tlv(seq.find_ctx(2u8)?),
                                 field_null <- rs_matter_maybe_renamed::tlv::Nullable::init_from_tlv(seq.find_ctx(3u8)?),
-                            }? rs_matter_maybe_renamed::error::Error);
+                            }? rs_matter_maybe_renamed::tlv::__private::Error);
 
                             Ok(init)
                         })
@@ -1073,7 +1079,7 @@ mod tests {
                 }
 
                 impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestS {
-                    type Error = rs_matter_maybe_renamed::error::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
@@ -1097,14 +1103,14 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_totlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::ToTLV for TestEnum {
                     fn to_tlv<W: rs_matter_maybe_renamed::tlv::TLVWrite>(
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             tw.start_struct(tag)?;
@@ -1124,7 +1130,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
                         let iter = rs_matter_maybe_renamed::tlv::TLV::structure(tag).into_tlv_iter();
 
                         let iter = Iterator::chain(
@@ -1158,14 +1164,14 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_totlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::ToTLV for TestEnum {
                     fn to_tlv<W: rs_matter_maybe_renamed::tlv::TLVWrite>(
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             match self {
@@ -1183,7 +1189,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
                         match self {
                             Self::ValueA => rs_matter_maybe_renamed::tlv::TLV::u8(tag, 0u8).into_tlv_iter(),
                             Self::ValueB => rs_matter_maybe_renamed::tlv::TLV::u8(tag, 1u8).into_tlv_iter(),
@@ -1194,11 +1200,11 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
                         if *self as u8 != u8::MAX {
                             Self::to_tlv(self, tag, tw)
                         } else {
-                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
                         }
                     }
 
@@ -1206,13 +1212,13 @@ mod tests {
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
                     ) -> impl Iterator<
-                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>,
+                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>,
                     > {
                         if *self as u8 != u8::MAX {
                             rs_matter_maybe_renamed::tlv::EitherIter::First(Self::tlv_iter(self, tag))
                         } else {
                             rs_matter_maybe_renamed::tlv::EitherIter::Second(core::iter::once(Err(
-                                rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into(),
+                                rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into(),
                             )))
                         }
                     }
@@ -1237,14 +1243,14 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_totlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::ToTLV for TestEnum {
                     fn to_tlv<W: rs_matter_maybe_renamed::tlv::TLVWrite>(
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             match self {
@@ -1264,7 +1270,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
                         match self {
                             Self::ValueA => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 0u16).into_tlv_iter(),
                             Self::ValueB => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 1u16).into_tlv_iter(),
@@ -1277,11 +1283,11 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
                         if *self as u16 != u16::MAX {
                             Self::to_tlv(self, tag, tw)
                         } else {
-                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
                         }
                     }
 
@@ -1289,13 +1295,13 @@ mod tests {
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
                     ) -> impl Iterator<
-                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>,
+                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>,
                     > {
                         if *self as u16 != u16::MAX {
                             rs_matter_maybe_renamed::tlv::EitherIter::First(Self::tlv_iter(self, tag))
                         } else {
                             rs_matter_maybe_renamed::tlv::EitherIter::Second(core::iter::once(Err(
-                                rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into(),
+                                rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into(),
                             )))
                         }
                     }
@@ -1315,32 +1321,32 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_fromtlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
                     fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
                         let element = element
                             .r#struct()?
                             .iter()
                             .next()
-                            .ok_or(rs_matter_maybe_renamed::error::ErrorCode::TLVTypeMismatch)??;
+                            .ok_or(rs_matter_maybe_renamed::tlv::__private::ErrorCode::TLVTypeMismatch)??;
 
                         let tag = element
                             .try_ctx()?
-                            .ok_or(rs_matter_maybe_renamed::error::ErrorCode::TLVTypeMismatch)?;
+                            .ok_or(rs_matter_maybe_renamed::tlv::__private::ErrorCode::TLVTypeMismatch)?;
 
                         Ok(match tag {
                             0u8 => Self::ValueA(u32::from_tlv(&element)?),
                             1u8 => Self::ValueB(u32::from_tlv(&element)?),
-                            _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                            _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
                         })
                     }
                 }
 
                 impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
-                    type Error = rs_matter_maybe_renamed::error::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
@@ -1365,37 +1371,37 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_fromtlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
                    fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
                         Ok(match element.u8()? {
                             0u8 => Self::ValueA,
                             1u8 => Self::ValueB,
-                            _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                            _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
                         })
                     }
 
                     fn nullable_from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
                         let value = element.u8()?;
                         if value != u8::MAX {
                             Ok(match value {
                                 0u8 => Self::ValueA,
                                 1u8 => Self::ValueB,
-                                _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                                _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
                             })
                         } else {
-                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
                         }
                     }
                 }
 
                 impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
-                    type Error = rs_matter_maybe_renamed::error::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
@@ -1424,24 +1430,24 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &derive_fromtlv(ast, "rs_matter_maybe_renamed::tlv".to_string()),
             &quote!(
                 impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
                     fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
                         Ok(match element.u16()? {
                             0u16 => Self::A,
                             1u16 => Self::B,
                             100u16 => Self::C,
                             4660u16 => Self::D,
-                            _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                            _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
                        })
                     }
 
                     fn nullable_from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
                         let value = element.u16()?;
                         if value != u16::MAX {
                             Ok(match value {
@@ -1449,16 +1455,16 @@ mod tests {
                                 1u16 => Self::B,
                                 100u16 => Self::C,
                                 4660u16 => Self::D,
-                                _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                                _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
                             })
                         } else {
-                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
                         }
                     }
                 }
 
                 impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
-                    type Error = rs_matter_maybe_renamed::error::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,

@@ -82,8 +82,8 @@ use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ON_OFF_LIGHT_SWITCH
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
-use rs_matter::im::client::ImClient;
 use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
+use rs_matter::im::ImClient;
 use rs_matter::im::{CmdDataTag, CmdPath, InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
@@ -92,6 +92,7 @@ use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::case::CaseInitiator;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::tlv::{Nullable, OctetStr, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
@@ -181,6 +182,7 @@ const SWITCH_NODE: Node<'static> = Node {
 };
 
 fn switch_data_model<'a>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     bindings: &'a Bindings<MAX_BINDINGS>,
 ) -> impl DataModel + 'a {
@@ -188,7 +190,7 @@ fn switch_data_model<'a>(
         SWITCH_NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -223,6 +225,7 @@ const LIGHT_NODE: Node<'static> = Node {
 };
 
 fn light_data_model<'a, OH: OnOffHooks>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, on_off::NoLevelControl>,
 ) -> impl DataModel + 'a {
@@ -230,14 +233,14 @@ fn light_data_model<'a, OH: OnOffHooks>(
         LIGHT_NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == LIGHT_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == LIGHT_ENDPOINT && c == groups::GroupsHandler::CLUSTER.id,
-                Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == LIGHT_ENDPOINT && c == TestOnOffDeviceLogic::CLUSTER.id,
@@ -287,7 +290,7 @@ async fn run_test() -> Result<(), Error> {
         a_matter,
         &a_crypto,
         a_buffers,
-        switch_data_model(a_rand, &bindings),
+        switch_data_model(a_matter, a_rand, &bindings),
         &a_kv,
         a_state,
     );
@@ -332,7 +335,7 @@ async fn run_test() -> Result<(), Error> {
         b_matter,
         &b_crypto,
         b_buffers,
-        light_data_model(b_rand, &b_on_off),
+        light_data_model(b_matter, b_rand, &b_on_off),
         &b_kv,
         b_state,
     );
@@ -921,8 +924,17 @@ async fn press_switch<C: Crypto>(
         );
 
         // CASE to the bound peer at its known address (no mDNS in this test).
-        let case_exchange = Exchange::initiate_plaintext(a_matter, a_crypto, peer_addr).await?;
-        CaseInitiator::perform(case_exchange, a_crypto, binding.fab_idx, node, None).await?;
+        let case_exchange =
+            Exchange::initiate_plaintext(a_matter.transport(), a_crypto, peer_addr).await?;
+        CaseInitiator::perform(
+            a_matter,
+            case_exchange,
+            a_crypto,
+            binding.fab_idx,
+            node,
+            None,
+        )
+        .await?;
 
         // The CASE session is now in A's session table; `initiate` reuses it.
         let exchange = Exchange::initiate(a_matter, a_crypto, binding.fab_idx, node).await?;

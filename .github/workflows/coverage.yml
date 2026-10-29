@@ -1,6 +1,6 @@
 name: Coverage
 
-# Line coverage of the `rs-matter` unit, doc and internal e2e tests, measured
+# Line coverage of the unit, doc and internal e2e tests of the `rs-matter*` crates, measured
 # with `cargo llvm-cov` on the same feature set as the `os` leg of the CI test
 # job. It runs on nightly so that the test modules themselves, marked
 # `#[cfg_attr(coverage_nightly, coverage(off))]`, stay out of the figures and
@@ -29,7 +29,8 @@ env:
   # Generated D-Bus proxies and the Linux OS backends (Avahi, BlueZ, NetworkManager,
   # wpa_supplicant, OTBR) only run against real system services and are excluded.
   COV_IGNORE: 'zbus_proxies|mdns/(avahi|zeroconf|astro)|gatt/(bluez|bluer)|wifi/(nm|wpa_supp)|thread/otbr|networks/(unix|eth)'
-  COV_FEATURES: rustcrypto,os,async-io,log,groups,case-resumption,persistent-subscriptions,max-group-keys-per-fabric-2,max-groups-per-fabric-4
+  COV_FEATURES: rs-matter/rustcrypto,rs-matter/os,rs-matter/async-io,rs-matter/log,rs-matter/groups,rs-matter/case-resumption,rs-matter/persistent-subscriptions,rs-matter/max-group-keys-per-fabric-2,rs-matter/max-groups-per-fabric-4
+  COV_EXCLUDE: --exclude rs-matter-examples --exclude rs-matter-tests --exclude rs-matter-codegen --exclude rs-matter-macros
 
 jobs:
   coverage:
@@ -57,21 +58,19 @@ jobs:
 
       - name: Measure
         run: |
-          cd rs-matter
-          cargo llvm-cov --doctests --no-default-features --features "$COV_FEATURES" \
+          cargo llvm-cov --workspace $COV_EXCLUDE --doctests --no-default-features --features "$COV_FEATURES" \
             --ignore-filename-regex "$COV_IGNORE" \
-            --lcov --output-path ../target/lcov.info
+            --lcov --output-path target/lcov.info
           cargo llvm-cov report --doctests --ignore-filename-regex "$COV_IGNORE" \
-            --html --output-dir ../target/llvm-cov-html
-          cd ..
-          cargo xtask coverage --depth 1 --split-above 2000 --lowest 20 target/lcov.info
+            --html --output-dir target/llvm-cov-html
+          cargo xtask coverage --depth 2 --split-above 2000 --lowest 20 target/lcov.info
 
       - name: Summary
         run: |
           {
             echo "## Line coverage by module"
             echo
-            cargo xtask coverage --depth 1 --split-above 2000 --markdown target/lcov.info
+            cargo xtask coverage --depth 2 --split-above 2000 --markdown target/lcov.info
             echo
             echo "<details><summary>Lowest-covered files</summary>"
             echo

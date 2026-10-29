@@ -78,7 +78,7 @@ The Simple Handler pattern works for all clusters, however, some clusters define
 
 ### Implementation
 
-1. Implement the cluster in `rs-matter/src/dm/clusters`, similar to the usage instructions in **A**.
+1. Implement the cluster in `rs-matter-dm/src/clusters`, similar to the usage instructions in **A**.
 
 ![Pattern B](assets/pattern_B.png)
 

@@ -1,0 +1,1209 @@
+/*
+ *
+ *    Copyright (c) 2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! The WebRTC Transport Provider cluster (0x0553).
+//!
+//! Implements the server side of the Matter WebRTC signalling used by Matter
+//! cameras to expose audio/video streams to Matter controllers via the standard
+//! WebRTC Offer/Answer flow and trickle-ICE exchange.
+//!
+//! # Architecture (Pattern B1 — "Hooks")
+//!
+//! [`WebRtcProvHandler`] implements the spec-defined session table and
+//! command state machine. All media-specific work (SDP generation, ICE
+//! gathering, media-source lifecycle) is delegated to a user-supplied
+//! [`WebRtcHooks`] implementation.
+//!
+//! ```text
+//! ┌───────────────────┐   ClusterAsyncHandler    ┌────────────────┐
+//! │                   │◀── inbound commands ─────│   rs-matter IM │
+//! │  WebRtcProvHandler│                          │    dispatcher  │
+//! └───────┬───────────┘                          └────────────────┘
+//!         │ delegates SDP/ICE work
+//!         ▼
+//! ┌───────────────────┐
+//! │    WebRtcHooks    │  user-supplied (e.g. str0m-based for std)
+//! └───────────────────┘
+//! ```
+//!
+//! # Const generics
+//!
+//! Every static allocation is explicit at the call-site:
+//!
+//! * `N_SESSIONS` — maximum concurrent WebRTC sessions held in the table.
+//!   The Matter spec mandates MinLimit = 3; typical values are 3..=8.
+//! * `SDP_LEN` — maximum SDP blob size, in bytes. Full WebRTC SDPs range
+//!   2–8 KiB depending on codec support.
+//! * `OUT_LEN` — scratch-buffer size, in bytes, for the outbound invoke
+//!   payload produced by [`WebRtcProvHandler::run`]. Must be large enough
+//!   for a trickle-ICE batch; typical value 1 KiB.
+//!
+//! On `no_std` / embedded targets, [`WebRtcProvHandler::run`] holds an
+//! `[u8; OUT_LEN]` plus, on the `Offer`/`Answer` paths, an `[u8; SDP_LEN]`
+//! in its async-future state. Pick `SDP_LEN` to fit the smallest SDP your
+//! deployment will negotiate (e.g. 2 KiB for a single H.264 + Opus track)
+//! to keep the future small enough for the executor's task slot.
+//!
+//! # Scope
+//!
+//! * Inbound command state machine: fully implemented for
+//!   `SolicitOffer` / `ProvideOffer` / `ProvideAnswer` /
+//!   `ProvideICECandidates` / `EndSession`.
+//! * Fabric-scoped `CurrentSessions` attribute.
+//! * `WebRtcHooks` trait with `async` hooks for the media-plane work.
+//! * Outbound push to `WebRTCTransportRequestor`:
+//!   [`OutboundWork::Offer`] (deferred-offer flow — camera-initiated
+//!   SDP Offer following an earlier `SolicitOffer`),
+//!   [`OutboundWork::Answer`] (SDP Answer for `ProvideOffer`),
+//!   [`OutboundWork::IceCandidates`] (trickle ICE to traverse NAT) and
+//!   [`OutboundWork::End`] (camera-initiated teardown) are driven from
+//!   [`WebRtcProvHandler::run`] via [`WebRtcHooks::next_outbound`].
+
+use core::cell::{Cell, RefCell};
+use core::future::Future;
+use core::pin::pin;
+
+use crate::dm::clusters::decl::globals::{
+    ICECandidateStruct, StreamUsageEnum, WebRTCEndReasonEnum, WebRTCSessionStructArrayBuilder,
+    WebRTCSessionStructBuilder,
+};
+use crate::dm::{
+    ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, LifecycleOp,
+    ReadContext,
+};
+use crate::error::{Error, ErrorCode};
+use crate::sc::ExchangeInitiator as _;
+use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
+use crate::transport::exchange::Exchange;
+use crate::utils::futures::{select, Either};
+use crate::utils::storage::{String, Vec};
+use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
+use crate::{with, Matter};
+use rs_matter_node::Transaction as _;
+
+use super::super::decl::web_rtc_transport_provider as decl;
+use super::super::decl::web_rtc_transport_requestor::WebRtcTransportRequestorClient;
+
+#[allow(unused_imports)]
+pub use crate::dm::clusters::decl::web_rtc_transport_provider::*;
+
+/// Errors surfaced by [`WebRtcHooks`] implementations. These map to
+/// Matter cluster-status codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum WebRtcError {
+    /// `INVALID_IN_STATE` — the command cannot be processed in the current
+    /// session state (e.g. `ProvideAnswer` before an Offer was sent).
+    InvalidInState,
+    /// `INVALID_COMMAND` — the command parameters are structurally invalid
+    /// (e.g. `SolicitOffer` with no stream IDs at all).
+    InvalidCommand,
+    /// `DYNAMIC_CONSTRAINT_ERROR` — the request refers to stream IDs,
+    /// codecs or capabilities the hooks cannot satisfy.
+    DynamicConstraint,
+    /// `RESOURCE_EXHAUSTED` — the media source cannot accept a new session.
+    ResourceExhausted,
+    /// `FAILURE` — any other hooks-level failure.
+    Failure,
+}
+
+impl From<WebRtcError> for Error {
+    fn from(e: WebRtcError) -> Self {
+        match e {
+            WebRtcError::InvalidInState => ErrorCode::InvalidInState.into(),
+            WebRtcError::InvalidCommand => ErrorCode::InvalidCommand.into(),
+            WebRtcError::DynamicConstraint => ErrorCode::DynamicConstraintError.into(),
+            WebRtcError::ResourceExhausted => ErrorCode::ResourceExhausted.into(),
+            WebRtcError::Failure => ErrorCode::Failure.into(),
+        }
+    }
+}
+
+/// Owned parameters of a `SolicitOffer` / `ProvideOffer` request.
+///
+/// Owned (not TLV-borrowed) so it can cross `.await` points when passed
+/// to async hooks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OfferParams {
+    /// The stream usage requested by the peer.
+    pub stream_usage: StreamUsageEnum,
+    /// Originating endpoint of the controller hosting the
+    /// `WebRTCTransportRequestor`.
+    pub originating_endpoint_id: EndptId,
+    /// Requested video-stream ID.
+    /// - `None`           → field absent from request
+    /// - `Some(None)`     → explicit NULL
+    /// - `Some(Some(id))` → concrete ID
+    pub video_stream_id: Option<Option<u16>>,
+    /// Requested audio-stream ID, same encoding as `video_stream_id`.
+    pub audio_stream_id: Option<Option<u16>>,
+    /// Whether the peer opted in to metadata delivery.
+    pub metadata_enabled: bool,
+}
+
+/// Outcome of [`WebRtcHooks::on_solicit_offer`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SolicitOutcome {
+    /// If `false`, the `SolicitOfferResponse` has `deferredOffer = false`
+    /// and the hooks are expected to enqueue [`OutboundWork::Offer`]
+    /// shortly so the Offer can be pushed via
+    /// `WebRTCTransportRequestor::Offer`. If `true`, the media source was
+    /// not ready; the hooks must enqueue the Offer when it becomes
+    /// available.
+    pub deferred: bool,
+    /// Resolved video-stream ID (absent = omit field in response).
+    pub video_stream_id: Option<u16>,
+    /// Resolved audio-stream ID (absent = omit field in response).
+    pub audio_stream_id: Option<u16>,
+}
+
+/// Outcome of [`WebRtcHooks::on_offer`].
+///
+/// The SDP Answer itself is buffered by the hooks implementation and
+/// pushed asynchronously via [`OutboundWork::Answer`] /
+/// [`WebRtcHooks::fill_answer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AnswerOutcome {
+    /// Resolved video-stream ID, or NULL (= session has no video).
+    pub video_stream_id: Option<u16>,
+    /// Resolved audio-stream ID, or NULL (= session has no audio).
+    pub audio_stream_id: Option<u16>,
+}
+
+/// A descriptor of an outbound invocation, returned by
+/// [`WebRtcHooks::next_outbound`] and dispatched by
+/// [`WebRtcProvHandler::run`].
+///
+/// The payload itself is NOT carried here: for [`OutboundWork::IceCandidates`]
+/// the handler calls [`WebRtcHooks::take_ice_candidates`] before opening
+/// the invoke, snapshotting the queue once into a stack-allocated buffer;
+/// the sync build closure then iterates that snapshot, so MRP retransmits
+/// re-emit the same TLV array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OutboundWork {
+    /// `WebRTCTransportRequestor::Offer` — deferred-offer flow:
+    /// the controller previously called `SolicitOffer` and the device
+    /// returned `deferredOffer = true`; once the local media source
+    /// produces an SDP Offer, the hooks enqueue this work item so the
+    /// handler pushes it to the controller. The handler invokes
+    /// [`WebRtcHooks::take_offer_sdp`] to obtain the SDP bytes.
+    Offer {
+        /// Target session.
+        session_id: u16,
+    },
+    /// `WebRTCTransportRequestor::Answer` — push the SDP Answer for a
+    /// session whose Offer arrived via `ProvideOffer`. The handler
+    /// invokes [`WebRtcHooks::fill_answer`] to obtain the SDP bytes.
+    Answer {
+        /// Target session.
+        session_id: u16,
+    },
+    /// `WebRTCTransportRequestor::ICECandidates` — trickle a batch of
+    /// locally-gathered ICE candidates to the peer (needed for NAT
+    /// traversal).
+    IceCandidates {
+        /// Target session.
+        session_id: u16,
+    },
+    /// `WebRTCTransportRequestor::End` — notify the peer that we are
+    /// tearing down the session (e.g. camera power-down, media source
+    /// lost).
+    End {
+        /// Target session.
+        session_id: u16,
+        /// Reason for termination.
+        reason: WebRTCEndReasonEnum,
+    },
+}
+
+/// Receiver for [`WebRtcHooks::take_ice_candidates`]. The hook pushes
+/// one candidate SDP string at a time; storage (size, layout, backing
+/// allocator) is owned by the caller — typically
+/// [`WebRtcProvHandler::push_outbound`], which stack-allocates a
+/// bounded buffer for the duration of one outbound `IceCandidates`
+/// invoke.
+pub trait IceCandidateSink {
+    /// Append `candidate` to the snapshot. Returns
+    /// [`WebRtcError::ResourceExhausted`] if the sink's bounded
+    /// storage is full — the hook MAY choose to drop further
+    /// candidates and continue (deliver next round) or surface the
+    /// error to the caller.
+    fn push(&mut self, candidate: &str) -> Result<(), WebRtcError>;
+}
+
+/// Default `IceCandidateSink` backed by a `crate::utils::storage::Vec`
+/// of bounded-length `crate::utils::storage::String`s. `WebRtcProvHandler::push_outbound`
+/// stack-allocates one of these per outbound `IceCandidates` invoke and
+/// passes a `&mut` to the hook.
+struct VecCandidateSink<'a, const CAND_LEN: usize, const MAX_CAND: usize> {
+    buf: &'a mut Vec<String<CAND_LEN>, MAX_CAND>,
+}
+
+impl<const CAND_LEN: usize, const MAX_CAND: usize> IceCandidateSink
+    for VecCandidateSink<'_, CAND_LEN, MAX_CAND>
+{
+    fn push(&mut self, candidate: &str) -> Result<(), WebRtcError> {
+        let mut s = String::<CAND_LEN>::new();
+        s.push_str(candidate)
+            .map_err(|_| WebRtcError::ResourceExhausted)?;
+        self.buf
+            .push(s)
+            .map_err(|_| WebRtcError::ResourceExhausted)?;
+        Ok(())
+    }
+}
+
+/// The device-side WebRTC media-plane plumbing. Cluster state (session
+/// table, dataver, attribute/command dispatch) is owned by
+/// [`WebRtcProvHandler`]; this trait captures every side-effect the
+/// spec commands have on the actual WebRTC peer.
+///
+/// All methods are `async` and invoked inline from the handler's command
+/// dispatch. Implementations MUST NOT perform blocking I/O.
+pub trait WebRtcHooks: MaybeSendSync {
+    /// Handle an inbound `SolicitOffer` command. The session ID has been
+    /// allocated; the hook decides whether to respond with `deferred = false`
+    /// (in which case it MUST shortly enqueue an [`OutboundWork::Offer`] so
+    /// the handler can push the SDP Offer via
+    /// `WebRTCTransportRequestor::Offer`) or `deferred = true` (Offer
+    /// pushed when the media source becomes ready).
+    ///
+    /// `SolicitOfferResponse` itself does NOT carry an SDP — see Matter Spec -
+    /// so this hook never returns Offer bytes inline.
+    fn on_solicit_offer(
+        &self,
+        session_id: u16,
+        params: &OfferParams,
+    ) -> impl Future<Output = Result<SolicitOutcome, WebRtcError>> + MaybeSend;
+
+    /// Handle an inbound `ProvideOffer` command. The SDP Offer has been
+    /// validated as UTF-8; the hooks buffers the SDP Answer internally
+    /// and enqueues an [`OutboundWork::Answer`] so the handler can push
+    /// it to the peer's `WebRTCTransportRequestor::Answer` command.
+    fn on_offer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+        params: &OfferParams,
+    ) -> impl Future<Output = Result<AnswerOutcome, WebRtcError>> + MaybeSend;
+
+    /// Handle an inbound `ProvideAnswer` for a session whose Offer THIS
+    /// node originally sent (deferred-offer flow).
+    fn on_answer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend;
+
+    /// Handle an inbound batch of remote ICE candidates.
+    fn on_ice_candidates(
+        &self,
+        session_id: u16,
+        candidates: &TLVArray<'_, ICECandidateStruct<'_>>,
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend;
+
+    /// Handle an inbound `EndSession`. The session entry is removed from
+    /// the table immediately after this call returns.
+    fn on_end_session(
+        &self,
+        session_id: u16,
+        reason: WebRTCEndReasonEnum,
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend;
+
+    /// Await the next outbound invocation the camera wants to push to the
+    /// controller. Called in a tight loop from [`WebRtcProvHandler::run`]:
+    /// when the hook has nothing to send it MUST `.await` a future that
+    /// never completes (e.g. [`core::future::pending`]) or parks on an
+    /// internal signal.
+    ///
+    /// A default implementation is provided that parks forever, i.e.
+    /// opts the implementor out of outbound support. Override to enable
+    /// trickle-ICE and camera-initiated session end.
+    fn next_outbound(&self) -> impl Future<Output = OutboundWork> + MaybeSend {
+        core::future::pending()
+    }
+
+    /// Snapshot-and-consume the queued ICE candidates for
+    /// `session_id` into `out`, in queue order. Called by the handler
+    /// **outside** the sync build closure of an outbound
+    /// `IceCandidates` invoke — analogous to [`Self::take_offer_sdp`] /
+    /// [`Self::take_answer_sdp`]. The handler then iterates the
+    /// snapshot inside the (sync, idempotent) build closure to write
+    /// the wire array; MRP retransmits re-iterate the same snapshot,
+    /// so the closure stays idempotent without the hook seeing the
+    /// retransmit.
+    ///
+    /// If the invoke fails after this hook returns, the snapshotted
+    /// candidates are lost — same semantics as the SDP paths. The
+    /// implementation MAY decide to keep a backup if it wants
+    /// at-least-once delivery, but the default contract is at-most-once.
+    ///
+    /// Default: returns `Err(WebRtcError::InvalidInState)` — override
+    /// alongside [`Self::next_outbound`] when emitting
+    /// [`OutboundWork::IceCandidates`].
+    fn take_ice_candidates(
+        &self,
+        _session_id: u16,
+        _out: &mut dyn IceCandidateSink,
+    ) -> impl Future<Output = Result<(), WebRtcError>> + MaybeSend {
+        core::future::ready(Err(WebRtcError::InvalidInState))
+    }
+
+    /// Write the SDP Answer bytes for `session_id` into the supplied
+    /// buffer, returning the number of bytes written. Called by the
+    /// handler immediately after [`Self::next_outbound`] returns
+    /// [`OutboundWork::Answer`].
+    ///
+    /// If the buffer is too small the hooks SHOULD return
+    /// [`WebRtcError::ResourceExhausted`]; if no Answer is queued for
+    /// `session_id` return [`WebRtcError::InvalidInState`].
+    ///
+    /// Default: errors out — override when overriding [`Self::on_offer`].
+    fn take_answer_sdp(
+        &self,
+        _session_id: u16,
+        _sdp_out: &mut [u8],
+    ) -> impl Future<Output = Result<usize, WebRtcError>> + MaybeSend {
+        core::future::ready(Err(WebRtcError::InvalidInState))
+    }
+
+    /// Write the SDP Offer bytes for `session_id` into the supplied
+    /// buffer, returning the number of bytes written. Called by the
+    /// handler immediately after [`Self::next_outbound`] returns
+    /// [`OutboundWork::Offer`].
+    ///
+    /// If the buffer is too small the hooks SHOULD return
+    /// [`WebRtcError::ResourceExhausted`]; if no Offer is queued for
+    /// `session_id` return [`WebRtcError::InvalidInState`].
+    ///
+    /// Default: errors out — override to enable the deferred-offer
+    /// flow ([`SolicitOutcome::deferred = true`](SolicitOutcome) on a
+    /// `SolicitOffer` response, followed by an [`OutboundWork::Offer`]
+    /// from [`Self::next_outbound`]).
+    fn take_offer_sdp(
+        &self,
+        _session_id: u16,
+        _sdp_out: &mut [u8],
+    ) -> impl Future<Output = Result<usize, WebRtcError>> + MaybeSend {
+        core::future::ready(Err(WebRtcError::InvalidInState))
+    }
+}
+
+impl<T> WebRtcHooks for &T
+where
+    T: WebRtcHooks,
+{
+    fn on_solicit_offer(
+        &self,
+        session_id: u16,
+        params: &OfferParams,
+    ) -> impl Future<Output = Result<SolicitOutcome, WebRtcError>> {
+        (*self).on_solicit_offer(session_id, params)
+    }
+
+    fn on_offer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+        params: &OfferParams,
+    ) -> impl Future<Output = Result<AnswerOutcome, WebRtcError>> {
+        (*self).on_offer(session_id, sdp, params)
+    }
+
+    fn on_answer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).on_answer(session_id, sdp)
+    }
+
+    fn on_ice_candidates(
+        &self,
+        session_id: u16,
+        candidates: &TLVArray<'_, ICECandidateStruct<'_>>,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).on_ice_candidates(session_id, candidates)
+    }
+
+    fn on_end_session(
+        &self,
+        session_id: u16,
+        reason: WebRTCEndReasonEnum,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).on_end_session(session_id, reason)
+    }
+
+    fn next_outbound(&self) -> impl Future<Output = OutboundWork> {
+        (*self).next_outbound()
+    }
+
+    fn take_ice_candidates(
+        &self,
+        session_id: u16,
+        out: &mut dyn IceCandidateSink,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).take_ice_candidates(session_id, out)
+    }
+
+    fn take_answer_sdp(
+        &self,
+        session_id: u16,
+        sdp_out: &mut [u8],
+    ) -> impl Future<Output = Result<usize, WebRtcError>> {
+        (*self).take_answer_sdp(session_id, sdp_out)
+    }
+
+    fn take_offer_sdp(
+        &self,
+        session_id: u16,
+        sdp_out: &mut [u8],
+    ) -> impl Future<Output = Result<usize, WebRtcError>> {
+        (*self).take_offer_sdp(session_id, sdp_out)
+    }
+}
+
+/// Internal session-state tracked by the handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum SessionState {
+    /// Created via `SolicitOffer` with a deferred Offer; awaiting the
+    /// hooks to enqueue [`OutboundWork::Offer`].
+    AwaitingDeferredOffer,
+    /// Offer was sent (immediately via SolicitOfferResponse or later via
+    /// the deferred flow). Awaiting `ProvideAnswer`.
+    AwaitingAnswer,
+    /// `ProvideOffer` arrived peer-initiated and was answered inline, OR
+    /// `ProvideAnswer` arrived for an already-sent Offer. Signalling
+    /// done; ICE candidates may still flow.
+    Established,
+}
+
+/// Owned session-table row. Kept small + `Copy` so snapshotting for
+/// iteration is cheap.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct SessionEntry {
+    id: u16,
+    fab_idx: u8,
+    peer_node_id: u64,
+    peer_endpoint_id: EndptId,
+    stream_usage: StreamUsageEnum,
+    /// `None` = NULL in spec; `Some(x)` = concrete stream ID.
+    video_stream_id: Option<u16>,
+    /// `None` = NULL in spec; `Some(x)` = concrete stream ID.
+    audio_stream_id: Option<u16>,
+    metadata_enabled: bool,
+    state: SessionState,
+}
+
+/// The WebRTC Transport Provider cluster handler.
+///
+/// See the [module documentation](self) for the architecture and usage.
+pub struct WebRtcProvHandler<
+    'a,
+    H: WebRtcHooks,
+    const N_SESSIONS: usize,
+    const SDP_LEN: usize,
+    const OUT_LEN: usize,
+    const CAND_LEN: usize,
+    const MAX_CAND: usize,
+> {
+    dataver: Dataver,
+    matter: &'a Matter<'a>,
+    endpoint_id: EndptId,
+    hooks: H,
+    sessions: Mutex<RefCell<Vec<SessionEntry, N_SESSIONS>>>,
+    /// IDs of sessions dropped because their fabric was removed, for which
+    /// [`WebRtcHooks::on_end_session`] is still to be called.
+    removed: Mutex<RefCell<Vec<u16, N_SESSIONS>>>,
+    removed_signal: Notification,
+    next_id: Mutex<Cell<u16>>,
+}
+
+impl<
+        'a,
+        H: WebRtcHooks,
+        const N_SESSIONS: usize,
+        const SDP_LEN: usize,
+        const OUT_LEN: usize,
+        const CAND_LEN: usize,
+        const MAX_CAND: usize,
+    > WebRtcProvHandler<'a, H, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>
+{
+    /// Cluster metadata exposed to the data-model dispatcher.
+    pub const CLUSTER: Cluster<'static> = decl::FULL_CLUSTER
+        .with_revision(2)
+        .with_attrs(with!(required))
+        .with_cmds(with!(
+            decl::CommandId::SolicitOffer
+                | decl::CommandId::ProvideOffer
+                | decl::CommandId::ProvideAnswer
+                | decl::CommandId::ProvideICECandidates
+                | decl::CommandId::EndSession
+        ));
+
+    /// Construct a new handler, opening the exchanges to the requestors over
+    /// `matter`.
+    pub const fn new(
+        dataver: Dataver,
+        matter: &'a Matter<'a>,
+        endpoint_id: EndptId,
+        hooks: H,
+    ) -> Self {
+        Self {
+            dataver,
+            matter,
+            endpoint_id,
+            hooks,
+            sessions: Mutex::new(RefCell::new(Vec::new())),
+            removed: Mutex::new(RefCell::new(Vec::new())),
+            removed_signal: Notification::new(),
+            next_id: Mutex::new(Cell::new(1)),
+        }
+    }
+
+    /// The node ID of the peer that invoked a command.
+    fn peer_node_id(&self, ctx: &impl InvokeContext) -> Result<u64, Error> {
+        ctx.transaction_id()
+            .peer_node_id(self.matter)?
+            .ok_or(ErrorCode::Invalid.into())
+    }
+
+    /// Wrap in the generic async adaptor for registration with a
+    /// `rs-matter` `Node`.
+    pub const fn adapt(self) -> decl::HandlerAsyncAdaptor<Self> {
+        decl::HandlerAsyncAdaptor(self)
+    }
+
+    /// Remove every session owned by the given fabric index and queue them
+    /// for [`WebRtcHooks::on_end_session`], which is called from the
+    /// handler's `run` task. Returns `true` if any session was removed.
+    fn remove_fabric_sessions(&self, fab_idx: u8) -> bool {
+        let removed = self.sessions.lock(|cell| {
+            let mut sessions = cell.borrow_mut();
+            let before = sessions.len();
+
+            self.removed.lock(|removed| {
+                let mut removed = removed.borrow_mut();
+
+                for s in sessions.iter().filter(|s| s.fab_idx == fab_idx) {
+                    if removed.push(s.id).is_err() {
+                        warn!("webrtc_prov: no room to queue the end of session {}", s.id);
+                    }
+                }
+            });
+
+            sessions.retain(|s| s.fab_idx != fab_idx);
+
+            before != sessions.len()
+        });
+
+        if removed {
+            self.removed_signal.notify();
+        }
+
+        removed
+    }
+
+    /// Call [`WebRtcHooks::on_end_session`] for the sessions dropped on
+    /// fabric removal.
+    async fn end_removed_sessions(&self) {
+        while let Some(session_id) = self.removed.lock(|cell| cell.borrow_mut().pop()) {
+            if let Err(err) = self
+                .hooks
+                .on_end_session(session_id, WebRTCEndReasonEnum::UnknownReason)
+                .await
+            {
+                warn!(
+                    "webrtc_prov: on_end_session({}) failed after fabric removal: {:?}",
+                    session_id, err
+                );
+            }
+        }
+    }
+
+    /// Get the endpoint this handler is mounted on.
+    pub const fn endpoint_id(&self) -> EndptId {
+        self.endpoint_id
+    }
+
+    fn allocate_id(&self) -> u16 {
+        self.sessions.lock(|cell| {
+            let sessions = cell.borrow();
+            self.next_id.lock(|n| loop {
+                let candidate = n.get();
+                // Wrap and skip zero (spec: session ID MUST be non-zero).
+                let next = if candidate == u16::MAX {
+                    1
+                } else {
+                    candidate + 1
+                };
+                n.set(next);
+                if candidate != 0 && !sessions.iter().any(|s| s.id == candidate) {
+                    return candidate;
+                }
+            })
+        })
+    }
+
+    fn session_copy(&self, id: u16) -> Option<SessionEntry> {
+        self.sessions
+            .lock(|cell| cell.borrow().iter().find(|s| s.id == id).copied())
+    }
+
+    fn upsert_session(&self, entry: SessionEntry) -> Result<(), Error> {
+        self.sessions.lock(|cell| {
+            let mut sessions = cell.borrow_mut();
+            if let Some(existing) = sessions.iter_mut().find(|s| s.id == entry.id) {
+                *existing = entry;
+                Ok(())
+            } else {
+                sessions
+                    .push(entry)
+                    .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
+            }
+        })
+    }
+
+    fn remove_session(&self, id: u16) {
+        self.sessions.lock(|cell| {
+            let mut sessions = cell.borrow_mut();
+            sessions.retain(|s| s.id != id);
+        });
+    }
+
+    fn set_state(&self, id: u16, state: SessionState) {
+        self.sessions.lock(|cell| {
+            if let Some(s) = cell.borrow_mut().iter_mut().find(|s| s.id == id) {
+                s.state = state;
+            }
+        });
+    }
+
+    fn check_peer(&self, s: &SessionEntry, fab_idx: u8, peer: u64) -> Result<(), Error> {
+        // Spec: NOT_FOUND if the session does not belong to the accessing
+        // fabric. Peer-node mismatch within the same fabric is also
+        // NOT_FOUND to avoid leaking existence.
+        if s.fab_idx != fab_idx || s.peer_node_id != peer {
+            Err(ErrorCode::NotFound.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Encode and send a single [`OutboundWork`] item.
+    ///
+    /// Opens a new initiator exchange to the session's peer via
+    /// [`Exchange::initiate`] (which in turn uses the CASE session cache
+    /// and mDNS if needed), encodes the request payload into a fixed-size
+    /// scratch buffer, and invokes the paired `WebRTCTransportRequestor`
+    /// cluster on the peer's originating endpoint.
+    ///
+    /// Returns `Ok(())` without doing anything if the session has been
+    /// removed meanwhile (e.g. peer sent `EndSession` in the race window).
+    async fn push_outbound(
+        &self,
+        ctx: &impl HandlerContext,
+        work: OutboundWork,
+    ) -> Result<(), Error> {
+        let session_id = match work {
+            OutboundWork::Offer { session_id } => session_id,
+            OutboundWork::Answer { session_id } => session_id,
+            OutboundWork::IceCandidates { session_id } => session_id,
+            OutboundWork::End { session_id, .. } => session_id,
+        };
+        let Some(session) = self.session_copy(session_id) else {
+            // Session dropped concurrently — not an error, just a race.
+            return Ok(());
+        };
+
+        // Pre-fetch any async-supplied request payload (SDPs for
+        // Offer/Answer; the ICE-candidate snapshot is similarly
+        // taken outside its own build closure further down). The
+        // `take_*` hooks consume the respective queues, so they must
+        // run exactly once — outside the sync `FnMut` build closure
+        // that MRP may re-invoke on retransmit. The build closure
+        // then works off the snapshot and stays idempotent.
+        // `OutboundWork::End` carries its parameters by value and
+        // needs no pre-fetch.
+        let mut sdp_buf = [0u8; SDP_LEN];
+        let sdp_len = match &work {
+            OutboundWork::Offer { session_id } => self
+                .hooks
+                .take_offer_sdp(*session_id, &mut sdp_buf)
+                .await
+                .map_err(Error::from)?,
+            OutboundWork::Answer { session_id } => self
+                .hooks
+                .take_answer_sdp(*session_id, &mut sdp_buf)
+                .await
+                .map_err(Error::from)?,
+            _ => 0,
+        };
+        let sdp = core::str::from_utf8(&sdp_buf[..sdp_len])
+            .map_err(|_| Error::from(ErrorCode::Invalid))?;
+
+        // Offer side-effect: transition the session to AwaitingAnswer
+        // so a subsequent ProvideAnswer is accepted. Doing this here
+        // (rather than inside the build closure) keeps the transition
+        // idempotent under retransmit.
+        if let OutboundWork::Offer { session_id } = &work {
+            self.set_state(*session_id, SessionState::AwaitingAnswer);
+        }
+
+        // A WebRTC peer session is always on a real (non-zero) fabric.
+        let fab_idx = core::num::NonZeroU8::new(session.fab_idx).ok_or(ErrorCode::Invalid)?;
+        let exchange =
+            Exchange::initiate(self.matter, ctx.crypto(), fab_idx, session.peer_node_id).await?;
+
+        // Single-shot client-trait invoke for all four commands. The
+        // codegen `WebRtcTransportRequestorClient` methods bake in
+        // cluster ID (0x0554), command ID, the request opcode
+        // (`InvokeRequest`), the MRP retransmit loop, chunk draining
+        // (trailing `StatusResponse(Success)` ACK) and IM-status-to-
+        // `Error` conversion. The build closure is a sync `FnMut`,
+        // so it must be idempotent under MRP retransmit; any state-
+        // changing hook (e.g. consuming the trickle-ICE queue) runs
+        // *outside* the closure.
+        let endpoint = session.peer_endpoint_id;
+        match &work {
+            OutboundWork::Offer { session_id } => {
+                let session_id = *session_id;
+                exchange
+                    .web_rtc_transport_requestor()
+                    .offer(endpoint, |req| {
+                        req.web_rtc_session_id(session_id)?
+                            .sdp(sdp)?
+                            .ice_servers()?
+                            .none()
+                            .ice_transport_policy(None)?
+                            .end()
+                    })
+                    .await?;
+            }
+            OutboundWork::Answer { session_id } => {
+                let session_id = *session_id;
+                exchange
+                    .web_rtc_transport_requestor()
+                    .answer(endpoint, |req| {
+                        req.web_rtc_session_id(session_id)?.sdp(sdp)?.end()
+                    })
+                    .await?;
+            }
+            OutboundWork::IceCandidates { session_id } => {
+                let session_id = *session_id;
+                // Snapshot the candidates OUTSIDE the build closure
+                // (mirrors `take_offer_sdp` / `take_answer_sdp`). The
+                // hook consumes the queue; the sync FnMut build
+                // closure below iterates the snapshot, so MRP
+                // retransmits re-iterate the same data and the
+                // closure stays idempotent. `CAND_LEN` / `MAX_CAND`
+                // bound the per-invoke snapshot — candidates beyond
+                // the bound are dropped by `IceCandidateSink::push`
+                // and will not be sent this round (or any future one,
+                // since the hook consumed them).
+                let mut ice_buf: crate::utils::storage::Vec<String<CAND_LEN>, MAX_CAND> =
+                    crate::utils::storage::Vec::new();
+                {
+                    let mut sink = VecCandidateSink { buf: &mut ice_buf };
+                    self.hooks
+                        .take_ice_candidates(session_id, &mut sink)
+                        .await
+                        .map_err(Error::from)?;
+                }
+                exchange
+                    .web_rtc_transport_requestor()
+                    .ice_candidates(endpoint, |req| {
+                        let req = req.web_rtc_session_id(session_id)?;
+                        let mut arr = req.ice_candidates()?;
+                        for cand in ice_buf.iter() {
+                            arr = arr
+                                .push()?
+                                .candidate(cand.as_str())?
+                                .sdp_mid(Nullable::none())?
+                                .sdpm_line_index(Nullable::none())?
+                                .end()?;
+                        }
+                        arr.end()?.end()
+                    })
+                    .await?;
+            }
+            OutboundWork::End { session_id, reason } => {
+                let session_id = *session_id;
+                let reason = *reason;
+                exchange
+                    .web_rtc_transport_requestor()
+                    .end(endpoint, |req| {
+                        req.web_rtc_session_id(session_id)?.reason(reason)?.end()
+                    })
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ClusterAsyncHandler
+// ──────────────────────────────────────────────────────────────────────
+
+impl<
+        H: WebRtcHooks,
+        const N_SESSIONS: usize,
+        const SDP_LEN: usize,
+        const OUT_LEN: usize,
+        const CAND_LEN: usize,
+        const MAX_CAND: usize,
+    > decl::ClusterAsyncHandler
+    for WebRtcProvHandler<'_, H, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>
+{
+    const CLUSTER: Cluster<'static> = Self::CLUSTER;
+
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        if let LifecycleOp::FabricRemoval { fab_idx } = op {
+            if self.remove_fabric_sessions(fab_idx.get()) {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::CurrentSessions as _,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        // Drain loop: the hook parks in `next_outbound().await` until it
+        // has something to say, then we push it to the paired
+        // `WebRTCTransportRequestor` on the remote. Errors are logged
+        // (when a `log`/`defmt` feature is enabled) and the loop
+        // continues — a single failed push must not take down the whole
+        // cluster.
+        //
+        // While parked, the loop also ends the sessions dropped on fabric
+        // removal. `next_outbound` is only paused meanwhile, never dropped,
+        // so no outbound work is lost.
+        loop {
+            let work = {
+                let mut outbound = pin!(self.hooks.next_outbound());
+
+                loop {
+                    match select(&mut outbound, self.removed_signal.wait()).await {
+                        Either::First(work) => break work,
+                        Either::Second(()) => self.end_removed_sessions().await,
+                    }
+                }
+            };
+
+            if let Err(err) = self.push_outbound(&ctx, work).await {
+                warn!("webrtc_prov: outbound push failed: {}", err);
+            }
+        }
+    }
+
+    async fn current_sessions<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            WebRTCSessionStructArrayBuilder<P>,
+            WebRTCSessionStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        let attr = ctx.attr();
+
+        // Snapshot the filtered list so we don't hold the Mutex across
+        // any `?` bail-outs inside the builder chain.
+        let mut snapshot: Vec<SessionEntry, N_SESSIONS> = Vec::new();
+        self.sessions.lock(|cell| {
+            for s in cell.borrow().iter() {
+                if !attr.fab_filter || s.fab_idx == attr.fab_idx {
+                    // `push` cannot fail: the snapshot is the same size
+                    // as the source.
+                    let _ = snapshot.push(*s);
+                }
+            }
+        });
+
+        match builder {
+            ArrayAttributeRead::ReadAll(mut arr) => {
+                for s in &snapshot {
+                    arr = encode_session_struct(arr.push()?, s)?;
+                }
+                arr.end()
+            }
+            ArrayAttributeRead::ReadOne(index, b) => {
+                let s = snapshot
+                    .get(index as usize)
+                    .ok_or(Error::from(ErrorCode::ConstraintError))?;
+                encode_session_struct(b, s)
+            }
+            ArrayAttributeRead::ReadNone(b) => b.end(),
+        }
+    }
+
+    async fn handle_solicit_offer<P: TLVBuilderParent>(
+        &self,
+        ctx: impl InvokeContext,
+        request: decl::SolicitOfferRequest<'_>,
+        response: decl::SolicitOfferResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let cmd = ctx.cmd();
+        let fab_idx = cmd.fab_idx;
+        let peer_node_id = self.peer_node_id(&ctx)?;
+
+        let params = OfferParams {
+            stream_usage: request.stream_usage()?,
+            originating_endpoint_id: request.originating_endpoint_id()?,
+            video_stream_id: request.video_stream_id()?.map(|n| n.into_option()),
+            audio_stream_id: request.audio_stream_id()?.map(|n| n.into_option()),
+            metadata_enabled: request.metadata_enabled()?.unwrap_or(false),
+        };
+
+        let session_id = self.allocate_id();
+
+        let outcome = self
+            .hooks
+            .on_solicit_offer(session_id, &params)
+            .await
+            .map_err(Error::from)?;
+        let state = if outcome.deferred {
+            SessionState::AwaitingDeferredOffer
+        } else {
+            SessionState::AwaitingAnswer
+        };
+
+        self.upsert_session(SessionEntry {
+            id: session_id,
+            fab_idx,
+            peer_node_id,
+            peer_endpoint_id: params.originating_endpoint_id,
+            stream_usage: params.stream_usage,
+            video_stream_id: outcome.video_stream_id,
+            audio_stream_id: outcome.audio_stream_id,
+            metadata_enabled: params.metadata_enabled,
+            state,
+        })?;
+        ctx.notify_own_attr_changed(AttributeId::CurrentSessions as _);
+
+        response
+            .web_rtc_session_id(session_id)?
+            .deferred_offer(outcome.deferred)?
+            .video_stream_id(wrap_opt_u16_nullable(outcome.video_stream_id))?
+            .audio_stream_id(wrap_opt_u16_nullable(outcome.audio_stream_id))?
+            .end()
+    }
+
+    async fn handle_provide_offer<P: TLVBuilderParent>(
+        &self,
+        ctx: impl InvokeContext,
+        request: decl::ProvideOfferRequest<'_>,
+        response: decl::ProvideOfferResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let cmd = ctx.cmd();
+        let fab_idx = cmd.fab_idx;
+        let peer_node_id = self.peer_node_id(&ctx)?;
+
+        let sdp = request.sdp()?;
+        if sdp.len() > SDP_LEN {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+
+        let params = OfferParams {
+            stream_usage: request.stream_usage()?,
+            originating_endpoint_id: request.originating_endpoint_id()?,
+            video_stream_id: request.video_stream_id()?.map(|n| n.into_option()),
+            audio_stream_id: request.audio_stream_id()?.map(|n| n.into_option()),
+            metadata_enabled: request.metadata_enabled()?.unwrap_or(false),
+        };
+
+        // Spec: NULL session ID = allocate new; non-null = existing session.
+        let session_id = match request.web_rtc_session_id()?.into_option() {
+            None => self.allocate_id(),
+            Some(id) => {
+                let s = self
+                    .session_copy(id)
+                    .ok_or(Error::from(ErrorCode::NotFound))?;
+                self.check_peer(&s, fab_idx, peer_node_id)?;
+                id
+            }
+        };
+
+        let outcome = self
+            .hooks
+            .on_offer(session_id, sdp, &params)
+            .await
+            .map_err(Error::from)?;
+
+        self.upsert_session(SessionEntry {
+            id: session_id,
+            fab_idx,
+            peer_node_id,
+            peer_endpoint_id: params.originating_endpoint_id,
+            stream_usage: params.stream_usage,
+            video_stream_id: outcome.video_stream_id,
+            audio_stream_id: outcome.audio_stream_id,
+            metadata_enabled: params.metadata_enabled,
+            state: SessionState::Established,
+        })?;
+        ctx.notify_own_attr_changed(AttributeId::CurrentSessions as _);
+
+        response
+            .web_rtc_session_id(session_id)?
+            .video_stream_id(wrap_opt_u16_nullable(outcome.video_stream_id))?
+            .audio_stream_id(wrap_opt_u16_nullable(outcome.audio_stream_id))?
+            .end()
+    }
+
+    async fn handle_provide_answer(
+        &self,
+        ctx: impl InvokeContext,
+        request: decl::ProvideAnswerRequest<'_>,
+    ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+        let fab_idx = cmd.fab_idx;
+        let peer_node_id = self.peer_node_id(&ctx)?;
+
+        let session_id = request.web_rtc_session_id()?;
+        let sdp = request.sdp()?;
+        if sdp.len() > SDP_LEN {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+
+        let session = self
+            .session_copy(session_id)
+            .ok_or(Error::from(ErrorCode::NotFound))?;
+        self.check_peer(&session, fab_idx, peer_node_id)?;
+
+        // Spec: ProvideAnswer is only valid when we sent the Offer.
+        match session.state {
+            SessionState::AwaitingAnswer | SessionState::AwaitingDeferredOffer => {}
+            SessionState::Established => return Err(ErrorCode::InvalidAction.into()),
+        }
+
+        self.hooks
+            .on_answer(session_id, sdp)
+            .await
+            .map_err(Error::from)?;
+        self.set_state(session_id, SessionState::Established);
+        Ok(())
+    }
+
+    async fn handle_provide_ice_candidates(
+        &self,
+        ctx: impl InvokeContext,
+        request: decl::ProvideICECandidatesRequest<'_>,
+    ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+        let fab_idx = cmd.fab_idx;
+        let peer_node_id = self.peer_node_id(&ctx)?;
+
+        let session_id = request.web_rtc_session_id()?;
+        let session = self
+            .session_copy(session_id)
+            .ok_or(Error::from(ErrorCode::NotFound))?;
+        self.check_peer(&session, fab_idx, peer_node_id)?;
+
+        let candidates = request.ice_candidates()?;
+        self.hooks
+            .on_ice_candidates(session_id, &candidates)
+            .await
+            .map_err(Error::from)
+    }
+
+    async fn handle_end_session(
+        &self,
+        ctx: impl InvokeContext,
+        request: decl::EndSessionRequest<'_>,
+    ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+        let fab_idx = cmd.fab_idx;
+        let peer_node_id = self.peer_node_id(&ctx)?;
+
+        let session_id = request.web_rtc_session_id()?;
+        let reason = request.reason()?;
+
+        let session = self
+            .session_copy(session_id)
+            .ok_or(Error::from(ErrorCode::NotFound))?;
+        self.check_peer(&session, fab_idx, peer_node_id)?;
+
+        // Best-effort notify the hooks; even if they fail we drop the row.
+        let _ = self.hooks.on_end_session(session_id, reason).await;
+        self.remove_session(session_id);
+        ctx.notify_own_attr_changed(AttributeId::CurrentSessions as _);
+        Ok(())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────
+
+/// Extract the peer node ID from an incoming exchange's session state.
+/// Convert `Option<u16>` (internal storage) into `Option<Nullable<u16>>`
+/// suitable for response builders that treat the field as BOTH optional
+/// and nullable. We always emit the field (`Some(_)`); `None` stream ID
+/// is represented as `Nullable::none()`.
+fn wrap_opt_u16_nullable(v: Option<u16>) -> Option<Nullable<u16>> {
+    Some(match v {
+        Some(x) => Nullable::some(x),
+        None => Nullable::none(),
+    })
+}
+
+/// Emit a single `WebRTCSessionStruct` into the TLV stream.
+fn encode_session_struct<P: TLVBuilderParent>(
+    b: WebRTCSessionStructBuilder<P>,
+    s: &SessionEntry,
+) -> Result<P, Error> {
+    let video = match s.video_stream_id {
+        Some(x) => Nullable::some(x),
+        None => Nullable::none(),
+    };
+    let audio = match s.audio_stream_id {
+        Some(x) => Nullable::some(x),
+        None => Nullable::none(),
+    };
+    b.id(s.id)?
+        .peer_node_id(s.peer_node_id)?
+        .peer_endpoint_id(s.peer_endpoint_id)?
+        .stream_usage(s.stream_usage)?
+        .video_stream_id(video)?
+        .audio_stream_id(audio)?
+        .metadata_enabled(s.metadata_enabled)?
+        .video_streams()?
+        .none()
+        .audio_streams()?
+        .none()
+        .fabric_index(Some(s.fab_idx))?
+        .end()
+}

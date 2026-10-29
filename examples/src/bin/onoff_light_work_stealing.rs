@@ -115,7 +115,7 @@ fn main() -> Result<(), Error> {
         matter,
         crypto,
         buffers,
-        (NODE, data_model(rand, on_off_handler)),
+        (NODE, data_model(matter, rand, on_off_handler)),
         &kv,
         state,
     );
@@ -196,12 +196,13 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
     endpoints::EthSysHandlerBuilder::new()
         .netif_diag(&SysNetifs)
-        .build(rand)
+        .build(matter, rand)
         .chain(
             |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

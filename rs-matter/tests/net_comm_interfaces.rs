@@ -101,7 +101,7 @@ fn network_interfaces_own_their_stores() -> Result<(), Error> {
     let mut thread = ThreadNetworks::<2>::new();
 
     {
-        let dm = data_model(&mut rand, &mut wifi, &wifi_ctl, &mut thread);
+        let dm = data_model(&matter, &mut rand, &mut wifi, &wifi_ctl, &mut thread);
         let im = InteractionModel::new(&matter, &crypto, &buffers, &dm, &kv, &state);
 
         futures_lite::future::block_on(im.startup())?;
@@ -245,6 +245,7 @@ fn interface_enabled_follows_the_fail_safe() -> Result<(), Error> {
 
 /// The data model of the node: one Network Commissioning instance per interface.
 fn data_model<'a>(
+    matter: &'a Matter<'a>,
     rand: &mut impl Rng,
     wifi: &'a mut WifiNetworks<2>,
     wifi_ctl: &'a EnabledRecorder,
@@ -254,6 +255,7 @@ fn data_model<'a>(
         |e, c| e == 0 && c == net_comm::FULL_CLUSTER.id,
         NetCommHandler::new(
             Dataver::new_rand(rand),
+            matter,
             0,
             wifi,
             NETWORKS_KEY,
@@ -267,6 +269,7 @@ fn data_model<'a>(
         |e, c| e == 2 && c == net_comm::FULL_CLUSTER.id,
         NetCommHandler::new(
             Dataver::new_rand(rand),
+            matter,
             2,
             thread,
             SECONDARY_NETWORKS_KEY,
@@ -293,7 +296,7 @@ fn lifecycle(
     thread: &mut ThreadNetworks<2>,
     op: LifecycleOp,
 ) -> Result<(), Error> {
-    let dm = data_model(rand, wifi, wifi_ctl, thread);
+    let dm = data_model(matter, rand, wifi, wifi_ctl, thread);
     let im = InteractionModel::new(matter, crypto, buffers, &dm, kv, state);
 
     // Bound, so that the temporary handler is dropped before `im` and `dm`

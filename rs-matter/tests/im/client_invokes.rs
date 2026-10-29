@@ -17,8 +17,8 @@
 
 //! Client-side invoke tests exercising the `InvokeSender` API.
 
-use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::CmdDataTag;
+use rs_matter::im::{ImClient, TxOutcome};
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::futures::{block_on, select, Coalesce};
 

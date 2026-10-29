@@ -1,0 +1,555 @@
+/*
+ *
+ *    Copyright (c) 2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+use core::fmt::{self, Debug};
+
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{TLVTag, TLVWrite};
+use crate::*;
+
+/// A type alias for the attribute matching function
+pub type WithAttrs = fn(&Attribute, u16, u32) -> bool;
+/// A type alias for the command matching function
+pub type WithCmds = fn(&Command, u16, u32) -> bool;
+/// A type alias for the event matching function
+pub type WithEvents = fn(&Event, u16, u32) -> bool;
+
+/// A struct modeling the cluster meta-data
+/// (i.e. what is the cluster ID, revision, features, attributes and their access, commands and their access)
+/// in the Matter data model.
+#[derive(Debug, Clone)]
+pub struct Cluster<'a> {
+    /// The ID of the cluster
+    pub id: ClusterId,
+    /// The revision of the cluster
+    pub revision: u16,
+    /// The feature map of the cluster
+    pub feature_map: u32,
+    /// The attributes of the cluster.
+    ///
+    /// These could be all attributes as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_attrs` for more details.
+    pub attributes: &'a [Attribute],
+    /// The commands of the cluster.
+    ///
+    /// These could be all commands as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_cmds` for more details.
+    pub commands: &'a [Command],
+    /// The events of the cluster.
+    ///
+    /// These could be all events as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_events` for more details.
+    pub events: &'a [Event],
+    /// A function that takes an attribute and returns a boolean indicating if the attribute
+    /// is supported by the cluster.
+    pub with_attrs: WithAttrs,
+    /// A function that takes a command and returns a boolean indicating if the command
+    /// is supported by the cluster.
+    pub with_cmds: WithCmds,
+    /// A function that takes an event and returns a boolean indicating if the event
+    /// is supported by the cluster.
+    pub with_events: WithEvents,
+}
+
+impl<'a> Cluster<'a> {
+    /// Create a new cluster
+    ///
+    /// # Arguments
+    /// - `id`: The ID of the cluster
+    /// - `revision`: The revision of the cluster
+    /// - `feature_map`: The feature map of the cluster
+    /// - `attributes`: The attributes of the cluster
+    /// - `commands`: The commands of the cluster
+    /// - `with_attrs`: A function that takes an attribute and returns a boolean indicating if the attribute should be included
+    /// - `with_cmds`: A function that takes a command and returns a boolean indicating if the command should be included
+    /// - `with_events`: A function that takes an event and returns a boolean indicating if the event should be included
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        id: ClusterId,
+        revision: u16,
+        feature_map: u32,
+        attributes: &'a [Attribute],
+        commands: &'a [Command],
+        events: &'a [Event],
+        with_attrs: WithAttrs,
+        with_cmds: WithCmds,
+        with_events: WithEvents,
+    ) -> Self {
+        Self {
+            id,
+            revision,
+            feature_map,
+            attributes,
+            commands,
+            events,
+            with_attrs,
+            with_cmds,
+            with_events,
+        }
+    }
+
+    /// Return a new cluster with a modified revision
+    pub const fn with_revision(self, revision: u16) -> Self {
+        Self { revision, ..self }
+    }
+
+    /// Return a new cluster with a modified feature map
+    pub const fn with_features(self, feature_map: u32) -> Self {
+        Self {
+            feature_map,
+            ..self
+        }
+    }
+
+    /// Return a new cluster with a modified attributes' matcher
+    pub const fn with_attrs(self, with_attrs: WithAttrs) -> Self {
+        Self { with_attrs, ..self }
+    }
+
+    /// Return a new cluster with a modified commands' matcher
+    pub const fn with_cmds(self, with_cmds: WithCmds) -> Self {
+        Self { with_cmds, ..self }
+    }
+
+    /// Return a new cluster with a modified events' matcher
+    pub const fn with_events(self, with_events: WithEvents) -> Self {
+        Self {
+            with_events,
+            ..self
+        }
+    }
+
+    /// Return a reference to the attribute with the given ID, if it exists.
+    pub fn attribute(&self, id: AttrId) -> Option<&Attribute> {
+        self.attributes().find(|attr| attr.id == id)
+    }
+
+    /// Return a reference to the command with the given ID, if it exists.
+    pub fn command(&self, id: CmdId) -> Option<&Command> {
+        self.commands().find(|cmd| cmd.id == id)
+    }
+
+    /// Return a reference to the event with the given ID, if it exists.
+    pub fn event(&self, id: EventId) -> Option<&Event> {
+        self.events().find(|event| event.id == id)
+    }
+
+    /// Return an iterator over the attributes of the cluster which are
+    /// configured to be included based on the provided configuration.
+    pub fn attributes(&self) -> impl Iterator<Item = &Attribute> + '_ {
+        self.attributes
+            .iter()
+            .filter(|attr| (self.with_attrs)(attr, self.revision, self.feature_map))
+    }
+
+    /// Return an iterator over the commands of the cluster which are
+    /// configured to be included based on the provided configuration.
+    pub fn commands(&self) -> impl Iterator<Item = &Command> + '_ {
+        self.commands
+            .iter()
+            .filter(|cmd| (self.with_cmds)(cmd, self.revision, self.feature_map))
+    }
+
+    /// Return an iterator over the events of the cluster which are
+    /// configured to be included based on the provided configuration.
+    pub fn events(&self) -> impl Iterator<Item = &Event> + '_ {
+        self.events
+            .iter()
+            .filter(|event| (self.with_events)(event, self.revision, self.feature_map))
+    }
+
+    /// Performs an IM attribute read for the given attribute ID.
+    ///
+    /// The provided attribute ID must be a global attribute, or else
+    /// an error will be returned.
+    pub fn read<W: Reply>(&self, attr: &AttrDetails, mut writer: W) -> Result<(), Error> {
+        match attr.attr_id.try_into()? {
+            GlobalElements::GeneratedCmdList => {
+                self.encode_generated_command_ids(
+                    Self::fetch_index(attr),
+                    &W::TAG,
+                    writer.writer(),
+                )?;
+                writer.complete()
+            }
+            GlobalElements::AcceptedCmdList => {
+                self.encode_accepted_command_ids(
+                    Self::fetch_index(attr),
+                    &W::TAG,
+                    writer.writer(),
+                )?;
+                writer.complete()
+            }
+            GlobalElements::EventList => {
+                self.encode_event_ids(Self::fetch_index(attr), &W::TAG, &mut writer.writer())?;
+                writer.complete()
+            }
+            GlobalElements::AttributeList => {
+                self.encode_attribute_ids(Self::fetch_index(attr), &W::TAG, &mut writer.writer())?;
+                writer.complete()
+            }
+            GlobalElements::FeatureMap => {
+                debug!(
+                    "Endpt(0x??)::Cluster(0x{:04x})::Attr::FeatureMap(0xfffc)::Read -> Ok({:08x})",
+                    self.id, self.feature_map
+                );
+                writer.set(self.feature_map)
+            }
+            GlobalElements::ClusterRevision => {
+                debug!(
+                    "Endpt(0x??)::Cluster(0x{:04x})::Attr::ClusterRevision(0xfffd)::Read -> Ok({})",
+                    self.id, self.revision
+                );
+                writer.set(self.revision)
+            }
+            other => {
+                error!("Attribute {:?} not supported", other);
+                Err(ErrorCode::AttributeNotFound.into())
+            }
+        }
+    }
+
+    fn encode_attribute_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AttributeIDs(0xfffb)::Read{{{:?}}} -> Ok([",
+            self.id, index
+        );
+
+        if let Some(Some(index)) = index {
+            let attr = self
+                .attributes()
+                .nth(index)
+                .ok_or(ErrorCode::ConstraintError)?;
+
+            tw.u32(tag, attr.id)?;
+            debug!("    Attr: 0x{:02x},", attr.id);
+        } else {
+            tw.start_array(tag)?;
+
+            if index.is_none() {
+                for attr in self.attributes() {
+                    tw.u32(&TLVTag::Anonymous, attr.id)?;
+                    debug!("    Attr: 0x{:02x},", attr.id);
+                }
+            }
+
+            tw.end_container()?;
+        }
+
+        debug!("])");
+
+        Ok(())
+    }
+
+    fn encode_accepted_command_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AcceptedCmdIDs(0xfff9)::Read{{{:?}}} -> Ok([",
+            self.id, index
+        );
+
+        if let Some(Some(index)) = index {
+            let cmd = self
+                .commands()
+                .nth(index)
+                .ok_or(ErrorCode::ConstraintError)?;
+
+            tw.u32(tag, cmd.id)?;
+            debug!("    Cmd: 0x{:02x}, ", cmd.id);
+        } else {
+            tw.start_array(tag)?;
+
+            if index.is_none() {
+                for cmd in self.commands() {
+                    tw.u32(&TLVTag::Anonymous, cmd.id)?;
+                    debug!("    Cmd: 0x{:02x}, ", cmd.id);
+                }
+            }
+
+            tw.end_container()?;
+        }
+
+        debug!("])");
+
+        Ok(())
+    }
+
+    fn encode_generated_command_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
+        // Matter C++ SDK unit tests do require the generated command IDs to be in ascending order and not to have repetitions.
+        // Therefore, we are generating the array incrementally, using a variation of the selection sort algorithm
+
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read{{{:?}}} -> Ok(",
+            self.id, index
+        );
+
+        if !matches!(index, Some(Some(_))) {
+            tw.start_array(tag)?;
+        }
+
+        let mut count = 0;
+        let mut max_inserted_cmd = None;
+
+        while let Some(next_cmd) = self
+            .commands()
+            .filter_map(|cmd| cmd.resp_id)
+            .filter(|cmd| {
+                max_inserted_cmd
+                    .map(|max_inserted| *cmd > max_inserted)
+                    .unwrap_or(true)
+            })
+            .min()
+        {
+            if index == Some(Some(count)) {
+                tw.u32(tag, next_cmd)?;
+                debug!("    Cmd: 0x{:02x}, ", next_cmd);
+            } else if index.is_none() {
+                tw.u32(&TLVTag::Anonymous, next_cmd)?;
+                debug!("    Cmd: 0x{:02x}, ", next_cmd);
+            }
+
+            max_inserted_cmd = Some(next_cmd);
+            count += 1;
+        }
+
+        if let Some(Some(index)) = index {
+            if index >= count {
+                Err(ErrorCode::ConstraintError)?;
+            }
+        }
+
+        if !matches!(index, Some(Some(_))) {
+            tw.end_container()?;
+        }
+
+        debug!("])");
+
+        Ok(())
+    }
+
+    fn encode_event_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::EventIDs(0xfffa)::Read{{{:?}}} -> Ok([",
+            self.id, index
+        );
+
+        if let Some(Some(index)) = index {
+            let event = self.events().nth(index).ok_or(ErrorCode::ConstraintError)?;
+
+            tw.u32(tag, event.id)?;
+            debug!("    Event: 0x{:02x}, ", event.id);
+        } else {
+            tw.start_array(tag)?;
+
+            if index.is_none() {
+                for event in self.events() {
+                    tw.u32(&TLVTag::Anonymous, event.id)?;
+                    debug!("    Event: 0x{:02x}, ", event.id);
+                }
+            }
+
+            tw.end_container()?;
+        }
+
+        debug!("])");
+
+        Ok(())
+    }
+
+    fn fetch_index(attr: &AttrDetails) -> Option<Option<usize>> {
+        attr.list_index
+            .clone()
+            .map(|li| li.into_option().map(|index| index as usize))
+    }
+}
+
+impl core::fmt::Display for Cluster<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "id: {}, ", self.id)?;
+
+        write!(f, "attrs [")?;
+        for (index, attr) in self.attributes().enumerate() {
+            if index > 0 {
+                write!(f, ", {}", attr)?;
+            } else {
+                write!(f, "{}", attr)?;
+            }
+        }
+
+        write!(f, "], cmds [")?;
+        for (index, cmd) in self.commands().enumerate() {
+            if index > 0 {
+                write!(f, ", {}", cmd)?;
+            } else {
+                write!(f, "{}", cmd)?;
+            }
+        }
+
+        write!(f, "]")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Cluster<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "id: {}, ", self.id);
+
+        defmt::write!(f, "attrs [");
+        for (index, attr) in self.attributes().enumerate() {
+            if index > 0 {
+                defmt::write!(f, ", ");
+            }
+            defmt::write!(f, "{}", attr);
+        }
+
+        defmt::write!(f, "], cmds [");
+        for (index, cmd) in self.commands().enumerate() {
+            if index > 0 {
+                defmt::write!(f, ", ");
+            }
+            defmt::write!(f, "{}", cmd);
+        }
+
+        defmt::write!(f, "]")
+    }
+}
+
+/// A macro that generates a "with" fn for matching attributes and commands
+///
+/// Usage:
+/// - `with!()` - returns false for all attributes and commands
+/// - `with!(all)` - returns true for all attributes and commands
+/// - `with!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for the specified attributes or commands
+/// - `with!(required[; (attr1, attr2, ...)])` - returns true for all mandatory attributes and the specified attributes
+/// - `with!(system[; (attr1, attr2, ...)])` - returns true for all system attributes and the specified attributes
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! with {
+    () => {
+        |_, _, _| false
+    };
+    (all) => {
+        |_, _, _| true
+    };
+    (required) => {
+        |attr, _, _| !attr.quality.contains($crate::Quality::OPTIONAL)
+    };
+    (required; $($id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |attr, _, _| {
+            if !attr.quality.contains($crate::Quality::OPTIONAL) {
+                true
+            } else if let Ok(l) = attr.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+    (system) => {
+        |attr, _, _| attr.is_system()
+    };
+    (system; $($id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |attr, _, _| {
+            if attr.is_system() {
+                true
+            } else if let Ok(l) = attr.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+    ($id0:path $(| $id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |leaf, _, _| {
+            if let Ok(l) = leaf.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $id0 => true,
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+}
+
+/// A macro that generates an "except" fn for matching attributes and commands
+///
+/// Usage:
+/// - `except!()` - returns true for all attributes and commands
+/// - `except!(all)` - returns false for all attributes and commands
+/// - `except!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for all but the specified attributes or commands
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! except {
+    () => {
+        |_, _, _| true
+    };
+    (all) => {
+        |_, _, _| false
+    };
+    ($id0:path $(| $id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |leaf, _, _| {
+            if let Ok(l) = leaf.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $id0 => false,
+                    $($id => false,)*
+                    _ => true,
+                }
+            } else {
+                false
+            }
+        }
+    };
+}

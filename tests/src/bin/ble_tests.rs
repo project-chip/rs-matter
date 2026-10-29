@@ -77,6 +77,7 @@ use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::networks::thread::otbr::OtbrCtl;
 use rs_matter::dm::networks::wireless::{
     connect_with_retries, NetCtlState, NetCtlWithStatusImpl, ThreadNetworks, WifiNetworks,
 };
@@ -90,7 +91,6 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::btp::{bluez, AdvData, Btp};
-use rs_matter::transport::network::thread::otbr::OtbrCtl;
 use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::futures::{select, select3, select4, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
@@ -192,7 +192,7 @@ fn run_wifi(connection: Connection, adapter: Option<String>) -> Result<(), Error
         matter,
         &crypto,
         buffers,
-        data_model(rand, &on_off, networks, &net_ctl, &net_ctl),
+        data_model(matter, rand, &on_off, networks, &net_ctl, &net_ctl),
         &kv,
         state,
     );
@@ -341,7 +341,7 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
         matter,
         &crypto,
         buffers,
-        data_model_thread(rand, &on_off, networks, &otbr_ctl, &net_ctl),
+        data_model_thread(matter, rand, &on_off, networks, &otbr_ctl, &net_ctl),
         &kv,
         state,
     );
@@ -522,7 +522,7 @@ impl NetCtl for DeferredNetCtl<'_> {
         } else {
             // Deferred: report success so provisioning can conclude over BTP,
             // and remember the dataset for the replay once the BLE phase is over.
-            creds.check_match(self.net_type())?;
+            self.net_type().check_creds(creds)?;
 
             if let WirelessCreds::Thread { dataset_tlv } = creds {
                 *self.deferred.lock().unwrap() = Some(dataset_tlv.to_vec());
@@ -578,6 +578,7 @@ const NODE_THREAD: Node<'static> = Node {
 };
 
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     networks: &'a mut WifiNetworks<MAX_NETWORKS>,
@@ -591,14 +592,14 @@ where
         NODE,
         endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,
@@ -608,6 +609,7 @@ where
 }
 
 fn data_model_thread<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     networks: &'a mut ThreadNetworks<MAX_NETWORKS>,
@@ -621,14 +623,14 @@ where
         NODE_THREAD,
         endpoints::ThreadSysHandlerBuilder::new(networks, net_ctl, thread_diag)
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,

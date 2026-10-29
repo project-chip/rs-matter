@@ -79,7 +79,7 @@ fn test_unaccepted_exchange_dropped_after_accept_timeout() {
             matter.run(&crypto, &controller_socket, &controller_socket, NoNetwork),
             async {
                 let mut exchange =
-                    Exchange::initiate_plaintext(&matter, &crypto, peer_addr).await?;
+                    Exchange::initiate_plaintext(matter.transport(), &crypto, peer_addr).await?;
 
                 let start = Instant::now();
 

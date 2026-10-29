@@ -120,15 +120,19 @@ fn test_add_group_if_identifying() {
         NODE,
         ChainedHandler::new(
             |e, c| e == 0 && c == GrpKeyMgmtHandler::CLUSTER.id,
-            Async(GrpKeyMgmtHandler::new(Dataver::new(2)).adapt()),
+            Async(GrpKeyMgmtHandler::new(Dataver::new(2), &im.matter).adapt()),
             ChainedHandler::new(
                 |e, c| e == 1 && c == identify::CLUSTER.id,
                 Async(identify::HandlerAdaptor(&identify_handler)),
                 ChainedHandler::new(
                     |e, c| e == 1 && c == GroupsHandler::CLUSTER.id,
                     Async(
-                        GroupsHandler::new_with_identify(Dataver::new(3), &identify_handler)
-                            .adapt(),
+                        GroupsHandler::new_with_identify(
+                            Dataver::new(3),
+                            &im.matter,
+                            &identify_handler,
+                        )
+                        .adapt(),
                     ),
                     EmptyHandler,
                 ),

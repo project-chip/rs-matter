@@ -57,7 +57,7 @@ use rs_matter::dm::clusters::app::zone_mgmt::{
     HandlerAsyncAdaptor as ZoneMgmtAdaptor, ZoneMgmtConfig, ZoneMgmtHandler, ZoneMgmtHooks,
 };
 use rs_matter::dm::clusters::basic_info::{
-    BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
+    BasicInfoConfig, PairingHintFlags, ProductAppearance, ProductColor, ProductFinish,
 };
 use rs_matter::dm::clusters::decl::chime::{
     self as chime_decl, ChimeSoundStructArrayBuilder, ClusterHandler as ChimeClusterHandler,
@@ -367,7 +367,8 @@ const CAND_LEN: usize = 256;
 const MAX_CAND: usize = 16;
 
 type CamAv = CameraAvStreamHandler<'static, StubCamHooks, CAM_AV_NV, CAM_AV_NA>;
-type WebRtc = WebRtcProvHandler<StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>;
+type WebRtc =
+    WebRtcProvHandler<'static, StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>;
 
 // ---------------------------------------------------------------------------
 // Static storage
@@ -525,6 +526,7 @@ fn main() -> Result<(), Error> {
 
     let webrtc = WEBRTC.init(WebRtcProvHandler::new(
         Dataver::new_rand(&mut rand),
+        matter,
         1,
         StubWebRtcHooks { cam_av },
     ));
@@ -565,6 +567,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
+            matter,
             rand,
             webrtc,
             cam_av,
@@ -629,8 +632,8 @@ fn main() -> Result<(), Error> {
 
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
-        finish: ProductFinishEnum::Satin,
-        color: Some(ColorEnum::Purple),
+        finish: ProductFinish::Satin,
+        color: Some(ProductColor::Purple),
     },
     device_type: Some(DEV_TYPE_MATTER_CAMERA.dtype),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
@@ -682,7 +685,9 @@ const NODE: Node<'static> = Node {
 // Handler wiring
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn data_model<'a>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CamAv,
@@ -699,14 +704,14 @@ fn data_model<'a>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == CamAv::CLUSTER_VIDEO_AUDIO.id,

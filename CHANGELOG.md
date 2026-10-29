@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Breaking: the MSRV is 1.92
-* New: `utils::futures`, `utils::timers`, `utils::io` and `utils::storage::String`, which re-export what `rs-matter` uses from `embassy-futures`, `embassy-time`, `embedded-io-async` and `heapless`
+* Breaking: `rs-matter` is split into crates, which it re-exports under the existing paths, so that an edit outside of the generated code no longer re-checks it (#559); the moved and changed APIs are listed in `docs/crate-split-design.md` (#634)
+  * Breaking: the handler contexts no longer hand out the `Matter` and the `Exchange`, and the system cluster handlers take a `&Matter` when created
+  * Breaking: node types in the cluster handler modules use their own enums instead of the generated ones
+  * Breaking: the generated cluster clients work over `im::ImClient`, and most of their methods return `impl Future`
+  * Breaking: `im::client` is gone, its contents are in `im`
+  * Breaking: the generated cluster code logs through functions in `dm`, so its messages are attributed to `rs-matter-dm-core`
+* Breaking: the MSRV is 1.92 (#631)
+* New: `utils::futures`, `utils::timers`, `utils::io` and `utils::storage::String`, which re-export what `rs-matter` uses from `embassy-futures`, `embassy-time`, `embedded-io-async` and `heapless` (#631)
   * Breaking: `utils::select` is renamed to `utils::futures`
   * Breaking: `utils::codec::base38::decode_vec` returns a `utils::storage::Vec`
 * New: `MultiSignal` and `IfMultiMutex` (with `IfMultiMutexGuard`) are types of their own, which keep a waker per waiter in an intrusive list, so that waiters from different tasks do not wake each other (#630)
@@ -24,7 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Breaking: `AttrDetails::cluster_status` and `CmdDetails::cluster_status` are `Mutex<Cell<..>>`; use `cluster_status()` and `set_cluster_status()`
   * Breaking: `UnitTestingHandler` takes its data as a `Mutex<RefCell<..>>`
 * New: the blocking `Mutex` implements `Clone`, `Debug` and `defmt::Format` when its contents do (#622)
-* New: the `ImClient` operations are also free functions in `im::client` (e.g. `invoke_with(exchange, ..)`), whose futures `rustc` can prove `Send`; the generated cluster clients use them (#622)
 * Fix: callers that initiate to a node while its CASE session is being established wait for that handshake and use its session, or get its error, instead of each running a handshake of their own (#620)
 * New: `MultiSignal` and `IfMultiMutex`, aliases of `Signal` and `IfMutex` that mark the places where waiters from different tasks may wait at the same time (#620)
 * Fix: a reply on an unsecured session we initiated (e.g. a `CASESigma2`) is no longer taken for a message of an unsecured session the same peer initiated (e.g. its lingering Check-Ins), as only the latter carry no destination node ID (#619)

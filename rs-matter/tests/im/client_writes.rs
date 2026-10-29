@@ -17,8 +17,8 @@
 
 //! Client-side write tests exercising the `WriteSender` API.
 
-use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::{AttrDataTag, IMStatusCode};
+use rs_matter::im::{ImClient, TxOutcome};
 use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::utils::futures::{block_on, select, Coalesce};
 

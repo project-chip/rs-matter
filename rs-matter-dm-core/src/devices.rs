@@ -1,0 +1,235 @@
+/*
+ *
+ *    Copyright (c) 2022-2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+use crate::DeviceType;
+
+/// A constant representing the device type for the root (ep0) endpoint in Matter.
+///
+/// Matter Device Library revision history: rev 1 was initial; rev 2
+/// added Power Source (conditional, optional); rev 3 added MNGD-feature
+/// restriction on Access Control; rev 4 added conditions and cluster
+/// requirements for Time Sync, TLS Certificate/Client Management. All four
+/// rev-2..4 additions are either conditional or `O` (optional) per spec;
+/// rs-matter implements the rev-1 mandatory set (BasicInfo, AccessControl,
+/// GeneralCommissioning, NetworkCommissioning, GeneralDiagnostics,
+/// AdminCommissioning, OperationalCredentials, GroupKeyManagement) and is
+/// therefore conformant at rev 4.
+pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
+    dtype: 0x0016,
+    drev: 4,
+};
+
+/// A constant representing the device type for a power source endpoint in the node.
+///
+/// Utility device type, node-scoped: it is declared *alongside* the primary
+/// device type of the endpoint hosting the `PowerSource` cluster (typically the
+/// root node - see Device Library spec which lists this device type under the
+/// Root Node's requirements with `PowerSourceCond, O`).
+pub const DEV_TYPE_POWER_SOURCE: DeviceType = DeviceType {
+    dtype: 0x0011,
+    drev: 1,
+};
+
+/// The Secondary Network Interface device type: an endpoint hosting the Network
+/// Commissioning cluster of an additional network interface of the node, next
+/// to the primary one on the root endpoint.
+pub const DEV_TYPE_SECONDARY_NETWORK_INTERFACE: DeviceType = DeviceType {
+    dtype: 0x0019,
+    drev: 1,
+};
+
+/// A constant representing the device type for a bridged device endpoint in the node.
+pub const DEV_TYPE_BRIDGED_NODE: DeviceType = DeviceType {
+    dtype: 0x0013,
+    drev: 1,
+};
+
+/// A constant representing the device type for an aggregator endpoint in the node
+///  when the Node contains bridged endpoints.
+pub const DEV_TYPE_AGGREGATOR: DeviceType = DeviceType {
+    dtype: 0x000e,
+    drev: 1,
+};
+
+/// The OTA Requestor device type: a node that obtains and applies software
+/// updates. It hosts the OTA Software Update Requestor cluster (server) and is a
+/// client of the OTA Software Update Provider cluster.
+pub const DEV_TYPE_OTA_REQUESTOR: DeviceType = DeviceType {
+    dtype: 0x0012,
+    drev: 1,
+};
+
+/// The OTA Provider device type: a node that serves software updates. It hosts
+/// the OTA Software Update Provider cluster (server) and is a client of the OTA
+/// Software Update Requestor cluster.
+pub const DEV_TYPE_OTA_PROVIDER: DeviceType = DeviceType {
+    dtype: 0x0014,
+    drev: 1,
+};
+
+/// A constant representing the On/Off Light device in Matter.
+///
+/// Matter Device Library revision history: rev 1 was Zigbee-3.0
+/// initial; rev 2 was the new data-model-format/notation rewrite; rev 3
+/// swapped the deprecated Scenes cluster (0x0005) for Scenes Management
+/// (0x0062). Conformance tests (TC_DeviceConformance::test_TC_IDM_10_5/_6)
+/// always evaluate the cluster set against the *current* spec, so claiming
+/// the latest revision matches the test framework's expectation.
+///
+/// Note: `On/Off Light` mandates Identify, Groups, On/Off (with the `LT`
+/// Lighting feature), and Scenes Management at rev 3. rs-matter does not
+/// yet implement Scenes Management — applications using this device type
+/// won't pass `test_TC_IDM_10_5` until that gap is closed.
+pub const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
+    dtype: 0x0100,
+    drev: 3,
+};
+
+pub const DEV_TYPE_DIMMABLE_LIGHT: DeviceType = DeviceType {
+    dtype: 0x0101,
+    drev: 3,
+};
+
+/// On/Off Light Switch — a controller device type that mandates the
+/// `OnOff` cluster as a **client** (i.e. it initiates On/Off commands to a
+/// bound light) plus the `Binding` cluster as a server (its address book of
+/// bound targets). See the Matter Device Library spec.
+pub const DEV_TYPE_ON_OFF_LIGHT_SWITCH: DeviceType = DeviceType {
+    dtype: 0x0103,
+    drev: 3,
+};
+
+/// Generic Switch — a device type for a button/switch that reports user
+/// presses via the `Switch` cluster (as a **server**), emitting events such as
+/// `InitialPress`/`ShortRelease`. Ecosystems surface these events as automation
+/// triggers. Unlike `DEV_TYPE_ON_OFF_LIGHT_SWITCH`, it does not bind to or
+/// command any device itself. See the Matter Device Library spec.
+pub const DEV_TYPE_GENERIC_SWITCH: DeviceType = DeviceType {
+    dtype: 0x000F,
+    drev: 2,
+};
+
+/// Mode Select — a Simple, endpoint-scoped device type whose only mandatory
+/// cluster is `ModeSelect` as a server. It exists so that a node can expose
+/// several independent mode choices: an endpoint hosts at most one instance of
+/// a given cluster ID, so each further choice needs its own endpoint. The
+/// Matter Application Cluster spec's own example is a coffee machine with one
+/// instance described `Milk` and another `Sugar`.
+///
+/// This is a Simple **application** device type, so per Core spec 9.2.1 an
+/// endpoint carries exactly one of it and no other application type — use it
+/// for an endpoint dedicated to a mode choice.
+///
+/// To attach a mode choice to an existing device instead, put the ModeSelect
+/// *cluster* on that device's endpoint without declaring this device type, and
+/// leave the endpoint's own application device type in place. That is what
+/// CHIP's `all-clusters-app` does, and it is also what the `ON_OFF` feature
+/// needs, since `OnMode` couples to an OnOff cluster on the same endpoint.
+pub const DEV_TYPE_MODE_SELECT: DeviceType = DeviceType {
+    dtype: 0x0027,
+    drev: 1,
+};
+
+/// Extended Color Light — mandates OnOff, LevelControl, and
+/// ColorControl with the full feature set (HUE_AND_SATURATION, XY,
+/// COLOR_TEMPERATURE, ENHANCED_HUE, COLOR_LOOP).
+pub const DEV_TYPE_EXTENDED_COLOR_LIGHT: DeviceType = DeviceType {
+    dtype: 0x010D,
+    drev: 4,
+};
+
+/// Thermostat (`0x0301`), Matter Device Library revision 6.
+///
+/// Mandates `Identify` and `Thermostat` as servers, plus `Groups` when the
+/// device supports group communication. Revision history: rev 4 dropped Time
+/// Synchronization, Scenes Management and the Zigbee-only clusters; rev 5 moved
+/// the disallowed-element conformance into the Thermostat cluster itself; rev 6
+/// added Ambient Context Sensing as an optional client.
+///
+/// See [`crate::clusters::app::thermostat`] for the heating-only cluster
+/// handler that backs it.
+pub const DEV_TYPE_THERMOSTAT: DeviceType = DeviceType {
+    dtype: 0x0301,
+    drev: 6,
+};
+
+/// Fan (`0x002B`), Matter Device Library revision 4.
+///
+/// A standalone, ceiling or wall fan that circulates the air in a room.
+/// Mandates `Identify`, `Groups` and `FanControl` as servers, with `OnOff`
+/// optional: the Device Library keeps the two independent, so that switching
+/// the fan off through `OnOff` leaves `FanMode`, `PercentSetting` and
+/// `SpeedSetting` where the occupant put them and only zeroes
+/// `PercentCurrent` / `SpeedCurrent`. Revision history: rev 2 allowed the
+/// composition with a Thermostat for fan heaters, rev 3 added `OnOff`, rev 4
+/// moved the `FanModeSequence` requirement into the Fan Control cluster.
+///
+/// See [`crate::clusters::app::fan_control`] for the cluster handler that
+/// backs it.
+pub const DEV_TYPE_FAN: DeviceType = DeviceType {
+    dtype: 0x002B,
+    drev: 4,
+};
+
+/// Electrical Sensor (`0x0510`), Matter Device Library revision 1.
+///
+/// A **utility** device type: it does not stand on its own but attaches to an
+/// endpoint that already carries an application device type, describing that
+/// endpoint's electrical behaviour. Core spec 9.2.1 permits any number of
+/// utility device types beside the single application one, which is how a
+/// thermostat endpoint can also meter its heating element.
+///
+/// Mandates `PowerTopology` plus at least one of `ElectricalPowerMeasurement`
+/// (instantaneous draw) and `ElectricalEnergyMeasurement` (energy over time).
+///
+/// See [`crate::clusters::app::power_topology`],
+/// [`crate::clusters::app::elec_pwr_meas`] and
+/// [`crate::clusters::app::elec_energy_meas`] for the handlers that back
+/// it.
+pub const DEV_TYPE_ELECTRICAL_SENSOR: DeviceType = DeviceType {
+    dtype: 0x0510,
+    drev: 1,
+};
+
+/// A constant representing the Smart Speaker device in Matter.
+pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
+    dtype: 0x0022,
+    drev: 2,
+};
+
+/// A constant representing the casting video player device in Matter.
+pub const DEV_TYPE_CASTING_VIDEO_PLAYER: DeviceType = DeviceType {
+    dtype: 0x0023,
+    drev: 1,
+};
+
+/// A constant representing the video player device in Matter.
+pub const DEV_TYPE_VIDEO_PLAYER: DeviceType = DeviceType {
+    dtype: 0x0028,
+    drev: 1,
+};
+
+/// A macro to generate the devices for an endpoint.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! devices {
+    ($($device:expr $(,)?)*) => {
+        &[
+            $($device,)*
+        ]
+    }
+}

@@ -215,7 +215,7 @@ fn test_case_resumption_round_trip() {
 
         // ---- 5. Device side: transport + SecureChannel responder ----
 
-        let sc = SecureChannel::new(&crypto, &());
+        let sc = SecureChannel::new(&device_matter, &crypto, &());
         let responder = Responder::new("device", sc, &device_matter, 0);
 
         let device_fut = async {
@@ -360,9 +360,10 @@ async fn run_case_handshake<C: Crypto>(
     fab_idx: NonZeroU8,
     peer_node_id: u64,
 ) -> Result<(), Error> {
-    let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
+    let exchange = Exchange::initiate_plaintext(matter.transport(), crypto, peer_addr).await?;
 
     let mut case_fut = pin!(CaseInitiator::perform(
+        matter,
         exchange,
         crypto,
         fab_idx,

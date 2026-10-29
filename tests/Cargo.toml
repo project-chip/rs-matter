@@ -61,21 +61,21 @@ test-tcp = ["rs-matter/large-buffers"]
 defmt = []
 
 [dependencies]
-log = "0.4"
-env_logger = "0.11"
-embassy-sync = "0.8"
-embassy-time = { version = "0.5", features = ["std"] }
-embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
-static_cell = "2"
-if-addrs = "0.15"
-async-io = "2"
-blocking = "1"
-futures-lite = "2"
-rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "pics", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
-rand = { version = "0.10", features = ["std", "std_rng", "thread_rng"] }
-async-signal = "0.2"
-socket2 = "0.6"
-async-compat = { version = "0.2", optional = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true, features = ["std"] }
+embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
+static_cell = { workspace = true }
+if-addrs = { workspace = true }
+async-io = { workspace = true }
+blocking = { workspace = true }
+futures-lite = { workspace = true }
+rs-matter = { workspace = true, features = ["async-io", "groups", "persistent-subscriptions", "pics", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
+rand = { workspace = true, features = ["std", "std_rng", "sys_rng", "thread_rng"] }
+async-signal = { workspace = true }
+socket2 = { workspace = true }
+async-compat = { workspace = true, optional = true }
 
 [[bin]]
 name = "wireless_tests"

@@ -648,8 +648,9 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
     let cluster_id = Literal::u32_unsuffixed(cluster.code as u32);
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
     let import_globals = if cluster_uses_globals(cluster, globals) {
+        // The cluster modules are next to the `globals` module
         quote!(
-            use #krate::dm::clusters::decl::globals::*;
+            use super::globals::*;
         )
     } else {
         quote!()

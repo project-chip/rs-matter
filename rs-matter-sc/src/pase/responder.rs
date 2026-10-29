@@ -1,0 +1,497 @@
+/*
+ *
+ *    Copyright (c) 2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! PASE Responder (Device side) implementation.
+//!
+//! This module implements the responder side of the PASE (Passcode-Authenticated Session Establishment)
+//! protocol, used by Matter devices to accept secure session establishment from commissioners.
+
+use rand_core::Rng;
+
+use crate::crypto::{
+    CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
+    HMAC_HASH_ZEROED,
+};
+use crate::dm::AttrChangeNotifier;
+use crate::error::{Error, ErrorCode};
+use crate::host::ExchangeScExt as _;
+use crate::pase::spake2p::{Spake2P, Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys};
+use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
+use crate::transport::exchange::Exchange;
+use crate::transport::session::{ReservedSession, SessionMode};
+use crate::utils::init::{init, Init};
+use crate::ScHost;
+use crate::{check_opcode, complete_with_status, expect_opcode, OpCode, SCStatusCodes};
+
+use super::{
+    PBKDFParamReq, PBKDFParamResp, PBKDFParamRespParams, Pake1, Pake2, Pake3,
+    SPAKE2_SESSION_KEYS_INFO,
+};
+
+/// The PASE Responder (device side) handler
+pub struct PaseResponder<'a, M, C: Crypto, N> {
+    matter: &'a M,
+    crypto: &'a C,
+    notify: &'a N,
+    spake2p: Spake2P,
+}
+
+impl<'a, M: ScHost, C: Crypto, N: AttrChangeNotifier> PaseResponder<'a, M, C, N> {
+    /// Create a new PASE Responder handler
+    pub const fn new(matter: &'a M, crypto: &'a C, notify: &'a N) -> Self {
+        // TODO: Can any PBKDF2 calculation be pre-computed here
+        Self {
+            matter,
+            crypto,
+            notify,
+            spake2p: Spake2P::new(),
+        }
+    }
+
+    pub fn init(matter: &'a M, crypto: &'a C, notify: &'a N) -> impl Init<Self> {
+        init!(Self {
+            matter,
+            crypto,
+            notify,
+            spake2p <- Spake2P::init(),
+        })
+    }
+
+    /// Handle a PASE PAKE exchange, where the other peer is the exchange initiator.
+    ///
+    /// Consumes the exchange: on return the PAKE handshake has either
+    /// completed, been rejected, or aborted, and the exchange is dropped.
+    pub async fn handle(&mut self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        let result = self.handle_inner(&mut exchange).await;
+
+        // Per Matter Core spec, every unsuccessful PAKE
+        // handshake within the open commissioning window must be counted; the
+        // window SHALL be revoked after 20. We charge a failure for any path
+        // that errored mid-handshake or returned `Ok(false)` from
+        // `handle_inner` (PAKE3 verify failed). Successful handshakes and
+        // protocol-level rejections (e.g. "another PAKE session in progress",
+        // which is not a wrong-passcode attempt) return `Ok(true)` and
+        // therefore are not counted.
+        //
+        // We also unconditionally clear `session_timeout` so the next inbound
+        // PBKDFParamRequest isn't blocked by a stale "session in progress"
+        // marker left behind by an aborted handshake.
+        let pake_failed = matches!(result, Ok(false) | Err(_));
+
+        if pake_failed {
+            let notify_mdns = || exchange.transport().notify_comm_window_changed();
+            let notify_change =
+                |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
+
+            let _ = exchange.with_state(self.matter, |state| {
+                state.pase.record_pake_failure(notify_mdns, notify_change)
+            });
+        }
+
+        result.map(|_| ())
+    }
+
+    async fn handle_inner(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
+        let mut session = ReservedSession::reserve(exchange.transport(), self.crypto).await?;
+
+        if !self.update_session_timeout(exchange, true).await? {
+            return Ok(true);
+        }
+
+        // If the commissioning window is not open we silently drop the
+        // PASE attempt and let the initiator time out (CHIP-style behavior;
+        // TC-CADMIN-1.5 step 7 specifically asserts `CHIP_ERROR_TIMEOUT`).
+        // Replying with `InvalidParameter` here would surface as
+        // `CHIP_ERROR_INVALID_PASE_PARAMETER` and fail the test.
+        // Also clear the per-exchange `session_timeout` we set above so
+        // the next inbound PASE attempt isn't rejected as "another PAKE
+        // session in progress".
+        if !self
+            .handle_pbkdfparamrequest(exchange, &mut session)
+            .await?
+        {
+            self.clear_session_timeout(exchange)?;
+            return Ok(true);
+        }
+
+        exchange.recv_fetch().await?;
+
+        if !self.update_session_timeout(exchange, false).await? {
+            return Ok(true);
+        }
+
+        if !self.handle_pasepake1(exchange).await? {
+            self.clear_session_timeout(exchange)?;
+            return Ok(true);
+        }
+
+        exchange.recv_fetch().await?;
+
+        if !self.update_session_timeout(exchange, false).await? {
+            return Ok(true);
+        }
+
+        let success = self.handle_pasepake3(exchange, session).await?;
+
+        exchange.acknowledge().await?;
+
+        self.clear_session_timeout(exchange)?;
+
+        Ok(success)
+    }
+
+    /// Handle a PBKDFParamRequest message
+    ///
+    /// # Arguments
+    /// - `exchange` - The exchange
+    ///
+    /// Returns `Ok(true)` when a `PBKDFParamResponse` was sent (handshake
+    /// continues), or `Ok(false)` when the commissioning window is closed
+    /// and the request was silently dropped (caller should abort the
+    /// exchange without further processing).
+    async fn handle_pbkdfparamrequest(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        session: &mut ReservedSession<'_>,
+    ) -> Result<bool, Error> {
+        check_opcode(exchange, OpCode::PBKDFParamRequest)?;
+
+        let rx = exchange.rx()?;
+
+        let mut salt = [0u8; super::spake2p::SPAKE2P_VERIFIER_SALT_LEN];
+        let mut salt_len = 0usize;
+        let mut count = 0;
+
+        let notify_mdns = || exchange.transport().notify_comm_window_changed();
+        let notify_change =
+            |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
+
+        let has_comm_window = {
+            exchange.with_state(self.matter, |state| {
+                state
+                    .pase
+                    .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+                if let Some(comm_window) = state.pase.comm_window() {
+                    let src = comm_window.verifier.salt_bytes();
+                    salt[..src.len()].copy_from_slice(src);
+                    salt_len = src.len();
+                    count = comm_window.verifier.count;
+
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })?
+        };
+
+        if has_comm_window {
+            let mut our_random = Spake2pRandom::new();
+            let mut initiator_random = Spake2pRandom::new();
+
+            let (local_sessid, peer_sessid, resp) = {
+                let req = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
+                if req.passcode_id != 0 {
+                    error!("Can't yet handle passcode_id != 0");
+                    Err(ErrorCode::Invalid)?;
+                }
+
+                // Stash the initiator's MRP `session_parameters` (Matter
+                // Core spec) on both the unsecured session that
+                // currently carries the PASE handshake (so PASEPake2
+                // retransmits honour the peer's SAI) and on the reserved
+                // PASE session that takes over after PASEPake3.
+                if let Some(params) = req.session_parameters.as_ref() {
+                    session.apply_peer_session_params(exchange.id(), params)?;
+                }
+
+                let mut rand = self.crypto.rand()?;
+                rand.fill_bytes(our_random.access_mut());
+
+                let local_sessid = exchange
+                    .with_state(self.matter, |state| Ok(state.sessions.get_next_sess_id()))?;
+
+                initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
+
+                // Generate response
+                let resp = PBKDFParamResp {
+                    initiator_random: OctetStr::new(initiator_random.access()),
+                    responder_random: OctetStr::new(our_random.access()),
+                    responder_ssid: local_sessid,
+                    params: (!req.has_params).then(|| PBKDFParamRespParams {
+                        iterations: count,
+                        salt: OctetStr::new(&salt[..salt_len]),
+                    }),
+                    session_parameters: Some(crate::local_session_parameters(self.matter)),
+                };
+
+                (local_sessid, req.initiator_ssid, resp)
+            };
+
+            let mut context = Some(self.spake2p.start_context(
+                self.crypto,
+                local_sessid,
+                peer_sessid,
+                rx.payload(),
+            )?);
+
+            exchange
+                .send_with(|_, wb| {
+                    resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
+
+                    if let Some(context) = context.take() {
+                        self.spake2p.finish_context::<&C>(context, wb.as_slice())?;
+                    }
+
+                    Ok(Some(OpCode::PBKDFParamResponse.into()))
+                })
+                .await?;
+
+            Ok(true)
+        } else {
+            // No commissioning window open: silently ignore so the
+            // initiator times out (RFC 6762 §6.7-style "no response").
+            // Per Matter Core Spec a PASE attempt outside the
+            // commissioning window is not a wrong-passcode failure and
+            // therefore must not count toward the 20-failure limit, so
+            // we report `Ok(false)` (drop) rather than an error.
+            debug!("Dropping PBKDFParamRequest: no commissioning window open");
+            Ok(false)
+        }
+    }
+
+    /// Handle a PASEPake1 message
+    ///
+    /// # Arguments
+    /// - `exchange` - The exchange
+    ///
+    /// Returns `Ok(true)` when a `PASEPake2` reply was sent (handshake
+    /// continues), or `Ok(false)` when the commissioning window has
+    /// closed between PBKDF and Pake1 and the request was silently
+    /// dropped.
+    async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
+        expect_opcode(exchange, OpCode::PASEPake1).await?;
+
+        let req = get_root_node_struct(exchange.rx()?.payload())?;
+        let pake1 = Pake1::from_tlv(&req)?;
+        let a_pt: CanonEcPointRef<'_> = pake1.pa.0.try_into()?;
+
+        let mut b_pt = EC_POINT_ZEROED;
+        let mut cb = HMAC_HASH_ZEROED;
+
+        let notify_mdns = || exchange.transport().notify_comm_window_changed();
+        let notify_change =
+            |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
+
+        let has_comm_window = {
+            exchange.with_state(self.matter, |state| {
+                state
+                    .pase
+                    .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+                if let Some(comm_window) = state.pase.comm_window() {
+                    self.spake2p.setup_verifier(
+                        self.crypto,
+                        &comm_window.verifier,
+                        a_pt,
+                        &mut b_pt,
+                        &mut cb,
+                    )?;
+
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })?
+        };
+
+        if has_comm_window {
+            exchange
+                .send_with(|_, wb| {
+                    let resp = Pake2 {
+                        pb: OctetStr::new(b_pt.access()),
+                        cb: OctetStr::new(cb.access()),
+                    };
+                    resp.to_tlv(&TagType::Anonymous, wb)?;
+
+                    Ok(Some(OpCode::PASEPake2.into()))
+                })
+                .await?;
+            Ok(true)
+        } else {
+            // Commissioning window was closed (e.g. revoked or timed out)
+            // between PBKDFParamRequest and PASEPake1 — silently drop.
+            debug!("Dropping PASEPake1: no commissioning window open");
+            Ok(false)
+        }
+    }
+
+    /// Handle a PASEPake3 message
+    ///
+    /// # Arguments
+    /// - `exchange` - The exchange
+    /// - `session` - The reserved session
+    async fn handle_pasepake3(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        mut session: ReservedSession<'_>,
+    ) -> Result<bool, Error> {
+        expect_opcode(exchange, OpCode::PASEPake3).await?;
+
+        let req = get_root_node_struct(exchange.rx()?.payload())?;
+        let pake3 = Pake3::from_tlv(&req)?;
+        let ca: HmacHashRef<'_> = pake3.ca.0.try_into()?;
+
+        let verify_result = self.spake2p.verify(ca);
+        let success = verify_result.is_ok();
+
+        let status = match verify_result {
+            Ok((local_sessid, peer_sessid, ke)) => {
+                // Get the keys
+                let mut session_keys = Spake2pSessionKeys::new(); // TODO: MEDIUM BUFFER
+                self.crypto
+                    .kdf()?
+                    .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+                    .map_err(|_x| ErrorCode::InvalidData)?;
+
+                // Create a session
+                let peer_addr = exchange.with_state(self.matter, |state| {
+                    let sess = exchange.id().session(state.sessions);
+                    Ok(sess.get_peer_addr())
+                })?;
+
+                let (dec_key, remaining) = session_keys
+                    .reference()
+                    .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
+                let (enc_key, att_challenge) =
+                    remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
+
+                session.update(
+                    0,
+                    0,
+                    peer_sessid,
+                    local_sessid,
+                    peer_addr,
+                    SessionMode::Pase { fab_idx: 0 },
+                    Some(dec_key),
+                    Some(enc_key),
+                    Some(att_challenge),
+                    None,
+                )?;
+
+                // Complete the reserved session and thus make the `Session` instance
+                // immediately available for use by the system.
+                //
+                // We need to do this _before_ we send the response to the peer, or else we risk missing
+                // (dropping) the first messages the peer would send us on the newly-established session,
+                // as it might start using it right after it receives the response, while it is still marked
+                // as reserved.
+                session.complete();
+
+                // Per CHIP `CommissioningWindowManager::OnSessionEstablished`,
+                // arm the fail-safe automatically once a PASE session is up so
+                // the commissioner can issue `AddTrustedRootCertificate` and
+                // friends without first sending `ArmFailSafe` itself. Mirrors
+                // `CHIP_DEVICE_CONFIG_FAILSAFE_EXPIRY_LENGTH_SEC` (60s default).
+                exchange.with_state(self.matter, |state| {
+                    if !state.failsafe.is_armed() {
+                        let session_mode = SessionMode::Pase { fab_idx: 0 };
+                        state.failsafe.arm(
+                            crate::failsafe::DEFAULT_FAILSAFE_EXPIRY_SECS,
+                            0,
+                            &session_mode,
+                            state.pase.comm_window().is_some(),
+                        )?;
+                    }
+
+                    Ok(())
+                })?;
+
+                exchange.transport().notify_timeouts_changed();
+
+                SCStatusCodes::SessionEstablishmentSuccess
+            }
+            Err(status) => status,
+        };
+
+        complete_with_status(exchange, status, &[]).await?;
+
+        Ok(success)
+    }
+
+    /// Update the PASE session timeout tracker
+    ///
+    /// # Arguments
+    /// - `exchange` - The exchange
+    /// - `new` - Whether this is for a new session
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the session timeout was updated successfully
+    /// - `Ok(false)` if the session timeout could not be updated
+    ///   (e.g. another session is in progress, there is no active PASE session establishment, or the session has expired)
+    async fn update_session_timeout(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        new: bool,
+    ) -> Result<bool, Error> {
+        let status = exchange.with_state(self.matter, |state| {
+            if state
+                .pase
+                .session_timeout
+                .as_ref()
+                .map(|sd| sd.is_sess_expired())
+                .unwrap_or(false)
+            {
+                state.pase.session_timeout = None;
+            }
+
+            if let Some(sd) = state.pase.session_timeout.as_mut() {
+                if sd.exch_id != exchange.id() {
+                    debug!("Another PAKE session in progress");
+                    Ok(Some(SCStatusCodes::Busy))
+                } else {
+                    state.pase.session_timeout = Some(super::SessionEstTimeout::new(exchange.id()));
+
+                    Ok(None)
+                }
+            } else if new {
+                state.pase.session_timeout = Some(super::SessionEstTimeout::new(exchange.id()));
+
+                Ok(None)
+            } else {
+                error!("PAKE session not found or expired");
+                Ok(Some(SCStatusCodes::InvalidParameter))
+            }
+        })?;
+
+        if let Some(status) = status {
+            complete_with_status(exchange, status, &[]).await?;
+
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    }
+
+    /// Clear the PASE session timeout tracker
+    fn clear_session_timeout(&mut self, exchange: &Exchange) -> Result<(), Error> {
+        exchange.with_state(self.matter, |state| {
+            state.pase.session_timeout = None;
+            Ok(())
+        })
+    }
+}

@@ -1,0 +1,66 @@
+[package]
+name = "rs-matter-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - cryptography"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "rustcrypto", "log"]
+std = ["alloc", "rand", "rs-matter-utils/std", "rs-matter-tlv/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc"]
+# Multicast groups support.
+groups = []
+# Crypto backend: Rust Crypto.
+rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
+# Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
+openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
+# Crypto backend: mbedTLS.
+mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
+defmt = ["dep:defmt", "mbedtls-rs-sys?/defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-tlv = { workspace = true }
+rand_core = { workspace = true }
+der = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+rand = { workspace = true, features = ["std", "std_rng", "thread_rng"], optional = true }
+
+# OpenSSL
+openssl = { workspace = true, optional = true }
+foreign-types = { workspace = true, optional = true }
+
+# mbedTLS
+mbedtls-rs-sys = { workspace = true, optional = true }
+
+# Rust Crypto
+digest = { workspace = true, optional = true }
+cipher = { workspace = true, optional = true }
+ccm = { workspace = true, optional = true }
+elliptic-curve = { workspace = true, optional = true }
+primeorder = { workspace = true, optional = true }
+ecdsa = { workspace = true, optional = true }
+sec1 = { workspace = true, optional = true }
+signature = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
+hkdf = { workspace = true, optional = true }
+pbkdf2 = { workspace = true, optional = true }
+crypto-bigint = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+aes = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }
+x509-cert = { workspace = true, optional = true } # TODO: requires `alloc`
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }
