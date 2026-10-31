@@ -311,6 +311,9 @@ pub trait NetworkReceive: MaybeSend {
 
     /// Receive a single data packet from the network.
     ///
+    /// Must be cancel-safe: dropping the future before it completes loses no packet.
+    /// [`ChainedNetwork`] drops it when its other network has a packet first.
+    ///
     /// Might return an error if there is a general error on the network interface.
     fn recv_from(
         &mut self,
@@ -408,7 +411,8 @@ impl<H, T, F> ChainedNetwork<H, T, F> {
     /// - When a packet is about to be send, the `handler_can_send` function is called with the destination address.
     ///   If it returns `true`, the packet is sent via the `handler` network interface, otherwise it is sent via the `next` network interface.
     /// - When `wait_available` is called, the function waits until a packet is available on either network interface.
-    /// - When `recv_from` is called, the function receives a packet from the first network interface that has a packet available.
+    /// - When `recv_from` is called, the function receives a packet from the first network interface that has a packet available,
+    ///   or from the other one, should that one have a packet first meanwhile.
     pub const fn new(handler_can_send: F, handler: H, next: T) -> Self {
         Self {
             handler_can_send,
@@ -423,7 +427,8 @@ impl<H, T, F> ChainedNetwork<H, T, F> {
     /// - When a packet is about to be send, the `handler_can_send` function is called with the destination address.
     ///   If it returns `true`, the packet is sent via the `handler` network interface, otherwise it is sent via `self`.
     /// - When `wait_available` is called, the function waits until a packet is available on either network interface.
-    /// - When `recv_from` is called, the function receives a packet from the first network interface that has a packet available.
+    /// - When `recv_from` is called, the function receives a packet from the first network interface that has a packet available,
+    ///   or from the other one, should that one have a packet first meanwhile.
     pub const fn chain<H2, F2>(
         self,
         handler_can_send: F2,
@@ -449,7 +454,7 @@ where
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
-        let first = {
+        let mut first = {
             let mut first_available = pin!(self.handler.wait_available());
             let mut second_available = pin!(self.next.wait_available());
 
@@ -459,10 +464,26 @@ where
             )
         };
 
-        if first {
-            self.handler.recv_from(buffer).await
-        } else {
-            self.next.recv_from(buffer).await
+        // The packet one network reported may be gone by the time it is received
+        // (e.g. that network was reset), so the other one is watched meanwhile
+        loop {
+            if first {
+                let mut recv = pin!(self.handler.recv_from(buffer));
+                let mut other = pin!(self.next.wait_available());
+
+                if let Either::First(result) = select(&mut recv, &mut other).await {
+                    break result;
+                }
+            } else {
+                let mut recv = pin!(self.next.recv_from(buffer));
+                let mut other = pin!(self.handler.wait_available());
+
+                if let Either::First(result) = select(&mut recv, &mut other).await {
+                    break result;
+                }
+            }
+
+            first = !first;
         }
     }
 }
@@ -496,5 +517,71 @@ where
     async fn leave(&mut self, addr: IpAddr) -> Result<(), Error> {
         self.handler.leave(addr).await?;
         self.next.leave(addr).await
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    use crate::utils::futures::block_on;
+    use crate::utils::timers::{with_timeout, Duration};
+
+    /// Reports a packet, but has none to receive any more: e.g. it was reset in between.
+    struct Gone;
+
+    impl NetworkReceive for Gone {
+        async fn wait_available(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn recv_from(&mut self, _buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+            core::future::pending().await
+        }
+    }
+
+    /// Has one packet.
+    struct One(Option<[u8; 3]>);
+
+    impl NetworkReceive for One {
+        async fn wait_available(&mut self) -> Result<(), Error> {
+            if self.0.is_none() {
+                core::future::pending::<()>().await;
+            }
+
+            Ok(())
+        }
+
+        async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+            self.wait_available().await?;
+
+            let packet = unwrap!(self.0.take());
+            buffer[..packet.len()].copy_from_slice(&packet);
+
+            Ok((packet.len(), Address::new()))
+        }
+    }
+
+    /// Receive from `handler` chained with `next`: the packet of the one that has it.
+    fn receive<H: NetworkReceive, T: NetworkReceive>(handler: H, next: T) {
+        let mut network = ChainedNetwork::new(|_: &Address| true, handler, next);
+        let mut buf = [0; 8];
+
+        let received = block_on(with_timeout(
+            Duration::from_secs(1),
+            network.recv_from(&mut buf),
+        ));
+
+        assert!(matches!(received, Ok(Ok((3, _)))));
+        assert_eq!(&buf[..3], &[1, 2, 3]);
+    }
+
+    /// A packet one network reported but no longer has does not keep the packet of
+    /// the other one from being received.
+    #[test]
+    fn chained_receive_takes_the_other_packet_when_one_is_gone() {
+        receive(Gone, One(Some([1, 2, 3])));
+        receive(One(Some([1, 2, 3])), Gone);
     }
 }

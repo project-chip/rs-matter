@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: dropping the last mDNS responder wakes those waiting for there being none (#635)
+* Fix: a fail-safe expiry wakes the waiters on the PASE sessions it removes (#635)
+* Fix: an exchange whose session is gone no longer clears the packet of another exchange from the RX or TX buffer (#635)
+* Fix: on Windows, the `async-io` UDP adapter ignores the "connection reset" a receive reports for an earlier send to a closed port (#635)
+* Fix: `Btp::send` fails after the connection idle timeout if nothing takes the packet before it, instead of blocking sending for good (#635)
+* Fix: `ChainedNetwork` receives from its other network if the packet the first one reported is gone; `NetworkReceive::recv_from` must be cancel-safe (#635)
 * Breaking: `rs-matter` is split into crates, which it re-exports under the existing paths, so that an edit outside of the generated code no longer re-checks it (#559); the moved and changed APIs are listed in `docs/crate-split-design.md` (#634)
   * Breaking: the handler contexts no longer hand out the `Matter` and the `Exchange`, and the system cluster handlers take a `&Matter` when created
   * Breaking: node types in the cluster handler modules use their own enums instead of the generated ones

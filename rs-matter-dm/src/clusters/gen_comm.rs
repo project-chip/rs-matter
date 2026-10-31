@@ -433,6 +433,8 @@ impl ClusterHandler for GenCommHandler<'_> {
 
         // Outside `with_state`, since the broadcasts run the handlers inline
         if let Some(expiry) = expiry {
+            self.matter.transport().notify_session_removed();
+
             expiry.notify(&ctx);
         }
 
