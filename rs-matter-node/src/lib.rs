@@ -840,6 +840,7 @@ impl<'a> Matter<'a> {
                 notify_mdns,
                 |_, _| {},
             )?;
+            self.transport().notify_session_removed();
 
             load_networks(&mut networks, networks_key, &kv)?;
 
@@ -954,6 +955,7 @@ impl<'a> Matter<'a> {
                     || {},
                     |_, _| {},
                 );
+                self.transport().notify_session_removed();
 
                 let _ = load_networks(&mut networks, networks_key, &kv);
 

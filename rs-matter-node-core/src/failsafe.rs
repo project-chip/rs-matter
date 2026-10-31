@@ -102,6 +102,9 @@ impl Expiry {
     ///
     /// The broadcasts run the handlers inline, so this must NOT be called
     /// while holding the Matter state lock.
+    ///
+    /// The expiry removes the PASE sessions, so the caller also has to tell the
+    /// waiters on them, with `Transport::notify_session_removed`.
     pub fn notify(&self, ctx: impl HandlerContext) {
         if let Err(e) = ctx.broadcast_lifecycle(LifecycleOp::FailSafeExpiry) {
             warn!("Failed to broadcast the fail-safe expiry: {:?}", e);
