@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: dropping the last mDNS responder wakes those waiting for there being none (#635)
+* Fix: a fail-safe expiry wakes the waiters on the PASE sessions it removes (#635)
+* Fix: an exchange whose session is gone no longer clears the packet of another exchange from the RX or TX buffer (#635)
+* Fix: on Windows, the `async-io` UDP adapter ignores the "connection reset" a receive reports for an earlier send to a closed port (#635)
+* Fix: `Btp::send` fails after the connection idle timeout if nothing takes the packet before it, instead of blocking sending for good (#635)
+* Fix: `ChainedNetwork` receives from its other network if the packet the first one reported is gone; `NetworkReceive::recv_from` must be cancel-safe (#635)
 * New: `BasicInfoConfig::max_subscription_max_interval_secs` (default `DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS`, 120 s): the greatest max interval granted to a (non-ICD) subscription (#642)
 * Fix: a non-ICD subscription whose min interval floor is close to its max interval no longer expires before it can report (#642)
 * New: on Windows, a Wi-Fi `NetCtl`, `WirelessDiag` and `WifiDiag` over the Native Wifi API: `dm::networks::wifi::win32::Win32WifiCtl`. The `onoff_light_bt` example uses it on Windows (#641)

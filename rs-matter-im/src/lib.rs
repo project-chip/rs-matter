@@ -575,6 +575,8 @@ where
         // Outside `with_state`, since the broadcasts run the handlers inline
         // and they are free to access the Matter state themselves
         if let Some(expiry) = expiry {
+            self.matter.transport().notify_session_removed();
+
             expiry.notify(self);
         }
 
