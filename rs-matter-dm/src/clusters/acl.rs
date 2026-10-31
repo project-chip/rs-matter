@@ -1,0 +1,1048 @@
+/*
+ *
+ *    Copyright (c) 2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! This module contains the implementation of the Access Control cluster and its handler.
+
+use core::num::NonZeroU8;
+
+use crate::acl::{
+    self, Accessor, AclEntry, AuthMode, AuxiliaryType, Target, MAX_ACL_ENTRIES_PER_FABRIC,
+};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+use crate::dm::{
+    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, HandlerContext,
+    InvokeContext, NodeId, Privilege, ReadContext, WriteContext,
+};
+use crate::error::{Error, ErrorCode};
+use crate::fabric::{Fabric, FabricPersist, Fabrics};
+use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
+use crate::utils::init::{stack_try_pin_init, Init, IntoFallibleInit};
+use crate::utils::storage::Vec;
+use crate::{with, Matter};
+use rs_matter_node::Transaction as _;
+
+pub use crate::dm::clusters::decl::access_control::*;
+
+/// The system implementation of a handler for the Access Control Matter cluster.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AclHandler<'a> {
+    dataver: Dataver,
+    matter: &'a Matter<'a>,
+}
+
+impl<'a> AclHandler<'a> {
+    /// Create a new instance of `AclHandler` with the given `dataver`,
+    /// serving the access control lists of `matter`
+    pub const fn new(dataver: Dataver, matter: &'a Matter<'a>) -> Self {
+        Self { dataver, matter }
+    }
+
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
+    }
+
+    /// For unit-testing
+    /// Read the ACL entries from the fabrics and write them into the builder
+    fn acl<P: TLVBuilderParent>(
+        &self,
+        fabrics: &Fabrics,
+        attr: &AttrDetails,
+        builder: ArrayAttributeRead<
+            AccessControlEntryStructArrayBuilder<P>,
+            AccessControlEntryStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        let mut acls = fabrics
+            .iter()
+            .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
+            .flat_map(|fabric| fabric.acl_iter().map(|entry| (fabric.fab_idx(), entry)));
+
+        match builder {
+            ArrayAttributeRead::ReadAll(mut builder) => {
+                for (fab_idx, entry) in acls {
+                    builder = acl_entry_read_into(
+                        entry,
+                        attr.fab_idx,
+                        Some(fab_idx.get()),
+                        builder.push()?,
+                    )?;
+                }
+
+                builder.end()
+            }
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let Some((fab_idx, entry)) = acls.nth(index as usize) else {
+                    return Err(ErrorCode::ConstraintError.into());
+                };
+
+                acl_entry_read_into(entry, attr.fab_idx, Some(fab_idx.get()), builder)
+            }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
+    }
+
+    /// For unit-testing
+    /// Set the ACL entries in the fabrics
+    fn set_acl(
+        &self,
+        fabric: &mut Fabric,
+        value: ArrayAttributeWrite<
+            TLVArray<'_, AccessControlEntryStruct<'_>>,
+            AccessControlEntryStruct<'_>,
+        >,
+    ) -> Result<(), Error> {
+        match value {
+            ArrayAttributeWrite::Replace(list) => {
+                // Check the well-formedness of the list first & init to check validity
+                let mut count: usize = 0;
+                for entry in &list {
+                    count += 1;
+                    if count > MAX_ACL_ENTRIES_PER_FABRIC {
+                        return Err(ErrorCode::ResourceExhausted.into());
+                    }
+                    let entry = entry?;
+                    // Init a dummy to propagate failures for bad inputs
+                    stack_try_pin_init!(let _processed =? acl_entry_init(fabric.fab_idx(), &entry));
+                }
+
+                // Now add everything once we know all are valid
+                fabric.acl_remove_all();
+                for entry in &list {
+                    // unwrap! calls below can't fail because we already checked that the entry is well-formed
+                    // and the length of the list is within the limit
+                    let entry = unwrap!(entry);
+                    unwrap!(fabric.acl_add_init(acl_entry_init(fabric.fab_idx(), &entry)));
+                }
+            }
+            ArrayAttributeWrite::Add(entry) => {
+                fabric.acl_add_init(acl_entry_init(fabric.fab_idx(), &entry))?;
+            }
+            ArrayAttributeWrite::Update(index, entry) => {
+                fabric.acl_update_init(index as _, acl_entry_init(fabric.fab_idx(), &entry))?;
+            }
+            ArrayAttributeWrite::Remove(index) => {
+                fabric.acl_remove(index as _)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Serialize one synthesized `AuxiliaryACL` entry, applying the same
+    /// fabric-sensitive redaction as the writable-`ACL` read: entries of
+    /// other fabrics expose only their fabric index.
+    #[cfg(feature = "groups")]
+    fn build_auxiliary_entry<P: TLVBuilderParent>(
+        accessing_fab_idx: u8,
+        fab_idx: NonZeroU8,
+        group_id: u16,
+        endpoints: &[crate::dm::EndptId],
+        builder: AccessControlEntryStructBuilder<P>,
+    ) -> Result<P, Error> {
+        use crate::tlv::Nullable;
+
+        let same_fab_idx = accessing_fab_idx == fab_idx.get();
+
+        builder
+            .privilege(same_fab_idx.then_some(AccessControlEntryPrivilegeEnum::Operate))?
+            .auth_mode(same_fab_idx.then_some(AccessControlEntryAuthModeEnum::Group))?
+            .subjects()?
+            .with_some_if(same_fab_idx, |builder| {
+                builder.with_non_null(
+                    Nullable::some([group_id as u64]),
+                    |subjects, mut builder| {
+                        for subject in subjects {
+                            builder = builder.push(subject)?;
+                        }
+
+                        builder.end()
+                    },
+                )
+            })?
+            .targets()?
+            .with_some_if(same_fab_idx, |builder| {
+                builder.with_non_null(Nullable::some(endpoints), |endpoints, mut builder| {
+                    for endpoint in *endpoints {
+                        builder = builder
+                            .push()?
+                            .cluster(Nullable::none())?
+                            .endpoint(Nullable::some(*endpoint))?
+                            .device_type(Nullable::none())?
+                            .end()?;
+                    }
+
+                    builder.end()
+                })
+            })?
+            .auxiliary_type(same_fab_idx.then_some(AccessControlAuxiliaryTypeEnum::Groupcast))?
+            .fabric_index(Some(fab_idx.get()))?
+            .end()
+    }
+}
+
+impl ClusterHandler for AclHandler<'_> {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
+
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn acl<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            AccessControlEntryStructArrayBuilder<P>,
+            AccessControlEntryStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        ctx.transaction_id().with_state(self.matter, |state| {
+            self.acl(state.fabrics, ctx.attr(), builder)
+        })
+    }
+
+    fn auxiliary_acl<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            AccessControlEntryStructArrayBuilder<P>,
+            AccessControlEntryStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        // The entries are *derived* on the fly from the producing feature's
+        // state - the Groupcast group table - never stored (see the note on
+        // [`CLUSTER_AUX`]). Without the `groups` feature no producer exists,
+        // and the attribute is an empty list.
+        #[cfg(feature = "groups")]
+        {
+            ctx.transaction_id().with_state(self.matter, |state| {
+                let attr = ctx.attr();
+
+                // One synthesized entry per (fabric, aux-flagged group,
+                // targets-capacity chunk of its endpoints)
+                let mut entries = state
+                    .fabrics
+                    .iter()
+                    .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
+                    .flat_map(|fabric| {
+                        fabric
+                            .groups()
+                            .iter()
+                            .filter(|entry| entry.has_aux_acl() && !entry.endpoints.is_empty())
+                            .flat_map(move |entry| {
+                                entry
+                                    .endpoints
+                                    .chunks(acl::MAX_TARGETS_PER_ACL_ENTRY)
+                                    .map(move |endpoints| (fabric, entry.group_id, endpoints))
+                            })
+                    });
+
+                match builder {
+                    ArrayAttributeRead::ReadAll(mut builder) => {
+                        for (fabric, group_id, endpoints) in entries {
+                            builder = Self::build_auxiliary_entry(
+                                attr.fab_idx,
+                                fabric.fab_idx(),
+                                group_id,
+                                endpoints,
+                                builder.push()?,
+                            )?;
+                        }
+
+                        builder.end()
+                    }
+                    ArrayAttributeRead::ReadOne(index, builder) => {
+                        let Some((fabric, group_id, endpoints)) = entries.nth(index as usize)
+                        else {
+                            return Err(ErrorCode::ConstraintError.into());
+                        };
+
+                        Self::build_auxiliary_entry(
+                            attr.fab_idx,
+                            fabric.fab_idx(),
+                            group_id,
+                            endpoints,
+                            builder,
+                        )
+                    }
+                    ArrayAttributeRead::ReadNone(builder) => builder.end(),
+                }
+            })
+        }
+
+        #[cfg(not(feature = "groups"))]
+        {
+            let _ = ctx;
+
+            match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            }
+        }
+    }
+
+    fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _)
+    }
+
+    fn targets_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(acl::MAX_TARGETS_PER_ACL_ENTRY as _)
+    }
+
+    fn access_control_entries_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(acl::MAX_ACL_ENTRIES_PER_FABRIC as _)
+    }
+
+    fn set_acl(
+        &self,
+        ctx: impl WriteContext,
+        value: ArrayAttributeWrite<
+            TLVArray<'_, AccessControlEntryStruct<'_>>,
+            AccessControlEntryStruct<'_>,
+        >,
+    ) -> Result<(), Error> {
+        let mut persist = FabricPersist::new(ctx.kv());
+
+        let accessor = Accessor::for_operation(&ctx, self.matter)?;
+        let admin_node_id: Nullable<u64> = match accessor.peer_node_id() {
+            Some(id) => Nullable::some(id),
+            None => Nullable::none(),
+        };
+        let admin_passcode_id: Nullable<u16> =
+            if matches!(accessor.auth_mode(), Some(AuthMode::Pase)) {
+                Nullable::some(0u16)
+            } else {
+                Nullable::none()
+            };
+
+        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::UnsupportedAccess)?;
+
+        // We emit `AccessControlEntryChanged` events while still holding the
+        // matter state lock so that we can compare the *old* and *new* ACL
+        // contents and produce one event per entry change. `Events::push` (used
+        // by the emit path) takes its own independent lock, so this is safe.
+        ctx.transaction_id().with_state(self.matter, |state| {
+            let fabric = state.fabrics.fabric_mut(fab_idx)?;
+
+            match value {
+                ArrayAttributeWrite::Replace(list) => {
+                    // Snapshot old entries so we can diff against the new list per index
+                    // (Matter Core spec mandates one event per entry change,
+                    // with `LatestValue` populated). `MAX_ACL_ENTRIES_PER_FABRIC` is small
+                    // (default 4), so a stack-allocated snapshot is cheap.
+                    let mut old_entries: Vec<AclEntry, MAX_ACL_ENTRIES_PER_FABRIC> = Vec::new();
+                    for e in fabric.acl_iter() {
+                        let _ = old_entries.push(e.clone());
+                    }
+
+                    self.set_acl(fabric, ArrayAttributeWrite::Replace(list))?;
+
+                    let new_count = fabric.acl_iter().count();
+                    let old_count = old_entries.len();
+
+                    // Per-index Changed (overlap) and Added (new tail) events.
+                    for (i, entry) in fabric.acl_iter().enumerate() {
+                        let change = if i < old_count {
+                            ChangeTypeEnum::Changed
+                        } else {
+                            ChangeTypeEnum::Added
+                        };
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            change,
+                            entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+
+                    // Removed events for entries that fell off the end of the list.
+                    // `LatestValue` for a removal is the entry's contents just before removal.
+                    for old_entry in old_entries.iter().skip(new_count) {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Removed,
+                            old_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+                ArrayAttributeWrite::Add(entry) => {
+                    let old_count = fabric.acl_iter().count();
+                    self.set_acl(fabric, ArrayAttributeWrite::Add(entry))?;
+                    if let Some(new_entry) = fabric.acl_iter().nth(old_count) {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Added,
+                            new_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+                ArrayAttributeWrite::Update(index, entry) => {
+                    let idx = index as usize;
+                    self.set_acl(fabric, ArrayAttributeWrite::Update(index, entry))?;
+                    if let Some(new_entry) = fabric.acl_iter().nth(idx) {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Changed,
+                            new_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+                ArrayAttributeWrite::Remove(index) => {
+                    let idx = index as usize;
+                    let removed = fabric.acl_iter().nth(idx).cloned();
+                    self.set_acl(fabric, ArrayAttributeWrite::Remove(index))?;
+                    if let Some(old_entry) = removed {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Removed,
+                            &old_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+            }
+
+            // NOTE: Not sure this is a spec-compliant behavor:
+            // If the failsafe is armed for our fabric, we'll NOT persist the groups changes until commissioning is complete.
+            // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+            if !state.failsafe.is_armed_for(fab_idx.get()) {
+                persist.store(fabric)?;
+            }
+
+            Ok(())
+        })?;
+
+        persist.run()
+    }
+
+    fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: ReviewFabricRestrictionsRequest<'_>,
+        _response: ReviewFabricRestrictionsResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        // Only necessary with MNGD feature (ManagedDevice)
+        unimplemented!()
+    }
+}
+
+/// `AccessControl` cluster metadata that additionally advertises the
+/// provisional `AUXILIARY` feature and the `AuxiliaryACL` attribute.
+///
+/// Use this in place of [`AclHandler::CLUSTER`] on nodes where features (e.g.
+/// a Groupcast cluster) synthesize auxiliary ACL entries.
+///
+/// At startup, `AclHandler` inspects the node metadata and - when this
+/// feature is advertised - switches the access-control evaluation of
+/// wildcard-target Group-auth entries to exclude the root endpoint, as the
+/// Matter Core spec mandates for nodes with the feature.
+pub const CLUSTER_AUX: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(with!(required; AttributeId::AuxiliaryACL))
+    .with_cmds(with!())
+    .with_features(Feature::AUXILIARY.bits());
+
+/// Notify the data model that the `AuxiliaryACL` attribute changed, and emit
+/// the `AuxiliaryAccessUpdated` event.
+pub fn notify_auxiliary_access_updated(
+    ctx: &impl HandlerContext,
+    admin_node_id: Option<NodeId>,
+    fab_idx: NonZeroU8,
+) -> Result<(), Error> {
+    ctx.notify_attr_changed(
+        ROOT_ENDPOINT_ID,
+        FULL_CLUSTER.id,
+        AttributeId::AuxiliaryACL as _,
+    );
+
+    AuxiliaryAccessUpdated::emit_for(ctx, ROOT_ENDPOINT_ID, |event| {
+        event
+            .admin_node_id(Nullable::new(admin_node_id))?
+            .fabric_index(Some(fab_idx.get()))?
+            .end()
+    })
+    .map(|_event_number| ())
+}
+
+/// Emit one `AccessControlEntryChanged` event with the given change type and
+/// the entry's contents serialized into `LatestValue`.
+pub(crate) fn emit_acl_entry_changed<E>(
+    emitter: E,
+    admin_node_id: Nullable<u64>,
+    admin_passcode_id: Nullable<u16>,
+    change_type: ChangeTypeEnum,
+    entry: &AclEntry,
+    fab_idx: u8,
+) -> Result<(), Error>
+where
+    E: crate::dm::EventEmitter,
+{
+    AccessControlEntryChanged::emit_for(emitter, 0, |tw| {
+        let inner = tw
+            .admin_node_id(admin_node_id)?
+            .admin_passcode_id(admin_passcode_id)?
+            .change_type(change_type)?
+            .latest_value()?
+            .non_null()?;
+
+        // `read_into` populates the full `AccessControlEntryStruct` for the
+        // requested fabric. We pass `fab_idx == fab_idx` so that all
+        // fabric-sensitive fields are included in the event payload.
+        let parent = acl_entry_read_into(entry, fab_idx, Some(fab_idx), inner)?;
+
+        parent.fabric_index(Some(fab_idx))?.end()
+    })?;
+
+    Ok(())
+}
+
+/// Return an initializer for an ACL entry of the fabric `fab_idx`, from an
+/// entry written to the `ACL` attribute
+fn acl_entry_init<'a>(
+    fab_idx: NonZeroU8,
+    entry: &'a AccessControlEntryStruct<'a>,
+) -> impl Init<AclEntry, Error> + 'a {
+    AclEntry::init(Some(fab_idx), Privilege::empty(), AuthMode::Pase)
+        .into_fallible()
+        .chain(|e| {
+            let auth_mode = entry.auth_mode().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+            let privilege = entry.privilege().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+            let subjects = entry.subjects().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+            let targets = entry.targets().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+            let auxiliary_type = entry.auxiliary_type().map_err(|_| ErrorCode::ConstraintError)?;
+
+            // Per the Matter Core spec, the `AuxiliaryType` field SHALL
+            // NOT be present in entries in the (writable) `ACL`
+            // attribute - it is reserved for the server-generated
+            // entries in `AuxiliaryACL`.
+            if auxiliary_type.is_some() {
+                Err(ErrorCode::ConstraintError)?;
+            }
+
+            if
+                // As per spec, PASE auth mode is reserved for future use
+                matches!(auth_mode, AccessControlEntryAuthModeEnum::PASE)
+                // As per spec, Group auth mode cannot have Admin privilege
+                || matches!(auth_mode, AccessControlEntryAuthModeEnum::Group) && matches!(privilege, AccessControlEntryPrivilegeEnum::Administer)
+            {
+                Err(ErrorCode::ConstraintError)?;
+            }
+
+            e.set_privilege(privilege_from_acl(privilege));
+            e.set_auth_mode(auth_mode_from_acl(auth_mode));
+
+            // The subjects and the targets start as null, and become non-null
+            // only on the first incoming subject or target, so that empty
+            // arrays keep them null. This is what the YAML tests expect
+
+            if let Some(subjects) = subjects.into_option() {
+                for subject in subjects {
+                    let subject = subject?;
+
+                    if matches!(auth_mode, AccessControlEntryAuthModeEnum::CASE) && !acl::is_node(subject) && !acl::is_noc_cat(subject) {
+                        // As per spec, CASE auth mode only allows node ids and NOC CATs as subjects
+                        Err(ErrorCode::ConstraintError)?;
+                    }
+
+                    if matches!(auth_mode, AccessControlEntryAuthModeEnum::Group) {
+                        // Per Matter Core spec: for Group auth mode, the
+                        // subject SHALL be a valid 16-bit Group ID. Group ID 0 is reserved
+                        // and MUST NOT be used; values larger than `u16::MAX` are also invalid.
+                        if subject == 0 || subject > u16::MAX as u64 {
+                            Err(ErrorCode::ConstraintError)?;
+                        }
+                    }
+
+                    // As per spec, on too many subjects we should return a FAILURE status code
+                    // `ErrorCode::BufferTooSmall` translates to a generic FAILURE status code
+                    e.add_subject(subject)
+                        .map_err(|_| ErrorCode::BufferTooSmall)?;
+                }
+            }
+
+            if let Some(targets) = targets.into_option() {
+                for target in targets {
+                    let target = target?;
+
+                    // Matter Core spec (AccessControlTargetStruct):
+                    // - At least one of cluster, endpoint or deviceType SHALL be present.
+                    // - If endpoint is present, deviceType SHALL NOT be present (and vice
+                    //   versa). cluster may be combined with either endpoint or deviceType.
+                    let has_endpoint = target.endpoint()?.is_some();
+                    let has_cluster = target.cluster()?.is_some();
+                    let has_device_type = target.device_type()?.is_some();
+
+                    if (!has_endpoint && !has_cluster && !has_device_type)
+                        || (has_endpoint && has_device_type)
+                    {
+                        Err(ErrorCode::ConstraintError)?;
+                    }
+
+                    // As per spec, on too many targets we should return a FAILURE status code
+                    // `ErrorCode::BufferTooSmall` translates to a generic FAILURE status code
+                    e.add_target(Target::new(
+                            target.endpoint()?.into_option(),
+                            target.cluster()?.into_option(),
+                            target.device_type()?.into_option(),
+                        ))
+                        .map_err(|_| ErrorCode::BufferTooSmall)?;
+                }
+            }
+
+            Ok(())
+        })
+}
+
+/// Write an ACL entry into an `AccessControlEntryStruct` builder
+fn acl_entry_read_into<P: TLVBuilderParent>(
+    entry: &AclEntry,
+    accessing_fab_idx: u8,
+    fab_idx: Option<u8>,
+    builder: AccessControlEntryStructBuilder<P>,
+) -> Result<P, Error> {
+    let same_fab_idx = Some(accessing_fab_idx) == fab_idx;
+
+    builder
+        .privilege(same_fab_idx.then(|| privilege_to_acl(entry.privilege())))?
+        .auth_mode(same_fab_idx.then(|| auth_mode_to_acl(entry.auth_mode())))?
+        .subjects()?
+        .with_some_if(same_fab_idx, |builder| {
+            builder.with_non_null(entry.subjects(), |subjects, mut builder| {
+                for subject in *subjects {
+                    builder = builder.push(subject)?;
+                }
+
+                builder.end()
+            })
+        })?
+        .targets()?
+        .with_some_if(same_fab_idx, |builder| {
+            builder.with_non_null(entry.targets(), |targets, mut builder| {
+                for target in *targets {
+                    builder = builder
+                        .push()?
+                        .cluster(Nullable::new(target.cluster))?
+                        .endpoint(Nullable::new(target.endpoint))?
+                        .device_type(Nullable::new(target.device_type))?
+                        .end()?;
+                }
+
+                builder.end()
+            })
+        })?
+        .auxiliary_type(entry.auxiliary_type().map(auxiliary_type_to_acl))?
+        .fabric_index(fab_idx)?
+        .end()
+}
+
+/// Convert a privilege of the Access Control cluster to a [`Privilege`]
+fn privilege_from_acl(privilege: AccessControlEntryPrivilegeEnum) -> Privilege {
+    match privilege {
+        AccessControlEntryPrivilegeEnum::View => Privilege::VIEW,
+        AccessControlEntryPrivilegeEnum::ProxyView => Privilege::PROXYVIEW,
+        AccessControlEntryPrivilegeEnum::Operate => Privilege::OPERATE,
+        AccessControlEntryPrivilegeEnum::Manage => Privilege::MANAGE,
+        AccessControlEntryPrivilegeEnum::Administer => Privilege::ADMIN,
+    }
+}
+
+/// Convert a [`Privilege`] to a privilege of the Access Control cluster
+fn privilege_to_acl(privilege: Privilege) -> AccessControlEntryPrivilegeEnum {
+    if privilege.contains(Privilege::A) {
+        AccessControlEntryPrivilegeEnum::Administer
+    } else if privilege.contains(Privilege::M) {
+        AccessControlEntryPrivilegeEnum::Manage
+    } else if privilege.contains(Privilege::O) {
+        AccessControlEntryPrivilegeEnum::Operate
+    } else if privilege.contains(Privilege::V) {
+        AccessControlEntryPrivilegeEnum::View
+    } else if privilege.contains(Privilege::P) {
+        AccessControlEntryPrivilegeEnum::ProxyView
+    } else {
+        unreachable!()
+    }
+}
+
+/// Convert an auth mode of the Access Control cluster to an [`AuthMode`]
+fn auth_mode_from_acl(auth_mode: AccessControlEntryAuthModeEnum) -> AuthMode {
+    match auth_mode {
+        AccessControlEntryAuthModeEnum::PASE => AuthMode::Pase,
+        AccessControlEntryAuthModeEnum::CASE => AuthMode::Case,
+        AccessControlEntryAuthModeEnum::Group => AuthMode::Group,
+    }
+}
+
+/// Convert an [`AuthMode`] to an auth mode of the Access Control cluster
+fn auth_mode_to_acl(auth_mode: AuthMode) -> AccessControlEntryAuthModeEnum {
+    match auth_mode {
+        AuthMode::Pase => AccessControlEntryAuthModeEnum::PASE,
+        AuthMode::Case => AccessControlEntryAuthModeEnum::CASE,
+        AuthMode::Group => AccessControlEntryAuthModeEnum::Group,
+    }
+}
+
+/// Convert an [`AuxiliaryType`] to an auxiliary type of the Access Control cluster
+fn auxiliary_type_to_acl(auxiliary_type: AuxiliaryType) -> AccessControlAuxiliaryTypeEnum {
+    match auxiliary_type {
+        AuxiliaryType::System => AccessControlAuxiliaryTypeEnum::System,
+        AuxiliaryType::Groupcast => AccessControlAuxiliaryTypeEnum::Groupcast,
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use core::cell::Cell;
+    use core::num::NonZeroU8;
+
+    use crate::acl::{AclEntry, AuthMode};
+    use crate::dm::clusters::acl::{
+        AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
+    };
+    use crate::dm::{
+        ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReadReplyInstance, Privilege,
+        ReadReply, ReadReplyInstance, Reply,
+    };
+    use crate::fabric::Fabrics;
+    use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, ToTLV};
+    use crate::utils::storage::WriteBuf;
+    use crate::utils::sync::blocking::Mutex;
+
+    use super::AclHandler;
+
+    const FAB_1: core::num::NonZeroU8 = match core::num::NonZeroU8::new(1) {
+        Some(f) => f,
+        None => ::core::unreachable!(),
+    };
+
+    const FAB_2: core::num::NonZeroU8 = match core::num::NonZeroU8::new(2) {
+        Some(f) => f,
+        None => ::core::unreachable!(),
+    };
+
+    /// A `Matter` instance of the test device.
+    fn test_matter() -> crate::Matter<'static> {
+        crate::Matter::new(
+            &rs_matter_node_core::test_device::TEST_DEV_DET,
+            rs_matter_node_core::test_device::TEST_DEV_COMM,
+            &rs_matter_node_core::test_device::TEST_DEV_ATT,
+            0,
+        )
+    }
+
+    #[test]
+    /// Add an ACL entry
+    fn acl_cluster_add() {
+        let mut buf: [u8; 100] = [0; 100];
+        let mut tw = WriteBuf::new(&mut buf);
+
+        let mut fabrics = Fabrics::new();
+
+        // Add fabric with ID 1
+        unwrap!(fabrics.add_with_post_init(|_| Ok(())));
+
+        let matter = test_matter();
+        let acl = AclHandler::new(Dataver::new(0), &matter);
+
+        let new = AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case);
+
+        unwrap!(new.to_tlv(&TLVTag::Anonymous, &mut tw));
+        let data = unwrap!(get_root_node_struct(tw.as_slice()));
+
+        // Test, ACL has fabric index 2, but the accessing fabric is 1
+        //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1
+        acl_add(&acl, &mut fabrics, &data, FAB_1);
+
+        let verifier = AclEntry::new(Some(FAB_1), Privilege::VIEW, AuthMode::Case);
+        for fabric in fabrics.iter() {
+            for a in fabric.acl_iter() {
+                assert_eq!(*a, verifier);
+            }
+        }
+    }
+
+    #[test]
+    /// - The listindex used for edit should be relative to the current fabric
+    fn acl_cluster_edit() {
+        let mut buf: [u8; 100] = [0; 100];
+        let mut tw = WriteBuf::new(&mut buf);
+
+        let mut fabrics = Fabrics::new();
+
+        // Add fabric with ID 1
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
+
+        // Add fabric with ID 2
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
+
+        // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
+        let mut verifier = [
+            AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(Some(FAB_1), Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(Some(FAB_2), Privilege::ADMIN, AuthMode::Case),
+        ];
+        for i in &verifier {
+            fabrics
+                .fabric_mut(i.fab_idx.unwrap())
+                .unwrap()
+                .acl_add(i.clone())
+                .unwrap();
+        }
+        let matter = test_matter();
+        let acl = AclHandler::new(Dataver::new(0), &matter);
+
+        let new = AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case);
+        new.to_tlv(&TLVTag::Anonymous, &mut tw).unwrap();
+        let data = get_root_node_struct(tw.as_slice()).unwrap();
+
+        // Test, Edit Fabric 2's index 1 - with accessing fabric as 2 - allow
+        acl_edit(&acl, &mut fabrics, 1, &data, FAB_2);
+        // Fabric 2's index 1, is actually our index 2, update the verifier
+        verifier[2] = new;
+
+        // Also validate in the fabrics that the entries are in the right order
+        assert_eq!(fabrics.get(FAB_1).unwrap().acl_iter().count(), 1);
+        assert_eq!(
+            fabrics.get(FAB_1).unwrap().acl_iter().next().unwrap(),
+            &verifier[1]
+        );
+        assert_eq!(fabrics.get(FAB_2).unwrap().acl_iter().count(), 2);
+        assert_eq!(
+            fabrics.get(FAB_2).unwrap().acl_iter().next().unwrap(),
+            &verifier[0]
+        );
+        assert_eq!(
+            fabrics.get(FAB_2).unwrap().acl_iter().nth(1).unwrap(),
+            &verifier[2]
+        );
+    }
+
+    #[test]
+    /// - The listindex used for delete should be relative to the current fabric
+    fn acl_cluster_delete() {
+        let mut fabrics = Fabrics::new();
+
+        // Add fabric with ID 1
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
+
+        // Add fabric with ID 2
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
+
+        // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
+        let input = [
+            AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(Some(FAB_1), Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(Some(FAB_2), Privilege::ADMIN, AuthMode::Case),
+        ];
+        for i in &input {
+            fabrics
+                .fabric_mut(i.fab_idx.unwrap())
+                .unwrap()
+                .acl_add(i.clone())
+                .unwrap();
+        }
+        let matter = test_matter();
+        let acl = AclHandler::new(Dataver::new(0), &matter);
+
+        // Test: delete Fabric 1's index 0
+        acl_remove(&acl, &mut fabrics, 0, FAB_1);
+
+        let verifier = [input[0].clone(), input[2].clone()];
+        // Also validate in the fabrics that the entries are in the right order
+        let mut index = 0;
+        for fabric in fabrics.iter() {
+            for a in fabric.acl_iter() {
+                assert_eq!(*a, verifier[index]);
+                index += 1;
+            }
+        }
+    }
+
+    #[test]
+    /// - acl read with and without fabric filtering
+    fn acl_cluster_read() {
+        let mut buf: [u8; 100] = [0; 100];
+        let mut writebuf = WriteBuf::new(&mut buf);
+
+        let mut fabrics = Fabrics::new();
+
+        // Add fabric with ID 1
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
+
+        // Add fabric with ID 2
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
+
+        // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
+        let input = [
+            AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(Some(FAB_1), Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(Some(FAB_2), Privilege::ADMIN, AuthMode::Case),
+        ];
+        for i in input {
+            fabrics
+                .fabric_mut(i.fab_idx.unwrap())
+                .unwrap()
+                .acl_add(i)
+                .unwrap();
+        }
+        let matter = test_matter();
+        let acl = AclHandler::new(Dataver::new(0), &matter);
+
+        // Test 1, all 3 entries are read in the response without fabric filtering
+        {
+            let attr = AttrDetails {
+                endpoint_id: 0,
+                cluster_id: 0,
+                attr_id: 0,
+                list_index: None,
+                list_chunked: false,
+                fab_idx: 1,
+                fab_filter: false,
+                dataver: None,
+                wildcard: false,
+                array: false,
+                cluster_status: Mutex::new(Cell::new(None)),
+            };
+
+            acl_read(&acl, &fabrics, &attr, &mut writebuf);
+            assert_eq!(
+                &[
+                    21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
+                    1, 36, 2, 2, 52, 3, 52, 4, 36, 254, 1, 24, 21, 36, 254, 2, 24, 21, 36, 254, 2,
+                    24, 24, 24, 24
+                ],
+                writebuf.as_slice()
+            );
+        }
+        writebuf.reset();
+
+        // Test 2, only single entry is read in the response with fabric filtering and fabric idx 1
+        {
+            let attr = AttrDetails {
+                endpoint_id: 0,
+                cluster_id: 0,
+                attr_id: 0,
+                list_index: None,
+                list_chunked: false,
+                fab_idx: 1,
+                fab_filter: true,
+                dataver: None,
+                wildcard: false,
+                array: false,
+                cluster_status: Mutex::new(Cell::new(None)),
+            };
+
+            acl_read(&acl, &fabrics, &attr, &mut writebuf);
+            assert_eq!(
+                &[
+                    21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
+                    1, 36, 2, 2, 52, 3, 52, 4, 36, 254, 1, 24, 24, 24, 24
+                ],
+                writebuf.as_slice()
+            );
+        }
+        writebuf.reset();
+
+        // Test 3, only single entry is read in the response with fabric filtering and fabric idx 2
+        {
+            let attr = AttrDetails {
+                endpoint_id: 0,
+                cluster_id: 0,
+                attr_id: 0,
+                list_index: None,
+                list_chunked: false,
+                fab_idx: 2,
+                fab_filter: true,
+                dataver: None,
+                wildcard: false,
+                array: false,
+                cluster_status: Mutex::new(Cell::new(None)),
+            };
+
+            acl_read(&acl, &fabrics, &attr, &mut writebuf);
+            assert_eq!(
+                &[
+                    21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
+                    1, 36, 2, 2, 52, 3, 52, 4, 36, 254, 2, 24, 21, 36, 1, 5, 36, 2, 2, 52, 3, 52,
+                    4, 36, 254, 2, 24, 24, 24, 24
+                ],
+                writebuf.as_slice()
+            );
+        }
+    }
+
+    fn acl_read(acl: &AclHandler, fabrics: &Fabrics, attr: &AttrDetails, tw: &mut WriteBuf<'_>) {
+        let encoder = ReadReplyInstance::new(attr, &mut *tw);
+        let mut writer = unwrap!(unwrap!(encoder.with_dataver(acl.dataver.get())));
+        let build_root = TLVWriteParent::new((), writer.writer());
+        unwrap!(acl.acl(
+            fabrics,
+            attr,
+            ArrayAttributeRead::ReadAll(unwrap!(AccessControlEntryStructArrayBuilder::new(
+                build_root,
+                &AttrReadReplyInstance::<WriteBuf>::TAG
+            )))
+        ));
+
+        unwrap!(writer.complete());
+    }
+
+    fn acl_add(acl: &AclHandler, fabrics: &mut Fabrics, data: &TLVElement<'_>, fab_idx: NonZeroU8) {
+        unwrap!(acl.set_acl(
+            fabrics.fabric_mut(fab_idx).unwrap(),
+            ArrayAttributeWrite::Add(AccessControlEntryStruct::new(data.clone())),
+        ));
+    }
+
+    fn acl_edit(
+        acl: &AclHandler,
+        fabrics: &mut Fabrics,
+        index: u16,
+        data: &TLVElement<'_>,
+        fab_idx: NonZeroU8,
+    ) {
+        unwrap!(acl.set_acl(
+            fabrics.fabric_mut(fab_idx).unwrap(),
+            ArrayAttributeWrite::Update(index, AccessControlEntryStruct::new(data.clone())),
+        ));
+    }
+
+    fn acl_remove(acl: &AclHandler, fabrics: &mut Fabrics, index: u16, fab_idx: NonZeroU8) {
+        unwrap!(acl.set_acl(
+            fabrics.fabric_mut(fab_idx).unwrap(),
+            ArrayAttributeWrite::Remove(index)
+        ));
+    }
+}

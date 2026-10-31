@@ -25,24 +25,33 @@ mod tlv;
 #[proc_macro_derive(FromTLV, attributes(tlvargs, tagval, enumval))]
 pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
-    crate::tlv::derive_fromtlv(ast, get_crate_name()).into()
+    crate::tlv::derive_fromtlv(ast, tlv_crate_path()).into()
 }
 
 /// Generate code that derives `ToTLV` for the provided Rust type.
 #[proc_macro_derive(ToTLV, attributes(tlvargs, tagval, enumval))]
 pub fn derive_totlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
-    crate::tlv::derive_totlv(ast, get_crate_name()).into()
+    crate::tlv::derive_totlv(ast, tlv_crate_path()).into()
 }
 
-fn get_crate_name() -> String {
-    let found_crate = proc_macro_crate::crate_name("rs-matter").unwrap_or_else(|err| {
-        eprintln!("Warning: defaulting to `crate` {err}");
-        proc_macro_crate::FoundCrate::Itself
-    });
+/// Return the path to the `rs-matter-tlv` crate, as seen from the crate being compiled
+///
+/// That is `crate` in `rs-matter-tlv` itself, `::rs_matter_tlv` in the crates that
+/// depend on it (possibly renamed), and `::rs_matter::tlv` in the crates that only
+/// depend on the `rs-matter` facade.
+fn tlv_crate_path() -> String {
+    use proc_macro_crate::{crate_name, FoundCrate};
 
-    match found_crate {
-        proc_macro_crate::FoundCrate::Itself => String::from("crate"),
-        proc_macro_crate::FoundCrate::Name(name) => name,
+    match crate_name("rs-matter-tlv") {
+        Ok(FoundCrate::Itself) => "crate".into(),
+        Ok(FoundCrate::Name(name)) => format!("::{name}"),
+        Err(_) => match crate_name("rs-matter") {
+            Ok(FoundCrate::Name(name)) => format!("::{name}::tlv"),
+            _ => {
+                eprintln!("Warning: neither `rs-matter-tlv` nor `rs-matter` found; defaulting to `crate::tlv`");
+                "crate::tlv".into()
+            }
+        },
     }
 }

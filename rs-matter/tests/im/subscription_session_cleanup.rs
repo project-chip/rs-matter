@@ -24,10 +24,11 @@ use core::num::NonZeroU8;
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::error::Error;
-use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::encoding::ReportDataResp;
 use rs_matter::im::{AttrPath, GenericPath, InteractionModelState, OpCode};
+use rs_matter::im::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::persist::PERSISTENT_SUBSCRIPTIONS_START;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::tlv::{FromTLV, TLVElement};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, MatterRemoteService};
@@ -106,7 +107,7 @@ fn add_case_session(
     peer: u64,
     address: Address,
 ) -> Result<(), Error> {
-    let mut session = ReservedSession::reserve_now(matter, test_only_crypto())?;
+    let mut session = ReservedSession::reserve_now(matter.transport(), test_only_crypto())?;
     session.update(
         local,
         peer,
@@ -130,7 +131,7 @@ async fn receive_report<'a>(
     client: &'a Matter<'a>,
     subscription_id: u32,
 ) -> Result<Exchange<'a>, Error> {
-    let mut exchange = Exchange::accept(client).await?;
+    let mut exchange = Exchange::accept(client.transport()).await?;
     exchange.recv_fetch().await?;
     {
         let rx = exchange.rx()?;

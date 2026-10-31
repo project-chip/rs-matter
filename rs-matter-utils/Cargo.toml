@@ -1,0 +1,55 @@
+[package]
+name = "rs-matter-utils"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the error type and utilities"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["os", "log"]
+# OS-based (non-baremetal) targets.
+os = ["std", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
+std = ["alloc"]
+alloc = ["defmt?/alloc"]
+# The futures and the shared types are `Send` (and `Sync`), for work-stealing executors.
+send-sync = []
+# Capture a backtrace in each error.
+backtrace = []
+# Conversion from the errors of BlueR.
+bluer = ["std", "dep:bluer"]
+# Conversion from the errors of zbus, and the zbus proxies for a range of Linux D-Bus services
+# used by `rs-matter` (off by default due to slow compilation).
+zbus = ["std", "dep:zbus", "dep:serde"]
+defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt"]
+log = ["dep:log", "embassy-time/log"]
+
+[dependencies]
+bitflags = { workspace = true }
+critical-section = { workspace = true }
+embassy-futures = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true }
+embedded-io-async = { workspace = true }
+heapless = { workspace = true }
+num_enum = { workspace = true }
+pinned-init = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+zbus = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { workspace = true, optional = true }
+
+[dev-dependencies]
+futures-lite = { workspace = true }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

@@ -12,20 +12,20 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-quote = "1"
-proc-macro2 = "1"
-syn = { version = "2", features = ["full"] }
-prettyplease = "0.2"
-miette = { version = "7", features = ["fancy"] }
-nom = "7"
-nom-greedyerror = "0.5"
-nom-supreme = "0.8"
-nom_locate = "4.2"
-convert_case = "0.6"
-thiserror = "2"
-tracing = "0.1"
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+syn = { workspace = true, features = ["full"] }
+prettyplease = { workspace = true }
+miette = { workspace = true, features = ["fancy"] }
+nom = { workspace = true }
+nom-greedyerror = { workspace = true }
+nom-supreme = { workspace = true }
+nom_locate = { workspace = true }
+convert_case = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
-assert-tokenstreams-eq = "0.1.0"
-rstest = "0.26"
-tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
+assert-tokenstreams-eq = { workspace = true }
+rstest = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["regex", "json"] }

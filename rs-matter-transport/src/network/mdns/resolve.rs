@@ -1,0 +1,662 @@
+/*
+ *
+ *    Copyright (c) 2025-2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! A Linux-specific mDNS implementation based on systemd-resolved.
+//!
+//! Requires the systemd-resolved daemon to be installed, configured with mDNS enabled and running.
+
+use core::pin::pin;
+
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
+
+use domain::base::Name;
+use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::Connection;
+
+use crate::error::Error;
+use crate::network::mdns::{DottedName, MdnsRemoteService};
+use crate::network::MatterLocalService;
+use crate::utils::futures::{select3, Coalesce};
+use crate::utils::storage;
+use crate::utils::timers::{Duration, Timer};
+use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
+use crate::MdnsResponder;
+use crate::TransportHost;
+
+/// Interval (ms) at which a running query re-checks whether it is still in flight.
+const QUERY_POLL_INTERVAL_MS: u64 = 250;
+
+/// Interface index for "any interface"
+const IF_INDEX_ANY: i32 = 0;
+/// Address family for "unspecified" (both IPv4 and IPv6)
+const AF_UNSPEC: i32 = 0;
+/// DNS class IN (Internet)
+const DNS_CLASS_IN: u16 = 1;
+/// DNS record type PTR
+const DNS_TYPE_PTR: u16 = 12;
+
+/// An mDNS responder for Matter utilizing the systemd-resolved daemon over DBus.
+///
+/// Note that typically Ubuntu Desktop and other desktop distros - while distributing and running `systemd-resolved` -
+/// do not have mDNS enabled by default in it and instead do have the Avahi daemon running by default. So during development,
+/// you might just want to use the Avahi mDNS responder instead, which is also available in the `zbus` feature.
+///
+/// To use this responder, you need to have your `systemd-resolved` daemon installed, running and configured with
+/// mDNS enabled - also on the particular network interface(s) where you want mDNS multicasting. Doing so usually requires:
+/// - Stopping and/or uninstalling the avahi daemon if it is installed and running (e.g. `sudo service avahi-daemon stop`)
+/// - Eabling mDNS in the systemd-resolved configuration file, usually located at `/etc/systemd/resolved.conf` (`MulticastDNS=yes`)
+///   and then restarting the daemon (e.g. `sudo systemctl restart systemd-resolved`).
+/// - Enabling mDNS on the network interface(s) you want to use, by e.g. running `sudo resolvectl mdns eno0 yes`
+///   (you can check all is well by e.g. running `sudo resolvectl status eno1` after that)
+/// - See also https://unix.stackexchange.com/questions/459991/how-to-configure-systemd-resolved-for-mdns-multicast-dns-on-local-network
+///   for more details
+///
+/// NOTE: If you are greeted with an
+/// "Error: Error::DBusError: org.freedesktop.DBus.Error.InteractiveAuthorizationRequired: Interactive authentication required."
+/// message, this is an indication that the Linux user on behalf of which you are running the app does not have the elevated privileges
+/// required by the systemd-resolved daemon so as to register mDNS services.
+///
+/// For testing, easiest is to run the application with `sudo` or as root.
+pub struct ResolveMdns {
+    services: HashMap<MatterLocalService, OwnedObjectPath>,
+    connection: Connection,
+}
+
+impl ResolveMdns {
+    /// Create a new instance of the systemd-resolved mDNS implementation.
+    pub fn new(connection: Connection) -> Self {
+        Self {
+            services: HashMap::new(),
+            connection,
+        }
+    }
+
+    /// Run the mDNS responder + querier.
+    ///
+    /// # Arguments
+    /// - `matter`: A reference to the Matter instance to get mDNS services from.
+    pub async fn run(&mut self, node: &dyn TransportHost) -> Result<(), Error> {
+        let connection = self.connection.clone();
+
+        let responder = node.transport().mdns_responder();
+        let mut respond = pin!(self.run_respond(node));
+        let mut resolve = pin!(Self::run_resolve(node, &responder, &connection));
+        let mut browse = pin!(Self::run_browse(node, &responder, &connection));
+
+        select3(&mut respond, &mut resolve, &mut browse)
+            .coalesce()
+            .await
+    }
+
+    /// Publish the local Matter services and keep them in sync with the stack.
+    async fn run_respond(&mut self, node: &dyn TransportHost) -> Result<(), Error> {
+        loop {
+            node.transport().wait_mdns().await;
+
+            let mut services = HashSet::new();
+            node.mdns_services(&mut |service| {
+                services.insert(service);
+
+                Ok(())
+            })?;
+
+            info!("mDNS services changed, updating...");
+
+            self.update_services(node, &services).await?;
+
+            info!("mDNS services updated");
+        }
+    }
+
+    /// Service commissionable-browse requests: PTR-query `_matterc._udp.local`,
+    /// resolve each discovered instance, and deposit it (filter + exclude checks
+    /// happen in the deposit) while the browse is in flight.
+    async fn run_browse(
+        node: &dyn TransportHost,
+        responder: &MdnsResponder<'_>,
+        connection: &Connection,
+    ) -> Result<(), Error> {
+        loop {
+            let query = responder.wait_browse_request().await;
+            let ptr_name = format!("{}.local", query.base_service_type());
+
+            let resolve = ManagerProxy::new(connection).await?;
+
+            while node.transport().mdns_browse_in_flight() {
+                if let Ok((records, _flags)) = resolve
+                    .resolve_record(IF_INDEX_ANY, &ptr_name, DNS_CLASS_IN, DNS_TYPE_PTR, 0)
+                    .await
+                {
+                    for instance in records
+                        .into_iter()
+                        .filter_map(|(_if, _rt, _rc, rdata)| parse_dns_name(&rdata))
+                    {
+                        if !query.needs_resolve() {
+                            node.transport()
+                                .try_deposit_mdns_browse(&MdnsRemoteService {
+                                    instance_name: DottedName(&instance),
+                                    port: None,
+                                    addrs: core::iter::empty::<IpAddr>(),
+                                    txt: core::iter::empty::<(&str, &str)>(),
+                                    scope_id: 0,
+                                });
+                            continue;
+                        }
+
+                        let Some((name, type_, domain)) = parse_service_instance(&instance) else {
+                            continue;
+                        };
+
+                        if let Ok((srv_data, txt_data, _cn, _ct, _cd, _fl)) = resolve
+                            .resolve_service(IF_INDEX_ANY, &name, &type_, &domain, AF_UNSPEC, 0)
+                            .await
+                        {
+                            Self::deposit_browse(node, &instance, &srv_data, &txt_data);
+                        }
+
+                        if !node.transport().mdns_browse_in_flight() {
+                            break;
+                        }
+                    }
+                }
+
+                Timer::after(Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Service operational-resolve requests: resolve the requested instance and
+    /// deposit its address + MRP params, while the resolve is in flight.
+    async fn run_resolve(
+        node: &dyn TransportHost,
+        responder: &MdnsResponder<'_>,
+        connection: &Connection,
+    ) -> Result<(), Error> {
+        loop {
+            let service = responder.wait_resolve_request().await;
+
+            let mut name_buf: storage::String<128> = storage::String::new();
+            service.instance_name(&mut name_buf);
+            let label = name_buf.split('.').next().unwrap_or("").to_string();
+            let service_type = service.service_type();
+
+            let resolve = ManagerProxy::new(connection).await?;
+
+            while node.transport().mdns_resolve_in_flight() {
+                if let Ok((srv_data, txt_data, _cn, _ct, _cd, _fl)) = resolve
+                    .resolve_service(IF_INDEX_ANY, &label, service_type, "local", AF_UNSPEC, 0)
+                    .await
+                {
+                    Self::deposit_resolve(node, name_buf.as_str(), &srv_data, &txt_data);
+                }
+
+                Timer::after(Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Deposit a resolved browse hit (matched by `instance_name` for its id).
+    #[allow(clippy::type_complexity)]
+    fn deposit_browse(
+        node: &dyn TransportHost,
+        instance_name: &str,
+        srv_data: &[(u16, u16, u16, String, Vec<(i32, i32, Vec<u8>)>, String)],
+        txt_data: &[Vec<u8>],
+    ) {
+        for (_p, _w, port, _host, addresses, _ch) in srv_data {
+            // Deposit *all* resolved addresses; the transport picks the most
+            // preferred one (IPv6 link-local → ULA → global → IPv4) via
+            // `score_ip_address`.
+            let ips = all_addresses(addresses);
+            if !ips.is_empty() {
+                let txt = txt_iter(txt_data);
+                node.transport()
+                    .try_deposit_mdns_browse(&MdnsRemoteService {
+                        instance_name: DottedName(instance_name),
+                        port: Some(*port),
+                        addrs: ips.iter().copied(),
+                        txt: txt.iter().copied(),
+                        // systemd-resolved reports the interface index per
+                        // address; use the link-local IPv6 one as the scope id
+                        // so a `fe80::` result is routable.
+                        scope_id: link_local_scope_id(addresses),
+                    });
+            }
+        }
+    }
+
+    /// Deposit a resolved operational hit (matched by `instance_name`).
+    #[allow(clippy::type_complexity)]
+    fn deposit_resolve(
+        node: &dyn TransportHost,
+        instance_name: &str,
+        srv_data: &[(u16, u16, u16, String, Vec<(i32, i32, Vec<u8>)>, String)],
+        txt_data: &[Vec<u8>],
+    ) {
+        for (_p, _w, port, _host, addresses, _ch) in srv_data {
+            // Deposit *all* resolved addresses (see `deposit_browse`).
+            let ips = all_addresses(addresses);
+            if !ips.is_empty() {
+                let txt = txt_iter(txt_data);
+                node.transport().try_deposit_mdns_resolve(
+                    &MdnsRemoteService {
+                        instance_name: DottedName(instance_name),
+                        port: Some(*port),
+                        addrs: ips.iter().copied(),
+                        txt: txt.iter().copied(),
+                        // systemd-resolved reports the interface index per
+                        // address; use the link-local IPv6 one as the scope id
+                        // so a `fe80::` result is routable.
+                        scope_id: link_local_scope_id(addresses),
+                    },
+                    // systemd-resolved owns the host A/AAAA records; this backend never
+                    // sees the local interface addresses.
+                    &[],
+                );
+            }
+        }
+    }
+
+    async fn update_services(
+        &mut self,
+        node: &dyn TransportHost,
+        services: &HashSet<MatterLocalService>,
+    ) -> Result<(), Error> {
+        for service in services {
+            if !self.services.contains_key(service) {
+                info!("Registering mDNS service: {:?}", service);
+                let path = self.register(node, service).await?;
+                self.services.insert(service.clone(), path);
+            }
+        }
+
+        loop {
+            let removed = self
+                .services
+                .iter()
+                .find(|(service, _)| !services.contains(service));
+
+            if let Some((service, path)) = removed {
+                info!("Deregistering mDNS service: {:?}", service);
+                self.deregister(path.as_ref()).await?;
+                self.services.remove(&service.clone());
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn register(
+        &mut self,
+        node: &dyn TransportHost,
+        service: &MatterLocalService,
+    ) -> Result<OwnedObjectPath, Error> {
+        // Scratch buffer for expanding `MatterLocalService` into a `MdnsLocalService` view —
+        // the strings (name, subtypes, TXT values) are formatted into this buffer.
+        let mut buf = [0u8; 512];
+        let (service, _) = service.service(node, &mut buf)?;
+
+        let resolve = ManagerProxy::new(&self.connection).await?;
+
+        let txt = service
+            .txt_kvs
+            .clone()
+            .map(|(k, v)| (k, v.as_bytes()))
+            .collect::<HashMap<_, _>>();
+
+        // NOTE: By looking at the DBus `register_service` implementation it seems
+        // that the `register_service` call does not support mDNS subtypes at all:
+        // https://github.com/systemd/systemd/blob/0ae3a8d147f12cd47aa0cfbaa4c92570ae8ff949/src/resolve/resolved-bus.c#L1861
+        //
+        // (They are supported for mDNS configurations in config files though.)
+
+        // Make our ID a bit more unique
+        let id = format!("rs-matter-{}", service.name);
+
+        let path = resolve
+            .register_service(
+                &id,
+                service.name,
+                service.service_protocol,
+                service.port,
+                0,
+                0,
+                &[txt],
+            )
+            .await?;
+
+        Ok(path)
+    }
+
+    async fn deregister(&self, path: ObjectPath<'_>) -> Result<(), Error> {
+        let resolve = ManagerProxy::new(&self.connection).await?;
+
+        resolve.unregister_service(&path).await?;
+
+        Ok(())
+    }
+}
+
+/// All parseable IP addresses from a systemd-resolved address list
+/// (`(ifindex, family, bytes)` triples), best-effort. The caller deposits these
+/// and lets `score_ip_address` pick the most preferred (IPv6 first).
+fn all_addresses(addresses: &[(i32, i32, Vec<u8>)]) -> Vec<IpAddr> {
+    addresses
+        .iter()
+        .filter_map(|(_ifindex, family, bytes)| parse_ip_address(*family, bytes))
+        .collect()
+}
+
+/// The IPv6 scope id (interface index) for a link-local result, or `0` (the
+/// unscoped sentinel) if there is no link-local IPv6 address. systemd-resolved
+/// reports the interface index per address; for a `fe80::` address that index
+/// is the scope needed to make it routable. Returns the first link-local hit.
+fn link_local_scope_id(addresses: &[(i32, i32, Vec<u8>)]) -> u32 {
+    addresses
+        .iter()
+        .find_map(
+            |(ifindex, family, bytes)| match parse_ip_address(*family, bytes) {
+                Some(IpAddr::V6(v6)) if v6.is_unicast_link_local() && *ifindex > 0 => {
+                    Some(*ifindex as u32)
+                }
+                _ => None,
+            },
+        )
+        .unwrap_or(0)
+}
+
+/// Borrowed `(key, value)` view over systemd-resolved TXT records (each a
+/// `key=value` (or bare `key`) UTF-8 byte string).
+fn txt_iter(txt_data: &[Vec<u8>]) -> Vec<(&str, &str)> {
+    let mut pairs = Vec::new();
+    for entry in txt_data {
+        if let Ok(s) = core::str::from_utf8(entry) {
+            match s.find('=') {
+                Some(eq) => pairs.push((&s[..eq], &s[eq + 1..])),
+                None => pairs.push((s, "")),
+            }
+        }
+    }
+    pairs
+}
+
+/// Parse a DNS wire format domain name into a string.
+///
+/// Note that compressed names (with 0xC0 pointers) will return an error.
+/// In the context of systemd-resolved's D-Bus API, PTR record RDATA
+/// is typically returned uncompressed.
+fn parse_dns_name(data: &[u8]) -> Option<String> {
+    let labels: Vec<&str> = Name::from_slice(data)
+        .ok()?
+        .iter()
+        .filter(|label| !label.is_empty())
+        .filter_map(|label| core::str::from_utf8(label.as_slice()).ok())
+        .collect();
+
+    (!labels.is_empty()).then(|| labels.join("."))
+}
+
+/// Parse a service instance name into (name, type, domain) components
+/// Input format: "Instance Name._matterc._udp.local" (or `._matter._tcp`)
+fn parse_service_instance(instance: &str) -> Option<(String, String, String)> {
+    let instance = instance.trim_end_matches('.');
+
+    let type_start = instance
+        .find("._matterc._udp")
+        .or_else(|| instance.find("._matter._tcp"))?;
+    let name = &instance[..type_start];
+
+    // Find the domain (everything after the service type)
+    let after_name = &instance[type_start + 1..]; // Skip the dot before the type
+    let domain_start = after_name.find(".local")?;
+    let type_ = &after_name[..domain_start + ".local".len()];
+
+    // Split type into service type and domain
+    let dot_local_pos = type_.rfind(".local")?;
+    let service_type = &type_[..dot_local_pos];
+    let domain = "local";
+
+    Some((
+        name.to_string(),
+        service_type.to_string(),
+        domain.to_string(),
+    ))
+}
+
+/// Parse an IP address from systemd-resolved format
+fn parse_ip_address(family: i32, addr_bytes: &[u8]) -> Option<IpAddr> {
+    match family {
+        2 => {
+            // AF_INET (IPv4)
+            if addr_bytes.len() >= 4 {
+                Some(IpAddr::V4(std::net::Ipv4Addr::new(
+                    addr_bytes[0],
+                    addr_bytes[1],
+                    addr_bytes[2],
+                    addr_bytes[3],
+                )))
+            } else {
+                None
+            }
+        }
+        10 => {
+            // AF_INET6 (IPv6)
+            if addr_bytes.len() >= 16 {
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(&addr_bytes[..16]);
+                Some(IpAddr::V6(std::net::Ipv6Addr::from(octets)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_dns_name_simple() {
+        // "local" in DNS wire format: 5 l o c a l 0
+        let data = [5, b'l', b'o', b'c', b'a', b'l', 0];
+        assert_eq!(parse_dns_name(&data), Some("local".to_string()));
+    }
+
+    #[test]
+    fn parse_dns_name_multi_label() {
+        // "_matterc._udp.local" in DNS wire format
+        let data = [
+            8, b'_', b'm', b'a', b't', b't', b'e', b'r', b'c', // _matterc
+            4, b'_', b'u', b'd', b'p', // _udp
+            5, b'l', b'o', b'c', b'a', b'l', // local
+            0,    // terminator
+        ];
+        assert_eq!(
+            parse_dns_name(&data),
+            Some("_matterc._udp.local".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_dns_name_service_instance() {
+        // "Matter Device._matterc._udp.local" in DNS wire format
+        let data = [
+            13, b'M', b'a', b't', b't', b'e', b'r', b' ', b'D', b'e', b'v', b'i', b'c',
+            b'e', // Matter Device
+            8, b'_', b'm', b'a', b't', b't', b'e', b'r', b'c', // _matterc
+            4, b'_', b'u', b'd', b'p', // _udp
+            5, b'l', b'o', b'c', b'a', b'l', // local
+            0,    // terminator
+        ];
+        assert_eq!(
+            parse_dns_name(&data),
+            Some("Matter Device._matterc._udp.local".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_dns_name_empty() {
+        // Just a null terminator
+        let data = [0];
+        assert_eq!(parse_dns_name(&data), None);
+    }
+
+    #[test]
+    fn parse_dns_name_truncated() {
+        // Label claims 10 bytes but only 5 are present
+        let data = [10, b'h', b'e', b'l', b'l', b'o'];
+        assert_eq!(parse_dns_name(&data), None);
+    }
+
+    #[test]
+    fn parse_dns_name_with_spaces() {
+        // "Matter Device" in DNS wire format
+        // The space must not be escaped in the string
+        let data = [
+            13, b'M', b'a', b't', b't', b'e', b'r', b' ', b'D', b'e', b'v', b'i', b'c', b'e', 0,
+        ];
+        assert_eq!(parse_dns_name(&data), Some("Matter Device".to_string()));
+    }
+
+    // Tests for parse_service_instance()
+
+    #[test]
+    fn parse_service_instance_simple() {
+        let result = parse_service_instance("MyDevice._matterc._udp.local");
+        assert!(result.is_some());
+        let (name, type_, domain) = result.unwrap();
+        assert_eq!(name, "MyDevice");
+        assert_eq!(type_, "_matterc._udp");
+        assert_eq!(domain, "local");
+    }
+
+    #[test]
+    fn parse_service_instance_with_spaces() {
+        let result = parse_service_instance("Matter Test Device._matterc._udp.local");
+        assert!(result.is_some());
+        let (name, type_, domain) = result.unwrap();
+        assert_eq!(name, "Matter Test Device");
+        assert_eq!(type_, "_matterc._udp");
+        assert_eq!(domain, "local");
+    }
+
+    #[test]
+    fn parse_service_instance_with_trailing_dot() {
+        let result = parse_service_instance("MyDevice._matterc._udp.local.");
+        assert!(result.is_some());
+        let (name, type_, domain) = result.unwrap();
+        assert_eq!(name, "MyDevice");
+        assert_eq!(type_, "_matterc._udp");
+        assert_eq!(domain, "local");
+    }
+
+    #[test]
+    fn parse_service_instance_invalid_no_matterc() {
+        let result = parse_service_instance("MyDevice._http._tcp.local");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_service_instance_operational() {
+        let result = parse_service_instance("EADDBAEB88C41C26-000000000001B66B._matter._tcp.local");
+        assert!(result.is_some());
+        let (name, service_type, domain) = result.unwrap();
+        assert_eq!(name, "EADDBAEB88C41C26-000000000001B66B");
+        assert_eq!(service_type, "_matter._tcp");
+        assert_eq!(domain, "local");
+    }
+
+    #[test]
+    fn parse_service_instance_invalid_no_local() {
+        let result = parse_service_instance("MyDevice._matterc._udp.example.com");
+        assert!(result.is_none());
+    }
+
+    // Tests for parse_ip_address()
+
+    #[test]
+    fn parse_ip_address_ipv4() {
+        let addr_bytes = [192, 168, 1, 100];
+        let result = parse_ip_address(2, &addr_bytes);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100))
+        );
+    }
+
+    #[test]
+    fn parse_ip_address_ipv4_localhost() {
+        let addr_bytes = [127, 0, 0, 1];
+        let result = parse_ip_address(2, &addr_bytes);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+        );
+    }
+
+    #[test]
+    fn parse_ip_address_ipv6_localhost() {
+        let addr_bytes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let result = parse_ip_address(10, &addr_bytes);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))
+        );
+    }
+
+    #[test]
+    fn parse_ip_address_ipv6_link_local() {
+        // fe80::1
+        let addr_bytes = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let result = parse_ip_address(10, &addr_bytes);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            IpAddr::V6(std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))
+        );
+    }
+
+    #[test]
+    fn parse_ip_address_ipv4_too_short() {
+        let addr_bytes = [192, 168, 1]; // Only 3 bytes
+        let result = parse_ip_address(2, &addr_bytes);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_ip_address_ipv6_too_short() {
+        let addr_bytes = [0, 0, 0, 0, 0, 0, 0, 0]; // Only 8 bytes
+        let result = parse_ip_address(10, &addr_bytes);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_ip_address_unknown_family() {
+        let addr_bytes = [192, 168, 1, 100];
+        let result = parse_ip_address(99, &addr_bytes); // Unknown family
+        assert!(result.is_none());
+    }
+}

@@ -65,6 +65,7 @@ use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::persist::{DummyKvBlobStore, FABRIC_KEYS_START};
 use rs_matter::respond::{DefaultResponder, Responder};
 use rs_matter::sc::case::CaseInitiator;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NoNetwork};
@@ -117,6 +118,7 @@ const NODE: Node<'static> = Node {
 };
 
 fn device_data_model<'a>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, TestOnOffDeviceLogic, on_off::NoLevelControl>,
 ) -> impl DataModel + 'a {
@@ -124,7 +126,7 @@ fn device_data_model<'a>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -437,7 +439,7 @@ async fn run_fabric_survives_reboot() {
         &device_matter,
         &device_crypto,
         &buffers,
-        device_data_model(rand, &on_off_handler),
+        device_data_model(&device_matter, rand, &on_off_handler),
         &device_kv,
         &state,
     );
@@ -459,11 +461,19 @@ async fn run_fabric_survives_reboot() {
         let mut flow = pin!(async {
             // Admin: CASE, then a typed OnOff read that must succeed.
             info!("Admin CASE handshake against the rebooted device...");
-            let exchange = Exchange::initiate_plaintext(&ctrl_matter, &crypto, peer_addr).await?;
+            let exchange =
+                Exchange::initiate_plaintext(ctrl_matter.transport(), &crypto, peer_addr).await?;
             with_timeout(
                 30,
                 "admin CASE",
-                CaseInitiator::perform(exchange, &crypto, admin_fab_idx, DEVICE_NODE_ID, None),
+                CaseInitiator::perform(
+                    &ctrl_matter,
+                    exchange,
+                    &crypto,
+                    admin_fab_idx,
+                    DEVICE_NODE_ID,
+                    None,
+                ),
             )
             .await?;
 
@@ -485,11 +495,19 @@ async fn run_fabric_survives_reboot() {
             // Unauthorized subject: CASE succeeds (valid NOC on the fabric) but
             // the OnOff read is denied by ACL.
             info!("Unauthorized-subject CASE handshake...");
-            let exchange = Exchange::initiate_plaintext(&ctrl_matter, &crypto, peer_addr).await?;
+            let exchange =
+                Exchange::initiate_plaintext(ctrl_matter.transport(), &crypto, peer_addr).await?;
             with_timeout(
                 30,
                 "unauthorized CASE",
-                CaseInitiator::perform(exchange, &crypto, unauth_fab_idx, DEVICE_NODE_ID, None),
+                CaseInitiator::perform(
+                    &ctrl_matter,
+                    exchange,
+                    &crypto,
+                    unauth_fab_idx,
+                    DEVICE_NODE_ID,
+                    None,
+                ),
             )
             .await?;
 
@@ -601,7 +619,7 @@ async fn run_removed_fabric_gone_after_reboot() {
     let (device_socket, controller_socket) = create_localhost_socket_pair();
     let peer_addr = Address::Udp(device_socket.get_ref().local_addr().unwrap());
 
-    let sc = SecureChannel::new(&crypto, &());
+    let sc = SecureChannel::new(&device_matter, &crypto, &());
     let responder = Responder::new("device", sc, &device_matter, 0);
 
     let device_fut = async {
@@ -617,8 +635,10 @@ async fn run_removed_fabric_gone_after_reboot() {
         let mut transport =
             pin!(ctrl_matter.run(&crypto, &controller_socket, &controller_socket, NoNetwork,));
         let mut flow = pin!(async {
-            let exchange = Exchange::initiate_plaintext(&ctrl_matter, &crypto, peer_addr).await?;
+            let exchange =
+                Exchange::initiate_plaintext(ctrl_matter.transport(), &crypto, peer_addr).await?;
             let mut perform = pin!(CaseInitiator::perform(
+                &ctrl_matter,
                 exchange,
                 &crypto,
                 admin_fab_idx,

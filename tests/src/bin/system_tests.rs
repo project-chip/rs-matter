@@ -42,8 +42,8 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::basic_info::{
-    BasicInfoConfig, ColorEnum, DeviceLocationConfig, PairingHintFlags, ProductAppearance,
-    ProductFinishEnum, CLUSTER_DEVICE_LOCATION as BASIC_INFO_CLUSTER_DEVICE_LOCATION,
+    BasicInfoConfig, DeviceLocationConfig, PairingHintFlags, ProductAppearance, ProductColor,
+    ProductFinish, CLUSTER_DEVICE_LOCATION as BASIC_INFO_CLUSTER_DEVICE_LOCATION,
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::decl::scenes_management::FULL_CLUSTER as SCENES_FULL_CLUSTER;
@@ -114,6 +114,7 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::{ChainedExchangeHandler, Responder};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -253,11 +254,13 @@ fn main() -> Result<(), Error> {
 
     let scenes_handler_1 = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
+        matter,
         scenes_state_1,
         (&on_off_handler_1, ()),
     );
     let scenes_handler_2 = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
+        matter,
         scenes_state_2,
         (&on_off_handler_2, ()),
     );
@@ -286,7 +289,7 @@ fn main() -> Result<(), Error> {
     let time_zone_store: &TimeZoneStore = TIME_ZONE_STORE.init(TimeZoneStore::new());
 
     let time_sync_handler =
-        TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), time_zone_store);
+        TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), matter, time_zone_store);
     let binding_handler_ep1 = BindingHandler::new(Dataver::new_rand(&mut rand), 1, bindings);
 
     // Identify handlers for EP1/EP2 — owned by `main` (rather than moved
@@ -379,6 +382,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
+            matter,
             node,
             gen_diag,
             rand,
@@ -424,7 +428,7 @@ fn main() -> Result<(), Error> {
     let main_handler = ChainedExchangeHandler::new(
         PROTO_ID_INTERACTION_MODEL,
         &im,
-        SecureChannel::new(im.crypto(), &im),
+        SecureChannel::new(im.matter(), im.crypto(), &im),
     )
     .chain(
         PROTO_ID_BDX,
@@ -573,8 +577,8 @@ fn main() -> Result<(), Error> {
 ///   cluster which we do not implement.
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
-        finish: ProductFinishEnum::Satin,
-        color: Some(ColorEnum::Purple),
+        finish: ProductFinish::Satin,
+        color: Some(ProductColor::Purple),
     },
     device_type: Some(0x0101),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
@@ -1020,6 +1024,7 @@ const NODE_BINFO_PROVISIONAL: Node<'static> = Node {
 // the parameter list. Suppressing here is cleaner than abstracting.
 #[allow(clippy::too_many_arguments)]
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    matter: &'a Matter<'a>,
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
     mut rand: impl Rng + Copy,
@@ -1046,7 +1051,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         endpoints::EthSysHandlerBuilder::new()
             .gen_diag(gen_diag)
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             // TimeSync with the `TIME_ZONE` feature: shadows the plain
             // TimeSync handler inside the sys chain above (chained-later =
             // matched-first), adding SetTimeZone/SetDSTOffset storage, the
@@ -1070,15 +1075,19 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // is in `NODE` and `NODE_BINFO_PROVISIONAL` above.
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             // Groupcast at the root endpoint - the unified group-management
             // interface over the same per-fabric group table Groups uses.
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == groupcast::GroupcastHandler::CLUSTER.id,
                 Async(
-                    GroupcastHandler::new(Dataver::new_rand(&mut rand), groupcast::Feature::all())
-                        .adapt(),
+                    GroupcastHandler::new(
+                        Dataver::new_rand(&mut rand),
+                        matter,
+                        groupcast::Feature::all(),
+                    )
+                    .adapt(),
                 ),
             )
             // UserLabel handler at the root endpoint. Wired here for
@@ -1117,6 +1126,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 Async(
                     groups::GroupsHandler::new_with_identify(
                         Dataver::new_rand(&mut rand),
+                        matter,
                         identify_handler_ep1,
                     )
                     .adapt(),
@@ -1173,6 +1183,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 Async(
                     groups::GroupsHandler::new_with_identify(
                         Dataver::new_rand(&mut rand),
+                        matter,
                         identify_handler_ep2,
                     )
                     .adapt(),
@@ -1191,7 +1202,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // the cluster (gated behind `--filepath`), so it is inert otherwise.
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == OTA_PROVIDER_CLUSTER.id,
-                OtaProviderHandler::new(Dataver::new_rand(&mut rand), ota_images).adapt(),
+                OtaProviderHandler::new(Dataver::new_rand(&mut rand), matter, ota_images).adapt(),
             )
             // OTA Software Update Requestor on the root endpoint (OTA role).
             // Inert unless an and an
@@ -1202,6 +1213,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 Async(
                     OtaRequestorHandler::new(
                         Dataver::new_rand(&mut rand),
+                        matter,
                         ota_providers,
                         ota_state,
                     )
@@ -1212,13 +1224,18 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // streaming) is driven as part of this chain by `im.run()`.
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == DIAGNOSTIC_LOGS_CLUSTER.id,
-                DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
-                    .adapt(),
+                DiagLogsHandler::new(
+                    Dataver::new_rand(&mut rand),
+                    matter,
+                    dlog_buffers,
+                    log_provider,
+                )
+                .adapt(),
             )
             // ICD Management (Check-In Protocol) on the root endpoint.
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == ICD_MGMT_CLUSTER.id,
-                Async(LitIcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
+                Async(LitIcdMgmtHandler::new(Dataver::new_rand(&mut rand), matter, icd).adapt()),
             )
             // PowerSource on the root endpoint; the fixture is mains-powered.
             .chain(

@@ -145,6 +145,7 @@ fn main() -> Result<(), Error> {
     // a scene captures and recalls.
     let scenes_handler = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
+        &matter,
         &scenes_state,
         (
             &on_off_handler,
@@ -158,6 +159,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         data_model(
+            &matter,
             rand,
             &on_off_handler,
             &level_control_handler,
@@ -248,6 +250,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the light endpoint handlers.
 fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks, R>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
@@ -261,7 +264,7 @@ where
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -272,7 +275,7 @@ where
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,

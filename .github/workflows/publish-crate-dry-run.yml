@@ -7,9 +7,27 @@ on:
         required: true
         type: choice
         description: Crate to publish
+        # In the order of publishing: each crate after the ones it depends on
         options:
         - rs-matter-codegen
         - rs-matter-macros
+        - rs-matter-utils
+        - rs-matter-tlv
+        - rs-matter-crypto
+        - rs-matter-cert
+        - rs-matter-pairing
+        - rs-matter-im-core
+        - rs-matter-dm-core
+        - rs-matter-dm-clusters
+        - rs-matter-node-core
+        - rs-matter-transport
+        - rs-matter-sc
+        - rs-matter-bdx
+        - rs-matter-node
+        - rs-matter-im
+        - rs-matter-dm
+        - rs-matter-respond
+        - rs-matter-onboard
         - rs-matter
 
 env:

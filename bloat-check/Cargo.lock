@@ -3345,52 +3345,40 @@ dependencies = [
 name = "rs-matter"
 version = "0.4.1"
 dependencies = [
- "aes",
  "bitflags 2.13.2",
- "ccm",
- "cfg-if",
- "cipher",
- "critical-section",
- "crypto-bigint",
  "defmt 1.1.1",
- "der",
- "digest 0.11.3",
- "domain",
- "ecdsa",
- "either",
- "elliptic-curve",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-io-async 0.7.0",
- "heapless 0.9.3",
- "hkdf",
- "hmac",
  "log",
- "mbedtls-rs-sys",
- "nix 0.31.3",
+ "rs-matter-bdx",
+ "rs-matter-cert",
+ "rs-matter-crypto",
+ "rs-matter-dm",
+ "rs-matter-dm-clusters",
+ "rs-matter-dm-core",
+ "rs-matter-im",
+ "rs-matter-im-core",
+ "rs-matter-node",
+ "rs-matter-node-core",
+ "rs-matter-onboard",
+ "rs-matter-pairing",
+ "rs-matter-respond",
+ "rs-matter-sc",
+ "rs-matter-tlv",
+ "rs-matter-transport",
+ "rs-matter-utils",
+ "strum 0.28.0",
+]
+
+[[package]]
+name = "rs-matter-bdx"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
  "num",
  "num-derive",
  "num-traits",
- "num_enum",
- "p256",
- "pbkdf2",
- "pinned-init",
- "primeorder",
- "qrcodegen-no-heap",
- "rand_core 0.10.1",
- "rs-matter-codegen",
- "rs-matter-macros",
- "scopeguard",
- "sec1",
- "sha1",
- "sha2",
- "signature",
- "strum 0.28.0",
- "subtle",
- "time",
- "verhoeff",
- "x509-cert",
+ "rs-matter-transport",
+ "rs-matter-utils",
 ]
 
 [[package]]
@@ -3420,6 +3408,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rs-matter-cert"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "der",
+ "log",
+ "num",
+ "num-derive",
+ "num-traits",
+ "rs-matter-crypto",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+ "time",
+]
+
+[[package]]
 name = "rs-matter-codegen"
 version = "0.4.1"
 dependencies = [
@@ -3438,6 +3442,123 @@ dependencies = [
 ]
 
 [[package]]
+name = "rs-matter-crypto"
+version = "0.4.1"
+dependencies = [
+ "aes",
+ "ccm",
+ "cipher",
+ "crypto-bigint",
+ "defmt 1.1.1",
+ "der",
+ "digest 0.11.3",
+ "ecdsa",
+ "elliptic-curve",
+ "hkdf",
+ "hmac",
+ "log",
+ "mbedtls-rs-sys",
+ "p256",
+ "pbkdf2",
+ "primeorder",
+ "rand_core 0.10.1",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+ "sec1",
+ "sha1",
+ "sha2",
+ "signature",
+ "x509-cert",
+]
+
+[[package]]
+name = "rs-matter-dm"
+version = "0.4.1"
+dependencies = [
+ "bitflags 2.13.2",
+ "defmt 1.1.1",
+ "either",
+ "heapless 0.9.3",
+ "log",
+ "nix 0.31.3",
+ "num",
+ "rand_core 0.10.1",
+ "rs-matter-bdx",
+ "rs-matter-cert",
+ "rs-matter-crypto",
+ "rs-matter-dm-clusters",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-node",
+ "rs-matter-node-core",
+ "rs-matter-sc",
+ "rs-matter-tlv",
+ "rs-matter-transport",
+ "rs-matter-utils",
+ "scopeguard",
+]
+
+[[package]]
+name = "rs-matter-dm-clusters"
+version = "0.4.1"
+dependencies = [
+ "bitflags 2.13.2",
+ "defmt 1.1.1",
+ "rs-matter-codegen",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+ "strum 0.28.0",
+]
+
+[[package]]
+name = "rs-matter-dm-core"
+version = "0.4.1"
+dependencies = [
+ "cfg-if",
+ "defmt 1.1.1",
+ "either",
+ "log",
+ "rand_core 0.10.1",
+ "rs-matter-crypto",
+ "rs-matter-im-core",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+ "strum 0.28.0",
+]
+
+[[package]]
+name = "rs-matter-im"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "rs-matter-crypto",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-node",
+ "rs-matter-node-core",
+ "rs-matter-sc",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-im-core"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "num",
+ "num-derive",
+ "num-traits",
+ "num_enum",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+]
+
+[[package]]
 name = "rs-matter-macros"
 version = "0.4.1"
 dependencies = [
@@ -3445,6 +3566,164 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "rs-matter-node"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "rand_core 0.10.1",
+ "rs-matter-cert",
+ "rs-matter-crypto",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-node-core",
+ "rs-matter-pairing",
+ "rs-matter-sc",
+ "rs-matter-tlv",
+ "rs-matter-transport",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-node-core"
+version = "0.4.1"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "defmt 1.1.1",
+ "log",
+ "num",
+ "num-derive",
+ "num-traits",
+ "rs-matter-cert",
+ "rs-matter-crypto",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-pairing",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-onboard"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "rs-matter-cert",
+ "rs-matter-crypto",
+ "rs-matter-dm-clusters",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-node",
+ "rs-matter-sc",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-pairing"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "qrcodegen-no-heap",
+ "rs-matter-crypto",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+ "verhoeff",
+]
+
+[[package]]
+name = "rs-matter-respond"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "rs-matter-bdx",
+ "rs-matter-crypto",
+ "rs-matter-dm-core",
+ "rs-matter-im",
+ "rs-matter-node",
+ "rs-matter-sc",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-sc"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "num",
+ "rand_core 0.10.1",
+ "rs-matter-cert",
+ "rs-matter-crypto",
+ "rs-matter-dm-core",
+ "rs-matter-node-core",
+ "rs-matter-pairing",
+ "rs-matter-tlv",
+ "rs-matter-transport",
+ "rs-matter-utils",
+ "subtle",
+]
+
+[[package]]
+name = "rs-matter-tlv"
+version = "0.4.1"
+dependencies = [
+ "defmt 1.1.1",
+ "log",
+ "num",
+ "num-derive",
+ "num-traits",
+ "pinned-init",
+ "rs-matter-macros",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-transport"
+version = "0.4.1"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "defmt 1.1.1",
+ "domain",
+ "either",
+ "log",
+ "nix 0.31.3",
+ "num",
+ "num-derive",
+ "num-traits",
+ "rand_core 0.10.1",
+ "rs-matter-crypto",
+ "rs-matter-dm-core",
+ "rs-matter-im-core",
+ "rs-matter-node-core",
+ "rs-matter-pairing",
+ "rs-matter-tlv",
+ "rs-matter-utils",
+]
+
+[[package]]
+name = "rs-matter-utils"
+version = "0.4.1"
+dependencies = [
+ "bitflags 2.13.2",
+ "critical-section",
+ "defmt 1.1.1",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-io-async 0.7.0",
+ "heapless 0.9.3",
+ "log",
+ "num_enum",
+ "pinned-init",
 ]
 
 [[package]]

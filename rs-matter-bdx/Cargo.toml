@@ -1,0 +1,38 @@
+[package]
+name = "rs-matter-bdx"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the Bulk Data Exchange (BDX) protocol"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "log"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-transport/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-transport/alloc"]
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-transport/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-transport/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-transport = { workspace = true }
+num = { workspace = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[dev-dependencies]
+# For the `std` time driver of `embassy-time`
+rs-matter-utils = { workspace = true, features = ["os"] }
+rs-matter-crypto = { workspace = true, features = ["rustcrypto"] }
+embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

@@ -1,0 +1,50 @@
+[package]
+name = "rs-matter-sc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the Secure Channel protocol: PASE, CASE, Check-In"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "log"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-cert/std", "rs-matter-pairing/std", "rs-matter-dm-core/std", "rs-matter-node-core/std", "rs-matter-transport/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-cert/alloc", "rs-matter-pairing/alloc", "rs-matter-dm-core/alloc", "rs-matter-node-core/alloc", "rs-matter-transport/alloc"]
+# Multicast groups support.
+groups = ["rs-matter-crypto/groups", "rs-matter-node-core/groups", "rs-matter-transport/groups"]
+# CASE session resumption (Sigma2-Resume fast-path + its persisted cache).
+case-resumption = ["rs-matter-transport/case-resumption"]
+# Never initiate a new CASE session: `Exchange::initiate` only reuses an existing session (else fails).
+case-responder-only = ["rs-matter-transport/case-responder-only"]
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt", "rs-matter-cert/defmt", "rs-matter-pairing/defmt", "rs-matter-dm-core/defmt", "rs-matter-node-core/defmt", "rs-matter-transport/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-cert/log", "rs-matter-pairing/log", "rs-matter-dm-core/log", "rs-matter-node-core/log", "rs-matter-transport/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-tlv = { workspace = true }
+rs-matter-crypto = { workspace = true }
+rs-matter-cert = { workspace = true }
+rs-matter-dm-core = { workspace = true }
+rs-matter-node-core = { workspace = true }
+rs-matter-pairing = { workspace = true }
+rs-matter-transport = { workspace = true }
+num = { workspace = true }
+rand_core = { workspace = true }
+subtle = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[dev-dependencies]
+rs-matter-crypto = { workspace = true, features = ["rustcrypto"] }
+# For the `std` time driver of `embassy-time`
+rs-matter-utils = { workspace = true, features = ["os"] }
+embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

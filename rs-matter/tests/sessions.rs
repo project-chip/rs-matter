@@ -39,6 +39,7 @@ use core::num::NonZeroU8;
 use rs_matter::crypto::test_only_crypto;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend, NoNetwork};
 use rs_matter::transport::session::{
@@ -76,15 +77,17 @@ fn test_session_table_capped_and_recycled() {
         // initiator exchange so none of them can be evicted.
         let mut held = std::vec::Vec::new();
         for _ in 0..MAX_SESSIONS {
-            let exchange = Exchange::initiate_plaintext(&matter, &crypto, Address::new())
-                .await
-                .expect("plaintext session allocation should succeed below the cap");
+            let exchange =
+                Exchange::initiate_plaintext(matter.transport(), &crypto, Address::new())
+                    .await
+                    .expect("plaintext session allocation should succeed below the cap");
             held.push(exchange);
         }
 
         // The table is full and nothing is evictable (every session has a live
         // exchange), so the next allocation must fail with `NoSpaceSessions`.
-        let over_cap = Exchange::initiate_plaintext(&matter, &crypto, Address::new()).await;
+        let over_cap =
+            Exchange::initiate_plaintext(matter.transport(), &crypto, Address::new()).await;
         let outcome = over_cap.as_ref().map(|_| ()).map_err(|e| e.code());
         assert!(
             matches!(outcome, Err(ErrorCode::NoSpaceSessions)),
@@ -99,9 +102,10 @@ fn test_session_table_capped_and_recycled() {
         // Further allocations succeed by evicting the LRU idle session each
         // time - proof the table recycles at the cap rather than growing past it.
         for _ in 0..MAX_SESSIONS + 3 {
-            let exchange = Exchange::initiate_plaintext(&matter, &crypto, Address::new())
-                .await
-                .expect("allocation should succeed by evicting an idle session");
+            let exchange =
+                Exchange::initiate_plaintext(matter.transport(), &crypto, Address::new())
+                    .await
+                    .expect("allocation should succeed by evicting an idle session");
             drop(exchange);
         }
 
@@ -175,7 +179,7 @@ fn test_exchange_slots_exhausted_and_released() {
 /// Pre-install a keyless CASE-shaped session towards [`REMOTE_NODE_ID`], mirroring
 /// the helper in `tests/mrp.rs`, so `Exchange::initiate` finds and reuses it.
 fn install_case_session(matter: &Matter<'_>, fab_idx: NonZeroU8) {
-    let mut session = ReservedSession::reserve_now(matter, test_only_crypto()).unwrap();
+    let mut session = ReservedSession::reserve_now(matter.transport(), test_only_crypto()).unwrap();
 
     session
         .update(

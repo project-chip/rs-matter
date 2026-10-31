@@ -22,6 +22,34 @@ Users are free to consume all of the APIs, including the provided system cluster
 * ... or just using the shrink-wrapped [`rs-matter-stack`](https://github.com/sysgrok/rs-matter-stack) arrangement and its down-stream crates;
 * ... and so on.
 
+## Crates
+
+`rs-matter` is the crate to depend on. It re-exports the following crates, which hold the implementation,
+under a single set of paths and features:
+
+| Crate | Contents |
+|---|---|
+| `rs-matter-utils` | The error type, synchronization primitives, storage, timers, futures, I/O, in-place initialization |
+| `rs-matter-tlv` | The TLV encoding, and the `FromTLV` / `ToTLV` traits |
+| `rs-matter-crypto` | The crypto traits and backends, the group key derivation |
+| `rs-matter-cert` | Operational certificates and device attestation |
+| `rs-matter-pairing` | The manual pairing code, the QR code and the NFC payload |
+| `rs-matter-im-core` | The Interaction Model encoding |
+| `rs-matter-dm-core` | The Data Model types: metadata, handler traits, persistence traits |
+| `rs-matter-dm-clusters` | The cluster types, handler traits and clients generated from the Matter IDL |
+| `rs-matter-node-core` | What the node is built on: the fabrics, the ACL, the fail-safe, the basic information settings |
+| `rs-matter-transport` | The transport (exchanges, sessions, MRP, UDP, TCP, BTP, mDNS), the IM client |
+| `rs-matter-sc` | The Secure Channel protocol: PASE, CASE, Check-In |
+| `rs-matter-node` | `Matter`, which puts the transport, the Secure Channel state and the state of the node together |
+| `rs-matter-bdx` | The Bulk Data Exchange protocol |
+| `rs-matter-im` | The Interaction Model engine |
+| `rs-matter-dm` | The cluster handlers and the root endpoint |
+| `rs-matter-respond` | The responders of the incoming exchanges |
+| `rs-matter-onboard` | The commissioner |
+
+The split keeps the large generated code in a crate of its own, so that changes to the other crates are
+type-checked quickly. See [docs/crate-split-design.md](docs/crate-split-design.md) for the details.
+
 ## I just want to run Matter on my MCU!
 
 * To run `rs-matter` on baremetal MCUs with [Embassy](https://github.com/embassy-rs/embassy), look at [`rs-matter-embassy`](https://github.com/sysgrok/rs-matter-embassy). Currently supported MCUs:
@@ -311,7 +339,7 @@ These days mDNS is still a PITA especially on Windows, but not only.
 - Three well-supported ones - `avahi`, `resolve` and `builtin` -
 for production use-cases on embedded MCUs and embedded Linux;
 - ...as well as two legacy ones - `zeroconf` and `astro-dnssd` - which are kept around
-for compatibility with Windows and MacOSX; look inside `rs-matter/rs-matter/src/transport/network/mdns` for more details on those.
+for compatibility with Windows and MacOSX; look inside `rs-matter-transport/src/network/mdns` for more details on those.
 
 The TL;DR is, rather than building with `--features zeroconf` everywhere, you can try:
 - On Linux: all of the above, but `--features avahi` and `--features resolve` are your best bet in production;

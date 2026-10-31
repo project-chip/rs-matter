@@ -1,0 +1,38 @@
+[package]
+name = "rs-matter-pairing"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - onboarding payloads"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "log"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc"]
+# Recognizing Matter onboarding QR codes in images (via `rqrr`), for commissioners
+# that scan a device's QR code rather than being handed its payload text.
+# Requires `std`; the image *decoding* (PNG/JPEG/camera/...) is the caller's job -
+# this only consumes 8-bit greyscale pixels. See `qr::scan`.
+qr-scan = ["std", "dep:rqrr"]
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-tlv = { workspace = true }
+rs-matter-crypto = { workspace = true }
+qrcodegen-no-heap = { workspace = true }
+verhoeff = { workspace = true }
+rqrr = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

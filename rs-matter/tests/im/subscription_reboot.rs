@@ -27,13 +27,14 @@
 
 use core::cell::Cell;
 
-use rs_matter::dm::{EmptyHandler, Node, ReportContext, ReportDataHandler, SubscriptionCtx};
-use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
+use rs_matter::dm::{EmptyHandler, Node};
 use rs_matter::im::encoding::ReportDataResp;
 use rs_matter::im::{
     AttrPath, GenericPath, IMStatusCode, InteractionModel, InteractionModelState, OpCode,
     StatusResp,
 };
+use rs_matter::im::{ImClient, SubscribeOutcome, TxOutcome};
+use rs_matter::im::{ReportContext, ReportDataHandler, SubscriptionCtx};
 use rs_matter::persist::{DummyKvBlobStore, PERSISTENT_SUBSCRIPTIONS_START};
 use rs_matter::respond::Responder;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
@@ -130,7 +131,7 @@ fn test_subscription_survives_reboot() {
             // The resumed subscription's report arrives on a server-initiated
             // exchange. Accept it, note the opcode, and answer with a
             // `StatusResponse(Success)` so the server sees the report delivered.
-            let mut exchange = Exchange::accept(im.matter_client()).await?;
+            let mut exchange = Exchange::accept(im.matter_client().transport()).await?;
             exchange.recv_fetch().await?;
             let opcode = exchange.rx()?.meta().proto_opcode;
             exchange
@@ -184,8 +185,8 @@ impl ReportDataHandler for CapturingReports {
         }
         self.attrs.set(attrs);
 
-        // Ambient `HandlerContext` access is available too — e.g. `ctx.matter()`.
-        let _ = ctx.matter();
+        // Ambient `HandlerContext` access is available too — e.g. `ctx.utc_time()`.
+        let _ = ctx.utc_time();
 
         self.done.notify();
 

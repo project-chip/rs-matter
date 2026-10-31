@@ -216,7 +216,7 @@ impl NetCtl for MockNetCtl {
     async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
         // Only the credential type is checked; the node stays reachable on the
         // interface it was already reachable on.
-        Ok(creds.check_match(self.net_type)?)
+        Ok(self.net_type.check_creds(creds)?)
     }
 }
 

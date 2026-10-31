@@ -15,11 +15,11 @@ rust-version.workspace = true
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["extra-traits", "parsing"] }
-quote = "1"
-proc-macro2 = "1"
-proc-macro-crate = "3"
+syn = { workspace = true, features = ["extra-traits", "parsing"] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+proc-macro-crate = { workspace = true }
 
 [dev-dependencies]
-assert-tokenstreams-eq = "0.1"
-rstest = "0.26"
+assert-tokenstreams-eq = { workspace = true }
+rstest = { workspace = true }

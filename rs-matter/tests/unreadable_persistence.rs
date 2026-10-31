@@ -292,7 +292,7 @@ async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
     let bindings = Bindings::<4>::new();
     let time_zone_store = TimeZoneStore::new();
     let time_sync =
-        TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), &time_zone_store);
+        TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), matter, &time_zone_store);
     let ota_providers = Providers::new();
     let ota_state = OtaState::new(ROOT_ENDPOINT_ID);
     let icd = LitIcd::new(100, ICD_MODE, 5000);
@@ -338,7 +338,7 @@ async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == TimeSyncHandler::CLUSTER.id,
                 Async(time_sync::HandlerAdaptor(&time_sync)),
@@ -366,6 +366,7 @@ async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
                 Async(
                     OtaRequestorHandler::new(
                         Dataver::new_rand(&mut rand),
+                        matter,
                         &ota_providers,
                         &ota_state,
                     )
@@ -374,7 +375,7 @@ async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
             )
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == LitIcdMgmtHandler::CLUSTER_DSLS.id,
-                Async(LitIcdMgmtHandler::new(Dataver::new_rand(&mut rand), &icd).adapt()),
+                Async(LitIcdMgmtHandler::new(Dataver::new_rand(&mut rand), matter, &icd).adapt()),
             )
             .chain(
                 |e, c| e == ENDPOINT && c == desc::DescHandler::CLUSTER.id,
@@ -417,7 +418,7 @@ async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
             )
             .chain(
                 |e, c| e == ENDPOINT && c == SCENES_CLUSTER.id,
-                ScenesHandler::new(Dataver::new_rand(&mut rand), &scenes_state, ()).adapt(),
+                ScenesHandler::new(Dataver::new_rand(&mut rand), matter, &scenes_state, ()).adapt(),
             ),
     );
 

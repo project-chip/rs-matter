@@ -2,6 +2,23 @@
 resolver = "2"
 members = [
         "rs-matter",
+        "rs-matter-utils",
+        "rs-matter-tlv",
+        "rs-matter-crypto",
+        "rs-matter-cert",
+        "rs-matter-pairing",
+        "rs-matter-im-core",
+        "rs-matter-dm-core",
+        "rs-matter-dm-clusters",
+        "rs-matter-node-core",
+        "rs-matter-transport",
+        "rs-matter-sc",
+        "rs-matter-node",
+        "rs-matter-bdx",
+        "rs-matter-im",
+        "rs-matter-dm",
+        "rs-matter-respond",
+        "rs-matter-onboard",
         "rs-matter-macros",
         "rs-matter-codegen",
         "examples",
@@ -35,7 +52,7 @@ lto = "fat"
 incremental = false
 overflow-checks = false
 
-# Build scripts and proc-macros run optimized. `rs-matter`'s `build.rs`
+# Build scripts and proc-macros run optimized. `rs-matter-dm-clusters`'s `build.rs`
 # generates ~30MB of cluster code from the Matter IDL and takes several
 # times longer when it runs unoptimized (the default for build scripts).
 [profile.dev.build-override]
@@ -45,5 +62,120 @@ opt-level = 2
 opt-level = 2
 
 [workspace.dependencies]
+# The crates of this workspace
+rs-matter = { path = "rs-matter", version = "0.4.1" }
+rs-matter-utils = { path = "rs-matter-utils", version = "0.4.1", default-features = false }
+rs-matter-tlv = { path = "rs-matter-tlv", version = "0.4.1", default-features = false }
+rs-matter-crypto = { path = "rs-matter-crypto", version = "0.4.1", default-features = false }
+rs-matter-cert = { path = "rs-matter-cert", version = "0.4.1", default-features = false }
+rs-matter-pairing = { path = "rs-matter-pairing", version = "0.4.1", default-features = false }
+rs-matter-im-core = { path = "rs-matter-im-core", version = "0.4.1", default-features = false }
+rs-matter-dm-core = { path = "rs-matter-dm-core", version = "0.4.1", default-features = false }
+rs-matter-dm-clusters = { path = "rs-matter-dm-clusters", version = "0.4.1", default-features = false }
+rs-matter-node-core = { path = "rs-matter-node-core", version = "0.4.1", default-features = false }
+rs-matter-transport = { path = "rs-matter-transport", version = "0.4.1", default-features = false }
+rs-matter-sc = { path = "rs-matter-sc", version = "0.4.1", default-features = false }
+rs-matter-node = { path = "rs-matter-node", version = "0.4.1", default-features = false }
+rs-matter-bdx = { path = "rs-matter-bdx", version = "0.4.1", default-features = false }
+rs-matter-im = { path = "rs-matter-im", version = "0.4.1", default-features = false }
+rs-matter-dm = { path = "rs-matter-dm", version = "0.4.1", default-features = false }
+rs-matter-respond = { path = "rs-matter-respond", version = "0.4.1", default-features = false }
+rs-matter-onboard = { path = "rs-matter-onboard", version = "0.4.1", default-features = false }
 rs-matter-macros = { path = "rs-matter-macros", version = "0.4.1" }
 rs-matter-codegen = { path = "rs-matter-codegen", version = "0.4.1" }
+
+# Used by the `rs-matter` crates
+aes = "0.9"
+astro-dnssd = "0.3"
+async-channel = "2"
+async-compat = { version = "0.2", default-features = false }
+async-io = { version = "2", default-features = false }
+bitflags = { version = "2.5", default-features = false }
+bluer = { version = "0.17", features = ["bluetoothd"] }
+ccm = { version = "0.6", default-features = false, features = ["alloc"] }
+cfg-if = "1"
+cipher = { version = "0.5", default-features = false }
+critical-section = "1.1"
+crypto-bigint = { version = "0.7", default-features = false }
+defmt = { version = "1", features = ["ip_in_core"] }
+der = { version = "0.8", features = ["derive", "oid"] }
+digest = { version = "0.11", default-features = false }
+domain = { version = "0.12", default-features = false, features = ["heapless"] }
+ecdsa = { version = "0.17", default-features = false, features = ["der"] }
+either = { version = "1", default-features = false }
+elliptic-curve = { version = "0.14", default-features = false }
+embassy-futures = "0.1.2"
+embassy-sync = "0.8"
+embassy-time = "0.5"
+embedded-io-async = "0.7"
+foreign-types = "0.3"
+futures-lite = "2"
+heapless = "0.9"
+hkdf = "0.13"
+hmac = "0.13"
+if-addrs = "0.15"
+libc = "0.2"
+log = "0.4"
+mbedtls-rs-sys = { version = "0.3", default-features = false, features = ["matter"] }
+nix = { version = "0.31", features = ["net"] }
+num = { version = "0.4", default-features = false }
+num-derive = "0.5"
+num-traits = { version = "0.2", default-features = false }
+num_enum = { version = "0.7.5", default-features = false }
+openssl = "0.10"
+p256 = { version = "0.14", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"] }
+pbkdf2 = "0.13"
+pinned-init = { version = "0.0.10", default-features = false }
+primeorder = { version = "0.14", default-features = false }
+qrcodegen-no-heap = "1.8"
+rand = { version = "0.10", default-features = false }
+rand_core = { version = "0.10", default-features = false }
+rqrr = { version = "0.11", default-features = false }
+scopeguard = { version = "1", default-features = false }
+sec1 = { version = "0.8", default-features = false }
+serde = { version = "1", default-features = false }
+serde-json-core = "0.6"
+sha1 = { version = "0.11", default-features = false }
+sha2 = { version = "0.11", default-features = false }
+signature = { version = "3", default-features = false }
+strum = { version = "0.28", default-features = false, features = ["derive"] }
+subtle = { version = "2.5", default-features = false }
+time = { version = "0.3", default-features = false }
+tokio = "1"
+tokio-stream = "0.1"
+uuid = "1"
+verhoeff = { version = "1", default-features = false }
+x509-cert = { version = "0.3", default-features = false, features = ["hazmat"] }
+zbus = "5.8"
+zeroconf = "0.18"
+
+# Used by the proc-macros and the code generator
+convert_case = "0.6"
+miette = "7"
+nom = "7"
+nom-greedyerror = "0.5"
+nom-supreme = "0.8"
+nom_locate = "4.2"
+prettyplease = "0.2"
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
+thiserror = "2"
+tracing = "0.1"
+
+# Used by the tests and the examples
+assert-tokenstreams-eq = "0.1"
+async-executor = "1"
+async-signal = "0.2"
+blocking = "1"
+embassy-time-queue-utils = "0.3"
+env_logger = "0.11"
+rstest = "0.26"
+similar = "3"
+socket2 = "0.6"
+static_cell = "2"
+str0m = "0.18"
+tempfile = "3"
+tracing-subscriber = "0.3"
+trybuild = "1"

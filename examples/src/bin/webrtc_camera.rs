@@ -163,7 +163,8 @@ const OUT_LEN: usize = SDP_LEN + 1024;
 const CAND_LEN: usize = 256;
 const MAX_CAND: usize = 16;
 
-type WebRtc = WebRtcProvHandler<Str0mHooks, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>;
+type WebRtc =
+    WebRtcProvHandler<'static, Str0mHooks, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>;
 
 /// Stream usages advertised by the `CameraAVStreamManagement` cluster, in
 /// priority order (highest priority first). `LiveView` is the only usage
@@ -1212,6 +1213,7 @@ fn main() -> Result<(), Error> {
     let shared: &'static Str0mShared = SHARED.init(Str0mShared::new(frames, fps));
     let webrtc = WEBRTC.init(WebRtcProvHandler::new(
         Dataver::new_rand(&mut rand),
+        matter,
         1,
         Str0mHooks { shared },
     ));
@@ -1295,7 +1297,7 @@ fn main() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        data_model(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
+        data_model(matter, rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
         &kv,
         state,
     );
@@ -1377,6 +1379,7 @@ const NODE: Node<'static> = Node {
 };
 
 fn data_model<'a>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>,
@@ -1391,7 +1394,7 @@ fn data_model<'a>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 rs_matter::dm::Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -1399,7 +1402,7 @@ fn data_model<'a>(
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
                 rs_matter::dm::Async(
-                    groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                    groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt(),
                 ),
             )
             .chain(
