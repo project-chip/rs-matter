@@ -32,6 +32,7 @@ use rs_matter::dm::{
 use rs_matter::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
 use rs_matter::tlv::Nullable;
 use rs_matter::tlv::ToTLV;
+use rs_matter::Matter;
 
 use crate::common::e2e::im::attributes::TestAttrData;
 use crate::common::e2e::new_default_runner;
@@ -48,12 +49,12 @@ const NODE: Node<'static> = Node {
 
 /// A data model over [`NODE`] serving the Access Control cluster (with the
 /// `AUXILIARY` feature) on EP0.
-fn dm_handler() -> impl DataModel {
+fn dm_handler<'a>(matter: &'a Matter<'a>) -> impl DataModel + 'a {
     (
         NODE,
         ChainedHandler::new(
             |e, c| e == 0 && c == acl::CLUSTER_AUX.id,
-            Async(AclHandler::new(Dataver::new(1)).adapt()),
+            Async(AclHandler::new(Dataver::new(1), matter).adapt()),
             EmptyHandler,
         ),
     )
@@ -119,7 +120,7 @@ fn test_auxiliary_acl_read() {
 
     let im = new_default_runner();
     im.add_default_acl();
-    let dm = dm_handler();
+    let dm = dm_handler(&im.matter);
 
     // Nothing synthesized yet: the attribute reads as an empty list.
     let no_entries: &[TestAclEntry] = &[];
@@ -147,7 +148,7 @@ fn test_acl_write_rejects_auxiliary_type() {
 
     let im = new_default_runner();
     im.add_default_acl();
-    let dm = dm_handler();
+    let dm = dm_handler(&im.matter);
 
     // A write of an `ACL` list entry carrying the (server-only)
     // `AuxiliaryType` field must be rejected with `ConstraintError`.

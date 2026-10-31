@@ -17,8 +17,8 @@
 
 //! Client-side read tests exercising the `ReadSender` API.
 
-use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::{AttrPath, GenericPath};
+use rs_matter::im::{ImClient, TxOutcome};
 use rs_matter::utils::futures::{block_on, select, Coalesce};
 
 use crate::common::e2e::im::echo_cluster;

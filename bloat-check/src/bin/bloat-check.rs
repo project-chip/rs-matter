@@ -94,8 +94,8 @@ use rs_matter::transport::network::{
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::sync::blocking::Mutex;
-use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 use rs_matter::utils::sync::MaybeSend;
+use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
 // Baremetal entry point macro depending on target
 #[cfg(all(target_arch = "arm", target_os = "none"))]
@@ -277,11 +277,7 @@ fn main() -> ! {
         size_of_val(stack.state.events()),
         &mut stack_total,
     );
-    report_size(
-        "Networks",
-        size_of_val(&stack.networks),
-        &mut stack_total,
-    );
+    report_size("Networks", size_of_val(&stack.networks), &mut stack_total);
     report_size(
         "NetCtl state",
         size_of_val(&stack.net_ctl_state),
@@ -329,6 +325,7 @@ fn main() -> ! {
     let handler = mk_static!(
         AppDmHandler,
         data_model(
+            &stack.matter,
             rand,
             on_off::OnOffHandler::new_standalone(
                 Dataver::new_rand(&mut rand),
@@ -625,6 +622,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     networks: &'a mut WifiNetworks<3>,
@@ -632,7 +630,7 @@ fn data_model<'a>(
     net_ctl: &'a AppNetCtl,
 ) -> AppDmHandler<'a> {
     endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
-        .build(rand)
+        .build(matter, rand)
         .chain(
             |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

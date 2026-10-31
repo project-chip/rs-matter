@@ -131,7 +131,7 @@ impl<C: Crypto> E2eRunner<C> {
                 self.execute_server_part_of_test(exchange, &test).await?;
             }
             E2eTestDirection::ServerInitiated => {
-                let mut peer_exchange = Exchange::accept(self.matter_client()).await?;
+                let mut peer_exchange = Exchange::accept(self.matter_client().transport()).await?;
                 self.execute_server_part_of_test(&mut peer_exchange, &test)
                     .await?;
                 self.execute_client_part_of_test(&mut peer_exchange, &test)

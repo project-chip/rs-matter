@@ -71,26 +71,26 @@ webrtc = [
 ]
 
 [dependencies]
-log = "0.4"
-env_logger = "0.11"
-tracing = { version = "0.1", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "tracing-log"], optional = true }
-embassy-sync = "0.8"
-embassy-time = { version = "0.5", features = ["std"] }
-embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
-static_cell = "2"
-if-addrs = "0.15"
-async-io = "2"
-async-compat = "0.2"
-blocking = "1"
-futures-lite = "2"
-rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
-rand = { version = "0.10", features = ["std", "std_rng", "thread_rng"] }
-async-signal = "0.2"
-socket2 = "0.6"
-async-executor = "1"
-async-channel = { version = "2", optional = true }
-str0m = { version = "0.18", optional = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "tracing-log"], optional = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true, features = ["std"] }
+embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
+static_cell = { workspace = true }
+if-addrs = { workspace = true }
+async-io = { workspace = true }
+async-compat = { workspace = true }
+blocking = { workspace = true }
+futures-lite = { workspace = true }
+rs-matter = { workspace = true, features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
+rand = { workspace = true, features = ["std", "std_rng", "sys_rng", "thread_rng"] }
+async-signal = { workspace = true }
+socket2 = { workspace = true }
+async-executor = { workspace = true }
+async-channel = { workspace = true, optional = true }
+str0m = { workspace = true, optional = true }
 
 # The `webrtc` feature pulls `str0m` -> `dimpl` -> `rcgen`, and `rcgen` 0.14.8
 # fails to compile against `time` >= 0.3.48 (a coherence regression in that

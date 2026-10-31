@@ -29,7 +29,7 @@ use rs_matter::dm::{
     ReadContext, ReadReply, WriteContext,
 };
 use rs_matter::error::Error;
-use rs_matter::{clusters, handler_chain_type};
+use rs_matter::{clusters, handler_chain_type, Matter};
 
 use crate::common::e2e::E2eRunner;
 
@@ -65,9 +65,13 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         ],
     };
 
-    pub fn new(mut rand: impl Rng + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
+    pub fn new(
+        matter: &'a Matter<'a>,
+        mut rand: impl Rng + Copy,
+        on_off: on_off::OnOffHandler<'a, OH, LH>,
+    ) -> Self {
         let handler = EthSysHandlerBuilder::new()
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == echo_cluster::ID,
                 Async(EchoHandler::new(2, Dataver::new_rand(&mut rand))),
@@ -140,6 +144,6 @@ impl<C: Crypto> E2eRunner<C> {
             TestOnOffDeviceLogic::new(false),
         );
 
-        E2eTestHandler::new(rand, on_off_handler)
+        E2eTestHandler::new(&self.matter, rand, on_off_handler)
     }
 }

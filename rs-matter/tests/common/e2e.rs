@@ -30,6 +30,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::persist::{DummyKvBlobStore, KvBlobStore};
 use rs_matter::respond::{ExchangeHandler, Responder};
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::{
@@ -389,7 +390,7 @@ impl<C: Crypto> E2eRunner<C> {
     ) -> Result<(), Error> {
         matter.reset_transport()?;
 
-        let mut session = ReservedSession::reserve_now(matter, crypto)?;
+        let mut session = ReservedSession::reserve_now(matter.transport(), crypto)?;
 
         session.update(
             local_nodeid,

@@ -272,7 +272,7 @@ fn run_case_handshake_test(drop_first_sigma2: bool, rejected: usize, handshakes:
         // ---- 5. Device side: transport + SecureChannel responder ----
         // No need to open commissioning window for CASE
 
-        let sc = SecureChannel::new(&crypto, &());
+        let sc = SecureChannel::new(&device_matter, &crypto, &());
         let responder = Responder::new("device", sc, &device_matter, 0);
         let first_two_packets = Mutex::new(Vec::new());
 
@@ -397,7 +397,7 @@ async fn run_case_handshake<C: Crypto>(
 ) -> Result<(), Error> {
     info!("Creating plaintext session and initiating CASE handshake...");
 
-    let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
+    let exchange = Exchange::initiate_plaintext(matter.transport(), crypto, peer_addr).await?;
     info!("Exchange initiated: {}", exchange.id());
 
     // An out-of-band hint, as a controller would take it from the device's
@@ -411,6 +411,7 @@ async fn run_case_handshake<C: Crypto>(
     info!("Starting CASE handshake...");
 
     let mut case_fut = pin!(CaseInitiator::perform(
+        matter,
         exchange,
         crypto,
         fab_idx,

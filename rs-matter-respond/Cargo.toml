@@ -1,0 +1,34 @@
+[package]
+name = "rs-matter-respond"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the responders of the incoming exchanges"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "log"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-crypto/std", "rs-matter-dm-core/std", "rs-matter-node/std", "rs-matter-sc/std", "rs-matter-bdx/std", "rs-matter-im/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-crypto/alloc", "rs-matter-dm-core/alloc", "rs-matter-node/alloc", "rs-matter-sc/alloc", "rs-matter-bdx/alloc", "rs-matter-im/alloc"]
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-crypto/defmt", "rs-matter-dm-core/defmt", "rs-matter-node/defmt", "rs-matter-sc/defmt", "rs-matter-bdx/defmt", "rs-matter-im/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-crypto/log", "rs-matter-dm-core/log", "rs-matter-node/log", "rs-matter-sc/log", "rs-matter-bdx/log", "rs-matter-im/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-crypto = { workspace = true }
+rs-matter-dm-core = { workspace = true }
+rs-matter-node = { workspace = true }
+rs-matter-sc = { workspace = true }
+rs-matter-bdx = { workspace = true }
+rs-matter-im = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

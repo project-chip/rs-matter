@@ -63,6 +63,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -121,7 +122,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &bindings),
+        data_model(&matter, rand, &bindings),
         &kv,
         &state,
     );
@@ -290,7 +291,6 @@ async fn group_toggle(
     fab_idx: NonZeroU8,
     group_id: u16,
 ) -> Result<(), Error> {
-    use rs_matter::im::client::ImClient as _;
     use rs_matter::im::{CmdDataTag, CmdPath};
     use rs_matter::tlv::{TLVTag, TLVWrite};
 
@@ -398,6 +398,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
 /// on the switch endpoint.
 fn data_model<'a, const N: usize>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     bindings: &'a Bindings<N>,
 ) -> impl DataModel + 'a {
@@ -405,7 +406,7 @@ fn data_model<'a, const N: usize>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

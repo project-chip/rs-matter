@@ -1,0 +1,632 @@
+/*
+ *
+ *    Copyright (c) 2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! PASE (Passcode-Authenticated Session Establishment) protocol implementation.
+//!
+//! This module provides both the initiator (commissioner) and responder (device) sides
+//! of the PASE protocol for establishing secure sessions using a shared passcode.
+
+use core::num::NonZeroU8;
+
+use self::spake2p::{
+    Spake2pVerifierData, Spake2pVerifierStrRef, SPAKE2P_VERIFIER_SALT_LEN,
+    SPAKE2P_VERIFIER_SALT_MIN_LEN,
+};
+use crate::dm::ROOT_ENDPOINT_ID;
+use crate::error::{Error, ErrorCode};
+use crate::im::{ClusterId, EndptId};
+use crate::transport::exchange::ExchangeId;
+use crate::transport::network::MatterLocalService;
+use crate::utils::init::{init, Init};
+use crate::utils::maybe::Maybe;
+use crate::utils::timers::{Duration, Instant};
+
+use crate::tlv::{FromTLV, OctetStr, ToTLV};
+use crate::SessionParameters;
+pub use spake2p::{
+    Spake2pVerifierPassword, Spake2pVerifierPasswordRef, SPAKE2P_VERIFIER_PASSWORD_LEN,
+    SPAKE2P_VERIFIER_PASSWORD_ZEROED,
+};
+
+pub use initiator::PaseInitiator;
+pub use responder::PaseResponder;
+
+mod initiator;
+mod responder;
+pub mod spake2p;
+
+/// Minimal commissioning window timeout in seconds, as per the Matter Core Spec
+pub const MIN_COMM_WINDOW_TIMEOUT_SECS: u16 = 3 * 60;
+/// Maximal commissioning window timeout in seconds, as per the Matter Core Spec
+pub const MAX_COMM_WINDOW_TIMEOUT_SECS: u16 = 15 * 60;
+
+/// The ID of the Administrator Commissioning cluster.
+const ADMIN_COMMISSIONING_CLUSTER_ID: ClusterId = 0x003C;
+
+/// Notify that the externally-visible attributes of the Administrator
+/// Commissioning cluster may have changed. Called whenever the commissioning
+/// window is opened or closed: `WindowStatus`, `AdminFabricIndex` and
+/// `AdminVendorId` all transition together, so we mark the entire cluster
+/// dirty with a single call.
+fn notify_adm_comm_window_attrs_changed(notify_change: &mut impl FnMut(EndptId, ClusterId)) {
+    notify_change(ROOT_ENDPOINT_ID, ADMIN_COMMISSIONING_CLUSTER_ID);
+}
+
+/// The type of commissioning window
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CommWindowType {
+    /// Basic commissioning window (using passcode)
+    Basic,
+    /// Enhanced commissioning window (using verifier)
+    Enhanced,
+}
+
+/// The fabric index of the fabric administrator that opened the commissioning window
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CommWindowOpener {
+    /// The fabric index
+    pub fab_idx: NonZeroU8,
+    /// The vendor ID
+    pub vendor_id: u16,
+}
+
+/// Whether a PASE commissioning window is open, and - if so - who opened it
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CommWindowState {
+    /// No commissioning window is open
+    Closed,
+    /// A commissioning window is open
+    Open {
+        /// The administrator that opened the window over a CASE session, or `None` when the
+        /// device opened it itself, which is the case for initial commissioning
+        opener: Option<CommWindowOpener>,
+    },
+}
+
+impl CommWindowState {
+    /// Return `true` if a commissioning window is open.
+    ///
+    /// This is the condition under which the device is discoverable as commissionable and will
+    /// accept PASE.
+    pub const fn is_open(&self) -> bool {
+        matches!(self, Self::Open { .. })
+    }
+
+    /// Return `true` if a commissioning window is open and should be advertised on every
+    /// supported transport, rather than on the operational IP network alone.
+    pub const fn is_open_on_all_transports(&self) -> bool {
+        matches!(self, Self::Open { opener: None })
+    }
+}
+
+/// A PASE commissioning window
+pub struct CommWindow {
+    /// The mDNS identifier
+    mdns_id: u64,
+    /// The discriminator
+    discriminator: u16,
+    /// The verifier data
+    pub verifier: Spake2pVerifierData,
+    /// The opener info
+    opener: Option<CommWindowOpener>,
+    /// The window expiry instant
+    window_expiry: Instant,
+    /// Number of failed PAKE handshake attempts within this window.
+    /// Per Matter Core spec, the window SHALL be
+    /// revoked after 20 unsuccessful handshakes.
+    pake_failures: u8,
+}
+
+impl CommWindow {
+    /// Initialize a commissioning window with a passcode
+    ///
+    /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
+    /// - `password` - The passcode
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
+    /// - `discriminator` - The discriminator
+    /// - `opener` - The opener info
+    /// - `window_expiry` - The window expiry instant
+    /// - `rand` - The random number generator
+    fn init_with_pw<'a>(
+        mdns_id: u64,
+        password: Spake2pVerifierPasswordRef<'a>,
+        salt: &'a [u8],
+        discriminator: u16,
+        opener: Option<CommWindowOpener>,
+        window_expiry: Instant,
+    ) -> impl Init<Self> + 'a {
+        init!(Self {
+            mdns_id,
+            discriminator,
+            verifier <- Spake2pVerifierData::init_with_pw(password, salt),
+            opener,
+            window_expiry,
+            pake_failures: 0,
+        })
+    }
+
+    /// Initialize a commissioning window with a verifier
+    ///
+    /// # Arguments
+    /// - `verifier` - The verifier bytes
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
+    /// - `count` - The iteration count
+    /// - `discriminator` - The discriminator
+    /// - `opener` - The opener info
+    /// - `window_expiry` - The window expiry instant
+    fn init<'a>(
+        mdns_id: u64,
+        verifier: Spake2pVerifierStrRef<'a>,
+        salt: &'a [u8],
+        count: u32,
+        discriminator: u16,
+        opener: Option<CommWindowOpener>,
+        window_expiry: Instant,
+    ) -> impl Init<Self> + 'a {
+        init!(Self {
+            mdns_id,
+            discriminator,
+            verifier <- Spake2pVerifierData::init(verifier, salt, count),
+            opener,
+            window_expiry,
+            pake_failures: 0,
+        })
+    }
+
+    /// Get the type of commissioning window
+    pub fn comm_window_type(&self) -> CommWindowType {
+        if self.verifier.password.is_some() {
+            CommWindowType::Basic
+        } else {
+            CommWindowType::Enhanced
+        }
+    }
+
+    /// Get the opener info, if any
+    pub fn opener(&self) -> Option<CommWindowOpener> {
+        self.opener
+    }
+
+    /// Get the mDNS service info
+    pub fn mdns_service(&self) -> MatterLocalService {
+        MatterLocalService::Commissionable {
+            id: self.mdns_id,
+            discriminator: self.discriminator,
+            enhanced: matches!(self.comm_window_type(), CommWindowType::Enhanced),
+        }
+    }
+}
+
+/// The PASE state
+pub struct Pase {
+    /// The opened commissioning window, if any
+    comm_window: Maybe<CommWindow>,
+    /// The (one and only) PASE session timeout tracker
+    /// If there is no active PASE session, this is `None`
+    pub session_timeout: Option<SessionEstTimeout>,
+}
+
+impl Pase {
+    /// Create a new PASE state
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            comm_window: Maybe::none(),
+            session_timeout: None,
+        }
+    }
+
+    /// Return an in-place initializer for the PASE manager
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            comm_window <- Maybe::init_none(),
+            session_timeout: None,
+        })
+    }
+
+    /// Check if the opened commissioning window has expired, and close it if so.
+    ///
+    /// This should be called periodically to ensure that the commissioning window state is updated in a timely manner.
+    /// Ideally, it should also be called at the beginning of any API that requires the commissioning window to be opened to ensure that the state is up to date.
+    pub fn check_comm_window_timeout(
+        &mut self,
+        notify_mdns: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<bool, Error> {
+        let expired = self
+            .comm_window
+            .as_opt_ref()
+            .map(|comm_window| Instant::now() >= comm_window.window_expiry)
+            .unwrap_or(false);
+
+        if expired {
+            warn!("PASE Commissioning Window expired, closing");
+
+            self.close_comm_window(notify_mdns, notify_change)?;
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// When the opened commissioning window expires, or `None` if none is open.
+    pub fn comm_window_expires_at(&self) -> Option<Instant> {
+        self.comm_window()
+            .map(|comm_window| comm_window.window_expiry)
+    }
+
+    /// Get the opened commissioning window, if any
+    pub fn comm_window(&self) -> Option<&CommWindow> {
+        self.comm_window.as_opt_ref()
+    }
+
+    /// Reject a salt that's outside the spec's 16..=32 B range
+    /// (Matter Core spec, Cryptographic Building Blocks).
+    fn validate_salt_len(salt: &[u8]) -> Result<(), Error> {
+        if !(SPAKE2P_VERIFIER_SALT_MIN_LEN..=SPAKE2P_VERIFIER_SALT_LEN).contains(&salt.len()) {
+            Err(ErrorCode::ConstraintError)?;
+        }
+
+        Ok(())
+    }
+
+    /// Return the state of the commissioning window - whether one is open, and if so who
+    /// opened it. See [`CommWindowState`] for what the answer is good for.
+    pub fn comm_window_state(&self) -> CommWindowState {
+        match self.comm_window() {
+            Some(comm_window) => CommWindowState::Open {
+                opener: comm_window.opener(),
+            },
+            None => CommWindowState::Closed,
+        }
+    }
+
+    /// Open a basic commissioning window using a passcode
+    ///
+    /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
+    /// - `password` - The passcode
+    /// - `discriminator` - The discriminator
+    /// - `timeout_secs` - The timeout in seconds of the validity of the window
+    /// - `opener` - The opener info
+    /// - `mdns_notif` - The mDNS notification callback
+    ///
+    /// # Returns
+    /// - `Ok(())` if the window was opened successfully
+    /// - `Err(Error)` if an error occurred
+    ///   (i.e. there is another non-expired commissioning window already opened
+    ///   or the timeout is invalid)
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_basic_comm_window(
+        &mut self,
+        mdns_id: u64,
+        salt: &[u8],
+        password: Spake2pVerifierPasswordRef<'_>,
+        discriminator: u16,
+        timeout_secs: u16,
+        opener: Option<CommWindowOpener>,
+        mut notify_mdns: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<(), Error> {
+        if self.comm_window.is_some() {
+            Err(ErrorCode::Busy)?;
+        }
+
+        if !(MIN_COMM_WINDOW_TIMEOUT_SECS..=MAX_COMM_WINDOW_TIMEOUT_SECS).contains(&timeout_secs) {
+            Err(ErrorCode::InvalidCommand)?;
+        }
+
+        Self::validate_salt_len(salt)?;
+
+        let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
+
+        self.comm_window
+            .reinit(Maybe::init_some(CommWindow::init_with_pw(
+                mdns_id,
+                password,
+                salt,
+                discriminator,
+                opener,
+                window_expiry,
+            )));
+
+        notify_mdns();
+        notify_adm_comm_window_attrs_changed(&mut notify_change);
+
+        info!("PASE Basic Commissioning Window opened");
+
+        Ok(())
+    }
+
+    /// Open an enhanced commissioning window using a verifier
+    ///
+    /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
+    /// - `verifier` - The verifier bytes
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
+    /// - `count` - The iteration count
+    /// - `discriminator` - The discriminator
+    /// - `timeout_secs` - The timeout in seconds of the validity of the window
+    /// - `opener` - The opener info
+    /// - `mdns_notif` - The mDNS notification callback
+    ///
+    /// # Returns
+    /// - `Ok(())` if the window was opened successfully
+    /// - `Err(Error)` if an error occurred
+    ///   (i.e. there is another non-expired commissioning window already opened
+    ///   or the timeout is invalid)
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_comm_window(
+        &mut self,
+        mdns_id: u64,
+        verifier: Spake2pVerifierStrRef<'_>,
+        salt: &[u8],
+        count: u32,
+        discriminator: u16,
+        timeout_secs: u16,
+        opener: Option<CommWindowOpener>,
+        mut notify_mdns: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<(), Error> {
+        if self.comm_window.is_some() {
+            Err(ErrorCode::Busy)?;
+        }
+
+        if !(MIN_COMM_WINDOW_TIMEOUT_SECS..=MAX_COMM_WINDOW_TIMEOUT_SECS).contains(&timeout_secs) {
+            Err(ErrorCode::InvalidCommand)?;
+        }
+
+        Self::validate_salt_len(salt)?;
+
+        let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
+
+        self.comm_window.reinit(Maybe::init_some(CommWindow::init(
+            mdns_id,
+            verifier,
+            salt,
+            count,
+            discriminator,
+            opener,
+            window_expiry,
+        )));
+
+        notify_mdns();
+        notify_adm_comm_window_attrs_changed(&mut notify_change);
+
+        info!("PASE Commissioning Window opened");
+
+        Ok(())
+    }
+
+    /// Record a failed PAKE handshake against the currently-open
+    /// commissioning window, and revoke the window if the limit is reached.
+    ///
+    /// Per Matter Core spec, after 20 unsuccessful PAKE
+    /// attempts the device SHALL revoke the open commissioning window.
+    ///
+    /// Also clears the in-progress PASE establishment timeout so that the
+    /// next handshake attempt is not rejected as "another session in
+    /// progress" — without this, only the first wrong-passcode attempt would
+    /// be counted because subsequent attempts would be short-circuited at the
+    /// session-timeout gate.
+    ///
+    /// Has no effect on the failure counter if no window is open.
+    pub fn record_pake_failure(
+        &mut self,
+        notify_mdns: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<(), Error> {
+        const MAX_PAKE_FAILURES: u8 = 20;
+
+        self.session_timeout = None;
+
+        let revoke = if let Some(window) = self.comm_window.as_opt_mut() {
+            window.pake_failures = window.pake_failures.saturating_add(1);
+            warn!(
+                "PASE Commissioning Window: PAKE failure {} of {}",
+                window.pake_failures, MAX_PAKE_FAILURES
+            );
+            window.pake_failures >= MAX_PAKE_FAILURES
+        } else {
+            false
+        };
+
+        if revoke {
+            warn!("PASE Commissioning Window revoked after too many failed PAKE attempts");
+            self.close_comm_window(notify_mdns, notify_change)?;
+        }
+
+        Ok(())
+    }
+
+    /// Close the opened commissioning window, if any
+    ///
+    /// # Arguments
+    /// - `ctx` - The handler context
+    ///
+    /// # Returns
+    /// - `Ok(true)` if a commissioning window was closed
+    /// - `Ok(false)` if there was no commissioning window to close
+    pub fn close_comm_window(
+        &mut self,
+        mut notify_mdns: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<bool, Error> {
+        if self.comm_window.is_some() {
+            self.comm_window.clear();
+
+            notify_mdns();
+            notify_adm_comm_window_attrs_changed(&mut notify_change);
+
+            info!("PASE Commissioning Window closed");
+
+            Ok(true)
+        } else {
+            warn!("No PASE Commissioning Window to close");
+
+            Ok(false)
+        }
+    }
+}
+
+impl Default for Pase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The timeout tracker for a PASE session establishment
+const PASE_SESSION_EST_TIMEOUT_SECS: Duration = Duration::from_secs(60);
+
+/// The PASE session establishment timeout tracker
+pub struct SessionEstTimeout {
+    /// The session expiry instant
+    session_est_expiry: Instant,
+    /// The exchange identifier
+    pub exch_id: ExchangeId,
+}
+
+impl SessionEstTimeout {
+    /// Create a new session establishment timeout tracker.
+    pub fn new(exch_id: ExchangeId) -> Self {
+        Self {
+            session_est_expiry: Instant::now().saturating_add(PASE_SESSION_EST_TIMEOUT_SECS),
+            exch_id,
+        }
+    }
+
+    /// Check if the session establishment has expired.
+    pub fn is_sess_expired(&self) -> bool {
+        Instant::now() > self.session_est_expiry
+    }
+}
+
+/// The info string for SPAKE2 session key derivation
+pub(crate) const SPAKE2_SESSION_KEYS_INFO: &[u8] = b"SessionKeys";
+
+/// The PBKDFParamRequest structure
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct PBKDFParamReq<'a> {
+    /// The initiator random bytes
+    pub initiator_random: OctetStr<'a>,
+    /// The initiator session identifier
+    pub initiator_ssid: u16,
+    /// The passcode identifier
+    pub passcode_id: u16,
+    /// Whether parameters are included
+    pub has_params: bool,
+    /// The session parameters, if any
+    pub session_parameters: Option<SessionParameters>,
+}
+
+/// The PBKDFParamResponse structure
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct PBKDFParamResp<'a> {
+    /// The initiator random bytes (echoed back)
+    pub initiator_random: OctetStr<'a>,
+    /// The responder random bytes
+    pub responder_random: OctetStr<'a>,
+    /// The responder session identifier
+    pub responder_ssid: u16,
+    /// The PBKDF2 parameters, if any
+    pub params: Option<PBKDFParamRespParams<'a>>,
+    /// The responder session parameters, if any
+    pub session_parameters: Option<SessionParameters>,
+}
+
+/// The PBKDFParamResponse parameters structure
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct PBKDFParamRespParams<'a> {
+    /// The iteration count
+    pub iterations: u32,
+    /// The salt bytes
+    pub salt: OctetStr<'a>,
+}
+
+/// TLV structure for Pake1 (sent by initiator)
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct Pake1<'a> {
+    /// The pA point (65 bytes, uncompressed P-256)
+    pub pa: OctetStr<'a>,
+}
+
+/// The Pake1Resp structure (Pake2 message from responder)
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct Pake2<'a> {
+    /// The pB bytes
+    pub pb: OctetStr<'a>,
+    /// The cB bytes
+    pub cb: OctetStr<'a>,
+}
+
+/// TLV structure for Pake3 (sent by initiator)
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct Pake3<'a> {
+    /// The cA confirmation (32 bytes HMAC)
+    pub ca: OctetStr<'a>,
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use rs_matter_node_core::test_device::TEST_DEV_COMM;
+
+    use crate::utils::timers::{Duration, Instant};
+
+    use super::Pase;
+
+    #[test]
+    fn expires_at_follows_the_open_window() {
+        let mut pase = Pase::new();
+        assert_eq!(pase.comm_window_expires_at(), None);
+
+        let before = Instant::now();
+        pase.open_basic_comm_window(
+            1,
+            &[0x11; 16],
+            TEST_DEV_COMM.password.reference(),
+            TEST_DEV_COMM.discriminator,
+            180,
+            None,
+            || {},
+            |_, _| {},
+        )
+        .unwrap();
+
+        let expires_at = pase.comm_window_expires_at().unwrap();
+        assert!(expires_at >= before + Duration::from_secs(180));
+        assert!(expires_at <= Instant::now() + Duration::from_secs(180));
+    }
+}

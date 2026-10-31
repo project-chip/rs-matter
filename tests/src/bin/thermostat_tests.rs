@@ -175,6 +175,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
+            matter,
             rand,
             &thermostat_handler,
             &power_handler,
@@ -272,6 +273,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the thermostat endpoint's clusters.
 fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHooks>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     thermostat: &'a thermostat::ThermostatHandler<H>,
     power: &'a elec_pwr_meas::ElecPwrMeasHandler<P>,
@@ -283,7 +285,7 @@ fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHook
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
             .gen_diag(triggers)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == THERMOSTAT_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -294,7 +296,7 @@ fn data_model<'a, H: ThermostatHooks, P: ElecPwrMeasHooks, E: ElecEnergyMeasHook
             )
             .chain(
                 |e, c| e == THERMOSTAT_ENDPOINT && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == THERMOSTAT_ENDPOINT && c == ThermostatDeviceLogic::CLUSTER.id,

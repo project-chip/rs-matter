@@ -1,0 +1,378 @@
+/*
+ *
+ *    Copyright (c) 2022-2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! The Interaction Model Encoding as defined by the Matter Core spec: the
+//! wire-level TLV-serde types and path primitives - request/response payloads
+//! (`ReadReq`, `ReportDataReq`, `WriteReq`, `InvReq`, …), paths (`AttrPath`,
+//! `CmdPath`, `EventPath`, `GenericPath`), status codes and opcodes.
+//!
+//! This is the lowest layer of the Interaction Model: it is what the data model
+//! depends upon, and what the IM engine and the IM client build their messages
+//! from. The `ImClient` trait is how the generated cluster clients send
+//! requests, without knowing the transport.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+#![allow(async_fn_in_trait)]
+#![allow(unknown_lints)]
+#![allow(clippy::uninlined_format_args)]
+// `cargo llvm-cov` sets `coverage_nightly` when it runs on a nightly toolchain;
+// the test modules are then excluded from the coverage report
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
+
+use num::FromPrimitive;
+use num_derive::FromPrimitive;
+
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+
+// The dependencies, under the names the code uses for them
+use rs_matter_tlv as tlv;
+use rs_matter_utils as utils;
+use rs_matter_utils::error;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+// This mod MUST go first, so that the others see its macros.
+pub(crate) mod fmt;
+
+pub use attr::*;
+pub use client::*;
+pub use event::*;
+pub use invoke::*;
+pub use invoke_builder::*;
+pub use status::*;
+pub use timed::*;
+pub use types::*;
+
+mod attr;
+mod client;
+mod event;
+mod invoke;
+mod invoke_builder;
+mod status;
+mod timed;
+pub mod types;
+
+/// Interaction Model ID as per the Matter Core spec
+pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
+
+/// `interactionModelRevision` value emitted on every outgoing IM message
+/// rs-matter sends — both responder-side (ReportData / WriteResponse /
+/// InvokeResponse / StatusResponse / SubscribeResponse, in [`crate::dm`]
+/// and [`status`] / [`attr::subscribe`]) and requestor-side (the client
+/// builders in [`crate::client`] and [`TimedReq`]).
+///
+/// The TLV context tag it is emitted under is [`IM_REVISION_TAG`] (= `0xFF`).
+///
+/// `13` has been the spec-mandated value since Matter 1.3; see the
+/// "Revision History" of the Matter Core Specification.
+pub const IM_REVISION: u8 = 13;
+
+/// TLV context tag for the trailing `interactionModelRevision` field present on
+/// every IM message (carries [`IM_REVISION`]). A Matter global element tag.
+pub const IM_REVISION_TAG: u8 = 0xFF;
+
+/// TLV context tag for the `fabricIndex` field of fabric-scoped structs.
+/// A Matter global element tag.
+pub const FABRIC_INDEX_TAG: u8 = 0xFE;
+
+/// An enumeration of all possible error codes that can be returned by the Interaction Model.
+#[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum IMStatusCode {
+    Success = 0,
+    Failure = 1,
+    InvalidSubscription = 0x7D,
+    UnsupportedAccess = 0x7E,
+    UnsupportedEndpoint = 0x7F,
+    InvalidAction = 0x80,
+    UnsupportedCommand = 0x81,
+    InvalidCommand = 0x85,
+    UnsupportedAttribute = 0x86,
+    ConstraintError = 0x87,
+    UnsupportedWrite = 0x88,
+    ResourceExhausted = 0x89,
+    NotFound = 0x8b,
+    UnreportableAttribute = 0x8c,
+    InvalidDataType = 0x8d,
+    UnsupportedRead = 0x8f,
+    DataVersionMismatch = 0x92,
+    Timeout = 0x94,
+    UnsupportedNode = 0x9b,
+    Busy = 0x9c,
+    AccessRestricted = 0x9d,
+    UnsupportedCluster = 0xc3,
+    NoUpstreamSubscription = 0xc5,
+    NeedsTimedInteraction = 0xc6,
+    UnsupportedEvent = 0xc7,
+    PathsExhausted = 0xc8,
+    TimedRequestMisMatch = 0xc9,
+    FailSafeRequired = 0xca,
+    InvalidInState = 0xcb,
+    NoCommandResponse = 0xcc,
+    TermsAndConditionsChanged = 0xcd,
+    MaintenanceRequired = 0xce,
+    DynamicConstraintError = 0xcf,
+    AlreadyExists = 0xd0,
+    InvalidTransportType = 0xd1,
+}
+
+impl From<ErrorCode> for IMStatusCode {
+    fn from(e: ErrorCode) -> Self {
+        match e {
+            ErrorCode::NodeNotFound => IMStatusCode::UnsupportedNode,
+            ErrorCode::EndpointNotFound => IMStatusCode::UnsupportedEndpoint,
+            ErrorCode::ClusterNotFound => IMStatusCode::UnsupportedCluster,
+            ErrorCode::AttributeNotFound => IMStatusCode::UnsupportedAttribute,
+            ErrorCode::CommandNotFound => IMStatusCode::UnsupportedCommand,
+            ErrorCode::EventNotFound => IMStatusCode::UnsupportedEvent,
+            ErrorCode::InvalidAction => IMStatusCode::InvalidAction,
+            ErrorCode::InvalidCommand => IMStatusCode::InvalidCommand,
+            ErrorCode::InvalidDataType => IMStatusCode::InvalidDataType,
+            ErrorCode::UnsupportedAccess => IMStatusCode::UnsupportedAccess,
+            ErrorCode::Busy => IMStatusCode::Busy,
+            ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
+            ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
+            ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
+            ErrorCode::NeedsTimedInteraction => IMStatusCode::NeedsTimedInteraction,
+            ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
+            ErrorCode::DynamicConstraintError => IMStatusCode::DynamicConstraintError,
+            ErrorCode::NotFound => IMStatusCode::NotFound,
+            ErrorCode::AlreadyExists => IMStatusCode::AlreadyExists,
+            ErrorCode::InvalidTransportType => IMStatusCode::InvalidTransportType,
+            ErrorCode::InvalidInState => IMStatusCode::InvalidInState,
+            ErrorCode::Failure => IMStatusCode::Failure,
+            _ => IMStatusCode::Failure,
+        }
+    }
+}
+
+impl From<Error> for IMStatusCode {
+    fn from(value: Error) -> Self {
+        Self::from(value.code())
+    }
+}
+
+impl IMStatusCode {
+    /// Convert a non-success IM status code to an `ErrorCode`.
+    ///
+    /// Returns `None` for `Success`, since success is not an error.
+    pub fn to_error_code(self) -> Option<ErrorCode> {
+        match self {
+            Self::Success => None,
+            Self::UnsupportedAccess => Some(ErrorCode::UnsupportedAccess),
+            Self::InvalidAction => Some(ErrorCode::InvalidAction),
+            Self::UnsupportedCommand => Some(ErrorCode::CommandNotFound),
+            Self::InvalidCommand => Some(ErrorCode::InvalidCommand),
+            Self::UnsupportedAttribute => Some(ErrorCode::AttributeNotFound),
+            Self::ConstraintError => Some(ErrorCode::ConstraintError),
+            Self::DynamicConstraintError => Some(ErrorCode::DynamicConstraintError),
+            Self::ResourceExhausted => Some(ErrorCode::ResourceExhausted),
+            Self::NotFound => Some(ErrorCode::NotFound),
+            Self::InvalidDataType => Some(ErrorCode::InvalidDataType),
+            Self::DataVersionMismatch => Some(ErrorCode::DataVersionMismatch),
+            Self::Busy => Some(ErrorCode::Busy),
+            Self::UnsupportedNode => Some(ErrorCode::NodeNotFound),
+            Self::UnsupportedEndpoint => Some(ErrorCode::EndpointNotFound),
+            Self::UnsupportedCluster => Some(ErrorCode::ClusterNotFound),
+            Self::UnsupportedEvent => Some(ErrorCode::EventNotFound),
+            Self::NeedsTimedInteraction => Some(ErrorCode::NeedsTimedInteraction),
+            Self::FailSafeRequired => Some(ErrorCode::FailSafeRequired),
+            Self::InvalidTransportType => Some(ErrorCode::InvalidTransportType),
+            Self::InvalidInState => Some(ErrorCode::InvalidInState),
+            _ => Some(ErrorCode::Failure),
+        }
+    }
+}
+
+impl FromTLV<'_> for IMStatusCode {
+    fn from_tlv(t: &TLVElement) -> Result<Self, Error> {
+        FromPrimitive::from_u16(t.u16()?).ok_or_else(|| ErrorCode::Invalid.into())
+    }
+}
+
+impl ToTLV for IMStatusCode {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.u16(tag, *self as _)
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        TLV::u16(tag, *self as _).into_tlv_iter()
+    }
+}
+
+/// An enumeration of all possible opcodes used in the Interaction Model.
+#[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OpCode {
+    Reserved = 0,
+    StatusResponse = 1,
+    ReadRequest = 2,
+    SubscribeRequest = 3,
+    SubscribeResponse = 4,
+    ReportData = 5,
+    WriteRequest = 6,
+    WriteResponse = 7,
+    InvokeRequest = 8,
+    InvokeResponse = 9,
+    TimedRequest = 10,
+}
+
+impl OpCode {
+    /// Return `true` if the opcode payload is in TLV format.
+    ///
+    /// Currently, the payload of all IM opcodes except `Reserved` is in TLV format.
+    pub const fn is_tlv(&self) -> bool {
+        !matches!(self, Self::Reserved)
+    }
+}
+
+/// A generic (possibly a wildcard) path with endpoint, clusters, and a leaf
+///
+/// The leaf could be a command, an attribute, or an event
+///
+/// Note that this type does not implement `FromTLV` / `ToTLV` because it does not correspond
+/// to a specific TLV structure in the Interaction Model.
+///
+/// Note also that it only captures a _subset_ of the fields of `AttrPath`, and as such, it should be used with care!
+///
+/// Look at `AttrPath`, `CmdPath`, and `EventPath` for specific TLV structures, which
+/// can be turned into `GenericPath` using their `to_gp()` method.
+#[derive(Default, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GenericPath {
+    /// The endpoint ID, if specified, otherwise `None` for wildcard
+    pub endpoint: Option<EndptId>,
+    /// The cluster ID, if specified, otherwise `None` for wildcard
+    pub cluster: Option<ClusterId>,
+    /// The leaf ID, if specified, otherwise `None` for wildcard
+    pub leaf: Option<u32>,
+}
+
+impl GenericPath {
+    /// Create a new `GenericPath` with the given endpoint, cluster, and leaf.
+    pub const fn new(
+        endpoint: Option<EndptId>,
+        cluster: Option<ClusterId>,
+        leaf: Option<u32>,
+    ) -> Self {
+        Self {
+            endpoint,
+            cluster,
+            leaf,
+        }
+    }
+
+    /// Return Ok, if the path is non wildcard, otherwise returns an error
+    pub fn not_wildcard(&self) -> Result<(EndptId, ClusterId, u32), Error> {
+        match *self {
+            GenericPath {
+                endpoint: Some(e),
+                cluster: Some(c),
+                leaf: Some(l),
+            } => Ok((e, c, l)),
+            _ => Err(ErrorCode::Invalid.into()),
+        }
+    }
+
+    /// Return true, if the path is wildcard
+    pub const fn is_wildcard(&self) -> bool {
+        !matches!(
+            *self,
+            GenericPath {
+                endpoint: Some(_),
+                cluster: Some(_),
+                leaf: Some(_),
+            }
+        )
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::error::ErrorCode;
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{GenericPath, IMStatusCode, OpCode};
+
+    #[test]
+    fn generic_path_wildcard_helpers() {
+        let concrete = GenericPath::new(Some(1), Some(6), Some(0));
+        assert!(!concrete.is_wildcard());
+        assert_eq!(concrete.not_wildcard().unwrap(), (1, 6, 0));
+
+        for wildcard in [
+            GenericPath::new(None, Some(6), Some(0)),
+            GenericPath::new(Some(1), None, Some(0)),
+            GenericPath::new(Some(1), Some(6), None),
+            GenericPath::default(),
+        ] {
+            assert!(wildcard.is_wildcard());
+            assert_eq!(
+                wildcard.not_wildcard().unwrap_err().code(),
+                ErrorCode::Invalid
+            );
+        }
+    }
+
+    #[test]
+    fn im_status_code_serde_and_error_mapping() {
+        let mut buf = [0; 8];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        IMStatusCode::UnsupportedCluster
+            .to_tlv(&TLVTag::Context(0), &mut wb)
+            .unwrap();
+        assert_eq!(wb.as_slice(), &[0x24, 0, 0xC3]);
+        assert_eq!(
+            IMStatusCode::from_tlv(&TLVElement::new(wb.as_slice())).unwrap(),
+            IMStatusCode::UnsupportedCluster
+        );
+
+        // Unknown numeric values are rejected
+        assert!(IMStatusCode::from_tlv(&TLVElement::new(&[0x24, 0, 0x02])).is_err());
+
+        // The error-code mapping is its own inverse for the codes that have a dedicated error
+        for code in [
+            IMStatusCode::UnsupportedAccess,
+            IMStatusCode::UnsupportedEndpoint,
+            IMStatusCode::UnsupportedCluster,
+            IMStatusCode::UnsupportedAttribute,
+            IMStatusCode::UnsupportedCommand,
+            IMStatusCode::ConstraintError,
+            IMStatusCode::Busy,
+            IMStatusCode::NeedsTimedInteraction,
+        ] {
+            assert_eq!(IMStatusCode::from(code.to_error_code().unwrap()), code);
+        }
+        assert_eq!(IMStatusCode::Success.to_error_code(), None);
+        assert_eq!(
+            IMStatusCode::Timeout.to_error_code(),
+            Some(ErrorCode::Failure)
+        );
+        assert_eq!(
+            IMStatusCode::from(ErrorCode::NoSpace),
+            IMStatusCode::Failure
+        );
+
+        assert!(OpCode::ReadRequest.is_tlv());
+        assert!(!OpCode::Reserved.is_tlv());
+    }
+}

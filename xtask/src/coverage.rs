@@ -17,13 +17,14 @@
 
 //! Per-module summary of one or more `cargo llvm-cov` LCOV traces.
 //!
-//! `cargo llvm-cov --lcov` reports per file. This groups those files by module
-//! path under `rs-matter/src`, so a coverage report can be read at the level
-//! the crate is organised: depth 1 gives one row per top-level module (`dm`,
-//! `transport`, ...), depth 2 splits those (`dm/clusters`, `transport/network`,
-//! ...), depth 0 is a single crate total. A file sitting at the requested depth
-//! (`acl.rs` at depth 1) forms a row of its own, and a module's own file
-//! (`dm.rs` next to `dm/`) is folded into the module's row.
+//! `cargo llvm-cov --lcov` reports per file. This groups those files by crate
+//! and module path, so a coverage report can be read at the level the code is
+//! organised: depth 1 gives one row per crate (`node`, `dm`, ..., named without
+//! their `rs-matter-` prefix), depth 2 one row per top-level module of a crate
+//! (`node/transport`, `dm/clusters`, ...), depth 3 splits those further, and
+//! depth 0 is a single total. A file sitting at the requested depth
+//! (`node/acl.rs` at depth 2) forms a row of its own, and a module's own file
+//! (`dm/clusters.rs` next to `dm/clusters/`) is folded into the module's row.
 //!
 //! `--split-above N` keeps `--depth` for small modules but breaks a module with
 //! more than N instrumented lines down one level further, so a report stays
@@ -46,8 +47,11 @@ use anyhow::{bail, Context};
 
 use clap::Args as ClapArgs;
 
-/// The path prefix that identifies the crate's sources in an LCOV record.
-const SRC_MARKER: &str = "rs-matter/src/";
+/// The directory of the sources of a crate, in an LCOV record.
+const SRC_DIR: &str = "/src/";
+
+/// The prefix of the names of the `rs-matter` crates, left out of the rows.
+const CRATE_PREFIX: &str = "rs-matter-";
 
 /// The name of the union column when several traces are given.
 const UNION: &str = "all";
@@ -266,19 +270,38 @@ fn write_lcov(trace: &Trace) -> String {
     out
 }
 
+/// The crate of a source file and its path in the sources of the crate:
+/// `/w/rs-matter-dm/src/clusters/on_off.rs` is `dm/clusters/on_off.rs`, and
+/// `/w/rs-matter/src/dm.rs` (the facade) is `rs-matter/dm.rs`.
+fn crate_path(source: &str) -> String {
+    let mut from = 0;
+
+    while let Some(idx) = source[from..].find(SRC_DIR) {
+        let at = from + idx;
+        let dir = &source[source[..at].rfind('/').map_or(0, |i| i + 1)..at];
+
+        if dir == "rs-matter" || dir.starts_with(CRATE_PREFIX) {
+            let name = dir.strip_prefix(CRATE_PREFIX).unwrap_or(dir);
+
+            return format!("{name}/{}", &source[at + SRC_DIR.len()..]);
+        }
+
+        from = at + 1;
+    }
+
+    source.to_string()
+}
+
 /// The row a source file belongs to at `depth`.
 ///
-/// `rs-matter/src/dm/clusters/on_off.rs` is `dm/clusters/on_off` at depth 3
+/// `rs-matter-dm/src/clusters/on_off.rs` is `dm/clusters/on_off` at depth 3
 /// or more, `dm/clusters` at depth 2 and `dm` at depth 1.
 fn module_key(source: &str, depth: usize) -> String {
     if depth == 0 {
-        return "(crate)".to_string();
+        return "(all)".to_string();
     }
 
-    let rel = source
-        .find(SRC_MARKER)
-        .map(|idx| &source[idx + SRC_MARKER.len()..])
-        .unwrap_or(source);
+    let rel = crate_path(source);
 
     let mut parts: Vec<&str> = rel.split('/').collect();
 
@@ -454,30 +477,30 @@ mod tests {
     use super::*;
 
     const TRACE_A: &str = "\
-SF:/w/rs-matter/src/dm.rs
+SF:/w/rs-matter-dm/src/clusters.rs
 DA:1,1
 DA:2,0
 end_of_record
-SF:/w/rs-matter/src/dm/clusters/on_off.rs
+SF:/w/rs-matter-dm/src/clusters/on_off.rs
 DA:10,3
 DA:11,0
 DA:12,0
 DA:13,0
 end_of_record
-SF:/w/rs-matter/src/acl.rs
+SF:/w/rs-matter-node/src/acl.rs
 DA:5,1
 DA:6,1
 end_of_record
 ";
 
     const TRACE_B: &str = "\
-SF:/w/rs-matter/src/dm/clusters/on_off.rs
+SF:/w/rs-matter-dm/src/clusters/on_off.rs
 DA:10,1
 DA:11,2
 DA:12,0
 DA:13,0
 end_of_record
-SF:/w/rs-matter/src/dm/types/cluster.rs
+SF:/w/rs-matter-dm/src/clusters/level_control.rs
 DA:7,4
 end_of_record
 ";
@@ -490,56 +513,71 @@ end_of_record
     }
 
     #[test]
-    fn keys_follow_the_module_tree() {
-        let src = "/w/rs-matter/src/dm/clusters/on_off.rs";
-        assert_eq!(module_key(src, 0), "(crate)");
+    fn keys_follow_the_crates_and_their_modules() {
+        let src = "/w/rs-matter-dm/src/clusters/on_off.rs";
+        assert_eq!(module_key(src, 0), "(all)");
         assert_eq!(module_key(src, 1), "dm");
         assert_eq!(module_key(src, 2), "dm/clusters");
         assert_eq!(module_key(src, 3), "dm/clusters/on_off");
         assert_eq!(module_key(src, 9), "dm/clusters/on_off");
-        assert_eq!(module_key("/w/rs-matter/src/dm.rs", 1), "dm");
-        assert_eq!(module_key("/w/rs-matter/src/dm.rs", 2), "dm");
+        assert_eq!(
+            module_key("/w/rs-matter-dm/src/clusters.rs", 2),
+            "dm/clusters"
+        );
+        assert_eq!(
+            module_key("/w/rs-matter-dm/src/clusters.rs", 3),
+            "dm/clusters"
+        );
+        assert_eq!(
+            module_key("/w/rs-matter-dm-core/src/cluster.rs", 1),
+            "dm-core"
+        );
+        assert_eq!(module_key("/w/rs-matter/src/dm.rs", 1), "rs-matter");
+        assert_eq!(module_key("/w/rs-matter/src/dm.rs", 2), "rs-matter/dm");
     }
 
     #[test]
     fn line_records_are_counted_per_file() {
         let a = trace(TRACE_A);
-        let on_off = &a["/w/rs-matter/src/dm/clusters/on_off.rs"];
+        let on_off = &a["/w/rs-matter-dm/src/clusters/on_off.rs"];
         assert_eq!((on_off.found(), on_off.hit()), (4, 1));
     }
 
     #[test]
     fn rows_fold_a_module_file_into_its_module() {
-        let rows = aggregate(&trace(TRACE_A), 1, None);
-        let dm = &rows["dm"];
-        assert_eq!((dm.found, dm.hit, dm.files), (6, 2, 2));
-        assert_eq!(rows["acl"].files, 1);
+        let rows = aggregate(&trace(TRACE_A), 2, None);
+        let clusters = &rows["dm/clusters"];
+        assert_eq!((clusters.found, clusters.hit, clusters.files), (6, 2, 2));
+        assert_eq!(rows["node/acl"].files, 1);
         assert_eq!(rows.len(), 2);
     }
 
     #[test]
     fn large_modules_are_split_one_level_further() {
-        let rows = aggregate(&trace(TRACE_A), 1, Some(3));
-        assert_eq!(rows["dm"].found, 2);
-        assert_eq!(rows["dm/clusters"].found, 4);
-        assert_eq!(rows["acl"].found, 2);
+        let rows = aggregate(&trace(TRACE_A), 2, Some(3));
+        assert_eq!(rows["dm/clusters"].found, 2);
+        assert_eq!(rows["dm/clusters/on_off"].found, 4);
+        assert_eq!(rows["node/acl"].found, 2);
 
-        // Nothing is large enough: the plain depth-1 rows come back
-        assert_eq!(aggregate(&trace(TRACE_A), 1, Some(1000)).len(), 2);
+        // Nothing is large enough: the plain depth-2 rows come back
+        assert_eq!(aggregate(&trace(TRACE_A), 2, Some(1000)).len(), 2);
     }
 
     #[test]
     fn union_covers_a_line_when_any_trace_does() {
         let union = merge(&[trace(TRACE_A), trace(TRACE_B)]);
 
-        let on_off = &union["/w/rs-matter/src/dm/clusters/on_off.rs"];
+        let on_off = &union["/w/rs-matter-dm/src/clusters/on_off.rs"];
         assert_eq!(on_off.lines[&10], 4);
         assert_eq!(on_off.lines[&11], 2);
         assert_eq!((on_off.found(), on_off.hit()), (4, 2));
 
         // Files present in only one trace are carried over unchanged
-        assert_eq!(union["/w/rs-matter/src/acl.rs"].hit(), 2);
-        assert_eq!(union["/w/rs-matter/src/dm/types/cluster.rs"].hit(), 1);
+        assert_eq!(union["/w/rs-matter-node/src/acl.rs"].hit(), 2);
+        assert_eq!(
+            union["/w/rs-matter-dm/src/clusters/level_control.rs"].hit(),
+            1
+        );
         assert_eq!(union.len(), 4);
     }
 
@@ -560,23 +598,23 @@ end_of_record
         let b = trace(TRACE_B);
         let union = merge(&[a.clone(), b.clone()]);
         let columns = vec![
-            ("own".to_string(), aggregate(&a, 1, None)),
-            ("chip".to_string(), aggregate(&b, 1, None)),
-            (UNION.to_string(), aggregate(&union, 1, None)),
+            ("own".to_string(), aggregate(&a, 2, None)),
+            ("chip".to_string(), aggregate(&b, 2, None)),
+            (UNION.to_string(), aggregate(&union, 2, None)),
         ];
 
         let text = render(&columns, None, 50, false);
         let lines: Vec<_> = text.lines().collect();
         assert!(lines[0].contains("own") && lines[0].contains("chip") && lines[0].contains("all"));
-        // `dm`: own 2/6, chip 3/5, union 4/7 - the lowest union row comes first
-        assert!(lines[1].starts_with("dm "), "{text}");
+        // `dm/clusters`: own 2/6, chip 3/5, union 4/7 - the lowest union row comes first
+        assert!(lines[1].starts_with("dm/clusters "), "{text}");
         assert!(
             lines[1].contains("33.3%") && lines[1].contains("60.0%") && lines[1].contains("57.1%"),
             "{text}"
         );
-        // `acl` is absent from the chip trace
+        // `node/acl` is absent from the chip trace
         assert!(
-            lines[2].starts_with("acl ") && lines[2].contains(" - "),
+            lines[2].starts_with("node/acl ") && lines[2].contains(" - "),
             "{text}"
         );
         assert!(lines[3].starts_with("total "), "{text}");

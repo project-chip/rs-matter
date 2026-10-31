@@ -105,7 +105,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        data_model(rand, &on_off_handler_ep2, &on_off_handler_ep3),
+        data_model(&matter, rand, &on_off_handler_ep2, &on_off_handler_ep3),
         &kv,
         &state,
     );
@@ -201,6 +201,7 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter Bridge.
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off_ep2: &'a on_off::OnOffHandler<'a, OH, LH>,
     on_off_ep3: &'a on_off::OnOffHandler<'a, OH, LH>,
@@ -209,7 +210,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             // The next chain is the handler for the "aggregator" endpoint 1.
             //
             // Note how the descriptor cluster is a bit different compared to the normal ones.
@@ -239,7 +240,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 |e, c| e == 2 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 2 && c == TestOnOffDeviceLogic::CLUSTER.id,
@@ -255,7 +256,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 |e, c| e == 3 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 3 && c == TestOnOffDeviceLogic::CLUSTER.id,

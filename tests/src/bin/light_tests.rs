@@ -77,16 +77,15 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
-// `OnOffClient` brings the `.on_off()` IM-client method into scope on
-// `Exchange`; `ImClient` brings `group_invoke_with`.
+// `OnOffClient` brings the `.on_off()` IM-client method into scope on `Exchange`
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
-use rs_matter::im::client::ImClient as _;
 use rs_matter::utils::futures::{select3, select4, Coalesce};
 use rs_matter::utils::timers::{Duration, Timer};
 
@@ -205,6 +204,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         data_model(
+            matter,
             rand,
             &on_off_handler,
             &level_control_handler,
@@ -458,6 +458,7 @@ const NODE: Node<'static> = Node {
     ],
 };
 
+#[allow(clippy::too_many_arguments)]
 fn data_model<
     'a,
     LH: LevelControlHooks,
@@ -465,6 +466,7 @@ fn data_model<
     CH: ColorControlHooks,
     MH: ModeSelectHooks,
 >(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
@@ -477,14 +479,14 @@ fn data_model<
         NODE,
         endpoints::EthSysHandlerBuilder::new()
             .netif_diag(&SysNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == OnOffDeviceLogic::CLUSTER.id,

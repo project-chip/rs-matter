@@ -848,15 +848,15 @@ fn write_responses_trait(cluster: &Cluster, context: &IdlGenerateContext) -> Tok
     )
 }
 
-/// Emit the high-level `<ClusterName>Client<'a>` trait + blanket impl
-/// on [`Exchange<'a>`]. One method per command / attribute, hiding
+/// Emit the high-level `<ClusterName>Client` trait + blanket impl
+/// on every `ImClient`. One method per command / attribute, hiding
 /// the full IM transaction (sender, retransmit loop, response chunk
 /// iteration, status-only handling) behind a single async call.
 ///
 /// Output shape, per cluster:
 ///
 /// ```ignore
-/// pub trait <ClusterName>Client<'a>: ImClient<'a> {
+/// pub trait <ClusterName>Client: ImClient {
 ///     // DefaultSuccess command, parameterized:
 ///     async fn <cluster>_<cmd><F>(self, ep: EndptId, request: F) -> Result<(), Error>
 ///     where F: FnMut(<Cmd>RequestBuilder<...>) -> Result<<parent>, Error>;
@@ -870,7 +870,7 @@ fn write_responses_trait(cluster: &Cluster, context: &IdlGenerateContext) -> Tok
 ///     // Scalar attribute write:
 ///     async fn <cluster>_<attr>_write(self, ep: EndptId, value: T) -> Result<(), Error>;
 /// }
-/// impl<'a> <ClusterName>Client<'a> for Exchange<'a> {}
+/// impl<T: ImClient> <ClusterName>Client for T {}
 /// ```
 ///
 /// Commands that return a real `*Response` struct (i.e. `cmd.output
@@ -911,8 +911,8 @@ fn client_trait(
     //   trailing `StatusResponse(Success)` ACK is sent before
     //   returning.
     // - Response-bearing: returns
-    //   `Result<<Output>Handle<'a>, Error>`. The handle keeps the
-    //   exchange's RX buffer alive; the caller materialises the
+    //   `Result<<Output>Handle<_>, Error>`. The handle keeps the
+    //   transaction's RX buffer alive; the caller materialises the
     //   borrowed response via `handle.response()?` and explicitly
     //   `.complete().await?`s to send the trailing `StatusResponse(Success)`.
     //
@@ -922,7 +922,7 @@ fn client_trait(
     // can safely parse one IB without iterating.
     //
     // Methods live on the per-cluster *view* struct
-    // (`<ClusterName>ClientView<'a>`) rather than on the trait, so
+    // (`<ClusterName>ClientView<T>`) rather than on the trait, so
     // IDE completion at `exchange.<cluster>().` shows only this
     // cluster's surface.
     let cmd_methods = cluster.commands.iter().map(|cmd| {
@@ -935,20 +935,27 @@ fn client_trait(
         let method_name = ident(&idl_field_name_to_rs_name(&cmd.id));
         let view_method_name = ident(&view_cmd_method_name(&cmd.id));
 
-        let default_success = cmd.output == NO_RESPONSE;
-        let (return_ty, return_expr) = if default_success {
-            (
-                quote!(()),
-                quote!(
-                    while let Some(next) = chunk.complete().await? {
-                        chunk = next;
-                    }
-                    Ok(())
-                ),
-            )
-        } else {
-            let handle = ident(&format!("{}Handle", cmd.output));
-            (quote!(#handle<'a>), quote!(Ok(#handle { chunk })))
+        // A method without a response returns the future of a shared helper rather than
+        // being an `async fn`, as a state machine per method takes long to type-check.
+        let shape = |build: TokenStream| {
+            if cmd.output == NO_RESPONSE {
+                (
+                    quote!(),
+                    quote!(impl core::future::Future<Output = Result<(), #krate::error::Error>>),
+                    quote!(#krate::im::invoke_cmd(self.tx, None, #build)),
+                )
+            } else {
+                let handle = ident(&format!("{}Handle", cmd.output));
+                (
+                    quote!(async),
+                    quote!(Result<#handle<T::InvokeChunk>, #krate::error::Error>),
+                    quote!(
+                        let chunk = #krate::im::ImClient::invoke_with(self.tx, None, #build).await?;
+
+                        Ok(#handle { chunk })
+                    ),
+                )
+            }
         };
 
         // For parameterized commands the closure takes the typed
@@ -969,27 +976,35 @@ fn client_trait(
         // `webrtc_prov::push_outbound` handles `take_offer_sdp`).
         if let Some(req_struct) = cmd.input.as_deref() {
             let req_builder = ident(&format!("{req_struct}Builder"));
-            // Successful-completion path uses `mut chunk` so the
-            // drain loop can rebind; handle-returning path doesn't
-            // mutate so we drop the `mut`. Quoting the binding lets
-            // each branch pick.
-            let chunk_binding = if default_success {
-                quote!(let mut chunk)
-            } else {
-                quote!(let chunk)
-            };
+            let (asyncness, return_ty, body) = shape(quote!(move |msg| {
+                // `suppress_response` and `timed_request` are
+                // skipped — `InvReqBuilder` fills them in as
+                // `false` on the wire (the common-case
+                // default). The view step
+                // (`<cluster>_inv()`) is a no-op typed
+                // wrapper; `<cmd>(endpoint)` is the
+                // codegen-emitted push method on the view
+                // (possibly `cmd_<cmd>` if the IDL name
+                // collides with the view's exit `end()` —
+                // see `view_cmd_method_name`).
+                let view = msg.invoke_requests()?.#cmd_requests_entry();
+                let req_builder = view.#view_method_name(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            }));
+
             quote!(
-                pub async fn #method_name<F>(
+                pub #asyncness fn #method_name<F>(
                     self,
                     endpoint: #krate::dm::EndptId,
                     mut request: F,
-                ) -> Result<#return_ty, #krate::error::Error>
+                ) -> #return_ty
                 where
                     F: FnMut(
                         #req_builder<
                             #krate::im::CmdDataBuilder<
                                 #krate::im::CmdDataArrayBuilder<
-                                    #krate::im::InvReqBuilder<#krate::im::client::InvokeSender<'a>, 3>,
+                                    #krate::im::InvReqBuilder<T::InvokeSender, 3>,
                                 >,
                                 2,
                             >,
@@ -998,66 +1013,42 @@ fn client_trait(
                     ) -> Result<
                         #krate::im::CmdDataBuilder<
                             #krate::im::CmdDataArrayBuilder<
-                                #krate::im::InvReqBuilder<#krate::im::client::InvokeSender<'a>, 3>,
+                                #krate::im::InvReqBuilder<T::InvokeSender, 3>,
                             >,
                             2,
                         >,
                         #krate::error::Error,
-                    >,
+                    > + #krate::utils::sync::MaybeSend,
                 {
                     use self::#cmd_requests_trait_name as _Cmds;
 
-                    #chunk_binding = #krate::im::client::invoke_with(self.exchange, None, |msg| {
-                        // `suppress_response` and `timed_request` are
-                        // skipped — `InvReqBuilder` fills them in as
-                        // `false` on the wire (the common-case
-                        // default). The view step
-                        // (`<cluster>_inv()`) is a no-op typed
-                        // wrapper; `<cmd>(endpoint)` is the
-                        // codegen-emitted push method on the view
-                        // (possibly `cmd_<cmd>` if the IDL name
-                        // collides with the view's exit `end()` —
-                        // see `view_cmd_method_name`).
-                        let view = msg.invoke_requests()?.#cmd_requests_entry();
-                        let req_builder = view.#view_method_name(endpoint)?;
-                        let cmd_data = request(req_builder)?;
-                        cmd_data.end()?.end()?.end()
-                    })
-                    .await?;
-
-                    #return_expr
+                    #body
                 }
             )
         } else {
-            let chunk_binding = if default_success {
-                quote!(let mut chunk)
-            } else {
-                quote!(let chunk)
-            };
+            let (asyncness, return_ty, body) = shape(quote!(move |msg| {
+                // `suppress_response` / `timed_request`
+                // skipped — see the parameterized branch.
+                // `.<cluster>_inv()` enters the cluster
+                // view; `.<cmd>(endpoint)?` pushes the
+                // empty-request command (possibly `cmd_<cmd>`
+                // on collision — see `view_cmd_method_name`);
+                // `.end()?` on the view closes the array.
+                msg.invoke_requests()?
+                    .#cmd_requests_entry()
+                    .#view_method_name(endpoint)?
+                    .end()?
+                    .end()
+            }));
+
             quote!(
-                pub async fn #method_name(
+                pub #asyncness fn #method_name(
                     self,
                     endpoint: #krate::dm::EndptId,
-                ) -> Result<#return_ty, #krate::error::Error> {
+                ) -> #return_ty {
                     use self::#cmd_requests_trait_name as _Cmds;
 
-                    #chunk_binding = #krate::im::client::invoke_with(self.exchange, None, |msg| {
-                        // `suppress_response` / `timed_request`
-                        // skipped — see the parameterized branch.
-                        // `.<cluster>_inv()` enters the cluster
-                        // view; `.<cmd>(endpoint)?` pushes the
-                        // empty-request command (possibly `cmd_<cmd>`
-                        // on collision — see `view_cmd_method_name`);
-                        // `.end()?` on the view closes the array.
-                        msg.invoke_requests()?
-                            .#cmd_requests_entry()
-                            .#view_method_name(endpoint)?
-                            .end()?
-                            .end()
-                    })
-                    .await?;
-
-                    #return_expr
+                    #body
                 }
             )
         }
@@ -1080,8 +1071,8 @@ fn client_trait(
         let resp_ty = ident(output);
         let handle_ty = ident(&format!("{output}Handle"));
         let handle_doc = Literal::string(&format!(
-            "Single-shot handle wrapping the [`InvokeRespChunk`] of a `{output}` \
-             response. Holds the exchange's RX buffer alive; `response()` \
+            "Single-shot handle wrapping the Invoke response chunk of a `{output}` \
+             response. Holds the transaction's RX buffer alive; `response()` \
              parses the embedded `CommandDataIB` into a borrowed \
              [`{output}`]. The trailing `StatusResponse(Success)` is sent \
              when the caller `.complete().await?`s the handle.\n\n\
@@ -1090,18 +1081,17 @@ fn client_trait(
         ));
         quote!(
             #[doc = #handle_doc]
-            pub struct #handle_ty<'a> {
-                chunk: #krate::im::client::InvokeRespChunk<'a>,
+            pub struct #handle_ty<C> {
+                chunk: C,
             }
 
-            impl<'a> #handle_ty<'a> {
+            impl<C: #krate::im::ImInvokeChunk> #handle_ty<C> {
                 /// Borrowed access to the parsed response. The returned
-                /// value points into the exchange's RX buffer, which
+                /// value points into the transaction's RX buffer, which
                 /// stays valid until this handle is dropped or
                 /// `.complete()`d.
                 pub fn response(&self) -> Result<#resp_ty<'_>, #krate::error::Error> {
-                    let invoke_resp = self.chunk
-                        .response()?
+                    let invoke_resp = #krate::im::ImInvokeChunk::response(&self.chunk)?
                         .ok_or(#krate::error::ErrorCode::InvalidData)?;
                     let invoke_responses = invoke_resp
                         .invoke_responses
@@ -1127,15 +1117,11 @@ fn client_trait(
                 }
 
                 /// Send the trailing `StatusResponse(Success)` and close
-                /// the exchange. Call this once after the borrowed
+                /// the transaction. Call this once after the borrowed
                 /// response is no longer needed. Forgetting it lets the
                 /// peer time out and resend — functional but wasteful.
-                pub async fn complete(self) -> Result<(), #krate::error::Error> {
-                    let mut chunk = self.chunk;
-                    while let Some(next) = chunk.complete().await? {
-                        chunk = next;
-                    }
-                    Ok(())
+                pub fn complete(self) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    #krate::im::complete_invoke(self.chunk)
                 }
             }
         )
@@ -1174,50 +1160,14 @@ fn client_trait(
         let attr_method = ident(&view_attr_method_name(&attr.field.field.id));
         let snake = idl_field_name_to_rs_name(&attr.field.field.id);
 
-        let read_request = quote!(
-            use self::#attr_reads_trait_name as _Reads;
-
-            let mut chunk = #krate::im::client::read_with(self.exchange, |msg| {
-                msg.attr_requests()?
-                    .#attr_reads_entry()
-                    .#attr_method(endpoint)?
-                    .end()?
-                    .fabric_filtered(true)?
-                    .end()
-            })
-            .await?;
-        );
-
-        // Decode the single attribute report from the current `chunk` into
-        // `value` (`Result<value_ty, Error>`); `AttrResp::Status` → `Err`.
-        // Shared between both flavours.
-        let decode_value = |value_ty: &TokenStream| {
-            quote!(
-                let resp = chunk.response()?;
-                let attr_reports = resp
-                    .attr_reports
-                    .as_ref()
-                    .ok_or(#krate::error::ErrorCode::InvalidData)?;
-                let attr_resp = attr_reports
-                    .iter()
-                    .next()
-                    .ok_or(#krate::error::ErrorCode::InvalidData)?
-                    .map_err(|_| #krate::error::ErrorCode::InvalidData)?;
-                let value: Result<#value_ty, #krate::error::Error> = match attr_resp {
-                    #krate::im::AttrResp::Data(data) => {
-                        #krate::tlv::FromTLV::from_tlv(&data.data)
-                    }
-                    #krate::im::AttrResp::Status(status) => {
-                        Err(status
-                            .status
-                            .status
-                            .to_error_code()
-                            .unwrap_or(#krate::error::ErrorCode::Failure)
-                            .into())
-                    }
-                };
-            )
-        };
+        let read_build = quote!(move |msg| {
+            msg.attr_requests()?
+                .#attr_reads_entry()
+                .#attr_method(endpoint)?
+                .end()?
+                .fabric_filtered(true)?
+                .end()
+        });
 
         if is_non_scalar {
             let method_name = ident(&format!("{snake}_read_with"));
@@ -1238,7 +1188,6 @@ fn client_trait(
                 entities,
                 &krate,
             );
-            let decode = decode_value(&value_ty);
 
             quote!(
                 #[doc = "Read a non-scalar attribute (string, octet string, struct or list) \
@@ -1247,23 +1196,16 @@ fn client_trait(
                          returning the owned `R` that `f` produces (copy out what you need, \
                          e.g. `|v| v.map(|s| s.to_string())`). A non-served optional \
                          attribute surfaces as `Err` to `f`."]
-                pub async fn #method_name<R>(
+                pub fn #method_name<R>(
                     self,
                     endpoint: #krate::dm::EndptId,
                     f: impl FnOnce(Result<#value_ty, #krate::error::Error>) -> R,
-                ) -> Result<R, #krate::error::Error> {
-                    #read_request
+                ) -> impl core::future::Future<Output = Result<R, #krate::error::Error>> {
+                    use self::#attr_reads_trait_name as _Reads;
 
-                    let out = {
-                        #decode
-                        f(value)
-                    };
-
-                    // Drain any remaining chunks (sends trailing StatusResponse).
-                    while let Some(next) = chunk.complete().await? {
-                        chunk = next;
-                    }
-                    Ok(out)
+                    #krate::im::read_attr_with(self.tx, #read_build, move |data| {
+                        f(data.and_then(|data| #krate::tlv::FromTLV::from_tlv(&data)))
+                    })
                 }
             )
         } else {
@@ -1278,25 +1220,15 @@ fn client_trait(
                 entities,
                 &krate,
             );
-            let decode = decode_value(&value_ty);
 
             quote!(
-                pub async fn #method_name(
+                pub fn #method_name(
                     self,
                     endpoint: #krate::dm::EndptId,
-                ) -> Result<#value_ty, #krate::error::Error> {
-                    #read_request
+                ) -> impl core::future::Future<Output = Result<#value_ty, #krate::error::Error>> {
+                    use self::#attr_reads_trait_name as _Reads;
 
-                    let value = {
-                        #decode
-                        value?
-                    };
-
-                    // Drain any remaining chunks (sends trailing StatusResponse).
-                    while let Some(next) = chunk.complete().await? {
-                        chunk = next;
-                    }
-                    Ok(value)
+                    #krate::im::read_attr(self.tx, #read_build)
                 }
             )
         }
@@ -1329,51 +1261,28 @@ fn client_trait(
         ));
 
         Some(quote!(
-            pub async fn #method_name(
+            pub fn #method_name(
                 self,
                 endpoint: #krate::dm::EndptId,
                 value: #value_ty,
-            ) -> Result<(), #krate::error::Error> {
+            ) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
                 use self::#attr_writes_trait_name as _Writes;
 
-                let handle = #krate::im::client::write_with(self.exchange, None, |msg| {
+                #krate::im::write_attr(self.tx, None, move |msg| {
                     msg.write_requests()?
                         .#attr_writes_entry()
                         .#attr_method(endpoint, value.clone())?
                         .end()?
                         .end()
                 })
-                .await?;
-
-                // Inspect every per-attribute status. The high-level
-                // single-attribute write should normally produce one
-                // entry, but a WriteRequest can carry many AttrData
-                // entries and the peer returns a status per path; if
-                // ANY of them is non-Success, surface that as the
-                // error. `WriteResponse` itself is single-message —
-                // no chunking — so a single `response()` call is
-                // sufficient.
-                let resp = handle.response()?;
-                for status in resp.write_responses.iter() {
-                    let status = status?;
-                    if status.status.status != #krate::im::IMStatusCode::Success {
-                        return Err(status
-                            .status
-                            .status
-                            .to_error_code()
-                            .unwrap_or(#krate::error::ErrorCode::Failure)
-                            .into());
-                    }
-                }
-                Ok(())
             }
         ))
     });
 
     let trait_doc = Literal::string(&format!(
         "Single-shot IM-client convenience trait for the `{cluster_id}` cluster. \
-         `use` this trait to call `.{snake}()` on an \
-         [`{krate}::transport::exchange::Exchange`]; the returned \
+         `use` this trait to call `.{snake}()` on any \
+         [`{krate}::im::ImClient`], such as an exchange; the returned \
          [`{view}`] exposes one method per command and per attribute. \
          Scalar attributes get a by-value `<attr>_read(endpoint)`; \
          non-scalar ones (string/octet/struct/list, whose value borrows \
@@ -1384,10 +1293,10 @@ fn client_trait(
          and status-only handling are all baked in. DefaultSuccess \
          commands return `Result<(), Error>` and drain the response \
          internally; response-bearing commands return \
-         `Result<<RespStruct>Handle<'a>, Error>` — the handle keeps \
+         `Result<<RespStruct>Handle<_>, Error>` — the handle keeps \
          the RX buffer alive so the caller can read the borrowed \
          response via `.response()?` before `.complete().await?`ing \
-         the exchange.\n\n\
+         the transaction.\n\n\
          The indirection through `{view}` keeps each cluster's API \
          surface narrow: at the call site `exchange.{snake}().` shows \
          only this cluster's methods in IDE completion.",
@@ -1397,11 +1306,10 @@ fn client_trait(
         view = format!("{cluster_camel}ClientView"),
     ));
     let view_doc = Literal::string(&format!(
-        "Per-exchange view onto the `{cluster_id}` cluster's client operations. \
+        "Per-transaction view onto the `{cluster_id}` cluster's client operations. \
          Returned by [`{cluster_camel}Client::{cluster_snake}`]. Each method \
          consumes the view (and therefore the underlying \
-         [`{krate}::transport::exchange::Exchange`]) — one exchange is one \
-         IM transaction.",
+         [`{krate}::im::ImClient`]).",
         cluster_id = cluster.id,
     ));
 
@@ -1409,28 +1317,28 @@ fn client_trait(
         #(#response_handles)*
 
         #[doc = #view_doc]
-        pub struct #view_name<'a> {
-            exchange: #krate::transport::exchange::Exchange<'a>,
+        pub struct #view_name<T> {
+            tx: T,
         }
 
-        impl<'a> #view_name<'a> {
+        impl<T: #krate::im::ImClient> #view_name<T> {
             #(#cmd_methods)*
             #(#attr_read_methods)*
             #(#attr_write_methods)*
         }
 
         #[doc = #trait_doc]
-        pub trait #trait_name<'a>: #krate::im::client::ImClient<'a> {
+        pub trait #trait_name: #krate::im::ImClient {
             /// Enter this cluster's client view. Consumes the
-            /// exchange — call methods on the returned view to drive
+            /// transaction — call methods on the returned view to drive
             /// a single IM transaction (one command invoke or one
             /// attribute read/write).
-            fn #entry_method(self) -> #view_name<'a> {
-                #view_name { exchange: self.into() }
+            fn #entry_method(self) -> #view_name<Self> {
+                #view_name { tx: self }
             }
         }
 
-        impl<'a> #trait_name<'a> for #krate::transport::exchange::Exchange<'a> {}
+        impl<T: #krate::im::ImClient> #trait_name for T {}
     )
 }
 

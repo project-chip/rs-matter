@@ -49,6 +49,9 @@ use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TES
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::wifi::nm::NetMgrCtl;
+use rs_matter::dm::networks::wifi::wpa_supp::unix::DhClientCtl;
+use rs_matter::dm::networks::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
@@ -63,9 +66,6 @@ use rs_matter::transport::exchange::MatterBuffers;
 #[cfg(target_os = "linux")]
 use rs_matter::transport::network::btp::bluez;
 use rs_matter::transport::network::btp::{AdvData, Btp};
-use rs_matter::transport::network::wifi::nm::NetMgrCtl;
-use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
-use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::futures::{select, select4, Coalesce};
 use rs_matter::utils::zbus::Connection;
@@ -163,6 +163,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         &crypto,
         &buffers,
         data_model(
+            &matter,
             rand,
             &on_off_handler,
             WifiNetworks::new(),
@@ -276,6 +277,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+    matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     networks: WifiNetworks<3>,
@@ -289,14 +291,14 @@ where
         NODE,
         endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
             .netif_diag(&UnixNetifs)
-            .build(rand)
+            .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == groups::GroupsHandler::CLUSTER.id,
-                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand), matter).adapt()),
             )
             .chain(
                 |e, c| e == 1 && c == TestOnOffDeviceLogic::CLUSTER.id,

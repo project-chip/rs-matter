@@ -1,0 +1,393 @@
+/*
+ *
+ *    Copyright (c) 2025-2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! This module contains the implementation of the General Diagnostics cluster and its handler.
+
+use core::fmt::Debug;
+use core::net::{Ipv4Addr, Ipv6Addr};
+use core::num::NonZeroU8;
+
+use crate::dm::ImStats;
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
+use crate::utils::epoch::MATTER_EPOCH_SECS;
+use crate::utils::sync::MaybeSendSync;
+use crate::utils::timers::Instant;
+use crate::{with, BootReason as NodeBootReason, Matter};
+
+pub use crate::dm::clusters::decl::general_diagnostics::*;
+
+/// A structure describing the network interface info as returned by the `GenDiag` trait.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct NetifInfo<'a> {
+    /// The name of the network interface.
+    pub name: &'a str,
+    /// Whether the network interface is operational from the POV of Matter.
+    /// I.e. the node is advertising itself operationally on this interface.
+    pub operational: bool,
+    /// Whether any Ipv4 off-premise services used by the node are reachable on this interface.
+    /// `None` if the node does not use such services or it is unclear if these are reachable.
+    pub offprem_svc_reachable_ipv4: Option<bool>,
+    /// Whether any Ipv6 off-premise services used by the node are reachable on this interface.
+    /// `None` if the node does not use such services or it is unclear if these are reachable.
+    pub offprem_svc_reachable_ipv6: Option<bool>,
+    /// The hardware address of the network interface: the 8-byte extended
+    /// address of a Thread interface, else a 6-byte MAC in the first 6 bytes
+    /// (the last two zero).
+    pub hw_addr: &'a [u8; 8],
+    /// The IPv4 addresses assigned to the network interface.
+    pub ipv4_addrs: &'a [Ipv4Addr],
+    /// The IPv6 addresses assigned to the network interface.
+    pub ipv6_addrs: &'a [Ipv6Addr],
+    /// The type of the network interface.
+    pub netif_type: InterfaceTypeEnum,
+    /// The index of the network interface.
+    /// Might not be available on all platforms.
+    pub netif_index: u32,
+}
+
+impl NetifInfo<'_> {
+    /// The hardware address as reported: all 8 bytes for Thread, the 6-byte MAC
+    /// otherwise.
+    pub fn hardware_address(&self) -> &[u8] {
+        if self.netif_type == InterfaceTypeEnum::Thread {
+            self.hw_addr
+        } else {
+            &self.hw_addr[..6]
+        }
+    }
+
+    /// Read the network interface info into the given `NetworkInterfaceBuilder`.
+    fn read_into<P: TLVBuilderParent>(
+        &self,
+        builder: NetworkInterfaceBuilder<P>,
+    ) -> Result<P, Error> {
+        builder
+            .name(self.name)?
+            .is_operational(self.operational)?
+            .off_premise_services_reachable_i_pv_4(Nullable::new(self.offprem_svc_reachable_ipv4))?
+            .off_premise_services_reachable_i_pv_6(Nullable::new(self.offprem_svc_reachable_ipv6))?
+            .hardware_address(Octets::new(self.hardware_address()))?
+            .i_pv_4_addresses()?
+            .with(|mut builder| {
+                for addr in self.ipv4_addrs {
+                    builder = builder.push(Octets::new(&addr.octets()))?;
+                }
+
+                builder.end()
+            })?
+            .i_pv_6_addresses()?
+            .with(|mut builder| {
+                for addr in self.ipv6_addrs {
+                    builder = builder.push(Octets::new(&addr.octets()))?;
+                }
+
+                builder.end()
+            })?
+            .r#type(self.netif_type)?
+            .end()
+    }
+}
+
+/// Re-exported for convenience: `DeviceLoad` is owned by the Interaction Model,
+/// which is where the subscription figures come from and which assembles the
+/// whole struct, but it is reported through this cluster. The message counters
+/// within it are tracked one layer down, by the transport.
+pub use crate::dm::DeviceLoad;
+
+/// A trait to which the system implementation of the General Diagnostics Matter cluster
+/// delegates for information.
+pub trait GenDiag: MaybeSendSync {
+    /// Whether the test event triggers are enabled.
+    /// Check the Matter Core spec for more info.
+    fn test_event_triggers_enabled(&self) -> Result<bool, Error>;
+
+    /// Trigger a test event.
+    /// Check the Matter Core spec for more info.
+    fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error>;
+}
+
+impl<T> GenDiag for &T
+where
+    T: GenDiag,
+{
+    fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
+        (**self).test_event_triggers_enabled()
+    }
+
+    fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error> {
+        (**self).test_event_trigger(key, trigger)
+    }
+}
+
+/// A default implementation of the `GenDiag` trait, suitable as a stand-in
+/// for devices that don't have a more sophisticated diagnostics source.
+///
+/// `uptime_ms` is backed by `crate::utils::timers::Instant::now()`, which by
+/// construction counts ticks since system boot — exactly the "uptime"
+/// semantics the spec asks for, and what `TimeSnapshot::SystemTimeMs` needs
+/// to advance with real wall time between calls.
+impl GenDiag for () {
+    fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    fn test_event_trigger(&self, _key: &[u8], _trigger: u64) -> Result<(), Error> {
+        Err(ErrorCode::ConstraintError.into())
+    }
+}
+
+pub trait NetifDiag: MaybeSendSync {
+    /// Iterate over the network interfaces and call the given function for each of them.
+    /// Call the function with `None` at the end.
+    fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error>;
+}
+
+impl<T> NetifDiag for &T
+where
+    T: NetifDiag,
+{
+    fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error> {
+        (*self).netifs(f)
+    }
+}
+
+/// A dummy implementation of the `NetifDiag` trait.
+impl NetifDiag for () {
+    fn netifs(&self, _f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// The system implementation of a handler for the General Diagnostics Matter cluster.
+#[derive(Clone)]
+pub struct GenDiagHandler<'a> {
+    dataver: Dataver,
+    matter: &'a Matter<'a>,
+    diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+}
+
+impl<'a> GenDiagHandler<'a> {
+    /// Create a new instance of `GenDiagHandler` with the given `Dataver`,
+    /// reporting the boot data of `matter`.
+    pub const fn new(
+        dataver: Dataver,
+        matter: &'a Matter<'a>,
+        diag: &'a dyn GenDiag,
+        netif_diag: &'a dyn NetifDiag,
+    ) -> Self {
+        Self {
+            dataver,
+            matter,
+            diag,
+            netif_diag,
+        }
+    }
+
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
+    }
+}
+
+impl ClusterHandler for GenDiagHandler<'_> {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        // Expose `UpTime` (optional in spec) so `TC_DGGEN_2_4` can read it,
+        // and accept the `TimeSnapshot` command which is required by the
+        // same test (returns SystemTimeMs from `GenDiag::uptime_ms` and a
+        // null PosixTimeMs when no Time Synchronization cluster is present).
+        //
+        // `DeviceLoadStatus` is new in Matter 1.6 and its conformance is
+        // `Rev >= v3`, i.e. mandatory from cluster revision 3 - which this
+        // cluster now is - so `TC_IDM_10_2` fails if it is absent. The IDL
+        // renders it `optional` (it cannot express revision-conditional
+        // conformance), hence it has to be listed explicitly here.
+        //
+        // `TotalOperationalHours` and `BootReason` are kept by `Matter`.
+        .with_attrs(with!(
+            required;
+            AttributeId::UpTime
+                | AttributeId::TotalOperationalHours
+                | AttributeId::BootReason
+                | AttributeId::DeviceLoadStatus
+        ))
+        .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot));
+
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn network_interfaces<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<NetworkInterfaceArrayBuilder<P>, NetworkInterfaceBuilder<P>>,
+    ) -> Result<P, Error> {
+        match builder {
+            ArrayAttributeRead::ReadAll(builder) => {
+                let mut builder = Some(builder);
+                self.netif_diag.netifs(&mut |netif| {
+                    builder = Some(netif.read_into(unwrap!(builder.take()).push()?)?);
+
+                    Ok(())
+                })?;
+
+                builder.take().unwrap().end()
+            }
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let mut builder = Some(builder);
+                let mut parent_builder = None;
+                let mut current = 0;
+
+                self.netif_diag.netifs(&mut |netif| {
+                    if current == index as usize {
+                        parent_builder = Some(netif.read_into(unwrap!(builder.take()))?);
+                    }
+
+                    current += 1;
+
+                    Ok(())
+                })?;
+
+                parent_builder
+                    .take()
+                    .ok_or_else(|| ErrorCode::ConstraintError.into())
+            }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
+    }
+
+    fn reboot_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.matter.reboot_count())
+    }
+
+    fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
+        Ok(Instant::now().as_secs())
+    }
+
+    fn total_operational_hours(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        Ok(self.matter.total_operational_hours())
+    }
+
+    fn boot_reason(&self, _ctx: impl ReadContext) -> Result<BootReasonEnum, Error> {
+        Ok(boot_reason_to_cluster(self.matter.boot_reason()))
+    }
+
+    fn device_load_status<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: DeviceLoadStructBuilder<P>,
+    ) -> Result<P, Error> {
+        // `CurrentSubscriptionsForFabric` is relative to the reading subject, so
+        // hand its fabric down. `fab_idx` is 0 when the read arrives over a
+        // non-fabric-scoped (e.g. PASE) session.
+        let load = ctx
+            .im_stats()
+            .device_load(NonZeroU8::new(ctx.attr().fab_idx));
+
+        builder
+            .current_subscriptions(load.current_subscriptions)?
+            .current_subscriptions_for_fabric(load.current_subscriptions_for_fabric)?
+            .total_subscriptions_established(load.total_subscriptions_established)?
+            .total_interaction_model_messages_sent(load.total_im_messages_sent)?
+            .total_interaction_model_messages_received(load.total_im_messages_received)?
+            .end()
+    }
+
+    fn test_event_triggers_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+        self.diag.test_event_triggers_enabled()
+    }
+
+    fn handle_test_event_trigger(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestEventTriggerRequest<'_>,
+    ) -> Result<(), Error> {
+        let key = request.enable_key()?.0;
+        let trigger = request.event_trigger()?;
+
+        self.diag.test_event_trigger(key, trigger)
+    }
+
+    fn handle_time_snapshot<P: TLVBuilderParent>(
+        &self,
+        ctx: impl InvokeContext,
+        response: TimeSnapshotResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let system_time_ms = Instant::now().as_millis();
+
+        // `PosixTimeMs` (Matter Core spec): SHALL be null only
+        // when the device doesn't support the TimeSynchronization cluster
+        // (we do) or when its `UTCTime` attribute is null. We read the
+        // Matter-wide current UTC time directly from `Matter::utc_time`
+        // and convert (Matter-epoch microseconds) → POSIX-epoch ms.
+        let posix_time_ms = Nullable::new(
+            ctx.utc_time()
+                .reliable()
+                .map(|us| us / 1000)
+                .map(|ms| ms.saturating_add(MATTER_EPOCH_SECS.saturating_mul(1000))),
+        );
+
+        response
+            .system_time_ms(system_time_ms)?
+            .posix_time_ms(posix_time_ms)?
+            .end()
+    }
+
+    fn handle_payload_test_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: PayloadTestRequestRequest<'_>,
+        _response: PayloadTestResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        Err(ErrorCode::CommandNotFound.into())
+    }
+}
+
+impl Debug for GenDiagHandler<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GenDiagHandler")
+            .field("dataver", &self.dataver)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for GenDiagHandler<'_> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "GenDiagHandler {{ dataver: {} }}", self.dataver);
+    }
+}
+
+/// Convert a boot reason of the node to the cluster's one
+fn boot_reason_to_cluster(reason: NodeBootReason) -> BootReasonEnum {
+    match reason {
+        NodeBootReason::Unspecified => BootReasonEnum::Unspecified,
+        NodeBootReason::PowerOnReboot => BootReasonEnum::PowerOnReboot,
+        NodeBootReason::BrownOutReset => BootReasonEnum::BrownOutReset,
+        NodeBootReason::SoftwareWatchdogReset => BootReasonEnum::SoftwareWatchdogReset,
+        NodeBootReason::HardwareWatchdogReset => BootReasonEnum::HardwareWatchdogReset,
+        NodeBootReason::SoftwareUpdateCompleted => BootReasonEnum::SoftwareUpdateCompleted,
+        NodeBootReason::SoftwareReset => BootReasonEnum::SoftwareReset,
+    }
+}

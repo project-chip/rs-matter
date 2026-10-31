@@ -66,7 +66,7 @@ fn test_plaintext_exchange_over_udp() {
             .unwrap();
 
         // Device side: transport + SecureChannel responder (handles PBKDFParamRequest)
-        let sc = SecureChannel::new(&crypto, &());
+        let sc = SecureChannel::new(&device_matter, &crypto, &());
         let responder = Responder::new("device", sc, &device_matter, 0);
 
         let device_fut = async {
@@ -97,7 +97,7 @@ async fn run_exchange_flow<C: Crypto>(
 ) -> Result<(), Error> {
     info!("Creating unsecured session and initiating exchange...");
 
-    let mut exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
+    let mut exchange = Exchange::initiate_plaintext(matter.transport(), crypto, peer_addr).await?;
 
     info!("Exchange initiated: {}", exchange.id());
     info!("Sending PBKDFParamRequest...");

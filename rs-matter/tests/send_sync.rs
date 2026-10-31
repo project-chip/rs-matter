@@ -17,16 +17,18 @@
 
 //! Checks that with feature `send-sync` the futures a node runs - the transport, the mDNS
 //! responder, the data model job and the responder, or each of its handlers - are
-//! `Send + 'static`, so that they can be spawned on a work-stealing executor.
+//! `Send + 'static`, so that they can be spawned on a work-stealing executor. The
+//! same for the futures of the generated cluster clients.
 //!
 //! The futures are only created, never run.
 
 use std::net::UdpSocket;
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
-use rs_matter::dm::clusters::app::on_off::OnOffHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, NoLevelControl};
+use rs_matter::dm::clusters::app::on_off::{OnOffClient as _, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
+use rs_matter::dm::clusters::gen_comm::GeneralCommissioningClient as _;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
@@ -36,7 +38,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::Ipv4Addr;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -97,7 +99,7 @@ fn node_futures_are_send() -> Result<(), Error> {
 
     let handler: DmHandler<'static> = endpoints::EthSysHandlerBuilder::new()
         .netif_diag(&SysNetifs)
-        .build(rand)
+        .build(matter, rand)
         .chain(
             |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -130,12 +132,30 @@ fn node_futures_are_send() -> Result<(), Error> {
     let handle = responder.responder().handle(0);
     let handle_busy = responder.busy_responder().handle(0);
 
+    // The generated cluster clients: commands with and without a response, an
+    // attribute read and an attribute write
+    let clients = async move {
+        let initiate = || Exchange::initiate_for_session(matter.transport(), crypto, 1);
+
+        initiate()?.on_off().toggle(1).await?;
+        initiate()?.on_off().on_time_write(1, 0).await?;
+        initiate()?.on_off().on_off_read(1).await?;
+
+        let handle = initiate()?
+            .general_commissioning()
+            .arm_fail_safe(0, |req| req.expiry_length_seconds(0)?.breadcrumb(0)?.end())
+            .await?;
+        handle.response()?;
+        handle.complete().await
+    };
+
     assert_spawnable(&transport);
     assert_spawnable(&mdns);
     assert_spawnable(&im_job);
     assert_spawnable(&respond);
     assert_spawnable(&handle);
     assert_spawnable(&handle_busy);
+    assert_spawnable(&clients);
 
     Ok(())
 }

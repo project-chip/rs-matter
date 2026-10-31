@@ -100,7 +100,7 @@ fn test_mcsp_responder() {
         let (device_socket, controller_socket) = create_localhost_socket_pair();
         let device_addr = Address::Udp(device_socket.get_ref().local_addr().unwrap());
 
-        let sc = SecureChannel::new(&crypto, &());
+        let sc = SecureChannel::new(&device_matter, &crypto, &());
         let responder = Responder::new("device", sc, &device_matter, 0);
 
         let device_fut = async {

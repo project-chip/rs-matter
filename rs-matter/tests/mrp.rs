@@ -65,6 +65,7 @@ use rs_matter::im::{
 };
 use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::{ExchangeHandler, Responder};
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::sc::{OpCode as ScOpCode, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::transport::exchange::{Exchange, MatterBuffers, MessageMeta};
 use rs_matter::transport::network::{
@@ -315,7 +316,7 @@ fn new_matter() -> Matter<'static> {
 fn install_session(matter: &Matter<'_>, local_nodeid: u64, remote_nodeid: u64) {
     matter.reset_transport().unwrap();
 
-    let mut session = ReservedSession::reserve_now(matter, test_only_crypto()).unwrap();
+    let mut session = ReservedSession::reserve_now(matter.transport(), test_only_crypto()).unwrap();
 
     session
         .update(
@@ -618,7 +619,7 @@ fn run_im_scenario(
         rs_matter::persist::VENDOR_KEYS_START + 0x10,
         TestOnOffDeviceLogic::new(false),
     );
-    let handler = E2eTestHandler::new(rand, on_off_handler);
+    let handler = E2eTestHandler::new(&device, rand, on_off_handler);
 
     let kv = device.kv(DummyKvBlobStore);
     let dm = InteractionModel::new(&device, &crypto, &buffers, &handler, &kv, &state);

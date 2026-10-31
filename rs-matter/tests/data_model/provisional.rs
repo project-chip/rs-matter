@@ -39,6 +39,7 @@ use rs_matter::dm::{
 };
 use rs_matter::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
 use rs_matter::tlv::{Nullable, ToTLV, Utf8Str};
+use rs_matter::Matter;
 
 use rs_matter::dm::devices::test::TEST_DEV_DET;
 
@@ -68,12 +69,12 @@ const NODE: Node<'static> = Node {
 
 /// A data model over [`NODE`] serving `BasicInformation` on EP0 and
 /// `Descriptor` on both endpoints.
-fn dm_handler() -> impl DataModel {
+fn dm_handler<'a>(matter: &'a Matter<'a>) -> impl DataModel + 'a {
     (
         NODE,
         ChainedHandler::new(
             |e, c| e == 0 && c == basic_info::CLUSTER_DEVICE_LOCATION.id,
-            Async(BasicInfoHandler::new(Dataver::new(1)).adapt()),
+            Async(BasicInfoHandler::new(Dataver::new(1), matter).adapt()),
             EmptyHandler,
         )
         .chain(
@@ -115,7 +116,7 @@ fn test_device_location_write_read() {
 
     let im = new_default_runner();
     im.add_default_acl();
-    let dm = dm_handler();
+    let dm = dm_handler(&im.matter);
 
     // Fresh device: the attribute is advertised and must read as Null.
     let null: Nullable<TestDeviceLocation> = Nullable::none();
@@ -257,7 +258,7 @@ fn test_endpoint_unique_id_read() {
 
     let im = new_default_runner();
     im.add_default_acl();
-    let dm = dm_handler();
+    let dm = dm_handler(&im.matter);
 
     // EP1 advertises the attribute and serves `Endpoint::unique_id`.
     im.handle_read_reqs(
@@ -308,7 +309,7 @@ fn test_config_factory_defaults() {
 
     let im = new_default_runner_with_dev_det(&DEV_DET_WITH_DEFAULTS);
     im.add_default_acl();
-    let dm = dm_handler();
+    let dm = dm_handler(&im.matter);
 
     // Fresh device: both attributes report the factory defaults.
     let factory = TestDeviceLocation {
@@ -418,12 +419,12 @@ const NODE_NR: Node<'static> = Node {
 /// Recovery feature (and its two provisional attributes) exposed. `&true` is
 /// the no-op `CommPolicy` (concurrent-connection, indoor/outdoor, default
 /// fail-safe timings) - none of which the recovery reads consult.
-fn nr_dm_handler() -> impl DataModel {
+fn nr_dm_handler<'a>(matter: &'a Matter<'a>) -> impl DataModel + 'a {
     (
         NODE_NR,
         ChainedHandler::new(
             |e, c| e == 0 && c == gen_comm::CLUSTER_NETWORK_RECOVERY.id,
-            Async(GenCommHandler::new(Dataver::new(1), &true).adapt()),
+            Async(GenCommHandler::new(Dataver::new(1), matter, &true).adapt()),
             EmptyHandler,
         ),
     )
@@ -439,12 +440,12 @@ const NODE_GC: Node<'static> = Node {
 
 /// A data model over [`NODE_GC`] - the same `GenCommHandler`, but with the
 /// default metadata that hides the provisional Network Recovery attributes.
-fn gc_dm_handler() -> impl DataModel {
+fn gc_dm_handler<'a>(matter: &'a Matter<'a>) -> impl DataModel + 'a {
     (
         NODE_GC,
         ChainedHandler::new(
             |e, c| e == 0 && c == GenCommHandler::CLUSTER.id,
-            Async(GenCommHandler::new(Dataver::new(1), &true).adapt()),
+            Async(GenCommHandler::new(Dataver::new(1), matter, &true).adapt()),
             EmptyHandler,
         ),
     )
@@ -464,7 +465,7 @@ fn test_network_recovery_feature_and_reason() {
 
     let im = new_default_runner();
     im.add_default_acl();
-    let dm = nr_dm_handler();
+    let dm = nr_dm_handler(&im.matter);
 
     // The Network Recovery feature bit (`NR` == 0x2) is advertised in FeatureMap.
     let feature_map_path = nr_attr_path(gen_comm::AttributeId::FeatureMap);
@@ -501,7 +502,7 @@ fn test_network_recovery_attributes_gated_by_default() {
 
     let im = new_default_runner();
     im.add_default_acl();
-    let dm = gc_dm_handler();
+    let dm = gc_dm_handler(&im.matter);
 
     // With the default metadata, both provisional attributes are absent from
     // the cluster and read back `UnsupportedAttribute` - even though the same

@@ -1,0 +1,49 @@
+[package]
+name = "rs-matter-dm-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the Data Model types"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "log"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-im-core/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-im-core/alloc"]
+# Extends the IM buffers to 1MB (from 1500 B), for Matter over TCP.
+large-buffers = []
+# Size (in bytes) of the key-value persistence scratch buffer owned by `Matter`.
+kv-blob-store-65536 = []
+kv-blob-store-32768 = []
+kv-blob-store-16384 = []
+kv-blob-store-8192 = []
+# Default key-value persistence scratch buffer size.
+kv-blob-store-4096 = []
+kv-blob-store-2048 = []
+kv-blob-store-1024 = []
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt", "rs-matter-im-core/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-im-core/log"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-tlv = { workspace = true }
+rs-matter-crypto = { workspace = true }
+rs-matter-im-core = { workspace = true }
+cfg-if = { workspace = true }
+either = { workspace = true }
+rand_core = { workspace = true }
+strum = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }
