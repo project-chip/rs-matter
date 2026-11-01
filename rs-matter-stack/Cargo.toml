@@ -1,0 +1,107 @@
+[package]
+name = "rs-matter-stack"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - the assembly of the node over a network driver"
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "log"]
+
+# Number of subscriptions.
+max-subscriptions-32 = []
+max-subscriptions-16 = []
+max-subscriptions-8 = []
+max-subscriptions-7 = []
+max-subscriptions-6 = []
+max-subscriptions-5 = []
+max-subscriptions-4 = []
+# Default number of subscriptions.
+max-subscriptions-3 = []
+max-subscriptions-2 = []
+max-subscriptions-1 = []
+
+# Size of the events ring buffer.
+events-ringbuf-size-2048 = []
+events-ringbuf-size-1024 = []
+events-ringbuf-size-512 = []
+# Default size of the events ring buffer.
+events-ringbuf-size-256 = []
+events-ringbuf-size-128 = []
+events-ringbuf-size-64 = []
+events-ringbuf-size-0 = []
+
+# Number of IM buffers.
+max-im-buffers-64 = []
+max-im-buffers-32 = []
+max-im-buffers-16 = []
+# Default number of IM buffers.
+max-im-buffers-10 = []
+max-im-buffers-9 = []
+max-im-buffers-8 = []
+max-im-buffers-7 = []
+max-im-buffers-6 = []
+max-im-buffers-5 = []
+max-im-buffers-4 = []
+
+# Number of concurrent responders.
+max-responders-32 = []
+max-responders-16 = []
+max-responders-8 = []
+max-responders-7 = []
+max-responders-6 = []
+max-responders-5 = []
+# Default number of concurrent responders.
+max-responders-4 = []
+max-responders-3 = []
+max-responders-2 = []
+max-responders-1 = []
+
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-pairing/std", "rs-matter-dm-core/std", "rs-matter-transport/std", "rs-matter-node/std", "rs-matter-sc/std", "rs-matter-im/std", "rs-matter-dm/std", "rs-matter-respond/std"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-pairing/alloc", "rs-matter-dm-core/alloc", "rs-matter-transport/alloc", "rs-matter-node/alloc", "rs-matter-sc/alloc", "rs-matter-im/alloc", "rs-matter-dm/alloc", "rs-matter-respond/alloc"]
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt", "rs-matter-pairing/defmt", "rs-matter-dm-core/defmt", "rs-matter-transport/defmt", "rs-matter-node/defmt", "rs-matter-sc/defmt", "rs-matter-im/defmt", "rs-matter-dm/defmt", "rs-matter-respond/defmt"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-pairing/log", "rs-matter-dm-core/log", "rs-matter-transport/log", "rs-matter-node/log", "rs-matter-sc/log", "rs-matter-im/log", "rs-matter-dm/log", "rs-matter-respond/log"]
+# The `NetStack` implementation over `async-io` and the standard UDP sockets.
+async-io = ["std", "rs-matter-transport/async-io", "dep:async-io", "dep:socket2"]
+# The mDNS responders and GATT peripherals over the services of the OS.
+zbus = ["rs-matter-transport/zbus", "rs-matter-utils/zbus"]
+zeroconf = ["rs-matter-transport/zeroconf"]
+astro-dnssd = ["rs-matter-transport/astro-dnssd"]
+bluer = ["rs-matter-transport/bluer"]
+
+[dependencies]
+rs-matter-utils = { workspace = true }
+rs-matter-tlv = { workspace = true }
+rs-matter-crypto = { workspace = true }
+rs-matter-pairing = { workspace = true }
+rs-matter-dm-core = { workspace = true }
+rs-matter-transport = { workspace = true }
+rs-matter-node = { workspace = true }
+rs-matter-sc = { workspace = true }
+rs-matter-im = { workspace = true }
+rs-matter-dm = { workspace = true }
+rs-matter-respond = { workspace = true }
+cfg-if = { workspace = true }
+scopeguard = { workspace = true }
+async-io = { workspace = true, optional = true }
+socket2 = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[dev-dependencies]
+rs-matter-crypto = { workspace = true, features = ["rustcrypto"] }
+rs-matter-node-core = { workspace = true }
+# For the `std` time driver of `embassy-time`
+rs-matter-utils = { workspace = true, features = ["os"] }
+embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
+futures-lite = { workspace = true }
+
+[lints.rust]
+# `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }

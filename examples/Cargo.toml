@@ -16,6 +16,9 @@ publish = false
 name = "onoff_light"
 
 [[bin]]
+name = "onoff_light_stack"
+
+[[bin]]
 name = "onoff_light_switch"
 
 [[bin]]

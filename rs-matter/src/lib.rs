@@ -56,6 +56,7 @@ pub use rs_matter_im as im;
 pub use rs_matter_onboard as onboard;
 pub use rs_matter_respond as respond;
 pub use rs_matter_sc as sc;
+pub use rs_matter_stack as stack;
 
 pub use rs_matter_dm::{clusters, ota, root_endpoint};
 
