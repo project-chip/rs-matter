@@ -40,7 +40,7 @@ use cfg_if::cfg_if;
 use rs_matter_crypto::{Crypto, Rng};
 use rs_matter_dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter_dm::clusters::dev_att::DeviceAttestation;
-use rs_matter_dm::clusters::gen_diag::NetifDiag;
+use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag, NetifInfo};
 use rs_matter_dm::clusters::sw_diag::SwDiag;
 use rs_matter_dm::endpoints::RootHandler;
 use rs_matter_dm::networks::NetChangeNotif;
@@ -308,7 +308,7 @@ where
         rs_matter_dm::endpoints::root_handler(matter, sw_diag, rand)
     }
 
-    /// Create a new `MatterStack` instance.
+    /// Create a new `MatterStack` instance, which listens on the default Matter port.
     #[allow(clippy::large_stack_frames)]
     #[inline(always)]
     pub const fn new(
@@ -316,8 +316,20 @@ where
         dev_comm: BasicCommData,
         dev_att: &'a dyn DeviceAttestation,
     ) -> Self {
+        Self::new_with_port(dev_det, dev_comm, dev_att, MATTER_PORT)
+    }
+
+    /// Create a new `MatterStack` instance, which listens on the given port.
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
+    pub const fn new_with_port(
+        dev_det: &'a BasicInfoConfig,
+        dev_comm: BasicCommData,
+        dev_att: &'a dyn DeviceAttestation,
+        port: u16,
+    ) -> Self {
         Self {
-            matter: Matter::new(dev_det, dev_comm, dev_att, MATTER_PORT),
+            matter: Matter::new(dev_det, dev_comm, dev_att, port),
             buffers: MatterBuffers::new(),
             state: MatterStackInteractionModelState::new(),
             bump: Bump::new(),
@@ -327,18 +339,32 @@ where
         }
     }
 
+    /// Return an in-place initializer for a `MatterStack` instance, which listens on the
+    /// default Matter port.
     #[allow(clippy::large_stack_frames)]
     pub fn init(
         dev_det: &'a BasicInfoConfig,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DeviceAttestation,
     ) -> impl Init<Self> {
+        Self::init_with_port(dev_det, dev_comm, dev_att, MATTER_PORT)
+    }
+
+    /// Return an in-place initializer for a `MatterStack` instance, which listens on the
+    /// given port.
+    #[allow(clippy::large_stack_frames)]
+    pub fn init_with_port(
+        dev_det: &'a BasicInfoConfig,
+        dev_comm: BasicCommData,
+        dev_att: &'a dyn DeviceAttestation,
+        port: u16,
+    ) -> impl Init<Self> {
         init!(Self {
             matter <- Matter::init(
                 dev_det,
                 dev_comm,
                 dev_att,
-                MATTER_PORT,
+                port,
             ),
             buffers <- MatterBuffers::init(),
             state <- MatterStackInteractionModelState::init(),
@@ -433,7 +459,7 @@ where
             .bind(
                 SocketAddr::V6(SocketAddrV6::new(
                     Ipv6Addr::UNSPECIFIED,
-                    MATTER_PORT,
+                    self.matter().port(),
                     0,
                     net_interface,
                 )),
@@ -515,6 +541,32 @@ where
             }
         }
 
+        /// How suitable the interface is for Matter: `0` if it is not, else the higher the
+        /// better. Virtual interfaces of a host are typically IPv4-only, and a Thread
+        /// interface is IPv6-only.
+        fn netif_rank(netif: &NetifInfo) -> u8 {
+            let mut ipv6 = netif
+                .ipv6_addrs
+                .iter()
+                .filter(|addr| !addr.is_unspecified() && !addr.is_loopback());
+
+            if !netif.operational || ipv6.clone().next().is_none() {
+                return 0;
+            }
+
+            let ipv4 = netif
+                .ipv4_addrs
+                .iter()
+                .any(|addr| !addr.is_unspecified() && !addr.is_loopback());
+
+            match (ipv4, ipv6.any(Ipv6Addr::is_unicast_link_local)) {
+                (true, true) => 3,
+                (true, false) => 2,
+                (false, _) => 1,
+            }
+        }
+
+        /// Load the first of the most suitable interfaces.
         fn load_netif_state<I>(net_diag: &I, state: &mut NetifState) -> Result<(), Error>
         where
             I: NetifDiag,
@@ -524,8 +576,14 @@ where
             state.ipv4 = Ipv4Addr::UNSPECIFIED;
             state.mac = [0; 8];
 
+            let mut best_rank = 0;
+
             net_diag.netifs(&mut |ni| {
-                if ni.operational && !ni.ipv6_addrs.is_empty() {
+                let rank = netif_rank(ni);
+
+                if rank > best_rank {
+                    best_rank = rank;
+
                     state.operational = true;
                     state.ipv6.clear();
                     for addr in ni.ipv6_addrs {
@@ -838,6 +896,98 @@ impl UserTask for () {
         N: NetifDiag + NetChangeNotif,
     {
         core::future::pending::<Result<(), Error>>()
+    }
+}
+
+/// The optional settings of the `run*` methods of the stack.
+///
+/// `()` selects the defaults, and any other `UserTask` selects the defaults with that
+/// task. Use `Options` to set anything else.
+pub trait RunOptions: MaybeSend {
+    /// The General Diagnostics implementation.
+    type GenDiag: GenDiag;
+    /// The user task.
+    type UserTask: UserTask;
+
+    /// Split into the individual settings.
+    fn into_parts(self) -> (Self::GenDiag, Self::UserTask);
+}
+
+impl<T> RunOptions for T
+where
+    T: UserTask,
+{
+    type GenDiag = &'static ();
+    type UserTask = T;
+
+    fn into_parts(self) -> (Self::GenDiag, Self::UserTask) {
+        (&(), self)
+    }
+}
+
+/// A builder of `RunOptions`.
+///
+/// What is not set stays at its default: the test event triggers are disabled
+/// and there is no user task.
+///
+/// ```ignore
+/// stack.run(driver, crypto, handler, kv, Options::new().gen_diag(&my_gen_diag));
+/// ```
+pub struct Options<G, U> {
+    gen_diag: G,
+    user_task: U,
+}
+
+impl Default for Options<&'static (), ()> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Options<&'static (), ()> {
+    /// Create the options with everything at its default.
+    pub const fn new() -> Self {
+        Self {
+            gen_diag: &(),
+            user_task: (),
+        }
+    }
+}
+
+impl<G, U> Options<G, U> {
+    /// Set the General Diagnostics implementation.
+    pub fn gen_diag<T>(self, gen_diag: T) -> Options<T, U>
+    where
+        T: GenDiag,
+    {
+        Options {
+            gen_diag,
+            user_task: self.user_task,
+        }
+    }
+
+    /// Set the user task.
+    pub fn user_task<T>(self, user_task: T) -> Options<G, T>
+    where
+        T: UserTask,
+    {
+        Options {
+            gen_diag: self.gen_diag,
+            user_task,
+        }
+    }
+}
+
+impl<G, U> RunOptions for Options<G, U>
+where
+    G: GenDiag,
+    U: UserTask,
+{
+    type GenDiag = G;
+    type UserTask = U;
+
+    fn into_parts(self) -> (Self::GenDiag, Self::UserTask) {
+        (self.gen_diag, self.user_task)
     }
 }
 

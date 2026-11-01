@@ -25,7 +25,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 
 use rs_matter_crypto::test_only_crypto;
-use rs_matter_dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
+use rs_matter_dm::clusters::gen_diag::{GenDiag, InterfaceTypeEnum, NetifDiag, NetifInfo};
 use rs_matter_dm::clusters::net_comm::NetworkType;
 use rs_matter_dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter_dm::networks::wireless::NoopWirelessNetCtl;
@@ -42,6 +42,7 @@ use rs_matter_stack::wireless::{
     GattDriver, GattTask, PreexistingWireless, ThreadDriver, ThreadMatterStack, ThreadTask,
     WifiMatterStack,
 };
+use rs_matter_stack::{Options, RunOptions, UserTask};
 use rs_matter_transport::network::btp::{AdvData, Btp};
 use rs_matter_transport::network::mdns::builtin::BuiltinMdns;
 use rs_matter_transport::network::mdns::{
@@ -234,6 +235,136 @@ impl ThreadDriver for FakeRadio<'_> {
         )
         .await
     }
+}
+
+/// The interfaces of a host: only the third one is what Matter should use.
+struct FakeHostNetifs;
+
+impl NetifDiag for FakeHostNetifs {
+    fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error> {
+        let netif = |name, ipv4_addrs, ipv6_addrs, netif_index| NetifInfo {
+            name,
+            operational: true,
+            offprem_svc_reachable_ipv4: None,
+            offprem_svc_reachable_ipv6: None,
+            hw_addr: &[1, 2, 3, 4, 5, 6, 0, 0],
+            ipv4_addrs,
+            ipv6_addrs,
+            netif_type: InterfaceTypeEnum::Ethernet,
+            netif_index,
+        };
+
+        const GLOBAL: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+
+        // The loopback one, and one with a routable IPv6 address only
+        f(&netif(
+            "lo",
+            &[Ipv4Addr::LOCALHOST],
+            &[Ipv6Addr::LOCALHOST],
+            1,
+        ))?;
+        f(&netif("tun0", &[], &[GLOBAL], 2))?;
+        // The one to use, followed by a virtual one which only ties with it
+        f(&netif(
+            "eth0",
+            &[IPV4_INTERFACE],
+            &[IPV6_ADDR],
+            IPV6_INTERFACE,
+        ))?;
+        f(&netif(
+            "docker0",
+            &[Ipv4Addr::new(192, 168, 0, 20)],
+            &[IPV6_ADDR],
+            8,
+        ))
+    }
+}
+
+impl NetChangeNotif for FakeHostNetifs {
+    fn wait_changed(&self) -> impl Future<Output = ()> + MaybeSend {
+        pending()
+    }
+}
+
+/// Run an Ethernet stack for a moment, and return its outcome if it exits.
+/// Logs when the stack starts it.
+struct FakeUserTask<'a>(&'a Log);
+
+impl UserTask for FakeUserTask<'_> {
+    fn run<S, N>(
+        &mut self,
+        _net_stack: S,
+        _netif: N,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
+    where
+        S: NetStack,
+        N: NetifDiag + NetChangeNotif,
+    {
+        self.0.event("user task");
+
+        pending()
+    }
+}
+
+/// A `GenDiag` that borrows the node, which the stack it is given to owns.
+struct NodeDiag<'a>(&'a Matter<'a>);
+
+impl GenDiag for NodeDiag<'_> {
+    fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
+        Ok(self.0.port() != 0)
+    }
+
+    fn test_event_trigger(&self, _key: &[u8], _trigger: u64) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+fn run_ethernet<C, U, N, O>(
+    stack: &EthMatterStack<'_, BUMP_SIZE, ()>,
+    crypto: C,
+    net_stack: U,
+    netif: N,
+    options: O,
+) -> Option<Result<(), Error>>
+where
+    C: rs_matter_crypto::Crypto,
+    U: NetStack,
+    N: NetifDiag + NetChangeNotif,
+    O: RunOptions,
+{
+    const NODE: Node = Node {
+        endpoints: &[EthMatterStack::<0, ()>::root_endpoint()],
+    };
+
+    let mut rand = crypto.weak_rand().unwrap();
+
+    let handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(EthMatterStack::<0, ()>::root_handler(
+            stack.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+
+    let mut store = MemKvBlobStore::new();
+    futures_lite::future::block_on(stack.startup(&crypto, &mut store)).unwrap();
+
+    let kv = stack.matter().kv(store);
+
+    futures_lite::future::block_on(run_for(
+        stack.run_preex(
+            net_stack,
+            netif,
+            &(),
+            BuiltinMdns::new(),
+            &crypto,
+            (NODE, handler),
+            kv,
+            options,
+        ),
+        300,
+    ))
 }
 
 /// Run `f` on a thread with a big stack, as the futures of the stack do not
@@ -481,7 +612,113 @@ fn non_concurrent_commissioning_hands_the_radio_over() {
     });
 }
 
+#[test]
+fn ethernet_binds_the_configured_port() {
+    const PORT: u16 = 5541;
+
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+
+        let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(
+            EthMatterStack::init_with_port(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, PORT),
+        );
+
+        assert_eq!(stack.matter().port(), PORT);
+
+        let result = run_ethernet(stack, &crypto, FakeNetStack(&log), &FakeNetif, ());
+
+        assert!(result.is_none(), "The stack exited: {result:?}");
+
+        let ports = log.bound_ports();
+
+        assert!(ports.contains(&PORT));
+        assert!(!ports.contains(&MATTER_PORT));
+    });
+}
+
+#[test]
+fn ethernet_advertises_on_the_first_of_the_most_suitable_netifs() {
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+
+        let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+
+        let result = run_ethernet(stack, &crypto, FakeNetStack(&log), &FakeHostNetifs, ());
+
+        assert!(result.is_none(), "The stack exited: {result:?}");
+
+        assert!(log
+            .binds
+            .lock()
+            .unwrap()
+            .contains(&(MDNS_PORT, IPV4_INTERFACE, IPV6_INTERFACE)));
+    });
+}
+
 /// With `send-sync` the futures of the stack are `Send`, if those of the drivers are.
+#[test]
+fn ethernet_runs_the_user_task() {
+    on_big_stack(|| {
+        // Both forms of passing it
+        for bare in [true, false] {
+            let log = Log::default();
+            let crypto = test_only_crypto();
+
+            let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+            ));
+
+            let net_stack = FakeNetStack(&log);
+            let task = FakeUserTask(&log);
+
+            let result = if bare {
+                run_ethernet(stack, &crypto, net_stack, &FakeNetif, task)
+            } else {
+                let options = Options::new().user_task(task);
+
+                run_ethernet(stack, &crypto, net_stack, &FakeNetif, options)
+            };
+
+            assert!(result.is_none(), "The stack exited: {result:?}");
+            assert!(log.events().contains(&"user task"));
+        }
+    });
+}
+
+#[test]
+fn ethernet_takes_a_gen_diag_that_borrows_the_node() {
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+
+        let stack = &*leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+
+        let diag = NodeDiag(stack.matter());
+
+        let result = run_ethernet(
+            stack,
+            &crypto,
+            FakeNetStack(&log),
+            &FakeNetif,
+            Options::new().gen_diag(&diag),
+        );
+
+        assert!(result.is_none(), "The stack exited: {result:?}");
+    });
+}
+
 #[cfg(feature = "send-sync")]
 #[test]
 #[allow(clippy::large_stack_frames)]
@@ -545,6 +782,9 @@ fn futures_are_send() {
         )),
     );
 
+    let eth_diag = NodeDiag(eth.matter());
+    let thread_diag = NodeDiag(thread.matter());
+
     let eth_run = eth.run_preex(
         FakeNetStack(log),
         &FakeNetif,
@@ -553,7 +793,7 @@ fn futures_are_send() {
         &crypto,
         (ETH_NODE, eth_handler),
         eth.matter().kv(MemKvBlobStore::new()),
-        (),
+        Options::new().gen_diag(&eth_diag),
     );
     let wifi_run = wifi.run_coex(
         PreexistingWireless::new(
@@ -577,7 +817,7 @@ fn futures_are_send() {
         &crypto,
         (THREAD_NODE, thread_handler),
         thread.matter().kv(MemKvBlobStore::new()),
-        (),
+        Options::new().user_task(()).gen_diag(&thread_diag),
     );
 
     assert_send(&eth_run);

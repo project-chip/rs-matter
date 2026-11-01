@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
-use rs_matter_dm::clusters::gen_diag::NetifDiag;
+use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::clusters::net_comm::{NetCtl, NetworkType, Networks};
 use rs_matter_dm::clusters::wifi_diag::WifiDiag;
 use rs_matter_dm::endpoints::wifi_net_handler;
@@ -42,7 +42,7 @@ use crate::network::Embedding;
 use crate::wireless::{
     GattPeripheral, MatterStackWirelessTask, WirelessNetCtl, MAX_WIRELESS_NETWORKS,
 };
-use crate::{pin_alloc, UserTask};
+use crate::{pin_alloc, RunOptions, UserTask};
 
 use super::{GattDriver, GattTask, PreexistingWireless, WirelessMatterStack};
 
@@ -68,9 +68,9 @@ where
     /// - `crypto` - a user-provided `Crypto` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
-    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
     #[allow(clippy::too_many_arguments)]
-    pub fn run_preex<'t, U, N, Q, D, G, C, H, K, X>(
+    pub fn run_preex<'t, U, N, Q, D, G, C, H, K, O>(
         &'t self,
         net_stack: U,
         netif: N,
@@ -80,7 +80,7 @@ where
         crypto: C,
         handler: H,
         kv: K,
-        user: X,
+        options: O,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         U: NetStack + 't,
@@ -91,14 +91,14 @@ where
         C: Crypto + 't,
         H: DataModel + 't,
         K: KvBlobStoreAccess + 't,
-        X: UserTask + 't,
+        O: RunOptions + 't,
     {
         self.run_coex(
             PreexistingWireless::new(net_stack, netif, net_ctl, mdns, gatt),
             crypto,
             handler,
             kv,
-            user,
+            options,
         )
     }
 
@@ -109,21 +109,21 @@ where
     /// - `crypto` - a user-provided `Crypto` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
-    /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run_coex<W, C, H, K, U>(
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
+    pub async fn run_coex<W, C, H, K, O>(
         &self,
         mut wifi: W,
         crypto: C,
         handler: H,
         kv: K,
-        user: U,
+        options: O,
     ) -> Result<(), Error>
     where
         W: WifiCoexDriver,
         C: Crypto,
         H: DataModel,
         K: KvBlobStoreAccess,
-        U: UserTask,
+        O: RunOptions,
     {
         let _lock = self.run_lock.lock().await;
 
@@ -140,9 +140,19 @@ where
 
         self.matter().reset_transport()?;
 
+        let (gen_diag, user) = options.into_parts();
+
         let net_task = pin_alloc!(
             self.bump,
-            self.run_wifi_coex(&mut networks, &mut wifi, crypto, handler, kv, user)
+            self.run_wifi_coex(
+                &mut networks,
+                &mut wifi,
+                crypto,
+                handler,
+                kv,
+                &gen_diag,
+                user
+            )
         );
 
         net_task.await
@@ -155,21 +165,21 @@ where
     /// - `crypto` - a user-provided `Crypto` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
-    /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<W, C, H, K, U>(
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
+    pub async fn run<W, C, H, K, O>(
         &self,
         wifi: W,
         crypto: C,
         handler: H,
         kv: K,
-        user: U,
+        options: O,
     ) -> Result<(), Error>
     where
         W: WifiDriver + GattDriver,
         C: Crypto,
         H: DataModel,
         K: KvBlobStoreAccess,
-        U: UserTask,
+        O: RunOptions,
     {
         let _lock = self.run_lock.lock().await;
 
@@ -186,14 +196,17 @@ where
 
         self.matter().reset_transport()?;
 
+        let (gen_diag, user) = options.into_parts();
+
         let net_task = pin_alloc!(
             self.bump,
-            self.run_wifi(&mut networks, wifi, crypto, handler, kv, user)
+            self.run_wifi(&mut networks, wifi, crypto, handler, kv, &gen_diag, user)
         );
 
         net_task.await
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_wifi_coex<'t, W, C, H, K, U>(
         &'t self,
         networks: &'t mut S,
@@ -201,6 +214,7 @@ where
         crypto: C,
         handler: H,
         kv: K,
+        gen_diag: &'t dyn GenDiag,
         user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -216,6 +230,7 @@ where
         wifi.run(
             MatterStackWirelessTask::<'_, _, _, _, _, _, _, _, _, NoopWirelessNetCtl> {
                 stack: self,
+                gen_diag,
                 networks,
                 crypto,
                 handler,
@@ -226,7 +241,7 @@ where
         )
     }
 
-    #[allow(clippy::manual_async_fn)]
+    #[allow(clippy::manual_async_fn, clippy::too_many_arguments)]
     fn run_wifi<'t, W, C, H, K, U>(
         &'t self,
         networks: &'t mut S,
@@ -234,6 +249,7 @@ where
         crypto: C,
         handler: H,
         kv: K,
+        gen_diag: &'t dyn GenDiag,
         mut user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -272,6 +288,7 @@ where
                             <W as WifiDriver>::NetCtl<'_>,
                         > {
                             stack: self,
+                            gen_diag,
                             networks: &mut *networks,
                             crypto: &crypto,
                             handler: &handler,
@@ -298,6 +315,7 @@ where
                         <W as WifiDriver>::NetCtl<'_>,
                     > {
                         stack: self,
+                        gen_diag,
                         networks: &mut *networks,
                         crypto: &crypto,
                         handler: &handler,
@@ -538,7 +556,7 @@ where
         let combined = wifi_net_handler(
             &self.stack.matter,
             &false,
-            &(),
+            self.gen_diag,
             &(),
             &net_ctl,
             &mut *self.networks,
@@ -617,7 +635,7 @@ where
         let combined = wifi_net_handler(
             &self.stack.matter,
             &false,
-            &(),
+            self.gen_diag,
             &netif,
             &net_ctl_s,
             &mut *self.networks,
@@ -707,7 +725,7 @@ where
         let combined = wifi_net_handler(
             &self.stack.matter,
             &true,
-            &(),
+            self.gen_diag,
             &netif,
             &net_ctl_s,
             &mut *self.networks,

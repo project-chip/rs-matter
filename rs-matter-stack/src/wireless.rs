@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
-use rs_matter_dm::clusters::gen_diag::NetifDiag;
+use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::clusters::net_comm::{
     self, remove_networks, NetCtlError, NetworkType, Networks, WirelessCreds,
 };
@@ -939,6 +939,7 @@ where
     E: Embedding,
 {
     stack: &'a MatterStack<'a, B, WirelessBle<T, E, S>>,
+    gen_diag: &'a dyn GenDiag,
     networks: &'a mut S,
     crypto: C,
     handler: H,

@@ -83,6 +83,9 @@ mod bluer {
             service_name: &str,
             service_adv: &AdvData,
         ) -> Result<(), Error> {
+            // BlueZ seems to report an incorrect GATT MTU
+            btp.set_relaxed_mtu_nego(true);
+
             rs_matter_transport::network::btp::bluer::run_peripheral(
                 self.0,
                 service_name,
@@ -124,6 +127,9 @@ mod bluez {
             service_name: &str,
             service_adv: &AdvData,
         ) -> Result<(), Error> {
+            // BlueZ seems to report an incorrect GATT MTU
+            btp.set_relaxed_mtu_nego(true);
+
             rs_matter_transport::network::btp::bluez::run_peripheral(
                 self.connection,
                 self.adapter_name,

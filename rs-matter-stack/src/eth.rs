@@ -19,7 +19,7 @@ use core::future::Future;
 
 use rs_matter_crypto::Crypto;
 use rs_matter_dm::clusters::eth_diag::EthDiag;
-use rs_matter_dm::clusters::gen_diag::NetifDiag;
+use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::endpoints::eth_net_handler;
 use rs_matter_dm::networks::NetChangeNotif;
 use rs_matter_dm::root_endpoint;
@@ -36,7 +36,7 @@ use crate::mdns::Mdns;
 use crate::net::NetStack;
 use crate::network::{Embedding, Network};
 use crate::private::Sealed;
-use crate::{pin_alloc, DummyAttrNotifier, MatterStack, UserTask};
+use crate::{pin_alloc, DummyAttrNotifier, MatterStack, RunOptions, UserTask};
 
 /// An implementation of the `Network` trait for Ethernet.
 ///
@@ -253,9 +253,9 @@ where
     /// - `crypto` - a user-provided crypto implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation for loading the persisted state of the stack
-    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
     #[allow(clippy::too_many_arguments)]
-    pub fn run_preex<'t, U, N, D, M, C, H, K, X>(
+    pub fn run_preex<'t, U, N, D, M, C, H, K, O>(
         &'t self,
         net_stack: U,
         netif: N,
@@ -264,7 +264,7 @@ where
         crypto: C,
         handler: H,
         kv: K,
-        user: X,
+        options: O,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         U: NetStack + 't,
@@ -274,14 +274,14 @@ where
         C: Crypto + 't,
         H: DataModel + 't,
         K: KvBlobStoreAccess + 't,
-        X: UserTask + 't,
+        O: RunOptions + 't,
     {
         self.run(
             PreexistingEthernet::new(net_stack, netif, eth_diag, mdns),
             crypto,
             handler,
             kv,
-            user,
+            options,
         )
     }
 
@@ -292,21 +292,21 @@ where
     /// - `crypto` - a user-provided crypto implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation for loading the persisted state of the stack
-    /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<N, C, H, K, X>(
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
+    pub async fn run<N, C, H, K, O>(
         &self,
         mut ethernet: N,
         crypto: C,
         handler: H,
         kv: K,
-        user: X,
+        options: O,
     ) -> Result<(), Error>
     where
         N: EthernetDriver,
         C: Crypto,
         H: DataModel,
         K: KvBlobStoreAccess,
-        X: UserTask,
+        O: RunOptions,
     {
         let _lock = self.run_lock.lock().await;
 
@@ -320,9 +320,11 @@ where
 
         self.matter().reset_transport()?;
 
+        let (gen_diag, user) = options.into_parts();
+
         let net_task = pin_alloc!(
             self.bump,
-            self.run_ethernet(&mut ethernet, crypto, handler, &kv, user)
+            self.run_ethernet(&mut ethernet, crypto, handler, &kv, &gen_diag, user)
         );
 
         net_task.await
@@ -334,6 +336,7 @@ where
         crypto: C,
         handler: H,
         kv: K,
+        gen_diag: &'t dyn GenDiag,
         user: X,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -347,6 +350,7 @@ where
             ethernet,
             MatterStackEthernetTask {
                 stack: self,
+                gen_diag,
                 crypto,
                 handler,
                 kv,
@@ -365,6 +369,7 @@ where
     X: UserTask,
 {
     stack: &'a MatterStack<'a, B, Eth<E>>,
+    gen_diag: &'a dyn GenDiag,
     crypto: C,
     handler: H,
     kv: K,
@@ -401,7 +406,7 @@ where
         let combined = eth_net_handler(
             &self.stack.matter,
             &false,
-            &(),
+            self.gen_diag,
             &netif,
             &eth_diag,
             &self.handler,
