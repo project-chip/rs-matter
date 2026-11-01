@@ -710,6 +710,7 @@ impl Session {
         &mut self,
         exch_index: Option<usize>,
         tx_header: &mut PacketHdr,
+        own_active_poll_ms: u32,
     ) -> Result<(Address, bool), Error> {
         let ctr = if let Some(exchange_index) = exch_index {
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
@@ -812,8 +813,12 @@ impl Session {
             let retry_interval_ms = self.peer_retry_interval_ms();
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
 
-            let result =
-                exchange.pre_send(&tx_header.plain, &mut tx_header.proto, retry_interval_ms);
+            let result = exchange.pre_send(
+                &tx_header.plain,
+                &mut tx_header.proto,
+                retry_interval_ms,
+                own_active_poll_ms,
+            );
 
             if matches!(
                 result.as_ref().map_err(Error::code),
@@ -3506,7 +3511,7 @@ mod tests {
         let mut tx = PacketHdr::new();
         tx.proto.set_reliable();
 
-        let (addr, retransmission) = unwrap!(sess.pre_send(None, &mut tx));
+        let (addr, retransmission) = unwrap!(sess.pre_send(None, &mut tx, 0));
         assert_eq!(addr, udp(5540));
         assert!(!retransmission);
         assert_eq!(tx.plain.sess_id, 0);
@@ -3515,12 +3520,12 @@ mod tests {
         assert_eq!(tx.plain.get_dst_unicast_nodeid(), Some(0x22));
         assert!(tx.proto.is_reliable());
 
-        unwrap!(sess.pre_send(None, &mut tx));
+        unwrap!(sess.pre_send(None, &mut tx, 0));
         assert_eq!(tx.plain.ctr, 101);
 
         sess.mode = SessionMode::Pase { fab_idx: 0 };
         sess.peer_sess_id = 0x1234;
-        unwrap!(sess.pre_send(None, &mut tx));
+        unwrap!(sess.pre_send(None, &mut tx, 0));
         assert_eq!(tx.plain.sess_id, 0x1234);
         assert_eq!(tx.plain.ctr, 102);
         assert!(tx.plain.get_src_nodeid().is_none());
@@ -3535,9 +3540,42 @@ mod tests {
             0,
         )));
         tx.proto.set_ack(Some(50));
-        let (addr, _) = unwrap!(sess.pre_send(None, &mut tx));
+        let (addr, _) = unwrap!(sess.pre_send(None, &mut tx, 0));
         assert!(addr.is_tcp());
         assert!(!tx.proto.is_reliable());
         assert!(tx.proto.get_ack().is_none());
+    }
+
+    /// A sleepy (ICD) sender receives the acknowledgement only on its next
+    /// poll, so its own active polling interval is added to every
+    /// retransmission delay as a flat term (Matter Core spec, 4.12.2.1).
+    #[test]
+    fn pre_send_adds_the_own_icd_polling_interval_to_the_retransmission_delay() {
+        let retrans_delay = |own_active_poll_ms: u32| {
+            use crate::exchange::InitiatorState;
+
+            let mut sess = Session::new(1, 100, false, udp(5540), Some(0x22), 300, 5000, 4000);
+            sess.set_local_nodeid(0x11);
+            sess.mark_peer_active(Instant::now());
+            unwrap!(sess.add_exch(2, Role::Initiator(InitiatorState::Owned)));
+
+            let mut tx = PacketHdr::new();
+            tx.proto.set_reliable();
+
+            unwrap!(sess.pre_send(Some(0), &mut tx, own_active_poll_ms));
+
+            unwrap!(sess.exchanges[0].as_ref())
+                .mrp
+                .retrans
+                .as_ref()
+                .unwrap()
+                .delay_ms(0)
+        };
+
+        // The peer is active, so its interval is the 300 ms one.
+        assert_eq!(retrans_delay(0), 330);
+        // An ICD polling every 300 ms pads the same delay by its interval,
+        // flat: the backoff's margin and jitter apply to the peer part only.
+        assert_eq!(retrans_delay(300), 630);
     }
 }
