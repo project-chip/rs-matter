@@ -480,3 +480,107 @@ fn non_concurrent_commissioning_hands_the_radio_over() {
         assert!(log.bound_ports().contains(&MATTER_PORT));
     });
 }
+
+/// With `send-sync` the futures of the stack are `Send`, if those of the drivers are.
+#[cfg(feature = "send-sync")]
+#[test]
+#[allow(clippy::large_stack_frames)]
+fn futures_are_send() {
+    fn assert_send<F: Send>(_: &F) {}
+
+    const ETH_NODE: Node = Node {
+        endpoints: &[EthMatterStack::<0, ()>::root_endpoint()],
+    };
+    const WIFI_NODE: Node = Node {
+        endpoints: &[WifiMatterStack::<0, ()>::root_endpoint()],
+    };
+    const THREAD_NODE: Node = Node {
+        endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
+    };
+
+    // What the futures borrow outlives the stacks
+    let log = &*Box::leak(Box::<Log>::default());
+    let crypto = test_only_crypto();
+
+    let eth = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
+    let wifi = leak::<WifiMatterStack<BUMP_SIZE, ()>>().init_with(WifiMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
+    let thread = leak::<ThreadMatterStack<BUMP_SIZE, ()>>().init_with(ThreadMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
+
+    let mut rand = rs_matter_crypto::Crypto::weak_rand(&crypto).unwrap();
+
+    let eth_handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(EthMatterStack::<0, ()>::root_handler(
+            eth.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+    let wifi_handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(WifiMatterStack::<0, ()>::root_handler(
+            wifi.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+    let thread_handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(ThreadMatterStack::<0, ()>::root_handler(
+            thread.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+
+    let eth_run = eth.run_preex(
+        FakeNetStack(log),
+        &FakeNetif,
+        &(),
+        BuiltinMdns::new(),
+        &crypto,
+        (ETH_NODE, eth_handler),
+        eth.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
+    let wifi_run = wifi.run_coex(
+        PreexistingWireless::new(
+            FakeNetStack(log),
+            &FakeNetif,
+            NoopWirelessNetCtl::new(NetworkType::Wifi),
+            BuiltinMdns::new(),
+            FakeGatt(log),
+        ),
+        &crypto,
+        (WIFI_NODE, wifi_handler),
+        wifi.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
+    let thread_run = thread.run(
+        FakeRadio {
+            log,
+            net_ctl: NoopWirelessNetCtl::new(NetworkType::Thread),
+            mdns: BuiltinMdns::new(),
+        },
+        &crypto,
+        (THREAD_NODE, thread_handler),
+        thread.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
+
+    assert_send(&eth_run);
+    assert_send(&wifi_run);
+    assert_send(&thread_run);
+}

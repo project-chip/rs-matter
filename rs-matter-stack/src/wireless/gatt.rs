@@ -18,6 +18,7 @@
 use core::future::Future;
 
 use rs_matter_utils::error::Error;
+use rs_matter_utils::sync::MaybeSend;
 
 use crate::ble::GattPeripheral;
 
@@ -25,9 +26,9 @@ use super::PreexistingWireless;
 
 /// A trait representing a task that needs access to the BLE GATT peripheral to perform its work
 /// (e.g. the first part of a non-concurrent commissioning flow)
-pub trait GattTask {
+pub trait GattTask: MaybeSend {
     /// Run the task with the given GATT peripheral
-    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
+    fn run<P>(&mut self, peripheral: P) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         P: GattPeripheral;
 }
@@ -36,7 +37,7 @@ impl<T> GattTask for &mut T
 where
     T: GattTask,
 {
-    fn run<P>(&mut self, peripheral: P) -> impl Future<Output = Result<(), Error>>
+    fn run<P>(&mut self, peripheral: P) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         P: GattPeripheral,
     {
@@ -46,9 +47,9 @@ where
 
 /// A trait for running a task within a context where the BLE peripheral is initialized and operable
 /// (e.g. the first part of a non-concurrent commissioning workflow)
-pub trait GattDriver {
+pub trait GattDriver: MaybeSend {
     /// Setup the radio to operate in BLE mode and run the given task.
-    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    fn run<T>(&mut self, task: T) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         T: GattTask;
 }
@@ -57,7 +58,7 @@ impl<T> GattDriver for &mut T
 where
     T: GattDriver,
 {
-    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>>
+    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         A: GattTask,
     {
@@ -67,6 +68,10 @@ where
 
 impl<U, N, C, M, P> GattDriver for PreexistingWireless<U, N, C, M, P>
 where
+    U: MaybeSend,
+    N: MaybeSend,
+    C: MaybeSend,
+    M: MaybeSend,
     P: GattPeripheral,
 {
     async fn run<T>(&mut self, mut task: T) -> Result<(), Error>

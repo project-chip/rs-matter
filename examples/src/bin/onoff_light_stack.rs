@@ -22,6 +22,8 @@ use core::pin::pin;
 
 use log::info;
 
+use rand::rngs::StdRng;
+
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::on_off;
 use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
@@ -79,7 +81,8 @@ fn main() -> Result<(), Error> {
         &TEST_DEV_ATT,
     ));
 
-    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
+    // `rand::rng()` is not `Send`
+    let crypto = default_crypto(rand::make_rng::<StdRng>(), DAC_PRIVKEY);
 
     let mut rand = crypto.weak_rand()?;
 

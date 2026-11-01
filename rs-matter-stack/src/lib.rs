@@ -416,8 +416,8 @@ where
     ///   i.e. when using concurrent commissisoning)
     async fn run_oper_net<C, U, X, R, S>(
         &self,
-        crypto: C,
-        net_stack: U,
+        crypto: &C,
+        net_stack: &U,
         net_interface: u32,
         until: X,
         mut comm: Option<(R, S)>,
@@ -425,7 +425,7 @@ where
     where
         C: Crypto,
         U: NetStack,
-        X: Future<Output = Result<(), Error>>,
+        X: Future<Output = Result<(), Error>> + MaybeSend,
         R: NetworkReceive,
         S: NetworkSend,
     {
@@ -451,7 +451,7 @@ where
             info!("Running operational and commissioning networks");
 
             let mut netw_task = pin!(self.run_transport_net(
-                &crypto,
+                crypto,
                 ChainedNetwork::new(Address::is_udp, send, comm_send),
                 ChainedNetwork::new(Address::is_udp, recv, comm_recv),
                 ChainedNetwork::new(Address::is_udp, multicast, NoNetwork),
@@ -461,7 +461,7 @@ where
         } else {
             info!("Running operational network");
 
-            let mut netw_task = pin!(self.run_transport_net(&crypto, send, recv, multicast));
+            let mut netw_task = pin!(self.run_transport_net(crypto, send, recv, multicast));
 
             select(&mut netw_task, &mut until_task).coalesce().await
         }
@@ -482,10 +482,10 @@ where
     /// - `mdns` - a user-provided mDNS implementation
     async fn run_oper_netif_mdns<C, U, I, M>(
         &self,
-        crypto: C,
-        net_stack: U,
-        netif: I,
-        mut mdns: M,
+        crypto: &C,
+        net_stack: &U,
+        netif: &I,
+        mdns: &mut M,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -515,7 +515,7 @@ where
             }
         }
 
-        fn load_netif_state<I>(net_diag: I, state: &mut NetifState) -> Result<(), Error>
+        fn load_netif_state<I>(net_diag: &I, state: &mut NetifState) -> Result<(), Error>
         where
             I: NetifDiag,
         {
@@ -555,7 +555,7 @@ where
         }
 
         async fn wait_changed<I>(
-            net_diag: I,
+            net_diag: &I,
             cur_state: &NetifState,
             new_state: &mut NetifState,
         ) -> Result<(), Error>
@@ -563,7 +563,7 @@ where
             I: NetifDiag + NetChangeNotif,
         {
             loop {
-                load_netif_state(&net_diag, new_state)?;
+                load_netif_state(net_diag, new_state)?;
 
                 if &*new_state != cur_state {
                     info!(
@@ -579,12 +579,12 @@ where
         }
 
         let mut new_state = NetifState::new();
-        load_netif_state(&netif, &mut new_state)?;
+        load_netif_state(netif, &mut new_state)?;
 
         loop {
             let cur_state = new_state.clone();
 
-            let mut netif_changed_task = pin!(wait_changed(&netif, &cur_state, &mut new_state));
+            let mut netif_changed_task = pin!(wait_changed(netif, &cur_state, &mut new_state));
 
             let mut mdns_task = pin!(async {
                 if cur_state.operational {
@@ -596,8 +596,8 @@ where
                         let _result = mdns
                             .run(
                                 self.matter(),
-                                &crypto,
-                                &net_stack,
+                                crypto,
+                                net_stack,
                                 &cur_state.mac,
                                 cur_state.ipv4,
                                 &cur_state.ipv6,
@@ -776,11 +776,11 @@ where
 
     fn run_transport_net<'t, C, S, R, M>(
         &'t self,
-        crypto: C,
+        crypto: &'t C,
         send: S,
         recv: R,
         multicast: M,
-    ) -> impl Future<Output = Result<(), Error>> + 't
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         C: Crypto + 't,
         S: NetworkSend + 't,
@@ -798,9 +798,13 @@ where
 /// brings up the operational interface (eth, wifi or thread)
 /// and if the interface goes down, the user task would be stopped.
 /// Upon re-connection, the task would be started again.
-pub trait UserTask {
+pub trait UserTask: MaybeSend {
     /// Run the task with the given network stack and network interface
-    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
+    fn run<S, N>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif;
@@ -810,7 +814,11 @@ impl<T> UserTask for &mut T
 where
     T: UserTask,
 {
-    fn run<S, N>(&mut self, net_stack: S, netif: N) -> impl Future<Output = Result<(), Error>>
+    fn run<S, N>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -820,7 +828,11 @@ where
 }
 
 impl UserTask for () {
-    fn run<S, N>(&mut self, _net_stack: S, _netif: N) -> impl Future<Output = Result<(), Error>>
+    fn run<S, N>(
+        &mut self,
+        _net_stack: S,
+        _netif: N,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,

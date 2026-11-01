@@ -69,6 +69,8 @@ defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter
 log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-pairing/log", "rs-matter-dm-core/log", "rs-matter-transport/log", "rs-matter-node/log", "rs-matter-sc/log", "rs-matter-im/log", "rs-matter-dm/log", "rs-matter-respond/log"]
 # The `NetStack` implementation over `async-io` and the standard UDP sockets.
 async-io = ["std", "rs-matter-transport/async-io", "dep:async-io", "dep:socket2"]
+# Makes the futures of the stack `Send`, if those of the drivers are.
+send-sync = ["rs-matter-utils/send-sync"]
 # The mDNS responders and GATT peripherals over the services of the OS.
 zbus = ["rs-matter-transport/zbus", "rs-matter-utils/zbus"]
 zeroconf = ["rs-matter-transport/zeroconf"]

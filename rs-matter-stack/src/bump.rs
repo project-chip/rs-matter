@@ -244,6 +244,10 @@ impl<T> core::ops::DerefMut for BumpBox<'_, T> {
 
 impl<T> Unpin for BumpBox<'_, T> {}
 
+// Safety: a `BumpBox` owns its `T`, as a `Box` does
+unsafe impl<T: Send> Send for BumpBox<'_, T> {}
+unsafe impl<T: Sync> Sync for BumpBox<'_, T> {}
+
 impl<T> Drop for BumpBox<'_, T> {
     fn drop(&mut self) {
         // Safety: The pointer is valid and we own the data

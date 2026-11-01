@@ -34,6 +34,7 @@ use rs_matter_dm_core::{DataModel, Endpoint};
 use rs_matter_transport::network::NoNetwork;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select3, select4, Coalesce};
+use rs_matter_utils::sync::MaybeSend;
 
 use crate::mdns::Mdns;
 use crate::net::NetStack;
@@ -80,7 +81,7 @@ where
         handler: H,
         kv: K,
         user: X,
-    ) -> impl Future<Output = Result<(), Error>> + 't
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         U: NetStack + 't,
         N: NetifDiag + NetChangeNotif + 't,
@@ -193,21 +194,21 @@ where
         net_task.await
     }
 
-    async fn run_wifi_coex<W, C, H, K, U>(
-        &self,
-        networks: &mut S,
-        wifi: &mut W,
+    fn run_wifi_coex<'t, W, C, H, K, U>(
+        &'t self,
+        networks: &'t mut S,
+        wifi: &'t mut W,
         crypto: C,
         handler: H,
         kv: K,
         user: U,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         W: WifiCoexDriver,
-        C: Crypto,
-        H: DataModel,
-        K: KvBlobStoreAccess,
-        U: UserTask,
+        C: Crypto + 't,
+        H: DataModel + 't,
+        K: KvBlobStoreAccess + 't,
+        U: UserTask + 't,
     {
         // The coex task never builds a `WirelessNetCtl` chain via `Q`, so its
         // phantom net-ctl type is an irrelevant placeholder.
@@ -223,39 +224,66 @@ where
                 _net_ctl: PhantomData,
             },
         )
-        .await
     }
 
-    async fn run_wifi<W, C, H, K, U>(
-        &self,
-        networks: &mut S,
+    #[allow(clippy::manual_async_fn)]
+    fn run_wifi<'t, W, C, H, K, U>(
+        &'t self,
+        networks: &'t mut S,
         mut wifi: W,
         crypto: C,
         handler: H,
         kv: K,
         mut user: U,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
-        W: WifiDriver + GattDriver,
-        C: Crypto,
-        H: DataModel,
-        K: KvBlobStoreAccess,
-        U: UserTask,
+        W: WifiDriver + GattDriver + 't,
+        C: Crypto + 't,
+        H: DataModel + 't,
+        K: KvBlobStoreAccess + 't,
+        U: UserTask + 't,
     {
-        loop {
-            // BLE carries a commissioning window that the device opened for itself; one that an
-            // administrator re-opened over CASE is advertised over the operational IP network
-            // alone. Deliberately not `has_fabrics`: a commissioned device that re-opens a basic
-            // window has to become reachable over BLE again, and an uncommissioned one whose
-            // window has expired has nothing left to advertise.
-            if self
-                .matter()
-                .comm_window_state()
-                .is_open_on_all_transports()
-            {
-                self.reset_net_ctl_state();
+        async move {
+            loop {
+                // BLE carries a commissioning window that the device opened for itself; one that an
+                // administrator re-opened over CASE is advertised over the operational IP network
+                // alone. Deliberately not `has_fabrics`: a commissioned device that re-opens a basic
+                // window has to become reachable over BLE again, and an uncommissioned one whose
+                // window has expired has nothing left to advertise.
+                if self
+                    .matter()
+                    .comm_window_state()
+                    .is_open_on_all_transports()
+                {
+                    self.reset_net_ctl_state();
 
-                GattDriver::run(
+                    GattDriver::run(
+                        &mut wifi,
+                        MatterStackWirelessTask::<
+                            '_,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            <W as WifiDriver>::NetCtl<'_>,
+                        > {
+                            stack: self,
+                            networks: &mut *networks,
+                            crypto: &crypto,
+                            handler: &handler,
+                            kv: &kv,
+                            user_task: &mut user,
+                            _net_ctl: PhantomData,
+                        },
+                    )
+                    .await?;
+                }
+
+                WifiDriver::run(
                     &mut wifi,
                     MatterStackWirelessTask::<
                         '_,
@@ -280,31 +308,6 @@ where
                 )
                 .await?;
             }
-
-            WifiDriver::run(
-                &mut wifi,
-                MatterStackWirelessTask::<
-                    '_,
-                    _,
-                    _,
-                    _,
-                    _,
-                    _,
-                    _,
-                    _,
-                    _,
-                    <W as WifiDriver>::NetCtl<'_>,
-                > {
-                    stack: self,
-                    networks: &mut *networks,
-                    crypto: &crypto,
-                    handler: &handler,
-                    kv: &kv,
-                    user_task: &mut user,
-                    _net_ctl: PhantomData,
-                },
-            )
-            .await?;
         }
     }
 
@@ -319,15 +322,15 @@ where
 
 /// A trait representing a task that needs access to the operational wireless interface (Wifi or Thread)
 /// (Netif, UDP stack and Wireless controller) to perform its work.
-pub trait WifiTask {
+pub trait WifiTask: MaybeSend {
     /// Run the task with the given network stack, network interface, wireless controller and mDNS
-    async fn run<S, N, C, M>(
+    fn run<S, N, C, M>(
         &mut self,
         net_stack: S,
         netif: N,
         net_ctl: C,
         mdns: M,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -345,7 +348,7 @@ where
         netif: N,
         net_ctl: C,
         mdns: M,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -357,7 +360,7 @@ where
 }
 
 /// A trait for running a task within a context where the wireless interface is initialized and operable
-pub trait WifiDriver {
+pub trait WifiDriver: MaybeSend {
     /// The Wifi network controller type this driver produces in its operational
     /// phase. Naming it here lets the commissioning and operational handler chains
     /// be built with the SAME `WirelessNetCtl<Self::NetCtl<'_>>` net-ctl type,
@@ -369,7 +372,7 @@ pub trait WifiDriver {
 
     /// Setup the radio to operate in wireless (Wifi or Thread) mode
     /// and run the given task.
-    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    fn run<T>(&mut self, task: T) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         T: WifiTask;
 }
@@ -383,7 +386,7 @@ where
     where
         Self: 'a;
 
-    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>>
+    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         A: WifiTask,
     {
@@ -395,16 +398,16 @@ where
 /// as well as to the commissioning BTP GATT peripheral.
 ///
 /// Typically, tasks performing the Matter concurrent commissioning workflow will implement this trait.
-pub trait WifiCoexTask {
+pub trait WifiCoexTask: MaybeSend {
     /// Run the task with the given network stack, network interface, wireless controller and mDNS
-    async fn run<S, N, C, M, G>(
+    fn run<S, N, C, M, G>(
         &mut self,
         net_stack: S,
         netif: N,
         net_ctl: C,
         mdns: M,
         gatt: G,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -424,7 +427,7 @@ where
         net_ctl: C,
         mdns: M,
         gatt: G,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -441,10 +444,10 @@ where
 ///
 /// Typically, tasks performing the Matter concurrent commissioning workflow will ran by implementations
 /// of this trait.
-pub trait WifiCoexDriver {
+pub trait WifiCoexDriver: MaybeSend {
     /// Setup the radio to operate in wireless coexist mode (Wifi or Thread + BLE)
     /// and run the given task.
-    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    fn run<T>(&mut self, task: T) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         T: WifiCoexTask;
 }
@@ -453,7 +456,7 @@ impl<T> WifiCoexDriver for &mut T
 where
     T: WifiCoexDriver,
 {
-    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>>
+    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         A: WifiCoexTask,
     {
@@ -463,6 +466,7 @@ where
 
 impl<S, N, C, M, P> WifiDriver for PreexistingWireless<S, N, C, M, P>
 where
+    P: MaybeSend,
     S: NetStack,
     N: NetifDiag + NetChangeNotif,
     C: NetCtl + WifiDiag + NetChangeNotif,
@@ -515,6 +519,7 @@ where
     C: Crypto,
     H: DataModel,
     K: KvBlobStoreAccess,
+    U: MaybeSend,
     Q: NetCtl + WifiDiag + NetChangeNotif,
 {
     async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>

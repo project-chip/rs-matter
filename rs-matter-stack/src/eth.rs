@@ -85,15 +85,15 @@ pub type EthMatterStack<'a, const B: usize, E = ()> = MatterStack<'a, B, Eth<E>>
 
 /// A trait representing a task that needs access to the operational Ethernet interface
 /// (Network stack, Netif and Ethernet diagnostics) to perform its work.
-pub trait EthernetTask {
+pub trait EthernetTask: MaybeSend {
     /// Run the task with the given network stack, network interface, Ethernet diagnostics and mDNS
-    async fn run<S, N, D, M>(
+    fn run<S, N, D, M>(
         &mut self,
         net_stack: S,
         netif: N,
         eth_diag: D,
         mdns: M,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -111,7 +111,7 @@ where
         netif: N,
         eth_diag: D,
         mdns: M,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
@@ -123,9 +123,9 @@ where
 }
 
 /// A trait for running a task within a context where the ethernet interface is initialized and operable
-pub trait EthernetDriver {
+pub trait EthernetDriver: MaybeSend {
     /// Setup Ethernet and run the given task
-    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    fn run<T>(&mut self, task: T) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         T: EthernetTask;
 }
@@ -134,7 +134,7 @@ impl<T> EthernetDriver for &mut T
 where
     T: EthernetDriver,
 {
-    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>>
+    fn run<A>(&mut self, task: A) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         A: EthernetTask,
     {
@@ -265,7 +265,7 @@ where
         handler: H,
         kv: K,
         user: X,
-    ) -> impl Future<Output = Result<(), Error>> + 't
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         U: NetStack + 't,
         N: NetifDiag + NetChangeNotif + 't,
@@ -335,7 +335,7 @@ where
         handler: H,
         kv: K,
         user: X,
-    ) -> impl Future<Output = Result<(), Error>> + 't
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
         N: EthernetDriver + 't,
         C: Crypto + 't,

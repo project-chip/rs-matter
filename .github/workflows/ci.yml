@@ -114,11 +114,15 @@ jobs:
 
       - name: Examples - Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cargo build -p rs-matter-examples --bin onoff_light_work_stealing --features zbus,send-sync
+        run: cargo build -p rs-matter-examples --bin onoff_light_work_stealing --bin onoff_light_stack --features zbus,send-sync
 
       - name: Test - Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cd rs-matter; cargo test --features send-sync --test send_sync
+
+      - name: Test - Stack Send Sync
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cd rs-matter-stack; cargo test --features send-sync --test drivers
 
       - name: Examples - WebRTC Camera
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'

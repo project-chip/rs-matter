@@ -37,7 +37,7 @@ use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select3, select4, Coalesce};
 use rs_matter_utils::init::{init, Init};
-use rs_matter_utils::sync::{blocking, IfMutex, MaybeSend};
+use rs_matter_utils::sync::{blocking, IfMutex, MaybeSend, MaybeSendSync};
 use rs_matter_utils::timers::{Duration, Timer};
 
 use crate::ble::GattPeripheral;
@@ -132,7 +132,7 @@ where
 
 impl<const N: usize, T> Embedding for WirelessNetworks<N, T>
 where
-    T: WirelessNetwork,
+    T: WirelessNetwork + MaybeSendSync,
 {
     const INIT: Self = Self::new();
 
@@ -677,11 +677,11 @@ where
     /// therefore only runs the BTP coexistence transport.
     async fn run_net_coex<C, S, N, D, G>(
         &self,
-        crypto: C,
-        net_stack: S,
-        netif: N,
-        mut mdns: D,
-        mut gatt: G,
+        crypto: &C,
+        net_stack: &S,
+        netif: &N,
+        mdns: &mut D,
+        gatt: &mut G,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -690,17 +690,17 @@ where
         D: Mdns,
         G: GattPeripheral,
     {
-        self.run_btp_coex(&crypto, &net_stack, &netif, &mut mdns, &mut gatt)
+        self.run_btp_coex(crypto, net_stack, netif, mdns, gatt)
             .await
     }
 
     async fn run_btp_coex<C, S, N, D, P>(
         &self,
-        crypto: C,
-        net_stack: S,
-        netif: N,
-        mut mdns: D,
-        peripheral: P,
+        crypto: &C,
+        net_stack: &S,
+        netif: &N,
+        mdns: &mut D,
+        peripheral: &mut P,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -726,8 +726,8 @@ where
         let mut net_task = pin_alloc!(
             self.bump,
             self.run_oper_net(
-                &crypto,
-                &net_stack,
+                crypto,
+                net_stack,
                 0, // TODO
                 core::future::pending(),
                 Some((&self.network.btp, &self.network.btp))
@@ -736,7 +736,7 @@ where
 
         let mut mdns_task = pin_alloc!(
             self.bump,
-            self.run_oper_netif_mdns(&crypto, &net_stack, &netif, &mut mdns)
+            self.run_oper_netif_mdns(crypto, net_stack, netif, mdns)
         );
 
         select3(&mut btp_task, &mut net_task, &mut mdns_task)
@@ -744,7 +744,7 @@ where
             .await
     }
 
-    async fn run_btp<C, P>(&self, crypto: C, mut peripheral: P) -> Result<(), Error>
+    async fn run_btp<C, P>(&self, crypto: &C, mut peripheral: P) -> Result<(), Error>
     where
         C: Crypto,
         P: GattPeripheral,
@@ -764,7 +764,7 @@ where
         );
 
         let mut net_task =
-            pin!(self.run_transport_net(&crypto, &self.network.btp, &self.network.btp, NoNetwork));
+            pin!(self.run_transport_net(crypto, &self.network.btp, &self.network.btp, NoNetwork));
 
         // The window this phase is advertising can also simply go away - it expires, or an
         // administrator revokes it - without the commissioner ever getting as far as handing
@@ -804,7 +804,7 @@ where
     /// fails.
     async fn run_gatt_while_ble_commissionable<P>(
         &self,
-        mut peripheral: P,
+        peripheral: &mut P,
         adv_data: &AdvData,
     ) -> Result<(), Error>
     where

@@ -19,6 +19,7 @@ use core::future::Future;
 
 use rs_matter_transport::network::btp::{AdvData, Btp};
 use rs_matter_utils::error::Error;
+use rs_matter_utils::sync::MaybeSend;
 
 #[cfg(all(target_os = "linux", feature = "bluer"))]
 pub use bluer::*;
@@ -30,19 +31,19 @@ pub use bluez::*;
 /// Running the peripheral means it would advertise the Matter BTP service
 /// and then - once a peer connects - will drive the passed `Btp` instance
 /// via write requests and indications to the Matter C1 and C2 characteristics.
-pub trait GattPeripheral {
+pub trait GattPeripheral: MaybeSend {
     /// Run the Matter GATT app
     ///
     /// # Arguments
     /// - `btp`: the BTP instance to drive with the GATT app
     /// - `service_name`: the name to advertise for the BTP service
     /// - `service_adv`: the advertisement data to use for the BTP service
-    async fn run(
+    fn run(
         &mut self,
         btp: &Btp,
         service_name: &str,
         service_adv: &AdvData,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend;
 }
 
 impl<T> GattPeripheral for &mut T
@@ -54,7 +55,7 @@ where
         btp: &Btp,
         service_name: &str,
         service_adv: &AdvData,
-    ) -> impl Future<Output = Result<(), Error>> {
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend {
         (*self).run(btp, service_name, service_adv)
     }
 }

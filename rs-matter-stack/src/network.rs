@@ -17,11 +17,12 @@
 
 use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_utils::init::{init_from_closure, Init};
+use rs_matter_utils::sync::MaybeSendSync;
 
 use crate::private::Sealed;
 
 /// User data that can be embedded in the stack network
-pub trait Embedding {
+pub trait Embedding: MaybeSendSync {
     const INIT: Self;
 
     fn init() -> impl Init<Self>;
@@ -39,7 +40,7 @@ impl Embedding for () {
 /// `MatterStack` is parameterized by a network type implementing this trait.
 ///
 /// The trait is sealed and has only two implementations: `Eth` and `WirelessBle`.
-pub trait Network: Sealed {
+pub trait Network: Sealed + MaybeSendSync {
     const INIT: Self;
 
     /// Optional additional state embedded in the network state

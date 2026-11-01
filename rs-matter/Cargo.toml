@@ -231,7 +231,7 @@ openssl = ["alloc", "rs-matter-crypto/openssl"]
 mbedtls = ["alloc", "rs-matter-crypto/mbedtls"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
 # This is a WIP feature and not yet fully supported.
-send-sync = ["rs-matter-utils/send-sync"]
+send-sync = ["rs-matter-utils/send-sync", "rs-matter-stack/send-sync"]
 # Enable a small OTA DCL client.
 # TODO: We likely don't need this hidden behind a feature.
 ota-dcl = ["rs-matter-dm/ota-dcl"]

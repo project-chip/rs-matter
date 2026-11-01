@@ -23,6 +23,7 @@ use rs_matter_node::Matter;
 use rs_matter_transport::network::mdns::builtin::BuiltinMdns;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::storage::String;
+use rs_matter_utils::sync::MaybeSend;
 
 use crate::net::{NetSocket, NetStack};
 
@@ -35,7 +36,7 @@ use crate::net::{NetSocket, NetStack};
 pub const MAX_NETIF_IPV6_ADDRS: usize = 4;
 
 /// A trait for running an mDNS responder.
-pub trait Mdns {
+pub trait Mdns: MaybeSend {
     /// Run the mDNS responder with the given network stack, MAC address, IPv4 and IPv6 addresses, and interface index.
     ///
     /// NOTE: This trait might change once `rs-matter` starts supporting mDNS resolvers
@@ -51,16 +52,16 @@ pub trait Mdns {
     ///   routable (GUA / ULA) ones - as commissioners pick whichever of them they can reach.
     /// - `interface`: The interface index for the host, used for IPv6 multicast.
     #[allow(clippy::too_many_arguments)]
-    async fn run<C, S>(
+    fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        crypto: C,
-        net_stack: S,
+        crypto: &C,
+        net_stack: &S,
         mac: &[u8],
         ipv4: Ipv4Addr,
         ipv6: &[Ipv6Addr],
         interface: u32,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         C: Crypto,
         S: NetStack;
@@ -73,13 +74,13 @@ where
     fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        crypto: C,
-        net_stack: S,
+        crypto: &C,
+        net_stack: &S,
         mac: &[u8],
         ipv4: Ipv4Addr,
         ipv6: &[Ipv6Addr],
         interface: u32,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         C: Crypto,
         S: NetStack,
@@ -92,8 +93,8 @@ impl Mdns for BuiltinMdns {
     async fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        crypto: C,
-        net_stack: S,
+        crypto: &C,
+        net_stack: &S,
         mac: &[u8],
         ipv4: Ipv4Addr,
         ipv6: &[Ipv6Addr],
@@ -176,13 +177,13 @@ impl Mdns for rs_matter_transport::network::mdns::avahi::AvahiMdns {
     fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        _crypto: C,
-        _net_stack: S,
+        _crypto: &C,
+        _net_stack: &S,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
         _ipv6: &[Ipv6Addr],
         _interface: u32,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         C: Crypto,
         S: NetStack,
@@ -196,13 +197,13 @@ impl Mdns for rs_matter_transport::network::mdns::resolve::ResolveMdns {
     fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        _crypto: C,
-        _net_stack: S,
+        _crypto: &C,
+        _net_stack: &S,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
         _ipv6: &[Ipv6Addr],
         _interface: u32,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         C: Crypto,
         S: NetStack,
@@ -216,13 +217,13 @@ impl Mdns for rs_matter_transport::network::mdns::zeroconf::ZeroconfMdns {
     fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        _crypto: C,
-        _net_stack: S,
+        _crypto: &C,
+        _net_stack: &S,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
         _ipv6: &[Ipv6Addr],
         _interface: u32,
-    ) -> impl Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend
     where
         C: Crypto,
         S: NetStack,
@@ -237,8 +238,8 @@ impl Mdns for rs_matter_transport::network::mdns::astro::AstroMdns {
     async fn run<C, S>(
         &mut self,
         matter: &Matter<'_>,
-        _crypto: C,
-        _net_stack: S,
+        _crypto: &C,
+        _net_stack: &S,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
         _ipv6: &[Ipv6Addr],
