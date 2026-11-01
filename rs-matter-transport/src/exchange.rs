@@ -473,6 +473,7 @@ impl ExchangeState {
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
         retry_interval_ms: u32,
+        own_active_poll_ms: u32,
     ) -> Result<(), Error> {
         if matches!(self.role, Role::Initiator(_)) {
             tx_proto.set_initiator();
@@ -482,7 +483,8 @@ impl ExchangeState {
 
         tx_proto.exch_id = self.exch_id;
 
-        self.mrp.pre_send(tx_plain, tx_proto, retry_interval_ms)
+        self.mrp
+            .pre_send(tx_plain, tx_proto, retry_interval_ms, own_active_poll_ms)
     }
 
     pub fn retrans_delay_ms(&mut self, jitter_rand: u8) -> Option<u64> {
@@ -745,9 +747,15 @@ impl TxMessage<'_> {
                 .get(self.exchange_id.session_id())
                 .ok_or(ErrorCode::NoSession)?;
 
+            // The own active polling interval of the node, if it is an ICD:
+            // snapshotted on the transport, as the advertisement itself lives
+            // under the very lock `with_sessions` is holding here.
+            let own_active_poll_ms = self.transport.icd_fast_poll_ms();
+
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,
+                own_active_poll_ms,
             )?;
 
             self.packet.peer = peer;

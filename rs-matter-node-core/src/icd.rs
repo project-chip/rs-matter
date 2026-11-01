@@ -44,6 +44,14 @@ pub struct IcdAdvertisement {
     /// reachable within while idle, so the least `SESSION_IDLE_INTERVAL`
     /// (`SII` TXT key) it may advertise.
     pub slow_poll_ms: u32,
+    /// The fast (active mode) polling interval in effect, in milliseconds: what
+    /// the ICD paces its polls at while active. Not advertised in any DNS-SD
+    /// TXT key - it carries no meaning for a peer - but pads the node's *own*
+    /// MRP retransmission delays, which a sleepy sender can only receive the
+    /// acknowledgement of on its next poll (Matter Core spec, 4.12.2.1:
+    /// "An ICD sender SHOULD increase t to also account for its own sleepy
+    /// interval required to receive the acknowledgment").
+    pub fast_poll_ms: u32,
     /// The current operating mode of a Long-Idle-Time-capable ICD: the `ICD`
     /// TXT key (`0` for `SIT`, `1` for `LIT`). `None` for a SIT-only ICD, which
     /// has no `ICD` key.

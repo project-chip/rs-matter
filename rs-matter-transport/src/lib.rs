@@ -39,6 +39,7 @@ use core::fmt::Display;
 use core::future::Future;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use domain::base::name::ToLabelIter;
 
@@ -209,6 +210,17 @@ pub struct Transport {
     timeouts_changed: Notification,
     /// The Session Active Interval this node advertises, if configured.
     sai: Option<u32>,
+    /// The fast (active mode) polling interval of the ICD this transport
+    /// serves, in milliseconds - `0` when the node is not an ICD.
+    ///
+    /// Snapshotted here by the node whenever its ICD advertisement changes,
+    /// because the advertisement itself lives under the sessions lock, which
+    /// the send paths are holding exactly when they need the value. A sleepy
+    /// sender only receives the acknowledgement of a reliable message on its
+    /// next poll, so the interval pads every MRP retransmission delay as a
+    /// flat term (Matter Core spec, 4.12.2.1; see
+    /// [`RetransEntry::delay_ms`](mrp::RetransEntry::delay_ms)).
+    icd_fast_poll_ms: AtomicU32,
     /// All sessions.
     ///
     /// `Matter` keeps the state of the node under this lock too, so that the sessions
@@ -235,6 +247,7 @@ impl Transport {
             comm_window_changed: MultiNotification::new(),
             timeouts_changed: Notification::new(),
             sai,
+            icd_fast_poll_ms: AtomicU32::new(0),
             sessions: Mutex::new(RefCell::new(Sessions::new())),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
@@ -259,6 +272,7 @@ impl Transport {
             comm_window_changed <- MultiNotification::init(),
             timeouts_changed <- Notification::init(),
             sai,
+            icd_fast_poll_ms: AtomicU32::new(0),
             sessions <- Mutex::init(RefCell::init(Sessions::init())),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
@@ -269,6 +283,24 @@ impl Transport {
     /// The Session Active Interval this node advertises.
     pub(crate) fn sai(&self) -> u32 {
         self.sai.unwrap_or(mrp::MRP_BASE_RETRY_INTERVAL_MS)
+    }
+
+    /// The fast (active mode) polling interval of the ICD this transport
+    /// serves, in milliseconds - `0` when the node is not an ICD. Set (from
+    /// the ICD advertisement) by the node with
+    /// [`Transport::set_icd_fast_poll_interval`](Self::set_icd_fast_poll_interval).
+    pub fn icd_fast_poll_ms(&self) -> u32 {
+        self.icd_fast_poll_ms.load(Ordering::Relaxed)
+    }
+
+    /// Record the fast (active mode) polling interval of the ICD this
+    /// transport serves, or `0` if the node is not (or no longer) an ICD.
+    ///
+    /// The node calls this whenever its ICD advertisement changes, so that
+    /// the MRP retransmission delays account for how long the device can take
+    /// to merely *receive* an acknowledgement.
+    pub fn set_icd_fast_poll_interval(&self, fast_poll_ms: u32) {
+        self.icd_fast_poll_ms.store(fast_poll_ms, Ordering::Relaxed);
     }
 
     /// Run `f` with the sessions locked.
@@ -1356,7 +1388,8 @@ impl Transport {
         if let Some(session) = &mut session {
             packet.header.plain = Default::default();
 
-            let (peer, retransmission) = session.pre_send(exchange_index, &mut packet.header)?;
+            let (peer, retransmission) =
+                session.pre_send(exchange_index, &mut packet.header, self.icd_fast_poll_ms())?;
 
             packet.peer = peer;
             packet.tx_info.retransmission = retransmission;
