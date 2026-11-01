@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: `rs-matter-stack`, re-exported as `stack`: the assembly of a node over a network driver, without a dependency on `edge-nal`
 * Breaking: `rs-matter` is split into crates, which it re-exports under the existing paths, so that an edit outside of the generated code no longer re-checks it (#559); the moved and changed APIs are listed in `docs/crate-split-design.md` (#634)
   * Breaking: the handler contexts no longer hand out the `Matter` and the `Exchange`, and the system cluster handlers take a `&Matter` when created
   * Breaking: node types in the cluster handler modules use their own enums instead of the generated ones

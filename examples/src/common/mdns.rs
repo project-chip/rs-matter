@@ -22,6 +22,42 @@ use rs_matter::{crypto::Crypto, error::Error};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
+/// Create the mDNS responder which the features of this crate select, for `rs_matter::stack`.
+#[allow(unused)]
+pub fn create_mdns() -> impl rs_matter::stack::mdns::Mdns {
+    #[cfg(feature = "astro-dnssd")]
+    let mdns = rs_matter::transport::network::mdns::astro::AstroMdns::new();
+
+    #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
+    let mdns = rs_matter::transport::network::mdns::zeroconf::ZeroconfMdns::new();
+
+    #[cfg(all(
+        feature = "resolve",
+        not(any(feature = "zeroconf", feature = "astro-dnssd"))
+    ))]
+    let mdns = rs_matter::transport::network::mdns::resolve::ResolveMdns::new(
+        futures_lite::future::block_on(rs_matter::utils::zbus::Connection::system()).unwrap(),
+    );
+
+    #[cfg(all(
+        feature = "avahi",
+        not(any(feature = "resolve", feature = "zeroconf", feature = "astro-dnssd"))
+    ))]
+    let mdns = rs_matter::transport::network::mdns::avahi::AvahiMdns::new(
+        futures_lite::future::block_on(rs_matter::utils::zbus::Connection::system()).unwrap(),
+    );
+
+    #[cfg(not(any(
+        feature = "avahi",
+        feature = "resolve",
+        feature = "zeroconf",
+        feature = "astro-dnssd"
+    )))]
+    let mdns = rs_matter::transport::network::mdns::builtin::BuiltinMdns::new();
+
+    mdns
+}
+
 #[allow(unused)]
 pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]

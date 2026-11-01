@@ -19,6 +19,7 @@ members = [
         "rs-matter-dm",
         "rs-matter-respond",
         "rs-matter-onboard",
+        "rs-matter-stack",
         "rs-matter-macros",
         "rs-matter-codegen",
         "examples",
@@ -81,6 +82,7 @@ rs-matter-im = { path = "rs-matter-im", version = "0.4.1", default-features = fa
 rs-matter-dm = { path = "rs-matter-dm", version = "0.4.1", default-features = false }
 rs-matter-respond = { path = "rs-matter-respond", version = "0.4.1", default-features = false }
 rs-matter-onboard = { path = "rs-matter-onboard", version = "0.4.1", default-features = false }
+rs-matter-stack = { path = "rs-matter-stack", version = "0.4.1", default-features = false }
 rs-matter-macros = { path = "rs-matter-macros", version = "0.4.1" }
 rs-matter-codegen = { path = "rs-matter-codegen", version = "0.4.1" }
 

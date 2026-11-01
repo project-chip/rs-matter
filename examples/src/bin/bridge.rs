@@ -22,8 +22,6 @@
 
 use core::pin::pin;
 
-use std::net::UdpSocket;
-
 use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
@@ -33,58 +31,63 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
-use rs_matter::dm::endpoints;
+use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, Dataver, Endpoint, InvokeContext, Node, ReadContext,
+    Async, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
-use rs_matter::im::{InteractionModel, InteractionModelState};
-use rs_matter::pairing::qr::QrTextType;
-use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
-use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVBuilderParent, Utf8StrBuilder};
-use rs_matter::transport::exchange::MatterBuffers;
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::futures::{select4, Coalesce};
-use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 pub use rs_matter::dm::clusters::decl::bridged_device_basic_information::{
     self, ClusterHandler as _, KeepActiveRequest,
 };
 
+use rs_matter::stack::eth::EthMatterStack;
+use rs_matter::stack::net::std::StdNetStack;
+use rs_matter::utils::init::InitMaybeUninit;
+
+use static_cell::StaticCell;
+
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+/// The bump allocator size of the stack, in bytes.
+///
+/// If it is not enough, the stack panics while it starts. The futures of an
+/// unoptimized build are much bigger than those of an optimized one.
+const BUMP_SIZE: usize = 32 * 1024;
+
+/// The stack is allocated statically to avoid program stack blowups.
+static MATTER_STACK: StaticCell<EthMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    // Create the Matter object
-    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let stack = MATTER_STACK.uninit().init_with(EthMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
 
     // Persistence
-    let store = DirKvBlobStore::new_default();
-
-    // Create the transport buffers
-    let buffers: MatterBuffers = MatterBuffers::new();
-
-    // Create the data model state (subscriptions, events).
-    let state: InteractionModelState = InteractionModelState::new();
-
-    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
-    let kv = matter.kv(store);
-
-    // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
-    matter.startup(&kv)?;
+    let mut store = DirKvBlobStore::new_default();
 
     // Create the crypto instance
     let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
+
+    // Re-hydrate the persisted state. If the device is not commissioned yet, this also
+    // prints the QR text and code to the console and enables basic commissioning.
+    futures_lite::future::block_on(stack.startup(&crypto, &mut store))?;
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = stack.kv(store);
 
     // Our on-off clusters
     let on_off_handler_ep2 = on_off::OnOffHandler::new_standalone(
@@ -100,53 +103,29 @@ fn main() -> Result<(), Error> {
         TestOnOffDeviceLogic::new(false),
     );
 
-    // Create the Data Model instance
-    let im = InteractionModel::new(
-        &matter,
+    // Run the stack, which adds the operational network clusters of endpoint 0 by itself
+    let matter = pin!(stack.run_preex(
+        // The UDP sockets of the node
+        StdNetStack::new(),
+        // The network interfaces of the host
+        SysNetifs,
+        // No Ethernet diagnostics to report
+        &(),
+        mdns::create_mdns(),
         &crypto,
-        &buffers,
-        data_model(&matter, rand, &on_off_handler_ep2, &on_off_handler_ep3),
-        &kv,
-        &state,
-    );
-
-    // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state and deliver the `Startup` lifecycle op to all cluster handlers.
-    futures_lite::future::block_on(im.startup())?;
-
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&im);
-
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
-
-    // Run the background job of the data model
-    let mut im_job = pin!(im.run());
-
-    // Create the Matter UDP socket
-    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-
-    // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
-
-    if !matter.has_fabrics() {
-        // If the device is not commissioned yet, print the QR text and code to the console
-        // and enable basic commissioning
-
-        matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
-        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
-    }
-
-    // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
+        data_model(
+            stack.matter(),
+            rand,
+            &on_off_handler_ep2,
+            &on_off_handler_ep3
+        ),
+        kv,
+        // No user task to run
+        (),
+    ));
 
     // Run with a simple `block_on`. Any local executor would do.
-    futures_lite::future::block_on(all)
+    futures_lite::future::block_on(matter)
 }
 
 /// The Node meta-data describing our Matter device.
@@ -208,9 +187,11 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&SysNetifs)
-            .build(matter, rand)
+        EmptyHandler
+            .chain(
+                |e, _| e == ROOT_ENDPOINT_ID,
+                Async(EthMatterStack::<0, ()>::root_handler(matter, &(), rand)),
+            )
             // The next chain is the handler for the "aggregator" endpoint 1.
             //
             // Note how the descriptor cluster is a bit different compared to the normal ones.
