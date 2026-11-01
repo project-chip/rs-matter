@@ -29,6 +29,7 @@
 //! where - moreover - the Linux stack does not have NetworkManager installed. For regular Linux systems, or for embedded
 //! Linux systems having NetworkManager, using the NetworkManager code-path is recommended, as it is much
 //! more straightfoward to run it, in that it does not need elevated permissions, nor the presence of the `dhclient` and `ip` commands.
+#![recursion_limit = "256"]
 
 use core::pin::pin;
 

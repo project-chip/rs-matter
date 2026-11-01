@@ -114,7 +114,7 @@ jobs:
 
       - name: Examples - Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cargo build -p rs-matter-examples --bin onoff_light_work_stealing --bin onoff_light --features zbus,send-sync
+        run: cargo build -p rs-matter-examples --bin onoff_light_work_stealing --bin onoff_light --bin onoff_light_switch --bin ota_requestor --features zbus,send-sync
 
       - name: Test - Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
