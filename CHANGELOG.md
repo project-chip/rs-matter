@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: on Windows, a BLE GATT peripheral and central over its Bluetooth LE API: `transport::network::btp::winrt`, and `stack::ble::WinrtGattPeripheral`. The `onoff_light_bt` example runs on Windows too (#639)
 * Fix: MRP: an ICD sender accounts for its own polling interval in the retransmission backoff (#638)
 * New: `rs-matter-stack`, re-exported as `stack`: the assembly of a node over a network driver (#636)
 * Breaking: `rs-matter` is split into crates, which it re-exports under the existing paths, so that an edit outside of the generated code no longer re-checks it; the moved and changed APIs are listed in `docs/crate-split-design.md` (#634)

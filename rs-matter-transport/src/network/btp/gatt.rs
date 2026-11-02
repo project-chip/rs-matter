@@ -46,6 +46,9 @@ pub mod bluer;
 // socket flags such as `SOCK_CLOEXEC`).
 #[cfg(all(feature = "zbus", target_os = "linux"))]
 pub mod bluez;
+// The Bluetooth LE API of Windows.
+#[cfg(all(windows, feature = "std"))]
+pub mod winrt;
 
 // The 16-bit, registered Matter Service UUID, as per the Matter Core spec.
 pub const MATTER_BLE_SERVICE_UUID16: u16 = 0xFFF6;

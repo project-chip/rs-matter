@@ -60,7 +60,7 @@ zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel", "rs-m
 bluer = ["dep:bluer", "dep:tokio", "dep:tokio-stream", "os", "rs-matter-utils/bluer"]
 # Umbrella set of features for typical OS-based non-baremetal deployments.
 os = ["std", "async-io", "rs-matter-utils/backtrace", "rs-matter-utils/os", "rs-matter-node-core/os"]
-std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-node-core/std"]
+std = ["alloc", "dep:windows", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-node-core/std"]
 alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-pairing/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-node-core/alloc"]
 # Multicast groups support.
 groups = ["rs-matter-crypto/groups", "rs-matter-node-core/groups"]
@@ -115,6 +115,15 @@ nix = { workspace = true }
 bluer = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
 tokio-stream = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+async-channel = { workspace = true }
+windows = { workspace = true, optional = true, features = [
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Radios",
+    "Storage_Streams",
+] }
 
 [dev-dependencies]
 rs-matter-crypto = { workspace = true, features = ["rustcrypto"] }

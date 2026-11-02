@@ -15,11 +15,15 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements the On/Off Light cluster over Wifi with commissioning over Bluetooth (Linux only).
+//! An example Matter device that implements the On/Off Light cluster over Wifi with commissioning over Bluetooth
+//! (Linux, with the `zbus` feature, and Windows).
 //!
-//! The example uses the BlueZ BLE stack and either the `NetworkManager` or directly the `wpa_supplicant` daemon
+//! On Linux, the example uses the BlueZ BLE stack and either the `NetworkManager` or directly the `wpa_supplicant` daemon
 //! to connect to BT and to manage Wifi networks.
-//! Therefore, it is likely to run only on Linux-based systems (e.g., Ubuntu, Debian, etc.), because BlueZ is Linux-specific.
+//!
+//! On Windows, the example uses the Bluetooth LE API of Windows. `rs-matter` has no Wifi control for Windows, so the
+//! example accepts the Wifi credentials it is given without acting on them, and stays on the network the host is on.
+//! It therefore works with commissioners that can reach the host there.
 //!
 //! Do note that running the app with the `wpa_supplicant` daemon, some Linux systems might require the user running the app to have
 //! elevated permissions, so run with `sudo`!
@@ -30,9 +34,15 @@
 //! Linux systems having NetworkManager, using the NetworkManager code-path is recommended, as it is much
 //! more straightfoward to run it, in that it does not need elevated permissions, nor the presence of the `dhclient` and `ip` commands.
 #![recursion_limit = "256"]
+// Only `main` differs between the platforms, and on those without Bluetooth support it uses nothing else.
+#![cfg_attr(
+    not(any(windows, all(target_os = "linux", feature = "zbus"))),
+    allow(dead_code, unused_imports)
+)]
 
 use core::pin::pin;
 
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 use log::{info, warn};
 
 use rand::Rng;
@@ -43,22 +53,33 @@ use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnO
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetCtl;
+#[cfg(windows)]
+use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
-use rs_matter::dm::networks::unix::UnixNetifs;
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::dm::networks::wifi::nm::NetMgrCtl;
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::dm::networks::wifi::wpa_supp::unix::DhClientCtl;
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::dm::networks::wifi::wpa_supp::WpaSuppCtl;
-use rs_matter::dm::networks::NetChangeNotif;
+#[cfg(windows)]
+use rs_matter::dm::networks::wireless::NoopWirelessNetCtl;
+use rs_matter::dm::networks::{NetChangeNotif, SysNetifs};
 use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, Node};
 use rs_matter::error::Error;
 use rs_matter::persist::DirKvBlobStore;
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::stack::ble::BluezGattPeripheral;
+use rs_matter::stack::ble::GattPeripheral;
+#[cfg(windows)]
+use rs_matter::stack::ble::WinrtGattPeripheral;
 use rs_matter::stack::net::std::StdNetStack;
 use rs_matter::stack::wireless::{PreexistingWireless, WifiMatterStack};
 use rs_matter::utils::init::InitMaybeUninit;
@@ -77,6 +98,7 @@ const BUMP_SIZE: usize = 64 * 1024;
 /// The stack is allocated statically to avoid program stack blowups.
 static MATTER_STACK: StaticCell<WifiMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
 
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
@@ -108,20 +130,43 @@ fn main() -> Result<(), Error> {
 
     let connection = futures_lite::future::block_on(Connection::system()).unwrap();
 
+    // Here's how to run with the BlueR peripheral instead:
+    // `rs_matter::stack::ble::BluerGattPeripheral::new(None)`
+    let gatt = BluezGattPeripheral::new(&connection, None);
+
     if use_wpa_supp {
         run(
-            &connection,
             WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
+            gatt,
         )
     } else {
-        run(&connection, NetMgrCtl::new(&connection, &if_name))
+        run(NetMgrCtl::new(&connection, &if_name), gatt)
     }
 }
 
-fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
-    connection: &Connection,
-    net_ctl: N,
-) -> Result<(), Error> {
+#[cfg(windows)]
+fn main() -> Result<(), Error> {
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
+
+    run(
+        NoopWirelessNetCtl::new(NetworkType::Wifi),
+        WinrtGattPeripheral::new(),
+    )
+}
+
+#[cfg(not(any(windows, all(target_os = "linux", feature = "zbus"))))]
+fn main() {
+    eprintln!("This example needs Bluetooth support: on Linux, build it with the `zbus` feature.");
+    eprintln!("It also runs on Windows. Other platforms have no GATT peripheral yet.");
+}
+
+fn run<N, G>(net_ctl: N, gatt: G) -> Result<(), Error>
+where
+    N: NetCtl + WifiDiag + NetChangeNotif,
+    G: GattPeripheral,
+{
     let stack = MATTER_STACK.uninit().init_with(WifiMatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
@@ -159,12 +204,10 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
             // The UDP sockets of the node
             StdNetStack::new(),
             // The network interfaces of the host
-            UnixNetifs,
+            SysNetifs,
             net_ctl,
             mdns::create_mdns(),
-            // Here's how to run with the BlueR peripheral instead:
-            // `rs_matter::stack::ble::BluerGattPeripheral::new(None)`
-            BluezGattPeripheral::new(connection, None),
+            gatt,
         ),
         &crypto,
         data_model(stack.matter(), rand, &on_off_handler),

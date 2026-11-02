@@ -147,6 +147,7 @@ tokio = "1"
 tokio-stream = "0.1"
 uuid = "1"
 verhoeff = { version = "1", default-features = false }
+windows = "0.62"
 x509-cert = { version = "0.3", default-features = false, features = ["hazmat"] }
 zbus = "5.8"
 zeroconf = "0.18"
