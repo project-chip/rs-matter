@@ -416,15 +416,14 @@ impl Icd {
     /// What the device advertises about itself as an ICD right now; the
     /// operating mode only if it is LIT-capable (`lit`).
     pub(crate) fn advertisement(&self, lit: bool) -> IcdAdvertisement {
-        let (operating_mode, slow_poll_ms, fast_poll_ms) = self.state.lock(|s| {
+        let (operating_mode, slow_poll_ms) = self.state.lock(|s| {
             let s = s.borrow();
-            (s.operating_mode, s.effective_slow_poll_ms(), s.fast_poll_ms)
+            (s.operating_mode, s.effective_slow_poll_ms())
         });
 
         IcdAdvertisement {
             active_threshold_ms: self.mode.active_mode_threshold_ms,
             slow_poll_ms,
-            fast_poll_ms,
             operating_mode: lit.then_some(match operating_mode {
                 OperatingModeEnum::SIT => IcdOperatingMode::Sit,
                 OperatingModeEnum::LIT => IcdOperatingMode::Lit,
@@ -684,10 +683,10 @@ impl Icd {
         let transport = matter.transport();
 
         let dev_det = matter.dev_det();
-        self.set_poll_intervals(
-            dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS),
-            dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS),
-        );
+        let fast_poll_ms = dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS);
+
+        self.set_poll_intervals(fast_poll_ms, dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS));
+        transport.set_icd_fast_poll_interval(fast_poll_ms);
 
         // The slow poll in effect may have changed with them.
         self.publish_advertisement(matter, X::LIT);
@@ -1142,7 +1141,6 @@ mod tests {
             IcdAdvertisement {
                 active_threshold_ms: mode().active_mode_threshold_ms,
                 slow_poll_ms: 5_000,
-                fast_poll_ms: 300,
                 operating_mode: Some(IcdOperatingMode::Sit),
                 idle_mode_duration_s: mode().idle_mode_duration_s,
             }
@@ -1155,7 +1153,6 @@ mod tests {
             IcdAdvertisement {
                 active_threshold_ms: mode().active_mode_threshold_ms,
                 slow_poll_ms: 900_000,
-                fast_poll_ms: 300,
                 operating_mode: Some(IcdOperatingMode::Lit),
                 idle_mode_duration_s: mode().idle_mode_duration_s,
             }
