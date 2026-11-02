@@ -291,6 +291,8 @@ impl ExchangeId {
 
     pub(crate) fn retrans_delay_ms(&self, transport: &Transport) -> Result<Option<u64>, Error> {
         self.with_sessions(transport, |sessions| {
+            let own_active_poll_ms = sessions.icd_fast_poll_ms;
+
             let sess = self.session(sessions);
             let exch = self.exch(sess);
 
@@ -298,7 +300,7 @@ impl ExchangeId {
             // TODO XXX FIXME matter.rand()(&mut jitter_rand);
             jitter_rand[0] = 100;
 
-            Ok(exch.retrans_delay_ms(jitter_rand[0]))
+            Ok(exch.retrans_delay_ms(jitter_rand[0], own_active_poll_ms))
         })
     }
 
@@ -485,11 +487,11 @@ impl ExchangeState {
         self.mrp.pre_send(tx_plain, tx_proto, retry_interval_ms)
     }
 
-    pub fn retrans_delay_ms(&mut self, jitter_rand: u8) -> Option<u64> {
+    pub fn retrans_delay_ms(&mut self, jitter_rand: u8, own_active_poll_ms: u32) -> Option<u64> {
         self.mrp
             .retrans
             .as_ref()
-            .map(|retrans| retrans.delay_ms(jitter_rand))
+            .map(|retrans| retrans.delay_ms(jitter_rand, own_active_poll_ms))
     }
 }
 

@@ -683,10 +683,10 @@ impl Icd {
         let transport = matter.transport();
 
         let dev_det = matter.dev_det();
-        self.set_poll_intervals(
-            dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS),
-            dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS),
-        );
+        let fast_poll_ms = dev_det.sai.unwrap_or(DEFAULT_FAST_POLL_MS);
+
+        self.set_poll_intervals(fast_poll_ms, dev_det.sii.unwrap_or(DEFAULT_SLOW_POLL_MS));
+        transport.set_icd_fast_poll_interval(fast_poll_ms);
 
         // The slow poll in effect may have changed with them.
         self.publish_advertisement(matter, X::LIT);

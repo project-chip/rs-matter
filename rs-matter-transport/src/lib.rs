@@ -271,6 +271,11 @@ impl Transport {
         self.sai.unwrap_or(mrp::MRP_BASE_RETRY_INTERVAL_MS)
     }
 
+    /// Set the fast polling interval of this node, if it is an ICD.
+    pub fn set_icd_fast_poll_interval(&self, fast_poll_ms: u32) {
+        self.with_sessions(|sessions| sessions.icd_fast_poll_ms = fast_poll_ms);
+    }
+
     /// Run `f` with the sessions locked.
     pub fn with_sessions<F, R>(&self, f: F) -> R
     where

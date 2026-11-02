@@ -1206,6 +1206,8 @@ pub struct Sessions {
     next_sess_unique_id: u32,
     next_sess_id: u16,
     next_exch_id: u16,
+    /// The fast polling interval of this node in ms if it is an ICD, else `0`.
+    pub(crate) icd_fast_poll_ms: u32,
     sessions: Vec<Session, MAX_SESSIONS>,
     #[cfg(feature = "groups")]
     group_ctr_store: GroupCtrStore,
@@ -1260,6 +1262,7 @@ impl Sessions {
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 0,
+            icd_fast_poll_ms: 0,
             #[cfg(feature = "groups")]
             global_group_data_ctr: 0,
             #[cfg(feature = "groups")]
@@ -1278,6 +1281,7 @@ impl Sessions {
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 0,
+            icd_fast_poll_ms: 0,
             global_group_data_ctr: 0,
             group_data_ctr_boundary: 0,
         });
@@ -1287,6 +1291,7 @@ impl Sessions {
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 0,
+            icd_fast_poll_ms: 0,
         });
         r
     }
@@ -3539,5 +3544,24 @@ mod tests {
         assert!(addr.is_tcp());
         assert!(!tx.proto.is_reliable());
         assert!(tx.proto.get_ack().is_none());
+    }
+
+    #[test]
+    fn retrans_delay_adds_the_own_fast_poll_interval_unscaled() {
+        use crate::exchange::InitiatorState;
+
+        let mut sess = Session::new(1, 100, false, udp(5540), Some(0x22), 300, 5000, 4000);
+        sess.set_local_nodeid(0x11);
+        sess.mark_peer_active(Instant::now());
+        unwrap!(sess.add_exch(2, Role::Initiator(InitiatorState::Owned)));
+
+        let mut tx = PacketHdr::new();
+        tx.proto.set_reliable();
+        unwrap!(sess.pre_send(Some(0), &mut tx));
+
+        let exch = unwrap!(sess.exchanges[0].as_mut());
+
+        assert_eq!(exch.retrans_delay_ms(0, 0), Some(330));
+        assert_eq!(exch.retrans_delay_ms(0, 300), Some(630));
     }
 }

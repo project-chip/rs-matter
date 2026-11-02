@@ -159,14 +159,19 @@ impl RetransEntry {
 
     /// Return how much to delay before (re)transmitting the message
     /// based on the number of re-transmissions so far
-    pub fn delay_ms(&self, jitter_rand: u8) -> u64 {
-        self.delay_ms_counter(self.counter, jitter_rand)
+    ///
+    /// `own_active_poll_ms` is the sender's fast polling interval if it is an
+    /// ICD, else `0`. It is not scaled, as a sleepy sender receives the
+    /// acknowledgement on its next poll, however many retransmissions preceded.
+    pub fn delay_ms(&self, jitter_rand: u8, own_active_poll_ms: u32) -> u64 {
+        self.delay_ms_counter(self.counter, jitter_rand, own_active_poll_ms)
     }
 
     /// Return how much to delay before (re)transmitting the message
     /// based on the provided number of re-transmissions so far
-    pub fn delay_ms_counter(&self, counter: u16, jitter_rand: u8) -> u64 {
+    pub fn delay_ms_counter(&self, counter: u16, jitter_rand: u8, own_active_poll_ms: u32) -> u64 {
         Self::backoff_ms(self.base_delay_interval_ms, counter, jitter_rand)
+            + own_active_poll_ms as u64
     }
 
     /// Account for a retransmission of the message, whose backoff starts from
@@ -550,13 +555,13 @@ mod tests {
 
         unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
         assert_eq!(
-            unwrap!(mrp.retrans.as_ref()).delay_ms(0),
+            unwrap!(mrp.retrans.as_ref()).delay_ms(0, 0),
             RetransEntry::backoff_ms(300, 0, 0)
         );
 
         unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 15_000));
         assert_eq!(
-            unwrap!(mrp.retrans.as_ref()).delay_ms(0),
+            unwrap!(mrp.retrans.as_ref()).delay_ms(0, 0),
             RetransEntry::backoff_ms(15_000, 1, 0)
         );
     }
@@ -666,8 +671,8 @@ mod tests {
     fn delay_ms_jitter_stays_within_band() {
         let entry = RetransEntry::new(Some(300), 1);
 
-        let no_jitter = entry.delay_ms(0);
-        let max_jitter = entry.delay_ms(255);
+        let no_jitter = entry.delay_ms(0, 0);
+        let max_jitter = entry.delay_ms(255, 0);
 
         // First transmission: only the margin applies.
         assert_eq!(no_jitter, 300 * MRP_BACKOFF_MARGIN.0 / MRP_BACKOFF_MARGIN.1);
@@ -676,7 +681,7 @@ mod tests {
             no_jitter + no_jitter * MRP_BACKOFF_JITTER.0 / MRP_BACKOFF_JITTER.1
         );
 
-        let mid_jitter = entry.delay_ms(128);
+        let mid_jitter = entry.delay_ms(128, 0);
         assert!(no_jitter < mid_jitter && mid_jitter < max_jitter);
     }
 
@@ -684,14 +689,28 @@ mod tests {
     /// zero interval can never collapse the ladder into a tight loop.
     #[test]
     fn retrans_entry_zero_interval_falls_back_to_default() {
-        let default = RetransEntry::new(None, 1).delay_ms(0);
+        let default = RetransEntry::new(None, 1).delay_ms(0, 0);
 
-        assert_eq!(RetransEntry::new(Some(0), 1).delay_ms(0), default);
+        assert_eq!(RetransEntry::new(Some(0), 1).delay_ms(0, 0), default);
         assert_eq!(
-            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), 1).delay_ms(0),
+            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), 1).delay_ms(0, 0),
             default
         );
-        assert!(RetransEntry::new(Some(1000), 1).delay_ms(0) > default);
+        assert!(RetransEntry::new(Some(1000), 1).delay_ms(0, 0) > default);
+    }
+
+    #[test]
+    fn own_active_poll_ms_is_added_flat_across_the_backoff_ladder() {
+        let entry = RetransEntry::new(Some(300), 1);
+
+        for counter in 0..MRP_MAX_TRANSMISSIONS {
+            for jitter in [0u8, 128, 255] {
+                assert_eq!(
+                    entry.delay_ms_counter(counter, jitter, 300),
+                    entry.delay_ms_counter(counter, jitter, 0) + 300
+                );
+            }
+        }
     }
 
     #[test]
