@@ -20,7 +20,6 @@ name = "onoff_light_switch"
 
 [[bin]]
 name = "onoff_light_bt"
-required-features = ["zbus"]
 
 [[bin]]
 name = "onoff_light_work_stealing"

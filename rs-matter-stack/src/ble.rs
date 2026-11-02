@@ -25,6 +25,8 @@ use rs_matter_utils::sync::MaybeSend;
 pub use bluer::*;
 #[cfg(feature = "zbus")]
 pub use bluez::*;
+#[cfg(all(windows, feature = "std"))]
+pub use winrt::*;
 
 /// A trait modeling a platform-specific / BLE-stack specific GATT peripheral.
 ///
@@ -138,6 +140,40 @@ mod bluez {
                 btp,
             )
             .await
+        }
+    }
+}
+
+#[cfg(all(windows, feature = "std"))]
+#[allow(clippy::large_futures)]
+mod winrt {
+    use rs_matter_transport::network::btp::{AdvData, Btp};
+    use rs_matter_utils::error::Error;
+
+    /// A GATT peripheral over the Bluetooth LE API of Windows, on the default adapter.
+    ///
+    /// Windows does not take a name to advertise, so the service name goes unused.
+    #[derive(Debug, Default)]
+    pub struct WinrtGattPeripheral(());
+
+    impl WinrtGattPeripheral {
+        /// Create a new `WinrtGattPeripheral`.
+        pub const fn new() -> Self {
+            Self(())
+        }
+    }
+
+    impl super::GattPeripheral for WinrtGattPeripheral {
+        async fn run(
+            &mut self,
+            btp: &Btp,
+            _service_name: &str,
+            service_adv: &AdvData,
+        ) -> Result<(), Error> {
+            // Windows may report an ATT MTU above what the peer puts in its handshake
+            btp.set_relaxed_mtu_nego(true);
+
+            rs_matter_transport::network::btp::winrt::run_peripheral(service_adv, btp).await
         }
     }
 }
