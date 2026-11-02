@@ -367,12 +367,19 @@ impl<'a> Matter<'a> {
 
     /// Set the ICD advertisement and, if it changed, signal the mDNS layer to
     /// re-publish.
+    ///
+    /// Also snapshots the advertisement's fast polling interval onto the
+    /// transport, which the send paths read while holding the very lock the
+    /// advertisement itself lives under.
     pub fn set_icd_advertisement(&self, adv: Option<IcdAdvertisement>) {
         let changed = self.with_state(|state| {
             let changed = *state.icd_adv != adv;
             *state.icd_adv = adv;
             changed
         });
+
+        self.transport
+            .set_icd_fast_poll_interval(adv.map_or(0, |adv| adv.fast_poll_ms));
 
         if changed {
             self.transport.notify_mdns_changed();

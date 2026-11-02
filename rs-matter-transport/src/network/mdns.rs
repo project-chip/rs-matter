@@ -1297,6 +1297,7 @@ mod tests {
             Some(IcdAdvertisement {
                 active_threshold_ms: 5000,
                 slow_poll_ms,
+                fast_poll_ms: 500,
                 operating_mode,
                 idle_mode_duration_s: 300,
             })
@@ -1328,6 +1329,7 @@ mod tests {
             let icd = active_threshold_ms.map(|active_threshold_ms| IcdAdvertisement {
                 active_threshold_ms,
                 slow_poll_ms: 15_000,
+                fast_poll_ms: 500,
                 operating_mode: None,
                 idle_mode_duration_s: 300,
             });

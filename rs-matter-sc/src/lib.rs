@@ -406,6 +406,7 @@ mod tests {
         let adv = |operating_mode, slow_poll_ms| IcdAdvertisement {
             active_threshold_ms: 5000,
             slow_poll_ms,
+            fast_poll_ms: 700,
             operating_mode,
             idle_mode_duration_s: 300,
         };
