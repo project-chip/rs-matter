@@ -19,7 +19,10 @@
 //! the two ways to obtain one - [`BdxDownloadInitiator`] (initiate a download) and
 //! [`BdxUploadResponder`] (respond to a peer's upload).
 
+use core::future::Future;
+
 use crate::utils::io;
+use crate::utils::sync::MaybeSend;
 
 use super::nego::*;
 use super::*;
@@ -235,11 +238,11 @@ pub trait BdxDownloadInitiator<'a> {
     /// The sender may refuse with [`StartOffsetNotSupported`](BdxStatus::StartOffsetNotSupported);
     /// the returned reader's [`len`](BdxReader::len), if known, is the number of
     /// bytes *remaining* from the offset.
-    async fn download(
+    fn download(
         self,
         file_designator: &[u8],
         offset: Option<u64>,
-    ) -> Result<BdxReader<'a>, Error>;
+    ) -> impl Future<Output = Result<BdxReader<'a>, Error>> + MaybeSend;
 }
 
 impl<'a> BdxDownloadInitiator<'a> for Exchange<'a> {

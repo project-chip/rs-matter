@@ -18,17 +18,22 @@
 //! Checks that with feature `send-sync` the futures a node runs - the transport, the mDNS
 //! responder, the data model job and the responder, or each of its handlers - are
 //! `Send + 'static`, so that they can be spawned on a work-stealing executor. The
-//! same for the futures of the generated cluster clients.
+//! same for the futures of the generated cluster clients, and of what a node uses
+//! to reach another one, with the crypto given by value or by reference.
 //!
 //! The futures are only created, never run.
 
+use core::num::NonZeroU8;
+
 use std::net::UdpSocket;
 
+use rs_matter::bdx::BdxDownloadInitiator as _;
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, NoLevelControl};
 use rs_matter::dm::clusters::app::on_off::{OnOffClient as _, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::gen_comm::GeneralCommissioningClient as _;
+use rs_matter::dm::clusters::ota_req::Provider;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
@@ -38,9 +43,10 @@ use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
-use rs_matter::transport::network::Ipv4Addr;
+use rs_matter::transport::network::{Address, Ipv4Addr};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
@@ -157,7 +163,43 @@ fn node_futures_are_send() -> Result<(), Error> {
     assert_spawnable(&handle_busy);
     assert_spawnable(&clients);
 
+    initiator_futures_are_send(matter, crypto);
+
     Ok(())
+}
+
+/// Generic over the crypto, as code in a handler is.
+fn initiator_futures_are_send<C: Crypto>(matter: &'static Matter<'static>, crypto: &'static C) {
+    const FABRIC: NonZeroU8 = NonZeroU8::MIN;
+
+    let provider: &'static Provider = Box::leak(Box::new(Provider {
+        fab_idx: FABRIC,
+        node_id: 1,
+        endpoint: 0,
+    }));
+
+    assert_spawnable(&Exchange::initiate(matter, crypto, FABRIC, 1));
+    assert_spawnable(&Exchange::initiate_pase(
+        matter,
+        crypto,
+        Address::Udp(([127, 0, 0, 1], MATTER_PORT).into()),
+        1,
+    ));
+    assert_spawnable(&provider.query(matter, crypto, &[], None, false, |_| Ok(())));
+    assert_spawnable(&provider.apply_update(matter, crypto, &[], 1));
+    assert_spawnable(&provider.notify_applied(matter, crypto, &[], 1));
+    download_future_is_send(matter, crypto);
+}
+
+/// Holds the crypto by value: generic `async` code cannot pass `&C` to the futures
+/// above (rust-lang/rust#64552), so it passes an opaque one (`HandlerContext::crypto`).
+fn download_future_is_send<C: Crypto + 'static>(matter: &'static Matter<'static>, crypto: C) {
+    assert_spawnable(&async move {
+        let exchange = Exchange::initiate(matter, crypto, NonZeroU8::MIN, 1).await?;
+        let mut reader = exchange.download(b"image", None).await?;
+
+        reader.read(&mut [0; 16]).await
+    });
 }
 
 /// The bounds a work-stealing executor puts on the futures it spawns.

@@ -21,8 +21,8 @@
 //! *controller*: it has OnOff in its **client** list and a **Binding** cluster
 //! (its address book). A commissioner writes the Binding attribute to point this
 //! switch at one or more On/Off lights (`(node, endpoint)` targets on the same
-//! fabric). The example's switch task then periodically reads its bindings and
-//! sends an `OnOff::Toggle` to each bound light.
+//! fabric). On every press of Enter in the console, the example sends an
+//! `OnOff::Toggle` to each bound light and emits Generic Switch press events.
 //!
 //! Sending a command to a remote node exercises the **operational discovery
 //! (resolve)** path: with no existing CASE session, `Exchange::initiate` resolves
@@ -30,19 +30,23 @@
 //! and then invokes — so this example is a way to exercise the resolve path of
 //! whichever mDNS responder is running (here, the built-in one).
 //!
+//! The loop lives in the `run` method of a handler that serves no cluster
+//! ([`SwitchTask`]), which receives what it needs from the Interaction Model, as
+//! the `ota_requestor` example explains.
+//!
 //! Try it with the `onoff_light` example running as the bound light on the same
-//! fabric; bind this switch to it via your controller, and watch the light
-//! toggle every few seconds.
+//! fabric; bind this switch to it via your controller, and press Enter. This
+//! example listens on [`PORT`], so both can run on one machine.
 
+use core::future::{pending, Future};
 use core::num::NonZeroU8;
 use core::pin::pin;
-
-use std::net::UdpSocket;
 
 use futures_lite::io::{AsyncBufReadExt, BufReader};
 
 use log::{info, warn};
 
+use rand::rngs::StdRng;
 use rand::Rng;
 
 use rs_matter::crypto::{default_crypto, Crypto};
@@ -54,24 +58,27 @@ use rs_matter::dm::clusters::decl::switch::{
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
-use rs_matter::dm::endpoints;
+use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EventEmitter, Node};
-use rs_matter::error::Error;
-use rs_matter::im::{InteractionModel, InteractionModelState};
-use rs_matter::pairing::qr::QrTextType;
-use rs_matter::pairing::DiscoveryCapabilities;
+use rs_matter::dm::{
+    Async, DataModel, Dataver, EmptyHandler, Endpoint, Handler, HandlerContext, MatchContext, Node,
+    NonBlockingHandler, ReadContext, ReadReply,
+};
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
-use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::exchange::MatterBuffers;
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::utils::init::InitMaybeUninit;
+use rs_matter::utils::sync::MaybeSend;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
+
+use rs_matter::stack::eth::EthMatterStack;
+use rs_matter::stack::net::std::StdNetStack;
 
 // `OnOffClient` brings the `.on_off()` IM-client method into scope on `Exchange`.
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
-use rs_matter::utils::futures::{select, select4, Coalesce};
+
+use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -88,80 +95,72 @@ const GENERIC_SWITCH_ENDPOINT: u16 = 2;
 /// How many binding entries the device can hold (across all fabrics/endpoints).
 const MAX_BINDINGS: usize = 16;
 
+/// The port this example listens on. Not the default one, which the `onoff_light`
+/// example takes, so that both can run on one machine.
+const PORT: u16 = MATTER_PORT + 1;
+
+/// The bump allocator size of the stack, in bytes.
+///
+/// If it is not enough, the stack panics while it starts. The futures of an
+/// unoptimized build are much bigger than those of an optimized one.
+const BUMP_SIZE: usize = 36 * 1024;
+
+/// The stack is allocated statically to avoid program stack blowups.
+static MATTER_STACK: StaticCell<EthMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
+
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let stack = MATTER_STACK
+        .uninit()
+        .init_with(EthMatterStack::init_with_port(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+            PORT,
+        ));
 
     // Persistence
-    let store = DirKvBlobStore::new_default();
+    let mut store = DirKvBlobStore::new_default();
 
-    let buffers: MatterBuffers = MatterBuffers::new();
+    // Create the crypto instance
+    let crypto = default_crypto(rand::make_rng::<StdRng>(), DAC_PRIVKEY);
 
-    // Create the data model state. This device EMITS events (the Generic Switch
-    // press events), so - unlike the examples that use `NoEvents` - the default
-    // state carries a real (non-zero) event queue that holds them until
-    // subscribers read them.
-    let state: InteractionModelState = InteractionModelState::new();
-
-    // The Binding registry (the switch's address book), loaded from persistence.
-    let bindings = Bindings::<MAX_BINDINGS>::new();
-
-    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
-    let kv = matter.kv(store);
-
-    // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info).
-    matter.startup(&kv)?;
-
-    let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
 
-    let im = InteractionModel::new(
-        &matter,
+    // Re-hydrate the persisted state. If the device is not commissioned yet, this also
+    // prints the QR text and code to the console and enables basic commissioning.
+    futures_lite::future::block_on(stack.startup(&crypto, &mut store))?;
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = stack.kv(store);
+
+    // The Binding registry (the switch's address book), re-hydrated by the cluster on startup.
+    let bindings = Bindings::<MAX_BINDINGS>::new();
+
+    // Run the stack, which adds the operational network clusters of endpoint 0 by itself
+    let matter = pin!(stack.run_preex(
+        // The UDP sockets of the node
+        StdNetStack::new(),
+        // The network interfaces of the host
+        SysNetifs,
+        // No Ethernet diagnostics to report
+        &(),
+        mdns::create_mdns(),
         &crypto,
-        &buffers,
-        data_model(&matter, rand, &bindings),
-        &kv,
-        &state,
-    );
+        data_model(stack.matter(), rand, &bindings),
+        kv,
+        // No user task to run
+        (),
+    ));
 
-    // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state (events epoch) and deliver the `Startup` lifecycle op
-    // to all cluster handlers (here notably: the Binding registry).
-    futures_lite::future::block_on(im.startup())?;
-
-    let responder = rs_matter::respond::DefaultResponder::new(&im);
-    let mut respond = pin!(responder.run::<4, 4>());
-
-    let mut im_job = pin!(im.run());
-
-    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
-
-    if !matter.has_fabrics() {
-        matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
-        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
-    }
-
-    // The switch task: on each Enter, emit Generic Switch press events and
-    // toggle every bound light. `&im` is the `EventEmitter` used to publish the
-    // Generic Switch events.
-    let mut switch = pin!(run_switch(&matter, &crypto, &kv, &bindings, &im));
-
-    // Combine the core Matter tasks, then add the switch tasks alongside.
-    let mut core = pin!(select4(&mut transport, &mut mdns, &mut respond, &mut im_job,).coalesce());
-
-    let all = select(&mut core, &mut switch).coalesce();
-
-    futures_lite::future::block_on(all)
+    // Run with a simple `block_on`. Any local executor would do.
+    futures_lite::future::block_on(matter)
 }
 
-/// The switch loop: on every line read from stdin (i.e. each time you press
+/// The switch loop, as a handler that only has a `run` method: on every line read from stdin (i.e. each time you press
 /// Enter in the console), walk the binding registry and send `OnOff::Toggle` to
 /// each unicast `(node, endpoint)` target on [`SWITCH_ENDPOINT`]. Each
 /// [`Binding`] carries its own `local_endpoint` and `fab_idx`, so no separate
@@ -170,103 +169,127 @@ fn main() -> Result<(), Error> {
 /// Driving the toggle by key press (rather than a timer) makes it easy to test
 /// against the `onoff_light` example: that device already blinks on its own
 /// timer, so a keyboard-triggered switch toggle is unambiguously observable.
-async fn run_switch<const N: usize>(
-    matter: &Matter<'_>,
-    crypto: impl Crypto,
-    kv: impl KvBlobStoreAccess,
-    bindings: &Bindings<N>,
-    emitter: impl EventEmitter,
-) -> Result<(), Error> {
-    // Async stdin: `blocking::Unblock` moves the blocking `Stdin` onto a thread
-    // pool so reads don't stall the executor.
-    let mut stdin = BufReader::new(blocking::Unblock::new(std::io::stdin()));
-    let mut line = String::new();
+struct SwitchTask<'a, const N: usize> {
+    matter: &'a Matter<'a>,
+    bindings: &'a Bindings<N>,
+}
 
-    info!("Switch ready: press Enter to (1) emit Generic Switch press events and (2) toggle all bound lights.");
+impl<const N: usize> SwitchTask<'_, N> {
+    async fn run_switch(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        // Async stdin: `blocking::Unblock` moves the blocking `Stdin` onto a thread
+        // pool so reads don't stall the executor.
+        let mut stdin = BufReader::new(blocking::Unblock::new(std::io::stdin()));
+        let mut line = String::new();
 
-    loop {
-        line.clear();
-        let n = stdin.read_line(&mut line).await?;
-        if n == 0 {
-            // EOF on stdin — stop the switch loop.
-            info!("stdin closed; switch loop exiting");
-            return Ok(());
-        }
+        info!("Switch ready: press Enter to (1) emit Generic Switch press events and (2) toggle all bound lights.");
 
-        info!("Switch: Enter pressed; emitting events and toggling bound lights...");
-
-        // (1) Generic Switch (endpoint 2): emit a full momentary press/release
-        // cycle. Ecosystems surface these events as automation triggers.
-        // `InitialPress.NewPosition = 1` (pressed), `ShortRelease.PreviousPosition = 1`.
-        match InitialPress::emit_for(&emitter, GENERIC_SWITCH_ENDPOINT, |b| {
-            b.new_position(1)?.end()
-        }) {
-            Ok(n) => info!("Generic Switch: emitted InitialPress (event #{n})"),
-            Err(e) => warn!("Generic Switch: InitialPress emit failed: {:?}", e),
-        }
-        match ShortRelease::emit_for(&emitter, GENERIC_SWITCH_ENDPOINT, |b| {
-            b.previous_position(1)?.end()
-        }) {
-            Ok(n) => info!("Generic Switch: emitted ShortRelease (event #{n})"),
-            Err(e) => warn!("Generic Switch: ShortRelease emit failed: {:?}", e),
-        }
-
-        // (2) Binding-based switch (endpoint 1): drive the bound lights.
-
-        // Iterate by index; `get` clones each entry out (lock released per call)
-        // so we can `await` the remote invoke below.
-        for i in 0..bindings.len() {
-            let Some(binding) = bindings.get(i) else {
-                break;
-            };
-
-            // Only this switch's endpoint.
-            if binding.local_endpoint != SWITCH_ENDPOINT {
-                continue;
+        loop {
+            line.clear();
+            let n = stdin.read_line(&mut line).await?;
+            if n == 0 {
+                // `run` must not return, as that would stop the node. It just has
+                // nothing left to do here.
+                info!("stdin closed; there will be no more presses");
+                return pending().await;
             }
 
-            // If a specific cluster is bound, it must be OnOff.
-            if let Some(cluster) = binding.cluster {
-                if cluster != on_off::FULL_CLUSTER.id {
+            info!("Switch: Enter pressed; emitting events and toggling bound lights...");
+
+            // (1) Generic Switch (endpoint 2): emit a full momentary press/release
+            // cycle. Ecosystems surface these events as automation triggers.
+            // `InitialPress.NewPosition = 1` (pressed), `ShortRelease.PreviousPosition = 1`.
+            match InitialPress::emit_for(&ctx, GENERIC_SWITCH_ENDPOINT, |b| {
+                b.new_position(1)?.end()
+            }) {
+                Ok(n) => info!("Generic Switch: emitted InitialPress (event #{n})"),
+                Err(e) => warn!("Generic Switch: InitialPress emit failed: {:?}", e),
+            }
+            match ShortRelease::emit_for(&ctx, GENERIC_SWITCH_ENDPOINT, |b| {
+                b.previous_position(1)?.end()
+            }) {
+                Ok(n) => info!("Generic Switch: emitted ShortRelease (event #{n})"),
+                Err(e) => warn!("Generic Switch: ShortRelease emit failed: {:?}", e),
+            }
+
+            // (2) Binding-based switch (endpoint 1): drive the bound lights.
+
+            // Iterate by index; `get` clones each entry out (lock released per call)
+            // so we can `await` the remote invoke below.
+            for i in 0..self.bindings.len() {
+                let Some(binding) = self.bindings.get(i) else {
+                    break;
+                };
+
+                // Only this switch's endpoint.
+                if binding.local_endpoint != SWITCH_ENDPOINT {
                     continue;
                 }
-            }
 
-            // Group targets: multicast an encrypted, fire-and-forget Toggle
-            // to the whole group, with an endpoint-less command path —
-            // receivers apply it to their group-member endpoints.
-            if let Some(group_id) = binding.group {
-                info!(
-                    "Switch: group-toggling fabric {}, group 0x{:04X}",
-                    binding.fab_idx, group_id
-                );
-
-                match group_toggle(matter, &crypto, &kv, binding.fab_idx, group_id).await {
-                    Ok(()) => info!("Switch: group toggle ok"),
-                    Err(e) => warn!("Switch: group toggle failed: {:?}", e),
+                // If a specific cluster is bound, it must be OnOff.
+                if let Some(cluster) = binding.cluster {
+                    if cluster != on_off::FULL_CLUSTER.id {
+                        continue;
+                    }
                 }
 
-                continue;
-            }
+                // Group targets: multicast an encrypted, fire-and-forget Toggle
+                // to the whole group, with an endpoint-less command path —
+                // receivers apply it to their group-member endpoints.
+                if let Some(group_id) = binding.group {
+                    info!(
+                        "Switch: group-toggling fabric {}, group 0x{:04X}",
+                        binding.fab_idx, group_id
+                    );
 
-            // Unicast OnOff targets (node + endpoint present).
-            let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
-                continue;
-            };
+                    match group_toggle(
+                        self.matter,
+                        ctx.crypto(),
+                        ctx.kv(),
+                        binding.fab_idx,
+                        group_id,
+                    )
+                    .await
+                    {
+                        Ok(()) => info!("Switch: group toggle ok"),
+                        Err(e) => warn!("Switch: group toggle failed: {:?}", e),
+                    }
 
-            info!(
-                "Switch: toggling fabric {}, node 0x{:016X}, endpoint {}",
-                binding.fab_idx, node, endpoint
-            );
+                    continue;
+                }
 
-            // Resolve (if needed) + CASE + invoke `OnOff::Toggle`.
-            match toggle(matter, &crypto, binding.fab_idx, node, endpoint).await {
-                Ok(()) => info!("Switch: toggle ok"),
-                Err(e) => warn!("Switch: toggle failed: {:?}", e),
+                // Unicast OnOff targets (node + endpoint present).
+                let (Some(node), Some(endpoint)) = (binding.node, binding.endpoint) else {
+                    continue;
+                };
+
+                info!(
+                    "Switch: toggling fabric {}, node 0x{:016X}, endpoint {}",
+                    binding.fab_idx, node, endpoint
+                );
+
+                // Resolve (if needed) + CASE + invoke `OnOff::Toggle`.
+                match toggle(self.matter, ctx.crypto(), binding.fab_idx, node, endpoint).await {
+                    Ok(()) => info!("Switch: toggle ok"),
+                    Err(e) => warn!("Switch: toggle failed: {:?}", e),
+                }
             }
         }
     }
 }
+
+impl<const N: usize> Handler for SwitchTask<'_, N> {
+    fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
+        Err(ErrorCode::AttributeNotFound.into())
+    }
+
+    fn bump_dataver(&self, _ctx: impl MatchContext) {}
+
+    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        self.run_switch(ctx)
+    }
+}
+
+impl<const N: usize> NonBlockingHandler for SwitchTask<'_, N> {}
 
 /// Open (or reuse) a CASE session to `(fab_idx, node)` and send `OnOff::Toggle`
 /// to `endpoint`. `Exchange::initiate` performs the operational mDNS resolve when
@@ -318,7 +341,7 @@ async fn group_toggle(
 /// Exposes the two mandatory attributes (`NumberOfPositions` = 2, a simple
 /// push-button; `CurrentPosition` = 0, i.e. released — we report the resting
 /// state and convey presses purely through events). The press *events* are
-/// emitted by the app (see [`run_switch`]) via the generated `InitialPress` /
+/// emitted by the app (see [`SwitchTask`]) via the generated `InitialPress` /
 /// `ShortRelease` `emit_for` helpers, not by this handler.
 #[derive(Clone)]
 struct SwitchHandler {
@@ -395,8 +418,8 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-/// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
-/// on the switch endpoint.
+/// The Data Model handler: root endpoint 0, the Descriptor and Binding handlers on
+/// the switch endpoint, the Generic Switch, and the switch loop.
 fn data_model<'a, const N: usize>(
     matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
@@ -404,9 +427,11 @@ fn data_model<'a, const N: usize>(
 ) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&SysNetifs)
-            .build(matter, rand)
+        EmptyHandler
+            .chain(
+                |e, _| e == ROOT_ENDPOINT_ID,
+                Async(EthMatterStack::<0, ()>::root_handler(matter, &(), rand)),
+            )
             .chain(
                 |e, c| e == SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -426,6 +451,8 @@ fn data_model<'a, const N: usize>(
             .chain(
                 |e, c| e == GENERIC_SWITCH_ENDPOINT && c == SwitchHandler::CLUSTER.id,
                 Async(SwitchHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-            ),
+            )
+            // It serves no cluster, so it matches nothing; only its `run` matters.
+            .chain(|_, _| false, Async(SwitchTask { matter, bindings })),
     )
 }

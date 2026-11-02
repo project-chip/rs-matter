@@ -55,6 +55,51 @@ max-group-endpoints-per-fabric-3 = ["rs-matter-node-core/max-group-endpoints-per
 max-group-endpoints-per-fabric-2 = ["rs-matter-node-core/max-group-endpoints-per-fabric-2"]
 max-group-endpoints-per-fabric-1 = ["rs-matter-node-core/max-group-endpoints-per-fabric-1"]
 
+# Number of subscriptions of `rs-matter-stack`.
+stack-max-subscriptions-32 = ["rs-matter-stack/max-subscriptions-32"]
+stack-max-subscriptions-16 = ["rs-matter-stack/max-subscriptions-16"]
+stack-max-subscriptions-8 = ["rs-matter-stack/max-subscriptions-8"]
+stack-max-subscriptions-7 = ["rs-matter-stack/max-subscriptions-7"]
+stack-max-subscriptions-6 = ["rs-matter-stack/max-subscriptions-6"]
+stack-max-subscriptions-5 = ["rs-matter-stack/max-subscriptions-5"]
+stack-max-subscriptions-4 = ["rs-matter-stack/max-subscriptions-4"]
+stack-max-subscriptions-3 = ["rs-matter-stack/max-subscriptions-3"]
+stack-max-subscriptions-2 = ["rs-matter-stack/max-subscriptions-2"]
+stack-max-subscriptions-1 = ["rs-matter-stack/max-subscriptions-1"]
+
+# Size of the events ring buffer of `rs-matter-stack`.
+stack-events-ringbuf-size-2048 = ["rs-matter-stack/events-ringbuf-size-2048"]
+stack-events-ringbuf-size-1024 = ["rs-matter-stack/events-ringbuf-size-1024"]
+stack-events-ringbuf-size-512 = ["rs-matter-stack/events-ringbuf-size-512"]
+stack-events-ringbuf-size-256 = ["rs-matter-stack/events-ringbuf-size-256"]
+stack-events-ringbuf-size-128 = ["rs-matter-stack/events-ringbuf-size-128"]
+stack-events-ringbuf-size-64 = ["rs-matter-stack/events-ringbuf-size-64"]
+stack-events-ringbuf-size-0 = ["rs-matter-stack/events-ringbuf-size-0"]
+
+# Number of IM buffers of `rs-matter-stack`.
+stack-max-im-buffers-64 = ["rs-matter-stack/max-im-buffers-64"]
+stack-max-im-buffers-32 = ["rs-matter-stack/max-im-buffers-32"]
+stack-max-im-buffers-16 = ["rs-matter-stack/max-im-buffers-16"]
+stack-max-im-buffers-10 = ["rs-matter-stack/max-im-buffers-10"]
+stack-max-im-buffers-9 = ["rs-matter-stack/max-im-buffers-9"]
+stack-max-im-buffers-8 = ["rs-matter-stack/max-im-buffers-8"]
+stack-max-im-buffers-7 = ["rs-matter-stack/max-im-buffers-7"]
+stack-max-im-buffers-6 = ["rs-matter-stack/max-im-buffers-6"]
+stack-max-im-buffers-5 = ["rs-matter-stack/max-im-buffers-5"]
+stack-max-im-buffers-4 = ["rs-matter-stack/max-im-buffers-4"]
+
+# Number of concurrent responders of `rs-matter-stack`.
+stack-max-responders-32 = ["rs-matter-stack/max-responders-32"]
+stack-max-responders-16 = ["rs-matter-stack/max-responders-16"]
+stack-max-responders-8 = ["rs-matter-stack/max-responders-8"]
+stack-max-responders-7 = ["rs-matter-stack/max-responders-7"]
+stack-max-responders-6 = ["rs-matter-stack/max-responders-6"]
+stack-max-responders-5 = ["rs-matter-stack/max-responders-5"]
+stack-max-responders-4 = ["rs-matter-stack/max-responders-4"]
+stack-max-responders-3 = ["rs-matter-stack/max-responders-3"]
+stack-max-responders-2 = ["rs-matter-stack/max-responders-2"]
+stack-max-responders-1 = ["rs-matter-stack/max-responders-1"]
+
 # Number of ACL entries per fabric.
 max-acls-per-fabric-32 = ["rs-matter-node-core/max-acls-per-fabric-32"]
 max-acls-per-fabric-16 = ["rs-matter-node-core/max-acls-per-fabric-16"]
@@ -149,15 +194,15 @@ kv-blob-store-1024 = ["rs-matter-dm-core/kv-blob-store-1024"]
 # General
 
 # mDNS support for MacOSX.
-astro-dnssd = ["os", "rs-matter-transport/astro-dnssd"]
+astro-dnssd = ["os", "rs-matter-transport/astro-dnssd", "rs-matter-stack/astro-dnssd"]
 # mDNS support for Linux and Windows (via Avahi or Bonjour).
 # Prefer the Avahi and Resolved mDNS implementations over Zeroconf for production deployments, via `zbus`.
-zeroconf = ["os", "rs-matter-transport/zeroconf"]
+zeroconf = ["os", "rs-matter-transport/zeroconf", "rs-matter-stack/zeroconf"]
 # Enable the zBus proxies for a range of Linux dBus services used by `rs-matter` (off by default due to slow compilation).
-zbus = ["os", "rs-matter-utils/zbus", "rs-matter-transport/zbus", "rs-matter-dm/zbus"]
+zbus = ["os", "rs-matter-utils/zbus", "rs-matter-transport/zbus", "rs-matter-dm/zbus", "rs-matter-stack/zbus"]
 # BLE suppport for Linux (via BlueZ).
 # Prefer the BlueZ implementation over Bluer for production deployments, via `zbus`.
-bluer = ["os", "rs-matter-utils/bluer", "rs-matter-transport/bluer"]
+bluer = ["os", "rs-matter-utils/bluer", "rs-matter-transport/bluer", "rs-matter-stack/bluer"]
 # Recognizing Matter onboarding QR codes in images (via `rqrr`), for commissioners
 # that scan a device's QR code rather than being handed its payload text.
 # Requires `std`; the image *decoding* (PNG/JPEG/camera/...) is the caller's job -
@@ -172,12 +217,12 @@ pics = ["rs-matter-node/pics"]
 # Umbrella set of features for typical OS-based non-baremetal deployments.
 os = ["std", "async-io", "rs-matter-utils/os", "rs-matter-node-core/os", "rs-matter-transport/os", "rs-matter-node/os", "rs-matter-dm/os"]
 # Minimal set of features for targets with support for Rust STD (narrower than `os` above).
-std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-cert/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-dm-clusters/std", "rs-matter-node-core/std", "rs-matter-transport/std", "rs-matter-node/std", "rs-matter-sc/std", "rs-matter-bdx/std", "rs-matter-im/std", "rs-matter-dm/std", "rs-matter-respond/std", "rs-matter-onboard/std"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-cert/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-dm-clusters/std", "rs-matter-node-core/std", "rs-matter-transport/std", "rs-matter-node/std", "rs-matter-sc/std", "rs-matter-bdx/std", "rs-matter-im/std", "rs-matter-dm/std", "rs-matter-respond/std", "rs-matter-onboard/std", "rs-matter-stack/std"]
 # Enable backtrace capturing (useful for debugging).
 backtrace = ["rs-matter-utils/backtrace"]
 # Enable the alloc feature for targets that support it.
 # In general, `rs-matter` does not use heap, so this feature enables only a few convenience features.
-alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-cert/alloc", "rs-matter-pairing/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-dm-clusters/alloc", "rs-matter-node-core/alloc", "rs-matter-transport/alloc", "rs-matter-node/alloc", "rs-matter-sc/alloc", "rs-matter-bdx/alloc", "rs-matter-im/alloc", "rs-matter-dm/alloc", "rs-matter-respond/alloc", "rs-matter-onboard/alloc"]
+alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-cert/alloc", "rs-matter-pairing/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-dm-clusters/alloc", "rs-matter-node-core/alloc", "rs-matter-transport/alloc", "rs-matter-node/alloc", "rs-matter-sc/alloc", "rs-matter-bdx/alloc", "rs-matter-im/alloc", "rs-matter-dm/alloc", "rs-matter-respond/alloc", "rs-matter-onboard/alloc", "rs-matter-stack/alloc"]
 # Crypto backend: Rust Crypto.
 rustcrypto = ["alloc", "rs-matter-crypto/rustcrypto"]
 # Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
@@ -186,14 +231,14 @@ openssl = ["alloc", "rs-matter-crypto/openssl"]
 mbedtls = ["alloc", "rs-matter-crypto/mbedtls"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
 # This is a WIP feature and not yet fully supported.
-send-sync = ["rs-matter-utils/send-sync"]
+send-sync = ["rs-matter-utils/send-sync", "rs-matter-stack/send-sync"]
 # Enable a small OTA DCL client.
 # TODO: We likely don't need this hidden behind a feature.
 ota-dcl = ["rs-matter-dm/ota-dcl"]
 # Enable support for `defmt` logging (for embedded targets).
-defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt", "rs-matter-cert/defmt", "rs-matter-pairing/defmt", "rs-matter-im-core/defmt", "rs-matter-dm-core/defmt", "rs-matter-dm-clusters/defmt", "rs-matter-node-core/defmt", "rs-matter-transport/defmt", "rs-matter-node/defmt", "rs-matter-sc/defmt", "rs-matter-bdx/defmt", "rs-matter-im/defmt", "rs-matter-dm/defmt", "rs-matter-respond/defmt", "rs-matter-onboard/defmt"]
+defmt = ["dep:defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt", "rs-matter-crypto/defmt", "rs-matter-cert/defmt", "rs-matter-pairing/defmt", "rs-matter-im-core/defmt", "rs-matter-dm-core/defmt", "rs-matter-dm-clusters/defmt", "rs-matter-node-core/defmt", "rs-matter-transport/defmt", "rs-matter-node/defmt", "rs-matter-sc/defmt", "rs-matter-bdx/defmt", "rs-matter-im/defmt", "rs-matter-dm/defmt", "rs-matter-respond/defmt", "rs-matter-onboard/defmt", "rs-matter-stack/defmt"]
 # Enable support for `log` logging (for embedded and OS targets).
-log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-cert/log", "rs-matter-pairing/log", "rs-matter-im-core/log", "rs-matter-dm-core/log", "rs-matter-dm-clusters/log", "rs-matter-node-core/log", "rs-matter-transport/log", "rs-matter-node/log", "rs-matter-sc/log", "rs-matter-bdx/log", "rs-matter-im/log", "rs-matter-dm/log", "rs-matter-respond/log", "rs-matter-onboard/log"]
+log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log", "rs-matter-crypto/log", "rs-matter-cert/log", "rs-matter-pairing/log", "rs-matter-im-core/log", "rs-matter-dm-core/log", "rs-matter-dm-clusters/log", "rs-matter-node-core/log", "rs-matter-transport/log", "rs-matter-node/log", "rs-matter-sc/log", "rs-matter-bdx/log", "rs-matter-im/log", "rs-matter-dm/log", "rs-matter-respond/log", "rs-matter-onboard/log", "rs-matter-stack/log"]
 # Enable `debug`-level logging of TLV payloads.
 # This is very verbose and should only be used for debugging.
 log-tlv-payload = ["rs-matter-transport/log-tlv-payload"]
@@ -214,7 +259,7 @@ case-resumption = ["rs-matter-transport/case-resumption", "rs-matter-node/case-r
 # Suits a pure accessory that only reports over sessions its peers established.
 case-responder-only = ["rs-matter-transport/case-responder-only", "rs-matter-sc/case-responder-only"]
 # The `async-io` adapters of the network traits.
-async-io = ["rs-matter-transport/async-io"]
+async-io = ["rs-matter-transport/async-io", "rs-matter-stack/async-io"]
 
 [dependencies]
 rs-matter-utils = { workspace = true }
@@ -234,6 +279,7 @@ rs-matter-im = { workspace = true }
 rs-matter-dm = { workspace = true }
 rs-matter-respond = { workspace = true }
 rs-matter-onboard = { workspace = true }
+rs-matter-stack = { workspace = true }
 bitflags = { workspace = true }
 strum = { workspace = true }
 log = { workspace = true, optional = true }

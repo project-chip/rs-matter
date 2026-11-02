@@ -29,10 +29,9 @@
 //! where - moreover - the Linux stack does not have NetworkManager installed. For regular Linux systems, or for embedded
 //! Linux systems having NetworkManager, using the NetworkManager code-path is recommended, as it is much
 //! more straightfoward to run it, in that it does not need elevated permissions, nor the presence of the `dhclient` and `ip` commands.
+#![recursion_limit = "256"]
 
 use core::pin::pin;
-
-use std::net::UdpSocket;
 
 use log::{info, warn};
 
@@ -43,36 +42,40 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus};
-use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
+use rs_matter::dm::clusters::net_comm::NetCtl;
+use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints;
+use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wifi::nm::NetMgrCtl;
 use rs_matter::dm::networks::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::dm::networks::wifi::wpa_supp::WpaSuppCtl;
-use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
+use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, Node};
 use rs_matter::error::Error;
-use rs_matter::im::{InteractionModel, InteractionModelState};
-use rs_matter::pairing::qr::QrTextType;
-use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
-use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::exchange::MatterBuffers;
-#[cfg(target_os = "linux")]
-use rs_matter::transport::network::btp::bluez;
-use rs_matter::transport::network::btp::{AdvData, Btp};
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::futures::{select, select4, Coalesce};
 use rs_matter::utils::zbus::Connection;
-use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, Matter};
+
+use rs_matter::stack::ble::BluezGattPeripheral;
+use rs_matter::stack::net::std::StdNetStack;
+use rs_matter::stack::wireless::{PreexistingWireless, WifiMatterStack};
+use rs_matter::utils::init::InitMaybeUninit;
+
+use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+/// The bump allocator size of the stack, in bytes.
+///
+/// If it is not enough, the stack panics while it starts. The futures of an
+/// unoptimized build are much bigger than those of an optimized one.
+const BUMP_SIZE: usize = 64 * 1024;
+
+/// The stack is allocated statically to avoid program stack blowups.
+static MATTER_STACK: StaticCell<WifiMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
@@ -119,28 +122,26 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     connection: &Connection,
     net_ctl: N,
 ) -> Result<(), Error> {
-    // Create the Matter object
-    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let stack = MATTER_STACK.uninit().init_with(WifiMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
 
     // Persistence
-    let store = DirKvBlobStore::new_default();
-
-    // Create the transport buffers
-    let buffers: MatterBuffers = MatterBuffers::new();
-
-    // Create the data model state (subscriptions, events).
-    let state: InteractionModelState = InteractionModelState::new();
-
-    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
-    let kv = matter.kv(store);
-
-    // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info).
-    matter.startup(&kv)?;
+    let mut store = DirKvBlobStore::new_default();
 
     // Create the crypto instance
     let crypto = default_crypto(rand::rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
+
+    // Re-hydrate the persisted state. If the device is not commissioned yet, this also
+    // prints the QR text and code to the console and enables basic commissioning.
+    futures_lite::future::block_on(stack.startup(&crypto, &mut store))?;
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = stack.kv(store);
 
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
@@ -150,112 +151,30 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         TestOnOffDeviceLogic::new(true),
     );
 
-    // The network controller
-    let net_ctl_state = NetCtlState::new_with_mutex();
-
-    let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
-
-    // Create the Data Model instance. The `NetworkCommissioning` handler in it
-    // drives the operational Wifi connection from its background job, run by
-    // `InteractionModel::run`.
-    let im = InteractionModel::new(
-        &matter,
-        &crypto,
-        &buffers,
-        data_model(
-            &matter,
-            rand,
-            &on_off_handler,
-            WifiNetworks::new(),
-            &net_ctl,
-            &net_ctl,
-        ),
-        &kv,
-        &state,
-    );
-
-    // Bring the Data Model to its operational state: re-hydrate its persisted
-    // state and deliver the `Startup` lifecycle op to all cluster handlers.
-    futures_lite::future::block_on(im.startup())?;
-
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&im);
-
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
-
-    // Run the background job of the data model
-    let mut im_job = pin!(im.run());
-
-    // Create and run the mDNS responder
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
-
-    if !matter.has_fabrics() {
-        // Not commissioned yet, start commissioning first
-
-        // Print the QR text and code to the console
-        // and enable basic commissioning
-
-        matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
-        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
-
-        // BLE commissioning via BlueZ is Linux-only.
-        #[cfg(not(target_os = "linux"))]
-        panic!("BLE commissioning requires Linux (BlueZ)");
-
-        #[cfg(target_os = "linux")]
-        {
-            // The BTP transport impl
-
-            use rs_matter::transport::network::NoNetwork;
-            let btp = Btp::new();
-            // BlueZ seems to report an incorrect GATT MTU, so we need to enable the relaxed MTU negotiation mode to be able to connect to BlueZ peripherals with MTU bigger than the minimum one
-            btp.set_relaxed_mtu_nego(true);
-            let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
-            let mut bluetooth = pin!(bluez::run_peripheral(
-                connection, None, "MT", &adv_data, &btp
-            ));
+    // Run the stack in its non-concurrent commissioning mode: BLE while the commissioning
+    // window is open, and Wifi once the commissioner has provisioned the network. The stack
+    // adds the operational network clusters of endpoint 0 by itself.
+    let matter = pin!(stack.run(
+        PreexistingWireless::new(
+            // The UDP sockets of the node
+            StdNetStack::new(),
+            // The network interfaces of the host
+            UnixNetifs,
+            net_ctl,
+            mdns::create_mdns(),
             // Here's how to run with the BlueR peripheral instead:
-            // let mut bluetooth = pin!(async_compat::Compat::new(rs_matter::transport::network::btp::bluer::run_peripheral(
-            //     None, "MT", &adv_data, &btp
-            // )));
-
-            let mut transport = pin!(matter.run(&crypto, &btp, &btp, NoNetwork));
-            let mut wifi_prov_task = pin!(async {
-                NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
-                Ok(())
-            });
-
-            // Combine all async tasks in a single one
-            let all = select4(
-                &mut transport,
-                &mut bluetooth,
-                &mut wifi_prov_task,
-                select(&mut respond, &mut im_job).coalesce(),
-            );
-
-            // Run with a simple `block_on`. Any local executor would do.
-            futures_lite::future::block_on(all.coalesce())?;
-
-            matter.reset_transport()?;
-        }
-    }
-
-    // Create the Matter UDP socket
-    let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-
-    // Run the Matter transport
-    let mut transport = pin!(matter.run(&crypto, &udp, &udp, &udp));
-
-    // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
+            // `rs_matter::stack::ble::BluerGattPeripheral::new(None)`
+            BluezGattPeripheral::new(connection, None),
+        ),
+        &crypto,
+        data_model(stack.matter(), rand, &on_off_handler),
+        kv,
+        // No user task to run
+        (),
+    ));
 
     // Run with a simple `block_on`. Any local executor would do.
-    futures_lite::future::block_on(all)
+    futures_lite::future::block_on(matter)
 }
 
 /// The Node meta-data describing our Matter device.
@@ -276,22 +195,18 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-    networks: WifiNetworks<3>,
-    wifi_diag: &'a dyn WifiDiag,
-    net_ctl: T,
-) -> impl DataModel + 'a
-where
-    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif + 'a,
-{
+) -> impl DataModel + 'a {
     (
         NODE,
-        endpoints::WifiSysHandlerBuilder::new(networks, net_ctl, wifi_diag)
-            .netif_diag(&UnixNetifs)
-            .build(matter, rand)
+        EmptyHandler
+            .chain(
+                |e, _| e == ROOT_ENDPOINT_ID,
+                Async(WifiMatterStack::<0, ()>::root_handler(matter, &(), rand)),
+            )
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

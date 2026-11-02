@@ -18,6 +18,7 @@
 //! Opening exchanges over sessions which may have to be established first, i.e.
 //! the part of initiating an exchange that needs the CASE and PASE initiators.
 
+use core::future::Future;
 use core::num::NonZeroU8;
 
 use crate::crypto::Crypto;
@@ -29,6 +30,7 @@ use crate::pase::PaseInitiator;
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
 use crate::transport::TransportPreference;
+use crate::utils::sync::MaybeSend;
 use crate::ScHost;
 #[cfg(not(feature = "case-responder-only"))]
 use {
@@ -65,12 +67,12 @@ pub trait ExchangeInitiator<'a>: Sized {
     /// drop the CASE initiator and mDNS resolver from a node that never needs to
     /// initiate CASE (a pure accessory that only reports over sessions its peers
     /// established).
-    async fn initiate<M: ScHost, C: Crypto>(
+    fn initiate<M: ScHost, C: Crypto>(
         matter: &'a M,
         crypto: C,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
-    ) -> Result<Self, Error>;
+    ) -> impl Future<Output = Result<Self, Error>> + MaybeSend;
 
     /// [`Self::initiate`], choosing the transport a newly established session
     /// runs over.
@@ -80,13 +82,13 @@ pub trait ExchangeInitiator<'a>: Sized {
     /// [`TransportPreference::LargePayload`] to require TCP; the peer must have
     /// advertised TCP server support or establishment fails rather than silently
     /// downgrading. See [`TransportPreference`].
-    async fn initiate_with_transport<M: ScHost, C: Crypto>(
+    fn initiate_with_transport<M: ScHost, C: Crypto>(
         matter: &'a M,
         crypto: C,
         fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
         transport: TransportPreference,
-    ) -> Result<Self, Error>;
+    ) -> impl Future<Output = Result<Self, Error>> + MaybeSend;
 
     /// Open an exchange over a **PASE** session to a not-yet-commissioned node
     /// at the given peer address (use-case 2).
@@ -107,12 +109,12 @@ pub trait ExchangeInitiator<'a>: Sized {
     /// [`crate::transport::Transport::browse`] - or from a BLE/BTP
     /// advertisement, etc.); this method is transport-agnostic and takes the
     /// already-known address.
-    async fn initiate_pase<M: ScHost, C: Crypto>(
+    fn initiate_pase<M: ScHost, C: Crypto>(
         matter: &'a M,
         crypto: C,
         peer_addr: Address,
         passcode: u32,
-    ) -> Result<Self, Error>;
+    ) -> impl Future<Output = Result<Self, Error>> + MaybeSend;
 }
 
 impl<'a> ExchangeInitiator<'a> for Exchange<'a> {

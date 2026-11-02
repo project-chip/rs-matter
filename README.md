@@ -46,6 +46,7 @@ under a single set of paths and features:
 | `rs-matter-dm` | The cluster handlers and the root endpoint |
 | `rs-matter-respond` | The responders of the incoming exchanges |
 | `rs-matter-onboard` | The commissioner |
+| `rs-matter-stack` | The assembly of the node over a network driver |
 
 The split keeps the large generated code in a crate of its own, so that changes to the other crates are
 type-checked quickly. See [docs/crate-split-design.md](docs/crate-split-design.md) for the details.

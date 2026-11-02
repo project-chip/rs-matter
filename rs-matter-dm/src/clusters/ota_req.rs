@@ -35,6 +35,7 @@
 //! - [`OtaImageHeader::load`](crate::ota::OtaImageHeader::load) reads the
 //!   downloaded image's header.
 
+use core::future::Future;
 use core::num::NonZeroU8;
 
 use crate::crypto::Crypto;
@@ -55,7 +56,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{MaybeSend, Notification};
 use crate::with;
 use crate::Matter;
 
@@ -108,61 +109,66 @@ impl Provider {
     ///
     /// [`BasicInfoConfig`]: crate::dm::clusters::basic_info::BasicInfoConfig
     /// [`OtaImagesRegistry`]: crate::dm::clusters::ota_prov::OtaImagesRegistry
-    pub async fn query<C, F, R>(
-        &self,
-        matter: &Matter<'_>,
+    // Not an `async fn`, so that the future is declared `MaybeSend`
+    #[allow(clippy::manual_async_fn, clippy::too_many_arguments)]
+    pub fn query<'a, 'm, C, F, R>(
+        &'a self,
+        matter: &'a Matter<'m>,
         crypto: C,
-        protocols: &[DownloadProtocolEnum],
+        protocols: &'a [DownloadProtocolEnum],
         current_version: Option<u32>,
         requestor_can_consent: bool,
         f: F,
-    ) -> Result<R, Error>
+    ) -> impl Future<Output = Result<R, Error>> + MaybeSend + use<'a, 'm, C, F, R>
     where
         C: Crypto,
-        F: FnOnce(&QueryImageResponse<'_>) -> Result<R, Error>,
+        F: FnOnce(&QueryImageResponse<'_>) -> Result<R, Error> + MaybeSend,
+        R: MaybeSend,
     {
-        let dev = matter.dev_det();
-        let version = current_version.unwrap_or(dev.sw_ver);
+        async move {
+            let dev = matter.dev_det();
+            let version = current_version.unwrap_or(dev.sw_ver);
 
-        // `Location`, per spec, mirrors the Basic Information cluster Location
-        // attribute (a 2-char region code) when one is configured. Copy it out so
-        // the state lock is not held across the exchange.
-        let location = matter.with_state(|state| state.basic_info_settings.location.clone());
-        let location = location.as_deref();
+            // `Location`, per spec, mirrors the Basic Information cluster Location
+            // attribute (a 2-char region code) when one is configured. Copy it out so
+            // the state lock is not held across the exchange.
+            let location = matter.with_state(|state| state.basic_info_settings.location.clone());
+            let location = location.as_deref();
 
-        let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
+            let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
 
-        let handle = exchange
-            .ota_software_update_provider()
-            .query_image(self.endpoint, |b| {
-                let mut protos = b
-                    .vendor_id(dev.vid)?
-                    .product_id(dev.pid)?
-                    .software_version(version)?
-                    .protocols_supported()?;
-                for proto in protocols {
-                    protos = protos.push(proto)?;
-                }
-                protos
-                    .end()?
-                    .hardware_version(Some(dev.hw_ver))?
-                    .location(location)?
-                    .requestor_can_consent(Some(requestor_can_consent))?
-                    .metadata_for_provider(None)?
-                    .end()
-            })
-            .await?;
+            let handle = exchange
+                .ota_software_update_provider()
+                .query_image(self.endpoint, |b| {
+                    let mut protos = b
+                        .vendor_id(dev.vid)?
+                        .product_id(dev.pid)?
+                        .software_version(version)?
+                        .protocols_supported()?;
+                    for proto in protocols {
+                        protos = protos.push(proto)?;
+                    }
+                    protos
+                        .end()?
+                        .hardware_version(Some(dev.hw_ver))?
+                        .location(location)?
+                        .requestor_can_consent(Some(requestor_can_consent))?
+                        .metadata_for_provider(None)?
+                        .end()
+                })
+                .await?;
 
-        // Hand the response to `f` while it is still valid (borrows the RX buffer),
-        // then release the exchange.
-        let result = {
-            let response = handle.response()?;
-            f(&response)
-        };
+            // Hand the response to `f` while it is still valid (borrows the RX buffer),
+            // then release the exchange.
+            let result = {
+                let response = handle.response()?;
+                f(&response)
+            };
 
-        handle.complete().await?;
+            handle.complete().await?;
 
-        result
+            result
+        }
     }
 
     /// Ask this provider how to apply the already-downloaded image identified by
@@ -177,66 +183,74 @@ impl Provider {
     /// [`Proceed`]: OtaApplyOutcome::Proceed
     /// [`Await`]: OtaApplyOutcome::Await
     /// [`Discontinue`]: OtaApplyOutcome::Discontinue
-    pub async fn apply_update<C>(
-        &self,
-        matter: &Matter<'_>,
+    // Not an `async fn`, so that the future is declared `MaybeSend`
+    #[allow(clippy::manual_async_fn)]
+    pub fn apply_update<'a, 'm, C>(
+        &'a self,
+        matter: &'a Matter<'m>,
         crypto: C,
-        update_token: &[u8],
+        update_token: &'a [u8],
         new_version: u32,
-    ) -> Result<OtaApplyOutcome, Error>
+    ) -> impl Future<Output = Result<OtaApplyOutcome, Error>> + MaybeSend + use<'a, 'm, C>
     where
         C: Crypto,
     {
-        let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
+        async move {
+            let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
 
-        let handle = exchange
-            .ota_software_update_provider()
-            .apply_update_request(self.endpoint, |b| {
-                b.update_token(Octets(update_token))?
-                    .new_version(new_version)?
-                    .end()
-            })
-            .await?;
+            let handle = exchange
+                .ota_software_update_provider()
+                .apply_update_request(self.endpoint, |b| {
+                    b.update_token(Octets(update_token))?
+                        .new_version(new_version)?
+                        .end()
+                })
+                .await?;
 
-        let outcome = {
-            let response = handle.response()?;
-            let delay_secs = response.delayed_action_time()?;
+            let outcome = {
+                let response = handle.response()?;
+                let delay_secs = response.delayed_action_time()?;
 
-            match response.action()? {
-                ApplyUpdateActionEnum::Proceed => OtaApplyOutcome::Proceed { delay_secs },
-                ApplyUpdateActionEnum::AwaitNextAction => OtaApplyOutcome::Await { delay_secs },
-                ApplyUpdateActionEnum::Discontinue => OtaApplyOutcome::Discontinue,
-            }
-        };
+                match response.action()? {
+                    ApplyUpdateActionEnum::Proceed => OtaApplyOutcome::Proceed { delay_secs },
+                    ApplyUpdateActionEnum::AwaitNextAction => OtaApplyOutcome::Await { delay_secs },
+                    ApplyUpdateActionEnum::Discontinue => OtaApplyOutcome::Discontinue,
+                }
+            };
 
-        handle.complete().await?;
+            handle.complete().await?;
 
-        Ok(outcome)
+            Ok(outcome)
+        }
     }
 
     /// Tell this provider that the image identified by `update_token` has been
     /// applied, now running `software_version`. Opens a CASE exchange and sends
     /// `NotifyUpdateApplied`; there is no response payload.
-    pub async fn notify_applied<C>(
-        &self,
-        matter: &Matter<'_>,
+    // Not an `async fn`, so that the future is declared `MaybeSend`
+    #[allow(clippy::manual_async_fn)]
+    pub fn notify_applied<'a, 'm, C>(
+        &'a self,
+        matter: &'a Matter<'m>,
         crypto: C,
-        update_token: &[u8],
+        update_token: &'a [u8],
         software_version: u32,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + use<'a, 'm, C>
     where
         C: Crypto,
     {
-        let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
+        async move {
+            let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
 
-        exchange
-            .ota_software_update_provider()
-            .notify_update_applied(self.endpoint, |b| {
-                b.update_token(Octets(update_token))?
-                    .software_version(software_version)?
-                    .end()
-            })
-            .await
+            exchange
+                .ota_software_update_provider()
+                .notify_update_applied(self.endpoint, |b| {
+                    b.update_token(Octets(update_token))?
+                        .software_version(software_version)?
+                        .end()
+                })
+                .await
+        }
     }
 }
 
@@ -691,7 +705,7 @@ impl OtaState {
     /// reports progress; on [`complete`](OtaUpdate::complete) - or if dropped
     /// without it, a failure - the reported state returns to `Idle`
     /// (`UpdateStateEnum` has no dedicated failure value).
-    pub fn initiate_update<E>(&self, ctx: E) -> OtaUpdate<'_, E>
+    pub fn initiate_update<'a, E>(&'a self, ctx: &'a E) -> OtaUpdate<'a, E>
     where
         E: AttrChangeNotifier + EventEmitter,
     {
@@ -718,7 +732,7 @@ where
     E: AttrChangeNotifier + EventEmitter,
 {
     state: &'a OtaState,
-    ctx: E,
+    ctx: &'a E,
     done: bool,
 }
 
@@ -746,7 +760,7 @@ where
     /// the platform has it in `platform_code`: the `DownloadError` event.
     pub fn download_failed(&self, bytes_downloaded: u64, platform_code: Option<i64>) {
         self.state
-            .download_failed(&self.ctx, bytes_downloaded, platform_code);
+            .download_failed(self.ctx, bytes_downloaded, platform_code);
     }
 
     /// Report `Applying`.
@@ -763,7 +777,7 @@ where
             _ => ChangeReasonEnum::Success,
         };
 
-        self.state.report(&self.ctx, state, progress, reason);
+        self.state.report(self.ctx, state, progress, reason);
     }
 
     /// Finish the session, returning the reported state to `Idle`.
@@ -786,7 +800,7 @@ where
         if !self.done {
             // Abandoned mid-update: revert to Idle.
             self.state.report(
-                &self.ctx,
+                self.ctx,
                 UpdateStateEnum::Idle,
                 None,
                 ChangeReasonEnum::Failure,
