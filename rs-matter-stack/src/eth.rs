@@ -80,7 +80,7 @@ where
     }
 }
 
-// A type alias for a Matter stack running over Ethernet.
+/// A type alias for a Matter stack running over Ethernet.
 pub type EthMatterStack<'a, const B: usize, E = ()> = MatterStack<'a, B, Eth<E>>;
 
 /// A trait representing a task that needs access to the operational Ethernet interface

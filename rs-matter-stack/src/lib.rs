@@ -230,6 +230,7 @@ cfg_if! {
 
 const MAX_BUSY_RESPONDERS: usize = 2;
 
+/// The `InteractionModel` specialization run by `MatterStack`.
 pub type MatterStackInteractionModel<'a, C, H, K> = InteractionModel<
     'a,
     C,

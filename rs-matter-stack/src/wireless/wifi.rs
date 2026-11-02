@@ -460,8 +460,8 @@ where
 /// A trait for running a task within a context where both the wireless interface (Thread or Wifi)
 /// is initialized and operable, as well as the BLE GATT peripheral is also operable.
 ///
-/// Typically, tasks performing the Matter concurrent commissioning workflow will ran by implementations
-/// of this trait.
+/// Typically, tasks performing the Matter concurrent commissioning workflow will be run by
+/// implementations of this trait.
 pub trait WifiCoexDriver: MaybeSend {
     /// Setup the radio to operate in wireless coexist mode (Wifi or Thread + BLE)
     /// and run the given task.
