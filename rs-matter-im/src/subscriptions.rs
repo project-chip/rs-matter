@@ -47,6 +47,11 @@ pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = MAX_FABRICS * 3;
 /// wildcards so that new changes can always be recorded.
 pub const MAX_CHANGED_ATTRS: usize = 16;
 
+/// How long before the max interval runs out a non-ICD subscription's report,
+/// held back by the subscriber's min interval floor, goes out: time for waiting
+/// behind another report, a session re-establishment and most of the retransmissions.
+const FLOOR_LEAD_SECS: u16 = 10;
+
 /// A struct for the RX buffers containing the read requests of the tracked subscriptions.
 // NOTE: `SubscriptionsBuffers` is a thin wrapper around a second
 // `Mutex<RefCell<Vec<..>>>` that is *always* locked in lockstep with
@@ -2004,6 +2009,23 @@ pub(crate) fn icd_max_int_secs(idle_mode_duration_s: u32, min_int_floor_secs: u1
         .min(u16::MAX as u32) as u16
 }
 
+/// The max interval granted to a non-ICD subscription: what the subscriber asks
+/// for, bounded above by the configured maximum max interval and below by the
+/// configured minimum max interval - but leaving room after the subscriber's min
+/// interval floor for a report, which the floor would otherwise hold back until
+/// the subscription expires.
+pub(crate) fn subscription_max_int_secs(
+    req_max_int_ceil: u16,
+    min_int_floor: u16,
+    min_subscription_max_interval_secs: u16,
+    max_subscription_max_interval_secs: u16,
+) -> u16 {
+    req_max_int_ceil
+        .min(max_subscription_max_interval_secs)
+        .max(min_subscription_max_interval_secs)
+        .max(min_int_floor.saturating_add(FLOOR_LEAD_SECS))
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -3542,6 +3564,63 @@ mod tests {
         assert_eq!(icd_max_int_secs(1, 0), 3);
         assert_eq!(icd_max_int_secs(60, 59), 62);
         assert_eq!(icd_max_int_secs(70_000, 0), u16::MAX);
+    }
+
+    #[test]
+    fn subscription_max_int() {
+        // When uncapped (u16::MAX), the subscriber's requested ceiling is accepted
+        assert_eq!(subscription_max_int_secs(600, 0, 40, u16::MAX), 600);
+
+        // When uncapped (u16::MAX), the lower bound floor is enforced
+        assert_eq!(subscription_max_int_secs(10, 0, 40, u16::MAX), 40);
+
+        // When capped, ceilings above the cap are clamped down
+        assert_eq!(subscription_max_int_secs(600, 0, 40, 120), 120);
+
+        // When capped, ceilings below the cap are accepted
+        assert_eq!(subscription_max_int_secs(80, 0, 40, 120), 80);
+
+        // When capped, lower bound floor is still enforced
+        assert_eq!(subscription_max_int_secs(10, 0, 40, 120), 40);
+
+        // The configured minimum takes precedence over the cap
+        assert_eq!(subscription_max_int_secs(600, 0, 300, 120), 300);
+
+        // There is always room for a report after the subscriber's min interval
+        // floor, whether the floor is above the cap or equal to the ceiling
+        assert_eq!(subscription_max_int_secs(600, 50, 40, 30), 60);
+        assert_eq!(subscription_max_int_secs(600, 300, 40, 120), 310);
+        assert_eq!(subscription_max_int_secs(300, 300, 40, 120), 310);
+        assert_eq!(
+            subscription_max_int_secs(u16::MAX, u16::MAX, 40, 120),
+            u16::MAX
+        );
+    }
+
+    #[test]
+    fn floor_does_not_hold_report_back_until_expiry() {
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        // A floor above the cap
+        let max_int = subscription_max_int_secs(600, 300, 40, 120);
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 300, max_int);
+            rctx.set_keep();
+        }
+
+        // The keep-alive goes out once the floor allows it...
+        let report_at = subs.next_report_at(0, KeepAlive::Default, &subs_bufs);
+        assert_eq!(report_at, now + Duration::from_secs(300));
+        assert!(subs.any_reportable(report_at, 0, KeepAlive::Default, &subs_bufs));
+
+        // ...which is before the subscription expires
+        assert!(!subs.remove(&subs_bufs, |sub| sub
+            .is_expired(report_at)
+            .then_some("expired")));
     }
 
     #[test]

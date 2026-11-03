@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: `BasicInfoConfig::max_subscription_max_interval_secs` (default `DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS`, 120 s): the greatest max interval granted to a (non-ICD) subscription (#642)
+* Fix: a non-ICD subscription whose min interval floor is close to its max interval no longer expires before it can report (#642)
 * New: on Windows, a Wi-Fi `NetCtl`, `WirelessDiag` and `WifiDiag` over the Native Wifi API: `dm::networks::wifi::win32::Win32WifiCtl`. The `onoff_light_bt` example uses it on Windows (#641)
 * New: on Windows, a BLE GATT peripheral and central over its Bluetooth LE API: `transport::network::btp::win32`, and `stack::ble::Win32GattPeripheral`. The `onoff_light_bt` example runs on Windows too (#639)
 * Fix: MRP: an ICD sender accounts for its own polling interval in the retransmission backoff (#638)
