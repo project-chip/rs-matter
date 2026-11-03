@@ -454,18 +454,11 @@ where
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
-        let mut first = {
-            let mut first_available = pin!(self.handler.wait_available());
-            let mut second_available = pin!(self.next.wait_available());
+        // Receive from one network, and switch to the other once that one has a packet
+        // first: the packet of a network may also be gone before it is received
+        // (e.g. that network was reset)
+        let mut first = true;
 
-            matches!(
-                select(&mut first_available, &mut second_available).await,
-                Either::First(_)
-            )
-        };
-
-        // The packet one network reported may be gone by the time it is received
-        // (e.g. that network was reset), so the other one is watched meanwhile
         loop {
             if first {
                 let mut recv = pin!(self.handler.recv_from(buffer));

@@ -302,7 +302,18 @@ impl Btp {
     /// Fails if the packet buffered before it is not taken within the connection idle
     /// timeout: no GATT Peripheral or Central serves a session then. That packet is
     /// dropped, so that the sends after this one do not wait for it too.
-    pub async fn send(&self, data: &[u8], addr: BtAddr) -> Result<(), Error> {
+    pub fn send<'a>(
+        &'a self,
+        data: &'a [u8],
+        addr: BtAddr,
+    ) -> impl Future<Output = Result<(), Error>> + 'a {
+        self.send_to_addr(data, Some(addr))
+    }
+
+    /// As [`Btp::send`], failing with `NoNetworkInterface` when there is no peer address.
+    async fn send_to_addr(&self, data: &[u8], addr: Option<BtAddr>) -> Result<(), Error> {
+        let addr = addr.ok_or(ErrorCode::NoNetworkInterface)?;
+
         let timeout_secs = self
             .inner
             .lock(|inner| inner.borrow().conn_idle_timeout_secs);
@@ -345,10 +356,8 @@ impl Default for Btp {
 }
 
 impl NetworkSend for &Btp {
-    async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
-        (*self)
-            .send(data, addr.btp().ok_or(ErrorCode::NoNetworkInterface)?)
-            .await
+    fn send_to(&mut self, data: &[u8], addr: Address) -> impl Future<Output = Result<(), Error>> {
+        (*self).send_to_addr(data, addr.btp())
     }
 }
 

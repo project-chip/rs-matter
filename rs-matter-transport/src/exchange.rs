@@ -134,6 +134,12 @@ impl ExchangeId {
         })
     }
 
+    /// Fail with [`ErrorCode::NoSession`] if the session of the exchange no longer exists.
+    #[inline(never)]
+    pub(crate) fn check_session(&self, transport: &Transport) -> Result<(), Error> {
+        self.with_sessions(transport, |_| Ok(()))
+    }
+
     /// Get the exchange state associated with this exchange from the given sessions store.
     pub(crate) fn exch<'a>(&self, session: &'a mut Session) -> &'a mut ExchangeState {
         unwrap!(session.exchanges[self.exchange_index()].as_mut())
@@ -178,7 +184,7 @@ impl ExchangeId {
                 Either3::First(mut packet) => {
                     // Taken because our session is gone: the packet is someone else's,
                     // so leave it in place.
-                    self.with_sessions(transport, |_| Ok(()))?;
+                    self.check_session(transport)?;
 
                     packet.clear_on_drop(true);
 
@@ -190,7 +196,7 @@ impl ExchangeId {
                     // Session removed
 
                     // Bail out if it was ours
-                    self.with_sessions(transport, |_| Ok(()))?;
+                    self.check_session(transport)?;
 
                     // If not, go back waiting for a packet
                     continue;
@@ -216,17 +222,15 @@ impl ExchangeId {
         &self,
         transport: &'a Transport,
     ) -> Result<TxMessage<'a>, Error> {
-        self.with_sessions(transport, |_| Ok(()))?;
+        self.check_session(transport)?;
 
         let mut packet = transport
-            .get_if_tx(|packet| {
-                packet.buf.is_empty() || self.with_sessions(transport, |_| Ok(())).is_err()
-            })
+            .get_if_tx(|packet| packet.buf.is_empty() || self.check_session(transport).is_err())
             .await;
 
         // Taken because our session is gone: the slot may still hold someone
         // else's unsent packet, so leave it in place.
-        self.with_sessions(transport, |_| Ok(()))?;
+        self.check_session(transport)?;
 
         // TODO: Resizing might be a bit expensive with large buffers
         unwrap!(packet.buf.resize_default(MAX_TX_BUF_SIZE));
@@ -268,7 +272,7 @@ impl ExchangeId {
                 }
 
                 // Bail out if the removed session was ours
-                self.with_sessions(transport, |_| Ok(()))?;
+                self.check_session(transport)?;
             }
 
             if self.retrans_delay_ms(transport)?.is_some() {
@@ -290,7 +294,7 @@ impl ExchangeId {
             })
             .await;
 
-        self.with_sessions(transport, |_| Ok(()))
+        self.check_session(transport)
     }
 
     pub(crate) fn retrans_delay_ms(&self, transport: &Transport) -> Result<Option<u64>, Error> {
