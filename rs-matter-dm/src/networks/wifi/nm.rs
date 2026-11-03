@@ -36,7 +36,7 @@ use crate::dm::clusters::net_comm::{
     WirelessCreds,
 };
 use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag};
-use crate::dm::networks::wifi::wpa_supp::band::{band_and_channel, signal_strength_to_rssi};
+use crate::dm::networks::wifi::band::{band_and_channel, signal_strength_to_rssi};
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;

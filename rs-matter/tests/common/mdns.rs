@@ -73,6 +73,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
 
     use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
 
+    #[cfg(unix)]
     #[inline(never)]
     fn initialize_network() -> Result<(Ipv4Addr, Vec<Ipv6Addr>, u32), Error> {
         use log::error;
@@ -131,6 +132,56 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
         info!("Will use network interface {iname} with {ip} / {ipv6_addrs:?} for mDNS");
 
         Ok((ip.octets().into(), ipv6_addrs, 0 as _))
+    }
+
+    // The same choice as on Unix, with `if-addrs`, as `nix` has no interface list
+    // on Windows. The IPv6 multicast join there needs the index of the interface.
+    #[cfg(windows)]
+    #[inline(never)]
+    fn initialize_network() -> Result<(Ipv4Addr, Vec<Ipv6Addr>, u32), Error> {
+        use std::net::IpAddr;
+
+        use log::error;
+        use rs_matter::error::ErrorCode;
+
+        let interfaces = if_addrs::get_if_addrs()
+            .map_err(|_| ErrorCode::StdIoError)?
+            .into_iter()
+            .filter(|ia| {
+                ia.oper_status == if_addrs::IfOperStatus::Up && !ia.is_loopback() && !ia.is_p2p
+            })
+            .collect::<Vec<_>>();
+
+        let (iname, ip, index) = interfaces
+            .iter()
+            .filter(|ia| ia.ip().is_ipv6())
+            .find_map(|ia| {
+                interfaces
+                    .iter()
+                    .filter(|ia2| ia2.name == ia.name)
+                    .find_map(|ia2| match ia2.ip() {
+                        IpAddr::V4(ip) => Some((ia.name.clone(), ip, ia.index.unwrap_or(0))),
+                        IpAddr::V6(_) => None,
+                    })
+            })
+            .ok_or_else(|| {
+                error!("Cannot find network interface suitable for mDNS broadcasting");
+                ErrorCode::StdIoError
+            })?;
+
+        // Every IPv6 address of the interface, as on Unix
+        let ipv6_addrs = interfaces
+            .iter()
+            .filter(|ia| ia.name == iname)
+            .filter_map(|ia| match ia.ip() {
+                IpAddr::V6(ipv6) => Some(Ipv6Addr::from(ipv6.octets())),
+                IpAddr::V4(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        info!("Will use network interface {iname} (#{index}) with {ip} / {ipv6_addrs:?} for mDNS");
+
+        Ok((ip.octets().into(), ipv6_addrs, index))
     }
 
     let (ipv4_addr, ipv6_addrs, interface) = initialize_network()?;

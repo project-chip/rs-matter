@@ -14,7 +14,7 @@ rust-version.workspace = true
 [features]
 default = ["os", "log"]
 # Umbrella set of features for typical OS-based non-baremetal deployments.
-os = ["std", "dep:if-addrs", "rs-matter-node-core/os", "rs-matter-node/os"]
+os = ["std", "dep:if-addrs", "dep:windows", "rs-matter-node-core/os", "rs-matter-node/os"]
 std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-cert/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-dm-clusters/std", "rs-matter-node-core/std", "rs-matter-node/std", "rs-matter-sc/std", "rs-matter-bdx/std"]
 alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-cert/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-dm-clusters/alloc", "rs-matter-node-core/alloc", "rs-matter-node/alloc", "rs-matter-sc/alloc", "rs-matter-bdx/alloc"]
 # The NetworkManager and wpa_supplicant Wi-Fi drivers, and the OTBR Thread driver.
@@ -58,6 +58,14 @@ futures-lite = { workspace = true, optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 nix = { workspace = true }
+
+# The Wi-Fi driver over the Native Wifi API of Windows.
+[target.'cfg(windows)'.dependencies]
+async-channel = { workspace = true }
+windows = { workspace = true, optional = true, features = [
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WiFi",
+] }
 
 [dev-dependencies]
 rs-matter-im = { workspace = true }

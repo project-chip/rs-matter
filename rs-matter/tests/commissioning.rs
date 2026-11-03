@@ -56,7 +56,7 @@ use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnO
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
 use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
@@ -133,7 +133,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&UnixNetifs)
+            .netif_diag(&SysNetifs)
             .build(matter, rand)
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,

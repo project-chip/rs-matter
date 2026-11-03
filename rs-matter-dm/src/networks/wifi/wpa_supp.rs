@@ -42,7 +42,8 @@ use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
 use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
 use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;
 
-pub mod band;
+pub use super::band;
+
 #[cfg(unix)]
 pub mod unix;
 

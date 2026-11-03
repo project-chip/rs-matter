@@ -54,7 +54,7 @@ use rs_matter::dm::clusters::app::on_off::{
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, Node, Privilege};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::fabric::FabricPersist;
@@ -125,7 +125,7 @@ fn device_data_model<'a>(
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&UnixNetifs)
+            .netif_diag(&SysNetifs)
             .build(matter, rand)
             .chain(
                 |e, c| e == ENDPOINT && c == desc::DescHandler::CLUSTER.id,
