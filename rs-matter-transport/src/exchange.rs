@@ -134,6 +134,12 @@ impl ExchangeId {
         })
     }
 
+    /// Fail with [`ErrorCode::NoSession`] if the session of the exchange no longer exists.
+    #[inline(never)]
+    pub(crate) fn check_session(&self, transport: &Transport) -> Result<(), Error> {
+        self.with_sessions(transport, |_| Ok(()))
+    }
+
     /// Get the exchange state associated with this exchange from the given sessions store.
     pub(crate) fn exch<'a>(&self, session: &'a mut Session) -> &'a mut ExchangeState {
         unwrap!(session.exchanges[self.exchange_index()].as_mut())
@@ -176,6 +182,10 @@ impl ExchangeId {
 
             match select3(&mut recv, &mut session_removed, &mut timeout).await {
                 Either3::First(mut packet) => {
+                    // Taken because our session is gone: the packet is someone else's,
+                    // so leave it in place.
+                    self.check_session(transport)?;
+
                     packet.clear_on_drop(true);
 
                     self.check_no_pending_retrans(transport)?;
@@ -186,7 +196,7 @@ impl ExchangeId {
                     // Session removed
 
                     // Bail out if it was ours
-                    self.with_sessions(transport, |_| Ok(()))?;
+                    self.check_session(transport)?;
 
                     // If not, go back waiting for a packet
                     continue;
@@ -212,28 +222,26 @@ impl ExchangeId {
         &self,
         transport: &'a Transport,
     ) -> Result<TxMessage<'a>, Error> {
-        self.with_sessions(transport, |_| Ok(()))?;
+        self.check_session(transport)?;
 
         let mut packet = transport
-            .get_if_tx(|packet| {
-                packet.buf.is_empty() || self.with_sessions(transport, |_| Ok(())).is_err()
-            })
+            .get_if_tx(|packet| packet.buf.is_empty() || self.check_session(transport).is_err())
             .await;
+
+        // Taken because our session is gone: the slot may still hold someone
+        // else's unsent packet, so leave it in place.
+        self.check_session(transport)?;
 
         // TODO: Resizing might be a bit expensive with large buffers
         unwrap!(packet.buf.resize_default(MAX_TX_BUF_SIZE));
 
         packet.clear_on_drop(true);
 
-        let tx = TxMessage {
+        Ok(TxMessage {
             exchange_id: *self,
             transport,
             packet,
-        };
-
-        self.with_sessions(transport, |_| Ok(()))?;
-
-        Ok(tx)
+        })
     }
 
     /// Waits until the other side acknowledges the last message sent on this exchange,
@@ -264,7 +272,7 @@ impl ExchangeId {
                 }
 
                 // Bail out if the removed session was ours
-                self.with_sessions(transport, |_| Ok(()))?;
+                self.check_session(transport)?;
             }
 
             if self.retrans_delay_ms(transport)?.is_some() {
@@ -286,7 +294,7 @@ impl ExchangeId {
             })
             .await;
 
-        self.with_sessions(transport, |_| Ok(()))
+        self.check_session(transport)
     }
 
     pub(crate) fn retrans_delay_ms(&self, transport: &Transport) -> Result<Option<u64>, Error> {
@@ -1678,5 +1686,44 @@ mod tests {
             Err(err) => assert!(matches!(err.code(), ErrorCode::NoSpaceSessions)),
             Ok(_) => panic!("expected NoSpaceSessions error"),
         }
+    }
+
+    /// An exchange whose session goes while it waits to receive fails, and leaves
+    /// the packet of another peer in the RX buffer.
+    #[test]
+    fn test_recv_after_session_removal_leaves_others_packet() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Poll, Waker};
+
+        let transport = Transport::new(None);
+        let crypto = test_only_crypto();
+
+        let mut exchange = block_on(Exchange::initiate_plaintext(
+            &transport,
+            &crypto,
+            network::Address::new(),
+        ))
+        .unwrap();
+        let session_id = exchange.id().session_id();
+
+        {
+            let mut packet = block_on(transport.get_if_rx(|packet| packet.buf.is_empty()));
+            packet.peer = network::Address::Udp(([192, 0, 2, 1], 5540).into());
+            unwrap!(packet.buf.extend_from_slice(&[1, 2, 3]));
+        }
+
+        let mut cx = Context::from_waker(Waker::noop());
+
+        let mut recv = pin!(exchange.recv());
+        assert!(recv.as_mut().poll(&mut cx).is_pending());
+
+        transport.with_sessions(|sessions| sessions.remove(session_id));
+        transport.notify_session_removed();
+
+        assert!(matches!(recv.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+
+        let packet = transport.rx.try_lock().ok().unwrap();
+        assert_eq!(&packet.buf[..], &[1, 2, 3]);
     }
 }
