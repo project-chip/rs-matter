@@ -464,15 +464,17 @@ where
                 let mut recv = pin!(self.handler.recv_from(buffer));
                 let mut other = pin!(self.next.wait_available());
 
-                if let Either::First(result) = select(&mut recv, &mut other).await {
-                    break result;
+                match select(&mut recv, &mut other).await {
+                    Either::First(result) => break result,
+                    Either::Second(result) => result?,
                 }
             } else {
                 let mut recv = pin!(self.next.recv_from(buffer));
                 let mut other = pin!(self.handler.wait_available());
 
-                if let Either::First(result) = select(&mut recv, &mut other).await {
-                    break result;
+                match select(&mut recv, &mut other).await {
+                    Either::First(result) => break result,
+                    Either::Second(result) => result?,
                 }
             }
 
@@ -556,6 +558,19 @@ mod tests {
         }
     }
 
+    /// Fails to wait for a packet.
+    struct Failing;
+
+    impl NetworkReceive for Failing {
+        async fn wait_available(&mut self) -> Result<(), Error> {
+            Err(ErrorCode::NoNetworkInterface.into())
+        }
+
+        async fn recv_from(&mut self, _buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+            core::future::pending().await
+        }
+    }
+
     /// Receive from `handler` chained with `next`: the packet of the one that has it.
     fn receive<H: NetworkReceive, T: NetworkReceive>(handler: H, next: T) {
         let mut network = ChainedNetwork::new(|_: &Address| true, handler, next);
@@ -576,5 +591,19 @@ mod tests {
     fn chained_receive_takes_the_other_packet_when_one_is_gone() {
         receive(Gone, One(Some([1, 2, 3])));
         receive(One(Some([1, 2, 3])), Gone);
+    }
+
+    /// An error while waiting on the other network ends the receive.
+    #[test]
+    fn chained_receive_returns_the_error_of_the_other_network() {
+        let mut network = ChainedNetwork::new(|_: &Address| true, One(None), Failing);
+        let mut buf = [0; 8];
+
+        let received = block_on(with_timeout(
+            Duration::from_secs(1),
+            network.recv_from(&mut buf),
+        ));
+
+        assert!(matches!(received, Ok(Err(_))));
     }
 }
