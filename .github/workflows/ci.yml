@@ -46,6 +46,11 @@ jobs:
       - name: Install libdbus
         run: sudo apt-get install -y libdbus-1-dev
 
+      # For the `zeroconf` and `astro-dnssd` mDNS backends
+      - name: Install Avahi
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: sudo apt-get install -y libavahi-client-dev libavahi-compat-libdnssd-dev
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -76,7 +81,25 @@ jobs:
       # The steps of `rs-matter` lint the `rs-matter-*` crates too, as they are its path dependencies.
       - name: Clippy - Optional features
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cd rs-matter; cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,zbus,bluer,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
+        run: cd rs-matter; cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,zbus,bluer,qr-scan,pics,backtrace,log-tlv-payload,log-mrp,large-buffers,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
+
+      # The features that do not go with the others: one mDNS backend at a time, and a CASE responder without an initiator
+      - name: Clippy - Exclusive features
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: |
+          cd rs-matter
+          cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,zeroconf -- -Dwarnings
+          cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,astro-dnssd -- -Dwarnings
+          cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,case-responder-only -- -Dwarnings
+
+      # Each crate on its own, with its own default features. The steps above lint the crates together,
+      # so each one gets the features that the others enable in it too.
+      - name: Clippy - Each crate
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: |
+          for p in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
+            cargo clippy -p "$p" --all-targets --no-deps -- -Dwarnings
+          done
 
       - name: Clippy - baremetal
         if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
@@ -127,6 +150,45 @@ jobs:
       - name: Examples - WebRTC Camera
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,webrtc
+
+  windows:
+    # Builds and tests what only Windows builds, such as the BLE GATT peripheral and central and the Wi-Fi driver.
+    # The runner has no radios, so the tests do not reach them.
+    runs-on: windows-latest
+
+    steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      # The tests compare with files of the repository, which have LF line endings
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clippy - All
+        run: cargo clippy --no-deps --all-targets -- -Dwarnings
+
+      # As on Linux, without `zbus` and `bluer`, which are Linux-only
+      - name: Clippy - Optional features
+        working-directory: rs-matter
+        run: cargo clippy --all-targets --no-default-features --features rustcrypto,os,async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,qr-scan,pics,backtrace,log-tlv-payload,log-mrp,large-buffers,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
+
+      - name: Clippy - Send Sync
+        working-directory: rs-matter
+        run: cargo clippy --no-deps --features send-sync -- -Dwarnings
+
+      # Clippy does not compute the layouts of the futures, while a build does, and it also links
+      - name: Build - onoff_light_bt
+        run: cargo build -p rs-matter-examples --bin onoff_light_bt
+
+      # As on Linux, with the `rustcrypto` backend
+      - name: Test
+        run: cargo test --workspace --exclude rs-matter-examples --exclude rs-matter-tests --exclude rs-matter-codegen --exclude rs-matter-macros --no-default-features --features rs-matter/rustcrypto,rs-matter/os,rs-matter/async-io,rs-matter/log,rs-matter/groups,rs-matter/case-resumption,rs-matter/persistent-subscriptions,rs-matter/max-group-keys-per-fabric-2,rs-matter/max-groups-per-fabric-4
 
   miri:
     # Runs the unit tests under Miri, to catch undefined behavior in the `unsafe` code

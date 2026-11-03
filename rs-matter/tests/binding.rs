@@ -79,7 +79,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
-use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
 use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
@@ -189,7 +189,7 @@ fn switch_data_model<'a>(
     (
         SWITCH_NODE,
         endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&UnixNetifs)
+            .netif_diag(&SysNetifs)
             .build(matter, rand)
             .chain(
                 |e, c| e == SWITCH_ENDPOINT && c == desc::DescHandler::CLUSTER.id,
@@ -232,7 +232,7 @@ fn light_data_model<'a, OH: OnOffHooks>(
     (
         LIGHT_NODE,
         endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&UnixNetifs)
+            .netif_diag(&SysNetifs)
             .build(matter, rand)
             .chain(
                 |e, c| e == LIGHT_ENDPOINT && c == desc::DescHandler::CLUSTER.id,

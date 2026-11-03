@@ -55,8 +55,8 @@ use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
-use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::WifiNetworks;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, Cluster, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{InteractionModel, InteractionModelState};
@@ -337,7 +337,7 @@ async fn startup_data_model<K: KvBlobStoreAccess>(matter: &Matter<'_>, kv: K) {
     let dm = (
         NODE,
         endpoints::EthSysHandlerBuilder::new()
-            .netif_diag(&UnixNetifs)
+            .netif_diag(&SysNetifs)
             .build(matter, rand)
             .chain(
                 |e, c| e == ROOT_ENDPOINT_ID && c == TimeSyncHandler::CLUSTER.id,

@@ -26,7 +26,7 @@ pub use bluer::*;
 #[cfg(feature = "zbus")]
 pub use bluez::*;
 #[cfg(all(windows, feature = "std"))]
-pub use winrt::*;
+pub use win32::*;
 
 /// A trait modeling a platform-specific / BLE-stack specific GATT peripheral.
 ///
@@ -146,7 +146,7 @@ mod bluez {
 
 #[cfg(all(windows, feature = "std"))]
 #[allow(clippy::large_futures)]
-mod winrt {
+mod win32 {
     use rs_matter_transport::network::btp::{AdvData, Btp};
     use rs_matter_utils::error::Error;
 
@@ -154,16 +154,16 @@ mod winrt {
     ///
     /// Windows does not take a name to advertise, so the service name goes unused.
     #[derive(Debug, Default)]
-    pub struct WinrtGattPeripheral(());
+    pub struct Win32GattPeripheral(());
 
-    impl WinrtGattPeripheral {
-        /// Create a new `WinrtGattPeripheral`.
+    impl Win32GattPeripheral {
+        /// Create a new `Win32GattPeripheral`.
         pub const fn new() -> Self {
             Self(())
         }
     }
 
-    impl super::GattPeripheral for WinrtGattPeripheral {
+    impl super::GattPeripheral for Win32GattPeripheral {
         async fn run(
             &mut self,
             btp: &Btp,
@@ -173,7 +173,7 @@ mod winrt {
             // Windows may report an ATT MTU above what the peer puts in its handshake
             btp.set_relaxed_mtu_nego(true);
 
-            rs_matter_transport::network::btp::winrt::run_peripheral(service_adv, btp).await
+            rs_matter_transport::network::btp::win32::run_peripheral(service_adv, btp).await
         }
     }
 }

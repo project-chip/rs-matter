@@ -15,7 +15,11 @@
  *    limitations under the License.
  */
 
+pub mod band;
 #[cfg(feature = "zbus")]
 pub mod nm;
+// Also built for the tests, which do not need Windows.
+#[cfg(all(any(windows, test), feature = "os"))]
+pub mod win32;
 #[cfg(feature = "zbus")]
 pub mod wpa_supp;

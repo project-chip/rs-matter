@@ -21,9 +21,10 @@
 //! On Linux, the example uses the BlueZ BLE stack and either the `NetworkManager` or directly the `wpa_supplicant` daemon
 //! to connect to BT and to manage Wifi networks.
 //!
-//! On Windows, the example uses the Bluetooth LE API of Windows. `rs-matter` has no Wifi control for Windows, so the
-//! example accepts the Wifi credentials it is given without acting on them, and stays on the network the host is on.
-//! It therefore works with commissioners that can reach the host there.
+//! On Windows, the example uses the Bluetooth LE API of Windows, and the Native Wifi API to manage Wifi networks.
+//! Since Windows 11 24H2, scanning for networks needs desktop apps to be allowed to access the location
+//! (Settings, Privacy & security, Location). On a host without a Wifi interface, the example accepts the Wifi
+//! credentials it is given without acting on them, and stays on the network the host is on.
 //!
 //! Do note that running the app with the `wpa_supplicant` daemon, some Linux systems might require the user running the app to have
 //! elevated permissions, so run with `sudo`!
@@ -42,7 +43,7 @@
 
 use core::pin::pin;
 
-#[cfg(all(target_os = "linux", feature = "zbus"))]
+#[cfg(any(windows, all(target_os = "linux", feature = "zbus")))]
 use log::{info, warn};
 
 use rand::Rng;
@@ -61,6 +62,8 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 #[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::dm::networks::wifi::nm::NetMgrCtl;
+#[cfg(windows)]
+use rs_matter::dm::networks::wifi::win32::Win32WifiCtl;
 #[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::dm::networks::wifi::wpa_supp::unix::DhClientCtl;
 #[cfg(all(target_os = "linux", feature = "zbus"))]
@@ -79,7 +82,7 @@ use rs_matter::{clusters, devices, root_endpoint, Matter};
 use rs_matter::stack::ble::BluezGattPeripheral;
 use rs_matter::stack::ble::GattPeripheral;
 #[cfg(windows)]
-use rs_matter::stack::ble::WinrtGattPeripheral;
+use rs_matter::stack::ble::Win32GattPeripheral;
 use rs_matter::stack::net::std::StdNetStack;
 use rs_matter::stack::wireless::{PreexistingWireless, WifiMatterStack};
 use rs_matter::utils::init::InitMaybeUninit;
@@ -150,10 +153,19 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    run(
-        NoopWirelessNetCtl::new(NetworkType::Wifi),
-        WinrtGattPeripheral::new(),
-    )
+    match Win32WifiCtl::new() {
+        Ok(net_ctl) => {
+            info!("Using the Native Wifi API of Windows to manage Wifi networks");
+            run(net_ctl, Win32GattPeripheral::new())
+        }
+        Err(_) => {
+            warn!("No Wifi interface, so staying on the network the host is on");
+            run(
+                NoopWirelessNetCtl::new(NetworkType::Wifi),
+                Win32GattPeripheral::new(),
+            )
+        }
+    }
 }
 
 #[cfg(not(any(windows, all(target_os = "linux", feature = "zbus"))))]

@@ -90,7 +90,7 @@ use rs_matter_crypto as crypto;
 #[cfg(feature = "groups")]
 use rs_matter_crypto::group_keys;
 use rs_matter_dm_core as dm;
-#[cfg(any(feature = "groups", test))]
+#[cfg(feature = "groups")]
 use rs_matter_dm_core::persist;
 use rs_matter_node_core::{basic_info, fabric, icd};
 use rs_matter_pairing as pairing;
