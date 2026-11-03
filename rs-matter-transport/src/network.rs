@@ -448,9 +448,9 @@ where
         let mut first = pin!(self.handler.wait_available());
         let mut second = pin!(self.next.wait_available());
 
-        select(&mut first, &mut second).await;
-
-        Ok(())
+        match select(&mut first, &mut second).await {
+            Either::First(result) | Either::Second(result) => result,
+        }
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
@@ -605,5 +605,15 @@ mod tests {
         ));
 
         assert!(matches!(received, Ok(Err(_))));
+    }
+
+    /// An error while waiting on either network ends the wait.
+    #[test]
+    fn chained_wait_returns_the_error_of_either_network() {
+        let mut network = ChainedNetwork::new(|_: &Address| true, One(None), Failing);
+        assert!(block_on(network.wait_available()).is_err());
+
+        let mut network = ChainedNetwork::new(|_: &Address| true, Failing, One(None));
+        assert!(block_on(network.wait_available()).is_err());
     }
 }

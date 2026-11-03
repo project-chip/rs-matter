@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: `ChainedNetwork` returns the errors of waiting on its networks instead of dropping them (#643)
 * Fix: dropping the last mDNS responder wakes those waiting for there being none (#635)
 * Fix: a fail-safe expiry wakes the waiters on the PASE sessions it removes (#635)
 * Fix: an exchange whose session is gone no longer clears the packet of another exchange from the RX or TX buffer (#635)
