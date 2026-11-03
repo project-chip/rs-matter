@@ -54,6 +54,9 @@ pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 5;
 /// The default for [`BasicInfoConfig::min_subscription_max_interval_secs`].
 pub const DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS: u16 = 40;
 
+/// The default for [`BasicInfoConfig::max_subscription_max_interval_secs`].
+pub const DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS: u16 = 120;
+
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
@@ -248,18 +251,19 @@ pub struct BasicInfoConfig<'a> {
     ///
     /// Not a real attribute.
     pub min_subscription_max_interval_secs: u16,
-    /// The greatest max interval granted to a subscription, in seconds: if specified,
-    /// what the subscriber asks for, but no more than this. This bounds how long a
+    /// The greatest max interval granted to a subscription, in seconds: what the
+    /// subscriber asks for, but no more than this. This bounds how long a
     /// subscriber will wait before timing out a silent device, speeding up background
     /// reconnects after reboots.
+    ///
+    /// [`Self::min_subscription_max_interval_secs`] and the subscriber's min interval
+    /// floor take precedence over this. Set to `u16::MAX` for no upper bound.
     ///
     /// Not used by an Intermittently Connected Device, whose subscriptions take
     /// their max interval from its idle mode duration.
     ///
-    /// If `None`, the subscriber's requested ceiling is accepted without an upper cap.
-    ///
     /// Not a real attribute.
-    pub max_subscription_max_interval_secs: Option<u16>,
+    pub max_subscription_max_interval_secs: u16,
 }
 
 impl BasicInfoConfig<'_> {
@@ -294,7 +298,7 @@ impl BasicInfoConfig<'_> {
             sii: None,
             tcp_supported: false,
             min_subscription_max_interval_secs: DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
-            max_subscription_max_interval_secs: None,
+            max_subscription_max_interval_secs: DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS,
         }
     }
 }

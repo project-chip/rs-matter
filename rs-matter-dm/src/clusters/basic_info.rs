@@ -32,7 +32,7 @@ pub use crate::basic_info::{
     BasicInfoConfig, BasicInfoSettings, CapabilityMinima, DeviceLocation, DeviceLocationConfig,
     PairingHintFlags, ProductAppearance, ProductColor, ProductFinish, DEFAULT_DATA_MODEL_REVISION,
     DEFAULT_MATTER_SPEC_VERSION, DEFAULT_MAX_PATHS_PER_INVOKE,
-    DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
+    DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS, DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
 };
 pub use crate::dm::clusters::decl::basic_information::*;
 pub use crate::dm::clusters::decl::globals::{
