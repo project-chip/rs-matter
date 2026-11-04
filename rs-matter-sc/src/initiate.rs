@@ -37,7 +37,6 @@ use {
     crate::case::CaseInitiator,
     crate::error::ErrorCode,
     crate::transport::network::MatterRemoteService,
-    crate::transport::session::PeerMrpParams,
     crate::transport::{CaseSetupTurn, Transport},
 };
 
@@ -284,11 +283,7 @@ async fn establish_case<M: ScHost, C: Crypto>(
         return Err(ErrorCode::NoNetworkInterface.into());
     }
 
-    let peer_mrp = PeerMrpParams {
-        sii: resolved.sii,
-        sai: resolved.sai,
-        sat: resolved.sat,
-    };
+    let peer_mrp = resolved.peer_mrp_params();
 
     let mut last_err = Some(Error::from(ErrorCode::NotFound));
 

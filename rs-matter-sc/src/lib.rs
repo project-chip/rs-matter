@@ -393,8 +393,9 @@ mod tests {
     }
 
     /// An ICD advertises the same intervals as over mDNS - the SII capped while
-    /// a LIT-capable device operates as a SIT, its slow poll when none is
-    /// configured - and its Active Mode Threshold as the SAT.
+    /// a LIT-capable device operates as a SIT, none while it operates as a LIT,
+    /// its slow poll when none is configured - and its Active Mode Threshold as
+    /// the SAT.
     #[test]
     fn local_session_parameters_of_an_icd() {
         const DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
@@ -423,7 +424,10 @@ mod tests {
             &DEV_DET,
             Some(adv(Some(IcdOperatingMode::Lit), 300_000)),
         ));
-        assert_eq!((params.sii, params.sat), (Some(300_000), Some(5000)));
+        assert_eq!(
+            (params.sai, params.sii, params.sat),
+            (Some(700), None, Some(5000))
+        );
 
         // A SIT-only ICD advertises its configured SII.
         let params =

@@ -229,8 +229,11 @@ pub struct BasicInfoConfig<'a> {
     /// If not specified, it is not advertised, and peers assume the spec
     /// default of 500
     ///
-    /// Per the Matter Core Spec, the value is a 32-bit unsigned integer and
-    /// SHALL NOT exceed 3,600,000 (1 hour in milliseconds).
+    /// Per the Matter Core Spec, the advertised value SHALL NOT exceed
+    /// 3,600,000 (1 hour in milliseconds), so a larger one is advertised as
+    /// that. Note that for a LIT ICD device which is in LIT mode, the idle interval
+    /// may be longer (up to 18 hours). While operating as a LIT, an ICD device
+    /// does not advertise this attribute.
     ///
     /// Not a real attribute, just used to configure the session timeouts
     pub sii: Option<u32>,
