@@ -491,6 +491,7 @@ impl Transport {
                 sii,
                 sai,
                 sat,
+                long_idle,
             } => {
                 let mut node = ResolvedNode {
                     addrs: Vec::new(),
@@ -498,6 +499,7 @@ impl Transport {
                     sii: *sii,
                     sai: *sai,
                     sat: *sat,
+                    long_idle: *long_idle,
                 };
 
                 for candidate in addrs.iter() {
@@ -607,6 +609,7 @@ impl Transport {
 
         let (sii, sai, sat) = answer.session_params();
         let tcp_capable = answer.supports_tcp_server();
+        let long_idle = answer.long_idle();
 
         let candidates = || {
             answer.addrs.clone().map(move |ip| ResolvedAddr {
@@ -639,6 +642,7 @@ impl Transport {
                     sii,
                     sai,
                     sat,
+                    long_idle,
                 };
                 (true, ())
             }
@@ -659,6 +663,7 @@ impl Transport {
                 sii: cur_sii,
                 sai: cur_sai,
                 sat: cur_sat,
+                long_idle: cur_long_idle,
                 ..
             } => {
                 let mut changed = false;
@@ -667,6 +672,7 @@ impl Transport {
                 // surface addresses and TXT on separate callbacks), so an
                 // advertised capability is latched, never cleared.
                 *cur_tcp |= tcp_capable;
+                *cur_long_idle |= long_idle;
 
                 for candidate in candidates() {
                     changed |= merge_resolve_candidate(addrs, candidate);
@@ -2891,7 +2897,13 @@ mod resolve_tests {
                     instance_name: DottedName(name.as_str()),
                     port: Some(1234),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))].into_iter(),
-                    txt: [("SII", "300"), ("SAI", "4000"), ("SAT", "5000")].into_iter(),
+                    txt: [
+                        ("SII", "300"),
+                        ("SAI", "4000"),
+                        ("SAT", "5000"),
+                        ("ICD", "1"),
+                    ]
+                    .into_iter(),
                     scope_id: 0,
                 };
 
@@ -2914,6 +2926,7 @@ mod resolve_tests {
         assert_eq!(resolved.sii, Some(300));
         assert_eq!(resolved.sai, Some(4000));
         assert_eq!(resolved.sat, Some(5000));
+        assert!(resolved.long_idle);
     }
 
     /// An answer carrying several addresses yields all of them, ranked best

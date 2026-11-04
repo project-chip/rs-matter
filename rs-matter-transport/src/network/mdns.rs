@@ -27,6 +27,7 @@ use crate::error::{Error, ErrorCode};
 use crate::icd::{IcdAdvertisement, IcdOperatingMode};
 use crate::mrp;
 use crate::pairing::qr::QrPayload;
+use crate::session::PeerMrpParams;
 use crate::tlv::EitherIter;
 use crate::utils::storage::{String, Vec, WriteBuf};
 use crate::utils::write_split;
@@ -479,6 +480,14 @@ where
 
         false
     }
+
+    /// Whether the peer advertises that it operates as a Long Idle Time ICD,
+    /// from the `ICD` TXT key (`1`; `0` is an ICD operating as a SIT).
+    pub fn long_idle(&self) -> bool {
+        self.txt
+            .clone()
+            .any(|(key, value)| key.eq_ignore_ascii_case("ICD") && value == "1")
+    }
 }
 
 /// A lazy iterator over the `key=value` pairs of raw DNS-SD TXT data.
@@ -811,6 +820,9 @@ pub struct ResolvedNode {
     pub sai: Option<u32>,
     /// Session Active Threshold (`SAT`), milliseconds.
     pub sat: Option<u16>,
+    /// Whether the peer advertised that it operates as a Long Idle Time ICD
+    /// (the `ICD` TXT key).
+    pub long_idle: bool,
 }
 
 impl ResolvedNode {
@@ -820,6 +832,26 @@ impl ResolvedNode {
     /// hand-constructed value.
     pub fn addr(&self) -> Option<SocketAddr> {
         self.addrs.first().copied()
+    }
+
+    /// The MRP parameters to seed a handshake with this peer.
+    ///
+    /// A Long Idle Time ICD is reached only while it is active, after it checked
+    /// in or reported, so the retransmissions towards it follow its active
+    /// interval, whatever idle interval it may still advertise; a retransmission
+    /// paced by that would arrive after it went back to sleep.
+    pub fn peer_mrp_params(&self) -> PeerMrpParams {
+        let sii = if self.long_idle {
+            Some(self.sai.unwrap_or(mrp::MRP_BASE_RETRY_INTERVAL_MS))
+        } else {
+            self.sii
+        };
+
+        PeerMrpParams {
+            sii,
+            sai: self.sai,
+            sat: self.sat,
+        }
     }
 }
 
@@ -948,6 +980,7 @@ pub(crate) enum MdnsResolveState {
         sii: Option<u32>,
         sai: Option<u32>,
         sat: Option<u16>,
+        long_idle: bool,
     },
 }
 
@@ -1262,10 +1295,10 @@ mod tests {
     }
 
     /// The `SII` a LIT-capable device advertises follows its operating mode:
-    /// its configured (LIT) idle interval as a LIT, the slow poll in effect
-    /// while it operates as a SIT; a SIT-only device and a non-ICD one
-    /// advertise what they configured. An ICD with none configured advertises
-    /// its slow poll, a non-ICD one nothing.
+    /// none as a LIT, the slow poll in effect while it operates as a SIT; a
+    /// SIT-only device and a non-ICD one advertise what they configured. An
+    /// ICD with none configured advertises its slow poll, a non-ICD one
+    /// nothing. Anything above one hour is advertised as one hour.
     #[test]
     fn sii_follows_the_icd_slow_poll() {
         use rs_matter_node_core::test_device::TEST_DEV_DET;
@@ -1307,13 +1340,62 @@ mod tests {
 
         assert_eq!(sii(&configured, adv(sit, 15_000)), Some(15_000));
         assert_eq!(sii(&configured, adv(sit, 5_000)), Some(5_000));
-        assert_eq!(sii(&configured, adv(lit, 300_000)), Some(300_000));
+        assert_eq!(sii(&configured, adv(lit, 300_000)), None);
         assert_eq!(sii(&configured, adv(None, 15_000)), Some(300_000));
         assert_eq!(sii(&configured, None), Some(300_000));
 
         assert_eq!(sii(&TEST_DEV_DET, adv(None, 15_000)), Some(15_000));
         assert_eq!(sii(&TEST_DEV_DET, adv(sit, 15_000)), Some(15_000));
+        assert_eq!(sii(&TEST_DEV_DET, adv(lit, 300_000)), None);
         assert_eq!(sii(&TEST_DEV_DET, None), None);
+
+        let four_hours = BasicInfoConfig {
+            sii: Some(4 * 3_600_000),
+            ..TEST_DEV_DET
+        };
+
+        assert_eq!(sii(&four_hours, adv(lit, 4 * 3_600_000)), None);
+        assert_eq!(sii(&four_hours, adv(sit, 15_000)), Some(15_000));
+        assert_eq!(sii(&four_hours, adv(None, 15_000)), Some(3_600_000));
+        assert_eq!(sii(&four_hours, None), Some(3_600_000));
+        assert_eq!(
+            sii(&TEST_DEV_DET, adv(None, 4 * 3_600_000)),
+            Some(3_600_000)
+        );
+    }
+
+    /// A handshake with a peer is seeded with its advertised intervals, except
+    /// that one with a LIT ICD paces its idle retransmissions by the active
+    /// interval (or the default one), whatever idle interval it advertises.
+    #[test]
+    fn peer_mrp_params_of_a_lit_icd_follow_its_active_interval() {
+        let node = |sii, sai, long_idle| ResolvedNode {
+            addrs: Vec::new(),
+            tcp_capable: false,
+            sii,
+            sai,
+            sat: Some(5000),
+            long_idle,
+        };
+
+        let params = |node: ResolvedNode| {
+            let params = node.peer_mrp_params();
+            (params.sii, params.sai, params.sat)
+        };
+
+        assert_eq!(
+            params(node(Some(1_800_000), Some(1000), false)),
+            (Some(1_800_000), Some(1000), Some(5000))
+        );
+        assert_eq!(
+            params(node(Some(1_800_000), Some(1000), true)),
+            (Some(1000), Some(1000), Some(5000))
+        );
+        assert_eq!(
+            params(node(None, None, true)),
+            (Some(mrp::MRP_BASE_RETRY_INTERVAL_MS), None, Some(5000))
+        );
+        assert_eq!(params(node(None, None, false)), (None, None, Some(5000)));
     }
 
     /// An ICD advertises its Active Mode Threshold in the `SAT` key, on both

@@ -99,18 +99,26 @@ pub(crate) const MRP_MAX_SESSION_INTERVAL_MS: u32 = 3_600_000;
 /// "SHALL advertise its SESSION_IDLE_INTERVAL using the SII discovery TXT
 /// key"): while operating as a SIT, its configured one is capped to the slow
 /// poll in effect. The mode change re-publishes the record.
+///
+/// While operating as a LIT, it advertises none, as the spec recommends. Its
+/// clients reach it while it is active after a Check-In or a report, and a
+/// retransmission paced by its long idle interval would only arrive after it
+/// went back to sleep. Without one, peers retransmit at a short default.
+///
+/// Otherwise the value is capped to one hour, the most the spec allows; peers
+/// drop a larger one as invalid.
 pub fn advertised_sii(dev_det: &BasicInfoConfig<'_>, icd: Option<IcdAdvertisement>) -> Option<u32> {
-    let Some(icd) = icd else {
-        return dev_det.sii;
+    let sii = match icd {
+        None => dev_det.sii?,
+        Some(icd) => match (icd.operating_mode, dev_det.sii) {
+            (Some(IcdOperatingMode::Lit), _) => return None,
+            (Some(IcdOperatingMode::Sit), Some(sii)) => sii.min(icd.slow_poll_ms),
+            (None, Some(sii)) => sii,
+            (_, None) => icd.slow_poll_ms,
+        },
     };
 
-    let sii = match (dev_det.sii, icd.operating_mode) {
-        (None, _) => icd.slow_poll_ms,
-        (Some(sii), Some(IcdOperatingMode::Sit)) => sii.min(icd.slow_poll_ms),
-        (Some(sii), _) => sii,
-    };
-
-    Some(sii)
+    Some(sii.min(MRP_MAX_SESSION_INTERVAL_MS))
 }
 
 /// The `SESSION_ACTIVE_INTERVAL` this node advertises in the session
