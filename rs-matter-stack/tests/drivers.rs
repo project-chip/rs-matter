@@ -531,6 +531,102 @@ fn concurrent_commissioning_runs_ble_next_to_the_operational_network() {
 }
 
 #[test]
+fn wifi_only_accepts_a_driver_without_gatt() {
+    const NODE: Node = Node {
+        endpoints: &[WifiMatterStack::<0, ()>::root_endpoint()],
+    };
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+        let stack = leak::<WifiMatterStack<BUMP_SIZE, ()>>().init_with(WifiMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+        let mut rand = rs_matter_crypto::Crypto::weak_rand(&crypto).unwrap();
+        let handler = EmptyHandler.chain(
+            |e, _| e == ROOT_ENDPOINT_ID,
+            Async(WifiMatterStack::<0, ()>::root_handler(
+                stack.matter(),
+                &(),
+                &mut rand,
+            )),
+        );
+        let mut store = MemKvBlobStore::new();
+        futures_lite::future::block_on(stack.startup(&crypto, &mut store)).unwrap();
+        let result = futures_lite::future::block_on(run_for(
+            stack.run_wifi_only(
+                // `()` is deliberately not a GattPeripheral. This driver can
+                // provide Wi-Fi without implementing GattDriver.
+                PreexistingWireless::new(
+                    FakeNetStack(&log),
+                    &FakeNetif,
+                    NoopWirelessNetCtl::new(NetworkType::Wifi),
+                    BuiltinMdns::new(),
+                    (),
+                ),
+                &crypto,
+                (NODE, handler),
+                stack.matter().kv(store),
+                FakeUserTask(&log),
+            ),
+            300,
+        ));
+        assert!(result.is_none(), "The Wi-Fi-only stack exited: {result:?}");
+        assert_eq!(log.events(), vec!["user task"]);
+        assert!(log.bound_ports().contains(&MATTER_PORT));
+    });
+}
+
+#[test]
+fn thread_only_accepts_a_driver_without_gatt() {
+    const NODE: Node = Node {
+        endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
+    };
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+        let stack = leak::<ThreadMatterStack<BUMP_SIZE, ()>>().init_with(ThreadMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+        let mut rand = rs_matter_crypto::Crypto::weak_rand(&crypto).unwrap();
+        let handler = EmptyHandler.chain(
+            |e, _| e == ROOT_ENDPOINT_ID,
+            Async(ThreadMatterStack::<0, ()>::root_handler(
+                stack.matter(),
+                &(),
+                &mut rand,
+            )),
+        );
+        let mut store = MemKvBlobStore::new();
+        futures_lite::future::block_on(stack.startup(&crypto, &mut store)).unwrap();
+        let result = futures_lite::future::block_on(run_for(
+            stack.run_thread_only(
+                // `()` is deliberately not a GattPeripheral. This driver can
+                // provide Thread without implementing GattDriver.
+                PreexistingWireless::new(
+                    FakeNetStack(&log),
+                    &FakeNetif,
+                    NoopWirelessNetCtl::new(NetworkType::Thread),
+                    BuiltinMdns::new(),
+                    (),
+                ),
+                &crypto,
+                (NODE, handler),
+                stack.matter().kv(store),
+                FakeUserTask(&log),
+            ),
+            300,
+        ));
+        assert!(result.is_none(), "The Thread-only stack exited: {result:?}");
+        assert_eq!(log.events(), vec!["user task"]);
+        assert!(log.bound_ports().contains(&MATTER_PORT));
+    });
+}
+
+#[test]
 fn non_concurrent_commissioning_hands_the_radio_over() {
     const NODE: Node = Node {
         endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
@@ -808,6 +904,27 @@ fn futures_are_send() {
         wifi.matter().kv(MemKvBlobStore::new()),
         (),
     );
+    let wifi_only_handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(WifiMatterStack::<0, ()>::root_handler(
+            wifi.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+    let wifi_only_run = wifi.run_wifi_only(
+        PreexistingWireless::new(
+            FakeNetStack(log),
+            &FakeNetif,
+            NoopWirelessNetCtl::new(NetworkType::Wifi),
+            BuiltinMdns::new(),
+            (),
+        ),
+        &crypto,
+        (WIFI_NODE, wifi_only_handler),
+        wifi.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
     let thread_run = thread.run(
         FakeRadio {
             log,
@@ -819,8 +936,31 @@ fn futures_are_send() {
         thread.matter().kv(MemKvBlobStore::new()),
         Options::new().user_task(()).gen_diag(&thread_diag),
     );
+    let thread_only_handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(ThreadMatterStack::<0, ()>::root_handler(
+            thread.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+    let thread_only_run = thread.run_thread_only(
+        PreexistingWireless::new(
+            FakeNetStack(log),
+            &FakeNetif,
+            NoopWirelessNetCtl::new(NetworkType::Thread),
+            BuiltinMdns::new(),
+            (),
+        ),
+        &crypto,
+        (THREAD_NODE, thread_only_handler),
+        thread.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
 
     assert_send(&eth_run);
     assert_send(&wifi_run);
+    assert_send(&wifi_only_run);
     assert_send(&thread_run);
+    assert_send(&thread_only_run);
 }

@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: `WifiMatterStack::run_wifi_only` and `ThreadMatterStack::run_thread_only`: run an operational Wi-Fi or Thread network without requiring a `GattDriver`, serving commissioning windows over IP (#645)
 * Fix: an ICD operating as a LIT advertises no session idle interval (`SII`), neither over mDNS nor in its CASE / PASE session parameters, so that its peers do not hold back their retransmissions until it is asleep again (#644)
 * Fix: the advertised `SII` is capped to one hour, the spec's maximum (#644)
 * Fix: a CASE initiator retransmits to a peer that advertises `ICD=1` at the peer's active interval, ignoring any `SII` it advertises, as it reaches such a peer only while it is active. (#644)
