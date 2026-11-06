@@ -40,7 +40,8 @@ use crate::mdns::Mdns;
 use crate::net::NetStack;
 use crate::network::Embedding;
 use crate::wireless::{
-    GattPeripheral, GattTask, MatterStackWirelessTask, WirelessNetCtl, MAX_WIRELESS_NETWORKS,
+    CommWindowHandover, GattPeripheral, GattTask, MatterStackWirelessTask, WirelessNetCtl,
+    MAX_WIRELESS_NETWORKS,
 };
 use crate::{pin_alloc, RunOptions, UserTask};
 
@@ -206,6 +207,94 @@ where
         net_task.await
     }
 
+    /// Run an already provisioned device without requiring a BLE driver.
+    ///
+    /// Call [`Self::startup`] first to load the saved fabric and Thread credentials.
+    /// This path never initializes GATT, including when an administrator opens
+    /// a new commissioning window; that window is served over IP.
+    ///
+    /// If the device has not been commissioned yet, consider using [`Self::run`] or
+    /// [`Self::run_coex`] to support initial BLE onboarding, unless initial commissioning
+    /// is handled over IP.
+    pub async fn run_thread_only<W, C, H, K, O>(
+        &self,
+        mut thread: W,
+        crypto: C,
+        handler: H,
+        kv: K,
+        options: O,
+    ) -> Result<(), Error>
+    where
+        W: ThreadDriver,
+        C: Crypto,
+        H: DataModel,
+        K: KvBlobStoreAccess,
+        O: RunOptions,
+    {
+        let _lock = self.run_lock.lock().await;
+        let mut networks = self.network.networks.lock().await;
+
+        info!("Matter Stack memory: {}b", core::mem::size_of_val(self));
+
+        if !self.matter().has_fabrics() {
+            warn!("Running Thread-only stack without an active fabric; commissioning over BLE is not available");
+        }
+
+        // All task futures and their bump allocations are dropped before this guard.
+        let _defer = scopeguard::guard((), |_| unsafe {
+            self.bump.reset();
+        });
+        self.matter().reset_transport()?;
+        let (gen_diag, user) = options.into_parts();
+        let net_task = pin_alloc!(
+            self.bump,
+            self.run_thread_only_task(
+                &mut networks,
+                &mut thread,
+                crypto,
+                handler,
+                kv,
+                &gen_diag,
+                user
+            )
+        );
+        net_task.await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_thread_only_task<'t, W, C, H, K, U>(
+        &'t self,
+        networks: &'t mut S,
+        thread: &'t mut W,
+        crypto: C,
+        handler: H,
+        kv: K,
+        gen_diag: &'t dyn GenDiag,
+        user: U,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
+    where
+        W: ThreadDriver,
+        C: Crypto + 't,
+        H: DataModel + 't,
+        K: KvBlobStoreAccess + 't,
+        U: UserTask + 't,
+    {
+        // No BLE handler chain needs to share a concrete net-ctl type here.
+        thread.run(
+            MatterStackWirelessTask::<'_, _, _, _, _, _, _, _, _, NoopWirelessNetCtl> {
+                stack: self,
+                gen_diag,
+                networks,
+                crypto,
+                handler,
+                kv,
+                user_task: user,
+                comm_window_handover: CommWindowHandover::Bypassed,
+                _net_ctl: PhantomData,
+            },
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn run_thread_coex<'t, W, C, H, K, U>(
         &'t self,
@@ -236,6 +325,7 @@ where
                 handler,
                 kv,
                 user_task: user,
+                comm_window_handover: CommWindowHandover::Wait,
                 _net_ctl: PhantomData,
             },
         )
@@ -294,6 +384,7 @@ where
                             handler: &handler,
                             kv: &kv,
                             user_task: &mut user,
+                            comm_window_handover: CommWindowHandover::Wait,
                             _net_ctl: PhantomData,
                         },
                     )
@@ -321,6 +412,7 @@ where
                         handler: &handler,
                         kv: &kv,
                         user_task: &mut user,
+                        comm_window_handover: CommWindowHandover::Wait,
                         _net_ctl: PhantomData,
                     },
                 )
@@ -676,22 +768,27 @@ where
         let mut oper_task =
             pin!(select4(&mut net_task, &mut mdns_task, &mut im_task, &mut user_task).coalesce());
 
-        // Hand the radio back to BLE once a commissioning window that has to be advertised
-        // there appears. The window still open from the commissioning this phase is finishing
-        // is not one of them - non-concurrent commissioning completes over the operational
-        // network, and only then does the window close - so wait for it to go away first, and
-        // only then for the next one to open.
-        let mut comm_window_task = pin!(async {
-            self.stack.wait_next_comm_window().await;
+        match self.comm_window_handover {
+            CommWindowHandover::Wait => {
+                // Hand the radio back to BLE once a commissioning window that has to be advertised
+                // there appears. The window still open from the commissioning this phase is finishing
+                // is not one of them - non-concurrent commissioning completes over the operational
+                // network, and only then does the window close - so wait for it to go away first, and
+                // only then for the next one to open.
+                let mut comm_window_task = pin!(async {
+                    self.stack.wait_next_comm_window().await;
 
-            info!("Commissioning window opened; handing the radio back to BLE");
+                    info!("Commissioning window opened; handing the radio back to BLE");
 
-            Ok(())
-        });
+                    Ok(())
+                });
 
-        select(&mut oper_task, &mut comm_window_task)
-            .coalesce()
-            .await
+                select(&mut oper_task, &mut comm_window_task)
+                    .coalesce()
+                    .await
+            }
+            CommWindowHandover::Bypassed => oper_task.await,
+        }
     }
 }
 
