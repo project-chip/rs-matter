@@ -32,6 +32,7 @@
 //!   exposed as thin re-export modules over the IDL-generated scaffolding;
 //!   spec-aware handlers are planned but not yet implemented.
 
+pub mod audio_av_stream;
 pub mod cam_av_settings;
 pub mod cam_av_stream;
 pub mod chime;
