@@ -223,6 +223,12 @@ pub const DEV_TYPE_VIDEO_PLAYER: DeviceType = DeviceType {
     drev: 1,
 };
 
+/// Audio Doorbell (`0x0141`), Matter Device Library revision 1.
+pub const DEV_TYPE_AUDIO_DOORBELL: DeviceType = DeviceType {
+    dtype: 0x0141,
+    drev: 1,
+};
+
 /// A macro to generate the devices for an endpoint.
 #[allow(unused_macros)]
 #[macro_export]
