@@ -156,12 +156,20 @@ pub struct Session {
     /// have just heard from it.
     peer_active_until: Instant,
     /// If `true` then the session is considered "expired". Session expiration happens
-    /// for the session on behalf of which a fabric is removed, and for a CASE session
-    /// whose peer stopped acknowledging (see [`Session::pre_send`]).
+    /// for the session on behalf of which a fabric is removed.
     ///
     /// Expired sessions can still process their ongoing exchanges, but do not accept any new ones.
     /// Furthermore, expired sessions are the prime candidates for eviction.
     expired: bool,
+    /// If `true` then the session is considered "defunct": it is a CASE session
+    /// whose peer stopped acknowledging (see [`Session::pre_send`]), so it may no
+    /// longer be in sync with the peer.
+    ///
+    /// Like expired sessions, defunct sessions do not initiate new exchanges and are
+    /// the prime candidates for eviction. Unlike expired sessions, they still accept
+    /// new exchanges from the peer, and the next fresh message received from the peer
+    /// revives them (see [`Session::post_recv`]).
+    defunct: bool,
     reserved: bool,
 }
 
@@ -204,6 +212,7 @@ impl Session {
             peer_active_threshold_ms,
             peer_active_until: Instant::MIN,
             expired: false,
+            defunct: false,
         }
     }
 
@@ -240,6 +249,7 @@ impl Session {
             peer_active_threshold_ms,
             peer_active_until: Instant::MIN,
             expired: false,
+            defunct: false,
         })
     }
 
@@ -550,6 +560,12 @@ impl Session {
         self.expired
     }
 
+    /// Return `true` if the session is defunct: its peer stopped acknowledging,
+    /// and has not been heard from since.
+    pub fn is_defunct(&self) -> bool {
+        self.defunct
+    }
+
     /// Expire the session, marking it as no longer valid.
     pub fn expire(&mut self) {
         info!("Expiring session with ID {}", self.id);
@@ -655,6 +671,17 @@ impl Session {
         // The session lookup (or creation) for the packet has just stamped
         // `last_use` with the time of its reception.
         self.mark_peer_active(self.last_use);
+
+        if self.defunct {
+            // The message decrypted with the session keys and is not a duplicate:
+            // the peer still has the session, so the acks it sent were only lost.
+            info!(
+                "Session {}: Heard from the peer again; reviving the session",
+                self.id
+            );
+
+            self.defunct = false;
+        }
 
         let exch_index = self.get_exch_for_rx(&rx_header.proto);
         if let Some(exch_index) = exch_index {
@@ -820,26 +847,33 @@ impl Session {
                 Err(ErrorCode::TxTimeout)
             ) && matches!(self.mode, SessionMode::Case { .. })
                 && !self.expired
+                && !self.defunct
             {
                 // The peer never acknowledged, which is the strongest evidence we
                 // get that its recorded address no longer reaches it - it may have
                 // renumbered, moved subnet, or the address picked out of the
                 // resolve was never reachable in the first place.
                 //
-                // Expiring keeps the session usable for the exchanges already on
-                // it (they fail on their own) while making `Transport::initiate`
-                // skip it, so the next attempt re-resolves the peer and builds a
-                // fresh session against the current candidate list.
+                // Marking the session defunct keeps it usable for the exchanges
+                // already on it (they fail on their own) while making
+                // `Transport::initiate` skip it, so the next attempt re-resolves
+                // the peer and builds a fresh session against the current
+                // candidate list.
+                //
+                // Unlike expiring it, this does not lock the peer out: only its
+                // acks may have been lost, in which case it still considers the
+                // session valid and keeps sending on it. Such a message revives
+                // the session (see `post_recv`).
                 //
                 // Only CASE sessions: PASE and plaintext are short-lived and
                 // pinned to an address the caller supplied itself, so there is
                 // nothing to re-resolve.
                 warn!(
-                    "Session {}: Peer did not acknowledge; marking the session as expired",
+                    "Session {}: Peer did not acknowledge; marking the session as defunct",
                     self.id
                 );
 
-                self.expired = true;
+                self.defunct = true;
             }
 
             result?;
@@ -973,7 +1007,7 @@ impl fmt::Display for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "peer: {:?}, peer_nodeid: {:?}, local: {}, remote: {}, msg_ctr: {}, mode: {:?}, ts: {:?}, expired: {}",
+            "peer: {:?}, peer_nodeid: {:?}, local: {}, remote: {}, msg_ctr: {}, mode: {:?}, ts: {:?}, expired: {}, defunct: {}",
             self.peer_addr,
             self.peer_nodeid,
             self.local_sess_id,
@@ -982,6 +1016,7 @@ impl fmt::Display for Session {
             self.mode,
             self.last_use,
             self.expired,
+            self.defunct,
         )
     }
 }
@@ -1945,8 +1980,8 @@ impl Sessions {
         Ok(next_exch_id)
     }
 
-    /// The session to evict to make room in a full table: an expired session,
-    /// else the least-recently-used one.
+    /// The session to evict to make room in a full table: an expired or defunct
+    /// session, else the least-recently-used one.
     ///
     /// A CASE session of a fabric holding no more than its
     /// [`CASE_SESSIONS_PER_FABRIC`] share is passed over while any other session
@@ -1974,11 +2009,11 @@ impl Sessions {
         Some(&mut self.sessions[index])
     }
 
-    /// An expired evictable session: those are the prime candidates for eviction.
+    /// An expired or defunct evictable session: those are the prime candidates for eviction.
     fn expired(&self) -> Option<usize> {
         self.sessions
             .iter()
-            .position(|sess| sess.expired && Self::is_evictable(sess))
+            .position(|sess| (sess.expired || sess.defunct) && Self::is_evictable(sess))
     }
 
     /// The least-recently-used evictable session matching `f`.
@@ -2188,7 +2223,7 @@ impl Sessions {
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, s)| !s.expired && s.is_for_node(fabric_idx, peer_node_id))
+            .filter(|(_, s)| !s.expired && !s.defunct && s.is_for_node(fabric_idx, peer_node_id))
             .max_by_key(|(_, s)| (s.peer_addr.is_tcp(), s.last_use))
             .map(|(i, _)| i)?;
 
@@ -3496,6 +3531,67 @@ mod tests {
         rx.plain.ctr = 6;
         rx.proto.exch_id = 7;
         assert!(!unwrap!(sess.post_recv(&Address::default(), &rx)));
+    }
+
+    /// A CASE session whose peer stops acknowledging becomes defunct rather than
+    /// expired: it is no longer picked for new exchanges of ours, but it still
+    /// accepts the peer's, and the first fresh message from the peer revives it.
+    /// A duplicate does not.
+    #[test]
+    fn defunct_session_is_revived_by_the_peer() {
+        use crate::exchange::InitiatorState;
+        use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+
+        let fab_idx = unwrap!(NonZeroU8::new(1));
+
+        let mut sm = Sessions::new();
+        let id = add_for_node(&mut sm, fab_idx, 0x22);
+
+        let sess = unwrap!(sm.get(id));
+
+        // A first message from the peer, so that its counter is known.
+        let mut rx = PacketHdr::new();
+        rx.plain.ctr = 1;
+        rx.proto.exch_id = 7;
+        rx.proto.proto_id = PROTO_ID_SECURE_CHANNEL;
+        rx.proto.proto_opcode = sc::OpCode::StatusReport as u8;
+        assert_eq!(
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
+            ErrorCode::NoExchange
+        );
+
+        // One of our messages runs out of retransmissions.
+        unwrap!(sess.add_exch(2, Role::Initiator(InitiatorState::Owned)));
+
+        let mut tx = PacketHdr::new();
+        tx.proto.set_reliable();
+
+        let err = unwrap!((0..10).find_map(|_| sess.pre_send(Some(0), &mut tx).err()));
+        assert_eq!(err.code(), ErrorCode::TxTimeout);
+        assert!(sess.is_defunct());
+        assert!(!sess.is_expired());
+
+        // Our next exchange with the peer will not use the session.
+        assert!(sm.get_for_node(fab_idx, 0x22).is_none());
+
+        // A duplicate does not show that the peer still has the session...
+        let sess = unwrap!(sm.get(id));
+        assert_eq!(
+            unwrap!(sess.post_recv(&Address::default(), &rx).err()).code(),
+            ErrorCode::Duplicate
+        );
+        assert!(sess.is_defunct());
+
+        // ...a fresh message does: it opens its exchange, and revives the session.
+        rx.plain.ctr = 2;
+        rx.proto.exch_id = 8;
+        rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
+        rx.proto.set_initiator();
+        rx.proto.set_reliable();
+        assert!(unwrap!(sess.post_recv(&Address::default(), &rx)));
+        assert!(!sess.is_defunct());
+
+        assert_eq!(unwrap!(sm.get_for_node(fab_idx, 0x22)).id, id);
     }
 
     /// Sending stamps the plain header per session mode: plaintext sessions

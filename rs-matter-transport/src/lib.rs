@@ -941,8 +941,8 @@ impl Transport {
         self.with_sessions(|sessions| {
             sessions
                 .get(session_id)
-                // Expired sessions are not allowed to initiate new exchanges
-                .filter(|sess| !sess.is_expired())
+                // Expired and defunct sessions are not allowed to initiate new exchanges
+                .filter(|sess| !sess.is_expired() && !sess.is_defunct())
                 .ok_or(ErrorCode::NoSession)?;
 
             let exch_id = sessions.get_next_exch_id(crypto)?;

@@ -718,8 +718,8 @@ impl<const N: usize> NetworkSend for CountingSend<'_, N> {
 ///
 /// The node without the session cannot authenticate anything sent on it, and
 /// the protocol defines no reply, so it stays silent. The node with the stale
-/// session learns nothing until its retransmissions run out; it then expires
-/// the session, so the next attempt establishes a fresh one.
+/// session learns nothing until its retransmissions run out; it then marks
+/// the session defunct, so the next attempt establishes a fresh one.
 #[test]
 fn message_on_a_session_the_peer_does_not_have_goes_unanswered() {
     init_env_logger();
@@ -801,14 +801,14 @@ fn message_on_a_session_the_peer_does_not_have_goes_unanswered() {
         );
         assert!(client_count.get() > 1, "the client never retransmitted");
 
-        // ...and the stale session is expired, so the next attempt establishes a
+        // ...and the stale session is defunct, so the next attempt establishes a
         // new one.
         assert!(
             client.with_state(|state| state
                 .sessions
                 .iter()
-                .any(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID) && sess.is_expired())),
-            "the stale session was not expired"
+                .any(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID) && sess.is_defunct())),
+            "the stale session was not marked defunct"
         );
     });
 }
@@ -875,9 +875,9 @@ fn session_survives_lost_acks_of_a_response() {
                 let mut exchange = initiate_exchange(&client).await?;
                 read_att1(&mut exchange).await?;
 
-                // wait until session is expired
+                // wait until session is defunct
                 while device
-                    .with_state(|state| state.sessions.iter().any(|sess| !sess.is_expired()))
+                    .with_state(|state| state.sessions.iter().any(|sess| !sess.is_defunct()))
                 {
                     Timer::after(Duration::from_millis(10)).await;
                 }
@@ -903,6 +903,14 @@ fn session_survives_lost_acks_of_a_response() {
         );
 
         result.expect("the device refused a request on a session whose peer had only lost acks");
+
+        assert!(
+            device.with_state(|state| state
+                .sessions
+                .iter()
+                .all(|sess| !sess.is_defunct() && !sess.is_expired())),
+            "the request did not revive the session"
+        );
     });
 }
 
