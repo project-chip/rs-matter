@@ -169,7 +169,9 @@ impl LinkStats {
         }
     }
 
-    fn record(&self, data: &[u8]) {
+    /// Record a packet offered to the link. Return `true` if it is an MRP
+    /// standalone ack.
+    fn record(&self, data: &[u8]) -> bool {
         self.offered.set(self.offered.get() + 1);
 
         let Some((ctr, proto_id, opcode)) = decode_hdr(data, self.sender_nodeid) else {
@@ -183,13 +185,18 @@ impl LinkStats {
             seen.push(ctr);
         }
 
-        if proto_id == PROTO_ID_SECURE_CHANNEL && opcode == ScOpCode::MRPStandAloneAck as u8 {
+        let standalone_ack =
+            proto_id == PROTO_ID_SECURE_CHANNEL && opcode == ScOpCode::MRPStandAloneAck as u8;
+
+        if standalone_ack {
             self.standalone_acks.set(self.standalone_acks.get() + 1);
         }
 
         if proto_id == PROTO_ID_INTERACTION_MODEL {
             self.im_messages.set(self.im_messages.get() + 1);
         }
+
+        standalone_ack
     }
 
     /// Number of distinct message counters that were offered.
@@ -256,7 +263,7 @@ impl<const N: usize> LossySend<'_, N> {
 
 impl<const N: usize> NetworkSend for LossySend<'_, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
-        self.stats.record(data);
+        let standalone_ack = self.stats.record(data);
 
         let mode = self.stats.mode.get();
 
@@ -264,11 +271,7 @@ impl<const N: usize> NetworkSend for LossySend<'_, N> {
             LossMode::Reliable | LossMode::DuplicateAll => false,
             LossMode::DropEveryNth(n) => self.stats.offered.get().is_multiple_of(n),
             LossMode::DropAll => true,
-            LossMode::DropStandaloneAcks => matches!(
-                decode_hdr(data, self.stats.sender_nodeid),
-                Some((_, PROTO_ID_SECURE_CHANNEL, opcode))
-                    if opcode == ScOpCode::MRPStandAloneAck as u8
-            ),
+            LossMode::DropStandaloneAcks => standalone_ack,
         };
 
         if drop {
