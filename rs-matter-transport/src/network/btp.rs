@@ -118,11 +118,14 @@ impl Btp {
         })
     }
 
-    /// Set the relaxed MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
+    /// Set the strict MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
     /// when there is a mismatch between the GATT MTU and the peer-reported MTU.
-    pub fn set_relaxed_mtu_nego(&self, relaxed_mtu_nego: bool) {
+    ///
+    /// By default, the session uses the smaller of the two, as the Matter spec asks. In the strict mode, it uses
+    /// the minimum MTU instead.
+    pub fn set_strict_mtu_nego(&self, strict_mtu_nego: bool) {
         self.inner
-            .lock(|inner| inner.borrow_mut().set_relaxed_mtu_nego(relaxed_mtu_nego));
+            .lock(|inner| inner.borrow_mut().set_strict_mtu_nego(strict_mtu_nego));
     }
 
     /// Set the BTP role.
@@ -427,10 +430,10 @@ impl BtpInner {
         self.conn_idle_timeout_secs = BTP_CONN_IDLE_TIMEOUT_SECS;
     }
 
-    /// Set the relaxed MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
+    /// Set the strict MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
     /// when there is a mismatch between the GATT MTU and the peer-reported MTU.
-    fn set_relaxed_mtu_nego(&mut self, relaxed_mtu_nego: bool) {
-        self.session.set_relaxed_mtu_nego(relaxed_mtu_nego);
+    fn set_strict_mtu_nego(&mut self, strict_mtu_nego: bool) {
+        self.session.set_strict_mtu_nego(strict_mtu_nego);
     }
 
     /// Set the BTP timeouts, by configuring the ACK timeout and the connection idle timeout.
@@ -676,6 +679,48 @@ mod test {
         );
 
         // Expected MTU is the minimum one (0x14)
+        expect_outgoing(&btp, &[0x65, 0x6c, 0x05, 0x14, 0x00, 0x05]);
+    }
+
+    /// When the peer reports another MTU than our GATT MTU, the session takes the smaller
+    /// of the two, never below the minimum; the strict mode takes the minimum.
+    #[test]
+    fn test_mtu_mismatch() {
+        // GATT MTU 0x100, peer 0xf7: 0xf7 - 3 = 0xf4
+        let btp = Btp::new();
+        incoming_mtu(
+            &btp,
+            Some(0x100),
+            &[0x65, 0x6c, 0x54, 0x00, 0x00, 0x00, 0xf7, 0x00, 0x05],
+        );
+        expect_outgoing(&btp, &[0x65, 0x6c, 0x05, 0xf4, 0x00, 0x05]);
+
+        // GATT MTU 0xc8, peer 0x100: 0xc8 - 3 = 0xc5
+        let btp = Btp::new();
+        incoming_mtu(
+            &btp,
+            Some(0xc8),
+            &[0x65, 0x6c, 0x54, 0x00, 0x00, 0x00, 0x00, 0x01, 0x05],
+        );
+        expect_outgoing(&btp, &[0x65, 0x6c, 0x05, 0xc5, 0x00, 0x05]);
+
+        // Peer below the minimum: the minimum (0x14)
+        let btp = Btp::new();
+        incoming_mtu(
+            &btp,
+            Some(0x100),
+            &[0x65, 0x6c, 0x54, 0x00, 0x00, 0x00, 0x02, 0x00, 0x05],
+        );
+        expect_outgoing(&btp, &[0x65, 0x6c, 0x05, 0x14, 0x00, 0x05]);
+
+        // Strict mode: the minimum (0x14)
+        let btp = Btp::new();
+        btp.set_strict_mtu_nego(true);
+        incoming_mtu(
+            &btp,
+            Some(0x100),
+            &[0x65, 0x6c, 0x54, 0x00, 0x00, 0x00, 0xf7, 0x00, 0x05],
+        );
         expect_outgoing(&btp, &[0x65, 0x6c, 0x05, 0x14, 0x00, 0x05]);
     }
 

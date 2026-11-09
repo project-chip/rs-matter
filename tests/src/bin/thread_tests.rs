@@ -254,7 +254,6 @@ fn run() -> Result<(), Error> {
 /// The two `TxDirect/IndirectMaxRetryExpiryCount` attributes stay out (and
 /// unclaimed in the `.pics`): otbr's D-Bus marshaling of the MAC counters
 /// omits them.
-
 const THREAD_DIAG_CLUSTER: Cluster<'static> = thread_diag::FULL_CLUSTER
     .with_features(thread_diag::Feature::MAC_COUNTS.bits())
     .with_attrs(rs_matter::with!(

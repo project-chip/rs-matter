@@ -85,9 +85,6 @@ mod bluer {
             service_name: &str,
             service_adv: &AdvData,
         ) -> Result<(), Error> {
-            // BlueZ seems to report an incorrect GATT MTU
-            btp.set_relaxed_mtu_nego(true);
-
             rs_matter_transport::network::btp::bluer::run_peripheral(
                 self.0,
                 service_name,
@@ -129,9 +126,6 @@ mod bluez {
             service_name: &str,
             service_adv: &AdvData,
         ) -> Result<(), Error> {
-            // BlueZ seems to report an incorrect GATT MTU
-            btp.set_relaxed_mtu_nego(true);
-
             rs_matter_transport::network::btp::bluez::run_peripheral(
                 self.connection,
                 self.adapter_name,
@@ -170,9 +164,6 @@ mod win32 {
             _service_name: &str,
             service_adv: &AdvData,
         ) -> Result<(), Error> {
-            // Windows may report an ATT MTU above what the peer puts in its handshake
-            btp.set_relaxed_mtu_nego(true);
-
             rs_matter_transport::network::btp::win32::run_peripheral(service_adv, btp).await
         }
     }

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a BTP peripheral takes the smaller of its GATT MTU and the MTU in the handshake request, never below the minimum, as the spec asks, instead of the minimum MTU whenever the two differ (#650)
+  * Breaking: `Btp::set_relaxed_mtu_nego` is now `Btp::set_strict_mtu_nego`, which brings back the old behavior
 * New: `WifiMatterStack::run_oper` and `ThreadMatterStack::run_oper`: run the stack without BLE (#649)
 * Fix: removing the last fabric also removes the stored networks, as the spec requires; `CommPolicy::remove_networks_on_last_fabric` can turn this off (#649)
   * Breaking: `NetCommHandler::new` takes the `CommPolicy` too

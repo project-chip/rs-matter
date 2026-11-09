@@ -213,8 +213,6 @@ fn run_wifi(connection: Connection, adapter: Option<String>) -> Result<(), Error
         // Phase 1: serve BTP over BlueZ until the commissioner has provisioned
         // a network, then drop the transport.
         let btp = Btp::new();
-        // BlueZ under-reports the GATT MTU, so accept a larger negotiated one.
-        btp.set_relaxed_mtu_nego(true);
 
         let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
 
@@ -363,8 +361,6 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
         // a network, then drop the transport. The `ConnectNetwork` it sends is
         // answered without touching the radio (see `DeferredNetCtl`).
         let btp = Btp::new();
-        // BlueZ under-reports the GATT MTU, so accept a larger negotiated one.
-        btp.set_relaxed_mtu_nego(true);
 
         let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
 
