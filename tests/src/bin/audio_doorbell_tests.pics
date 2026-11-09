@@ -1,0 +1,67 @@
+# PICS values for the `audio_doorbell_tests` executable
+#
+# Covers the Matter 1.5 audio doorbell clusters implemented in audio_doorbell_tests.rs:
+#   - CameraAvStreamManagement (AVSM) – audio-only (Feature::AUDIO | Feature::SPEAKER)
+#   - Chime (CHIME)
+
+# -----------------------------------------------------------------------
+# Chime cluster (0x0556)
+# -----------------------------------------------------------------------
+CHIME.S=1
+CHIME.S.A0000=1
+CHIME.S.A0001=1
+CHIME.S.A0002=1
+CHIME.S.C00.Rsp=1
+
+# -----------------------------------------------------------------------
+# CameraAvStreamManagement (0x0560 / 0x0551)
+# audio + speaker features (F01, F02)
+# -----------------------------------------------------------------------
+AVSM.S=1
+AVSM.S.F00=0
+AVSM.S.F01=1
+AVSM.S.F02=1
+AVSM.S.F03=0
+AVSM.S.A0000=1
+AVSM.S.A0001=0
+AVSM.S.A0002=0
+AVSM.S.A0003=0
+AVSM.S.A0004=1
+AVSM.S.A0005=1
+AVSM.S.A0006=1
+AVSM.S.A0007=1
+AVSM.S.A0008=0
+AVSM.S.A0009=0
+AVSM.S.A000A=1
+AVSM.S.A000B=1
+AVSM.S.A000C=1
+AVSM.S.A000D=1
+AVSM.S.A000E=1
+AVSM.S.A000F=1
+AVSM.S.A0010=1
+AVSM.S.A0011=0
+AVSM.S.A0012=1
+AVSM.S.A0013=0
+AVSM.S.A0014=0
+AVSM.S.A0016=0
+AVSM.S.A0017=0
+AVSM.S.A0018=0
+AVSM.S.A0019=0
+AVSM.S.A001A=1
+AVSM.S.A001B=1
+AVSM.S.A001C=1
+AVSM.S.A001D=1
+AVSM.S.A001E=1
+AVSM.S.A001F=1
+AVSM.S.A0020=0
+AVSM.S.A0021=0
+AVSM.S.A0022=0
+AVSM.S.A0023=0
+AVSM.S.A0024=0
+AVSM.S.A0025=0
+AVSM.S.A0026=0
+AVSM.S.A0027=0
+AVSM.S.A0028=0
+AVSM.S.C06.Rsp=1
+AVSM.S.C08.Rsp=1
+AVSM.S.C09.Rsp=1

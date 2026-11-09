@@ -763,6 +763,9 @@ pub(crate) const CAMERA_TESTS: &[&str] = &[
     "TC_WEBRTCP_2_1",
 ];
 
+/// Audio Doorbell cluster tests — run against the `audio_doorbell_tests` driver.
+pub(crate) const AUDIO_DOORBELL_TESTS: &[&str] = &["TC_CHIME_2_1", "TC_AVSM_2_1"];
+
 /// OnOff + LevelControl + ColorControl YAML/Python tests — run
 /// against the `light_tests` example.
 pub(crate) const LIGHT_TESTS: &[&str] = &[
@@ -1231,6 +1234,8 @@ pub(crate) enum TestSuite {
     SystemYaml,
     /// Matter 1.5 camera-related clusters.
     Camera,
+    /// Matter 1.5 audio doorbell clusters.
+    AudioDoorbell,
     /// OnOff + LevelControl + ColorControl, exercising the `light_tests` example.
     Light,
     /// Scenes Management cluster — runs against the `scenes_tests` example.
@@ -1282,6 +1287,7 @@ impl TestSuite {
                 .filter(|name| !name.starts_with("TC_"))
                 .collect(),
             Self::Camera => CAMERA_TESTS.to_vec(),
+            Self::AudioDoorbell => AUDIO_DOORBELL_TESTS.to_vec(),
             Self::Light => LIGHT_TESTS.to_vec(),
             Self::Scenes => SCENES_TESTS.to_vec(),
             Self::Thermostat => THERMOSTAT_TESTS.to_vec(),
@@ -1302,6 +1308,7 @@ impl TestSuite {
         match self {
             Self::System | Self::SystemPython | Self::SystemYaml => "system_tests",
             Self::Camera => "camera_tests",
+            Self::AudioDoorbell => "audio_doorbell_tests",
             Self::Light => "light_tests",
             Self::Scenes => "scenes_tests",
             Self::Thermostat => "thermostat_tests",
@@ -1322,6 +1329,7 @@ impl TestSuite {
             | Self::SystemPython
             | Self::SystemYaml
             | Self::Camera
+            | Self::AudioDoorbell
             | Self::Light
             | Self::Scenes
             | Self::Thermostat
@@ -1342,7 +1350,7 @@ impl TestSuite {
     pub(crate) fn default_timeout_secs(&self) -> u32 {
         match self {
             Self::System | Self::SystemPython | Self::SystemYaml => 120,
-            Self::Camera => 180,
+            Self::Camera | Self::AudioDoorbell => 180,
             Self::Light => 500,
             // Scenes tests include some long composite YAML suites
             // (multi-fabric/max-capacity); match `Light`'s budget.

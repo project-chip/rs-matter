@@ -76,7 +76,7 @@ use core::future::Future;
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, EndptId, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVArray, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
+use crate::tlv::{TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
@@ -88,6 +88,10 @@ pub use crate::dm::clusters::decl::camera_av_stream_management::*;
 pub use crate::dm::clusters::decl::globals::StreamUsageEnum;
 
 use super::super::decl::camera_av_stream_management as decl;
+use super::cam_av_common::{
+    build_stream_priorities, read_enum_array, write_audio_capabilities, write_audio_stream,
+};
+pub use super::cam_av_common::{AudioCapabilitiesConfig, AudioStream, CamAvError};
 
 /// Static description of the camera image sensor.
 ///
@@ -117,29 +121,6 @@ pub struct RateDistortionPoint {
     pub min_bit_rate: u32,
 }
 
-/// One row in the `AllocatedAudioStreams` attribute.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AudioStream {
-    pub audio_stream_id: u16,
-    pub stream_usage: StreamUsageEnum,
-    pub audio_codec: AudioCodecEnum,
-    pub channel_count: u8,
-    pub sample_rate: u32,
-    pub bit_rate: u32,
-    pub bit_depth: u8,
-    pub reference_count: u8,
-}
-
-/// Static description of the microphone, reported via `MicrophoneCapabilities`.
-#[derive(Debug, Clone, Copy)]
-pub struct AudioCapabilitiesConfig<'a> {
-    pub max_channels: u8,
-    pub supported_codecs: &'a [AudioCodecEnum],
-    pub supported_sample_rates: &'a [u32],
-    pub supported_bit_depths: &'a [u8],
-}
-
 /// One row in the `AllocatedVideoStreams` attribute.
 ///
 /// The `reference_count` field is fully managed by the handler — callers
@@ -165,34 +146,6 @@ pub struct VideoStream {
     pub watermark_enabled: Option<bool>,
     pub osd_enabled: Option<bool>,
     pub reference_count: u8,
-}
-
-/// Errors a [`CameraAvStreamHooks`] implementation can surface back to
-/// the cluster. Each maps to a Matter cluster-status code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum CamAvError {
-    /// `RESOURCE_EXHAUSTED` — encoder cannot accept another concurrent stream.
-    ResourceExhausted,
-    /// `DYNAMIC_CONSTRAINT_ERROR` — combination of params is unsupported
-    /// at runtime (e.g. requested bitrate exceeds what the codec can do
-    /// for the requested resolution).
-    DynamicConstraint,
-    /// `NOT_FOUND` — referenced stream ID does not exist.
-    NotFound,
-    /// `FAILURE` — any other hooks-level failure.
-    Failure,
-}
-
-impl From<CamAvError> for Error {
-    fn from(e: CamAvError) -> Self {
-        match e {
-            CamAvError::ResourceExhausted => ErrorCode::ResourceExhausted.into(),
-            CamAvError::DynamicConstraint => ErrorCode::ConstraintError.into(),
-            CamAvError::NotFound => ErrorCode::NotFound.into(),
-            CamAvError::Failure => ErrorCode::Failure.into(),
-        }
-    }
 }
 
 /// Application hooks for the side-effecting pieces of stream lifecycle.
@@ -282,7 +235,7 @@ pub struct CameraAvStreamConfig<'a> {
     pub min_viewport: (u16, u16),
     /// Reported via `MaxContentBufferSize`. Spec recommends ≥ 1 MiB.
     pub max_content_buffer_size: u32,
-    /// Reported via `MaxNetworkBandwidth` (kbps).
+    /// Reported via `MaxNetworkBandwidth` (bits per second).
     pub max_network_bandwidth: u32,
     /// Stable, server-defined list of every usage this camera *could*
     /// expose. `StreamUsagePriorities` (mutable, see
@@ -985,30 +938,21 @@ where
         ctx: impl InvokeContext,
         request: SetStreamPrioritiesRequest<'_>,
     ) -> Result<(), Error> {
-        let new_prio: TLVArray<'_, StreamUsageEnum> = request.stream_priorities()?;
-
-        // Build the new list while validating (a) every entry is in
-        // SupportedStreamUsages, (b) no duplicates, (c) it fits.
-        let mut buffer: Vec<StreamUsageEnum, MAX_STREAM_USAGES> = Vec::new();
-        for entry in new_prio.iter() {
-            let usage = entry?;
-            if !self.config.supported_stream_usages.contains(&usage) {
-                return Err(ErrorCode::ConstraintError.into());
-            }
-            if buffer.contains(&usage) {
-                return Err(ErrorCode::ConstraintError.into());
-            }
-            buffer
-                .push(usage)
-                .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
+        let any_allocated = self.state.lock(|cell| {
+            let s = cell.borrow();
+            !s.videos.is_empty() || !s.audios.is_empty()
+        });
+        if any_allocated {
+            return Err(ErrorCode::InvalidInState.into());
         }
+        let buffer = build_stream_priorities(
+            request.stream_priorities()?.iter(),
+            self.config.supported_stream_usages,
+        )?;
 
         self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
-            state.stream_usage_priorities.clear();
-            for u in buffer.iter() {
-                let _ = state.stream_usage_priorities.push(*u);
-            }
+            state.stream_usage_priorities = buffer;
         });
         ctx.notify_own_attr_changed(AttributeId::StreamUsagePriorities as _);
         Ok(())
@@ -1022,22 +966,7 @@ where
         let Some(cfg) = self.config.mic_capabilities else {
             return Err(ErrorCode::InvalidAction.into());
         };
-        let b = builder.max_number_of_channels(cfg.max_channels)?;
-        let mut codecs = b.supported_codecs()?;
-        for codec in cfg.supported_codecs {
-            codecs = codecs.push(codec)?;
-        }
-        let b = codecs.end()?;
-        let mut rates = b.supported_sample_rates()?;
-        for r in cfg.supported_sample_rates {
-            rates = rates.push(r)?;
-        }
-        let b = rates.end()?;
-        let mut depths = b.supported_bit_depths()?;
-        for d in cfg.supported_bit_depths {
-            depths = depths.push(d)?;
-        }
-        depths.end()?.end()
+        write_audio_capabilities(builder, &cfg)
     }
 
     async fn allocated_audio_streams<P: TLVBuilderParent>(
@@ -1121,30 +1050,6 @@ where
 // Local helpers
 // -----------------------------------------------------------------------
 
-fn read_enum_array<P: TLVBuilderParent>(
-    builder: ArrayAttributeRead<
-        ToTLVArrayBuilder<P, StreamUsageEnum>,
-        ToTLVBuilder<P, StreamUsageEnum>,
-    >,
-    items: &[StreamUsageEnum],
-) -> Result<P, Error> {
-    match builder {
-        ArrayAttributeRead::ReadAll(mut b) => {
-            for item in items {
-                b = b.push(item)?;
-            }
-            b.end()
-        }
-        ArrayAttributeRead::ReadOne(idx, b) => {
-            let Some(item) = items.get(idx as usize) else {
-                return Err(ErrorCode::ConstraintError.into());
-            };
-            b.set(item)
-        }
-        ArrayAttributeRead::ReadNone(b) => b.end(),
-    }
-}
-
 fn write_video_stream<P: TLVBuilderParent>(
     builder: VideoStreamStructBuilder<P>,
     s: &VideoStream,
@@ -1170,22 +1075,6 @@ fn write_video_stream<P: TLVBuilderParent>(
         .key_frame_interval(s.key_frame_interval)?
         .watermark_enabled(s.watermark_enabled)?
         .osd_enabled(s.osd_enabled)?
-        .reference_count(s.reference_count)?
-        .end()
-}
-
-fn write_audio_stream<P: TLVBuilderParent>(
-    builder: AudioStreamStructBuilder<P>,
-    s: &AudioStream,
-) -> Result<P, Error> {
-    builder
-        .audio_stream_id(s.audio_stream_id)?
-        .stream_usage(s.stream_usage)?
-        .audio_codec(s.audio_codec)?
-        .channel_count(s.channel_count)?
-        .sample_rate(s.sample_rate)?
-        .bit_rate(s.bit_rate)?
-        .bit_depth(s.bit_depth)?
         .reference_count(s.reference_count)?
         .end()
 }
