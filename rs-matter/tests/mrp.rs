@@ -126,6 +126,8 @@ enum LossMode {
     DuplicateAll,
     /// Deliver nothing.
     DropAll,
+    /// Drop MRP standalone acks, deliver everything else.
+    DropStandaloneAcks,
 }
 
 /// What the transport asked one direction of the link to send.
@@ -167,7 +169,9 @@ impl LinkStats {
         }
     }
 
-    fn record(&self, data: &[u8]) {
+    /// Record a packet offered to the link. Return `true` if it is an MRP
+    /// standalone ack.
+    fn record(&self, data: &[u8]) -> bool {
         self.offered.set(self.offered.get() + 1);
 
         let Some((ctr, proto_id, opcode)) = decode_hdr(data, self.sender_nodeid) else {
@@ -181,13 +185,18 @@ impl LinkStats {
             seen.push(ctr);
         }
 
-        if proto_id == PROTO_ID_SECURE_CHANNEL && opcode == ScOpCode::MRPStandAloneAck as u8 {
+        let standalone_ack =
+            proto_id == PROTO_ID_SECURE_CHANNEL && opcode == ScOpCode::MRPStandAloneAck as u8;
+
+        if standalone_ack {
             self.standalone_acks.set(self.standalone_acks.get() + 1);
         }
 
         if proto_id == PROTO_ID_INTERACTION_MODEL {
             self.im_messages.set(self.im_messages.get() + 1);
         }
+
+        standalone_ack
     }
 
     /// Number of distinct message counters that were offered.
@@ -254,7 +263,7 @@ impl<const N: usize> LossySend<'_, N> {
 
 impl<const N: usize> NetworkSend for LossySend<'_, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
-        self.stats.record(data);
+        let standalone_ack = self.stats.record(data);
 
         let mode = self.stats.mode.get();
 
@@ -262,6 +271,7 @@ impl<const N: usize> NetworkSend for LossySend<'_, N> {
             LossMode::Reliable | LossMode::DuplicateAll => false,
             LossMode::DropEveryNth(n) => self.stats.offered.get().is_multiple_of(n),
             LossMode::DropAll => true,
+            LossMode::DropStandaloneAcks => standalone_ack,
         };
 
         if drop {
@@ -711,8 +721,8 @@ impl<const N: usize> NetworkSend for CountingSend<'_, N> {
 ///
 /// The node without the session cannot authenticate anything sent on it, and
 /// the protocol defines no reply, so it stays silent. The node with the stale
-/// session learns nothing until its retransmissions run out; it then expires
-/// the session, so the next attempt establishes a fresh one.
+/// session learns nothing until its retransmissions run out; it then marks
+/// the session defunct, so the next attempt establishes a fresh one.
 #[test]
 fn message_on_a_session_the_peer_does_not_have_goes_unanswered() {
     init_env_logger();
@@ -794,14 +804,124 @@ fn message_on_a_session_the_peer_does_not_have_goes_unanswered() {
         );
         assert!(client_count.get() > 1, "the client never retransmitted");
 
-        // ...and the stale session is expired, so the next attempt establishes a
+        // ...and the stale session is defunct, so the next attempt establishes a
         // new one.
         assert!(
             client.with_state(|state| state
                 .sessions
                 .iter()
-                .any(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID) && sess.is_expired())),
-            "the stale session was not expired"
+                .any(|sess| sess.get_peer_node_id() == Some(DEVICE_NODE_ID) && sess.is_defunct())),
+            "the stale session was not marked defunct"
+        );
+    });
+}
+
+/// The device's answer to a request is received, but none of the client's
+/// acks of it reach the device, so the device runs out of retransmissions on
+/// a session that is perfectly fine on the client's side.
+///
+/// Nothing tells the client that anything went wrong, so it keeps sending its
+/// requests on that session. The device must still answer them: a peer whose
+/// acks were lost is not a removed fabric, and the first authenticated message
+/// it sends shows that the session should still be in sync.
+#[test]
+fn session_survives_lost_acks_of_a_response() {
+    init_env_logger();
+
+    spawn_with_large_stack(|| {
+        let device = new_matter();
+        let client = new_matter();
+
+        install_session(&device, DEVICE_NODE_ID, CLIENT_NODE_ID);
+        install_session(&client, CLIENT_NODE_ID, DEVICE_NODE_ID);
+        add_admin_acl(&device);
+
+        let crypto = test_only_crypto();
+        let buffers: MatterBuffers = MatterBuffers::new();
+        let state = InteractionModelState::<3, 0>::new();
+
+        let mut rand = crypto.rand().unwrap();
+        let on_off_handler = on_off::OnOffHandler::new_standalone(
+            Dataver::new_rand(&mut rand),
+            1,
+            rs_matter::persist::VENDOR_KEYS_START + 0x10,
+            TestOnOffDeviceLogic::new(false),
+        );
+        let handler = E2eTestHandler::new(&device, rand, on_off_handler);
+
+        let kv = device.kv(DummyKvBlobStore);
+        let dm = InteractionModel::new(&device, &crypto, &buffers, &handler, &kv, &state);
+        let responder = Responder::new_default(&dm);
+
+        let device_stats = LinkStats::new(DEVICE_NODE_ID);
+        let client_stats = LinkStats::new(CLIENT_NODE_ID);
+
+        let result = futures_lite::future::block_on(run_link(
+            &device,
+            &client,
+            (LossMode::Reliable, &device_stats),
+            (LossMode::Reliable, &client_stats),
+            async { select(responder.run::<4>(), dm.run()).coalesce().await },
+            async {
+                warm_up(&client).await?;
+
+                // Wait until `warm_up` has settled (no open exchanges on the device),
+                // otherwise the LossMode set below could drop queued acks.
+                while device
+                    .with_state(|state| state.sessions.iter().any(|sess| sess.has_exchanges()))
+                {
+                    Timer::after(Duration::from_millis(10)).await;
+                }
+
+                info!("=== Read whose response is never acknowledged ===");
+                client_stats.mode.set(LossMode::DropStandaloneAcks);
+                let mut exchange = initiate_exchange(&client).await?;
+                read_att1(&mut exchange).await?;
+
+                // Wait until the device gives up on its response; bounded, so
+                // that a regression fails the test instead of hanging it.
+                let mut waited_ms = 0;
+                while !device.with_state(|state| {
+                    state.sessions.iter().any(|sess| {
+                        sess.get_peer_node_id() == Some(CLIENT_NODE_ID) && sess.is_defunct()
+                    })
+                }) {
+                    assert!(
+                        waited_ms < 30_000,
+                        "the device never marked its session to the client defunct"
+                    );
+                    Timer::after(Duration::from_millis(10)).await;
+                    waited_ms += 10;
+                }
+
+                info!("=== Read on the same session once the link is back ===");
+                client_stats.mode.set(LossMode::Reliable);
+                let mut exchange = initiate_exchange(&client).await?;
+                read_att1(&mut exchange).await
+            },
+        ));
+
+        info!(
+            "Device link: offered={} retrans={}; client link: offered={} dropped={}",
+            device_stats.offered.get(),
+            device_stats.retransmissions.get(),
+            client_stats.offered.get(),
+            client_stats.dropped.get(),
+        );
+
+        assert!(
+            device_stats.retransmissions.get() > 0,
+            "the device never retransmitted its unacknowledged report"
+        );
+
+        result.expect("the device refused a request on a session whose peer had only lost acks");
+
+        assert!(
+            device.with_state(|state| state
+                .sessions
+                .iter()
+                .all(|sess| !sess.is_defunct() && !sess.is_expired())),
+            "the request did not revive the session"
         );
     });
 }

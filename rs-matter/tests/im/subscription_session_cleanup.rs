@@ -16,8 +16,8 @@
  */
 
 //! A failed subscription report must not remove sessions to its subscriber:
-//! the transport expires a session whose peer stopped acknowledging, and any
-//! other session, such as a newer one the peer just established, stays usable.
+//! the transport marks a session whose peer stopped acknowledging defunct, and
+//! any other session, such as a newer one the peer just established, stays usable.
 
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
@@ -268,11 +268,16 @@ fn session_cleanup(failure: Failure) {
                             "failed subscription processing removed the session it used"
                         );
                     }
-                    // Only a session whose peer stopped acknowledging is expired.
-                    let expired = im.matter.with_state(|state| {
-                        state.sessions.iter().filter(|s| s.is_expired()).count()
+                    // Only a session whose peer stopped acknowledging is defunct,
+                    // and none is expired.
+                    let (defunct, expired) = im.matter.with_state(|state| {
+                        (
+                            state.sessions.iter().filter(|s| s.is_defunct()).count(),
+                            state.sessions.iter().filter(|s| s.is_expired()).count(),
+                        )
                     });
-                    assert_eq!(expired, usize::from(failure == Failure::Unacknowledged));
+                    assert_eq!(defunct, usize::from(failure == Failure::Unacknowledged));
+                    assert_eq!(expired, 0);
                     Ok(())
                 },
             )
@@ -296,6 +301,6 @@ fn bad_response_preserves_sessions() {
 }
 
 #[test]
-fn unacknowledged_report_only_expires_its_session() {
+fn unacknowledged_report_only_marks_its_session_defunct() {
     session_cleanup(Failure::Unacknowledged);
 }

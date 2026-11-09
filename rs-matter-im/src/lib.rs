@@ -1267,10 +1267,11 @@ where
                     Ok(false) => dropped_any = true,
                     Err(e) => {
                         // Sessions to the subscriber are left alone. If the peer
-                        // stopped acknowledging, the transport has already expired
-                        // the session, so the retry establishes a fresh one. After
-                        // any other failure the session is still healthy, and other
-                        // exchanges may be using it.
+                        // stopped acknowledging, the transport has already marked
+                        // the session defunct, so the retry establishes a fresh one,
+                        // unless the peer revives the session first. After any other
+                        // failure the session is still healthy, and other exchanges
+                        // may be using it.
                         let (fab_idx, peer_node_id) = {
                             let ids = rctx.subscription().ids();
                             (ids.fab_idx, ids.peer_node_id)
