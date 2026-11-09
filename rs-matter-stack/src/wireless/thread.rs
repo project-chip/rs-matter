@@ -40,7 +40,7 @@ use crate::mdns::Mdns;
 use crate::net::NetStack;
 use crate::network::Embedding;
 use crate::wireless::{
-    CommWindowHandover, GattPeripheral, GattTask, MatterStackWirelessTask, WirelessNetCtl,
+    GattPeripheral, GattTask, MatterStackWirelessTask, UntilBleCommWindow, WirelessNetCtl,
     MAX_WIRELESS_NETWORKS,
 };
 use crate::{pin_alloc, RunOptions, UserTask};
@@ -207,16 +207,21 @@ where
         net_task.await
     }
 
-    /// Run an already provisioned device without requiring a BLE driver.
+    /// Run the Matter stack over the Thread network only, without BLE.
     ///
-    /// Call [`Self::startup`] first to load the saved fabric and Thread credentials.
-    /// This path never initializes GATT, including when an administrator opens
-    /// a new commissioning window; that window is served over IP.
+    /// This is meant for a commissioned device whose driver does not support BLE.
+    /// A commissioning window is advertised over the Thread network only.
     ///
-    /// If the device has not been commissioned yet, consider using [`Self::run`] or
-    /// [`Self::run_coex`] to support initial BLE onboarding, unless initial commissioning
-    /// is handled over IP.
-    pub async fn run_thread_only<W, C, H, K, O>(
+    /// An uncommissioned device can only be commissioned if its Thread interface
+    /// is connected by other means, as the stack has no network credentials yet.
+    ///
+    /// # Arguments
+    /// - `thread` - a user-provided `ThreadDriver` implementation
+    /// - `crypto` - a user-provided `Crypto` implementation
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
+    pub async fn run_oper<W, C, H, K, O>(
         &self,
         mut thread: W,
         crypto: C,
@@ -232,23 +237,29 @@ where
         O: RunOptions,
     {
         let _lock = self.run_lock.lock().await;
+
+        // Lent to the Network Commissioning handler
         let mut networks = self.network.networks.lock().await;
 
         info!("Matter Stack memory: {}b", core::mem::size_of_val(self));
 
         if !self.matter().has_fabrics() {
-            warn!("Running Thread-only stack without an active fabric; commissioning over BLE is not available");
+            warn!("Device is not commissioned; without BLE it is reachable only if Thread is connected by other means");
         }
 
-        // All task futures and their bump allocations are dropped before this guard.
+        // Since this is the last code executed in the method, resetting the allocator should be safe
+        // because all boxes returned by it should be dropped by then
         let _defer = scopeguard::guard((), |_| unsafe {
             self.bump.reset();
         });
+
         self.matter().reset_transport()?;
+
         let (gen_diag, user) = options.into_parts();
+
         let net_task = pin_alloc!(
             self.bump,
-            self.run_thread_only_task(
+            self.run_thread_oper(
                 &mut networks,
                 &mut thread,
                 crypto,
@@ -258,11 +269,12 @@ where
                 user
             )
         );
+
         net_task.await
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn run_thread_only_task<'t, W, C, H, K, U>(
+    fn run_thread_oper<'t, W, C, H, K, U>(
         &'t self,
         networks: &'t mut S,
         thread: &'t mut W,
@@ -279,7 +291,8 @@ where
         K: KvBlobStoreAccess + 't,
         U: UserTask + 't,
     {
-        // No BLE handler chain needs to share a concrete net-ctl type here.
+        // There is no BLE phase, so the phantom net-ctl type is an irrelevant placeholder.
+        // The task is not wrapped in `UntilBleCommWindow`, so it never hands the radio over.
         thread.run(
             MatterStackWirelessTask::<'_, _, _, _, _, _, _, _, _, NoopWirelessNetCtl> {
                 stack: self,
@@ -289,7 +302,6 @@ where
                 handler,
                 kv,
                 user_task: user,
-                comm_window_handover: CommWindowHandover::Bypassed,
                 _net_ctl: PhantomData,
             },
         )
@@ -325,7 +337,6 @@ where
                 handler,
                 kv,
                 user_task: user,
-                comm_window_handover: CommWindowHandover::Wait,
                 _net_ctl: PhantomData,
             },
         )
@@ -384,7 +395,6 @@ where
                             handler: &handler,
                             kv: &kv,
                             user_task: &mut user,
-                            comm_window_handover: CommWindowHandover::Wait,
                             _net_ctl: PhantomData,
                         },
                     )
@@ -393,27 +403,29 @@ where
 
                 ThreadDriver::run(
                     &mut thread,
-                    MatterStackWirelessTask::<
-                        '_,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        <W as ThreadDriver>::NetCtl<'_>,
-                    > {
+                    UntilBleCommWindow {
                         stack: self,
-                        gen_diag,
-                        networks: &mut *networks,
-                        crypto: &crypto,
-                        handler: &handler,
-                        kv: &kv,
-                        user_task: &mut user,
-                        comm_window_handover: CommWindowHandover::Wait,
-                        _net_ctl: PhantomData,
+                        task: MatterStackWirelessTask::<
+                            '_,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            <W as ThreadDriver>::NetCtl<'_>,
+                        > {
+                            stack: self,
+                            gen_diag,
+                            networks: &mut *networks,
+                            crypto: &crypto,
+                            handler: &handler,
+                            kv: &kv,
+                            user_task: &mut user,
+                            _net_ctl: PhantomData,
+                        },
                     },
                 )
                 .await?;
@@ -765,30 +777,49 @@ where
 
         let mut user_task = pin!(self.user_task.run(&net_stack, &netif));
 
-        let mut oper_task =
-            pin!(select4(&mut net_task, &mut mdns_task, &mut im_task, &mut user_task).coalesce());
+        select4(&mut net_task, &mut mdns_task, &mut im_task, &mut user_task)
+            .coalesce()
+            .await
+    }
+}
 
-        match self.comm_window_handover {
-            CommWindowHandover::Wait => {
-                // Hand the radio back to BLE once a commissioning window that has to be advertised
-                // there appears. The window still open from the commissioning this phase is finishing
-                // is not one of them - non-concurrent commissioning completes over the operational
-                // network, and only then does the window close - so wait for it to go away first, and
-                // only then for the next one to open.
-                let mut comm_window_task = pin!(async {
-                    self.stack.wait_next_comm_window().await;
+impl<const B: usize, S, E, X> ThreadTask for UntilBleCommWindow<'_, B, wireless::Thread, S, E, X>
+where
+    S: Networks + Embedding,
+    E: Embedding,
+    X: ThreadTask,
+{
+    async fn run<T, N, Q, D>(
+        &mut self,
+        net_stack: T,
+        netif: N,
+        net_ctl: Q,
+        mdns: D,
+    ) -> Result<(), Error>
+    where
+        T: NetStack,
+        N: NetifDiag + NetChangeNotif,
+        Q: NetCtl + ThreadDiag + NetChangeNotif,
+        D: Mdns,
+    {
+        let stack = self.stack;
 
-                    info!("Commissioning window opened; handing the radio back to BLE");
+        let mut task = pin!(self.task.run(net_stack, netif, net_ctl, mdns));
 
-                    Ok(())
-                });
+        // Hand the radio back to BLE once a commissioning window that has to be advertised
+        // there appears. The window still open from the commissioning this phase is finishing
+        // is not one of them - non-concurrent commissioning completes over the operational
+        // network, and only then does the window close - so wait for it to go away first, and
+        // only then for the next one to open.
+        let mut comm_window_task = pin!(async {
+            stack.wait_next_comm_window().await;
 
-                select(&mut oper_task, &mut comm_window_task)
-                    .coalesce()
-                    .await
-            }
-            CommWindowHandover::Bypassed => oper_task.await,
-        }
+            info!("Commissioning window opened; handing the radio back to BLE");
+
+            Ok(())
+        });
+
+        select(&mut task, &mut comm_window_task).coalesce().await
     }
 }
 

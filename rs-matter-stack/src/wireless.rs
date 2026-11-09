@@ -932,16 +932,6 @@ impl<S, N, C, M, G> PreexistingWireless<S, N, C, M, G> {
     }
 }
 
-/// Whether the operational task waits for a commissioning window to perform
-/// a radio handover, or bypasses waiting so the operational network remains active.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CommWindowHandover {
-    /// Wait for the next commissioning window to open so the radio can be handed to BLE.
-    Wait,
-    /// Bypass waiting for the next commissioning window; the operational network runs persistently.
-    Bypassed,
-}
-
 pub(crate) struct MatterStackWirelessTask<'a, const B: usize, T, S, E, C, H, K, U, Q>
 where
     T: WirelessNetwork,
@@ -955,6 +945,17 @@ where
     handler: H,
     kv: K,
     user_task: U,
-    comm_window_handover: CommWindowHandover,
     _net_ctl: PhantomData<fn() -> Q>,
+}
+
+/// Runs an operational task until a commissioning window that has to be advertised
+/// over BLE opens, so that the radio can be handed back to BLE.
+pub(crate) struct UntilBleCommWindow<'a, const B: usize, T, S, E, X>
+where
+    T: WirelessNetwork,
+    S: Embedding,
+    E: Embedding,
+{
+    stack: &'a MatterStack<'a, B, WirelessBle<T, E, S>>,
+    task: X,
 }
