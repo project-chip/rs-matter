@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: `WifiMatterStack::run_oper` and `ThreadMatterStack::run_oper`: run the stack without BLE (#649)
+* Fix: removing the last fabric also removes the stored networks, as the spec requires; `CommPolicy::remove_networks_on_last_fabric` can turn this off (#649)
+  * Breaking: `NetCommHandler::new` takes the `CommPolicy` too
+* New: `CommPolicy::open_comm_window_on_last_fabric`: open a basic commissioning window once the last fabric is removed (#649)
 * Fix: a CASE session whose peer stopped acknowledging becomes defunct rather than expired, so the peer can still use it, which revives it (#648)
 * New: `Session::state` returns the session's `SessionState`: `Reserved`, `Active`, `Defunct` or `Expired` (#648)
-* New: `WifiMatterStack::run_oper` and `ThreadMatterStack::run_oper`: run the stack without BLE (#645)
 * Fix: an ICD operating as a LIT advertises no session idle interval (`SII`), neither over mDNS nor in its CASE / PASE session parameters, so that its peers do not hold back their retransmissions until it is asleep again (#644)
 * Fix: the advertised `SII` is capped to one hour, the spec's maximum (#644)
 * Fix: a CASE initiator retransmits to a peer that advertises `ICD=1` at the peer's active interval, ignoring any `SII` it advertises, as it reaches such a peer only while it is active. (#644)

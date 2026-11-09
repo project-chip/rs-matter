@@ -256,6 +256,7 @@ fn data_model<'a>(
         NetCommHandler::new(
             Dataver::new_rand(rand),
             matter,
+            &false,
             0,
             wifi,
             NETWORKS_KEY,
@@ -270,6 +271,7 @@ fn data_model<'a>(
         NetCommHandler::new(
             Dataver::new_rand(rand),
             matter,
+            &false,
             2,
             thread,
             SECONDARY_NETWORKS_KEY,
