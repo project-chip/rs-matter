@@ -301,6 +301,6 @@ fn bad_response_preserves_sessions() {
 }
 
 #[test]
-fn unacknowledged_report_only_expires_its_session() {
+fn unacknowledged_report_only_marks_its_session_defunct() {
     session_cleanup(Failure::Unacknowledged);
 }

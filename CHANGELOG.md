@@ -6,8 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Fix: a CASE session whose peer stopped acknowledging is marked defunct instead of expired: it still accepts new exchanges from the peer, and the next message received from the peer revives it, so that a peer whose acks were lost is no longer locked out of the session
-* New: `Session::is_defunct`
+* Fix: a CASE session whose peer stopped acknowledging becomes defunct rather than expired, so the peer can still use it, which revives it (#648)
+* New: `Session::state` returns the session's `SessionState`: `Reserved`, `Active`, `Defunct` or `Expired` (#648)
 * Fix: an ICD operating as a LIT advertises no session idle interval (`SII`), neither over mDNS nor in its CASE / PASE session parameters, so that its peers do not hold back their retransmissions until it is asleep again (#644)
 * Fix: the advertised `SII` is capped to one hour, the spec's maximum (#644)
 * Fix: a CASE initiator retransmits to a peer that advertises `ICD=1` at the peer's active interval, ignoring any `SII` it advertises, as it reaches such a peer only while it is active. (#644)

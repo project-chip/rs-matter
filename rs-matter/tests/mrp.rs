@@ -875,11 +875,20 @@ fn session_survives_lost_acks_of_a_response() {
                 let mut exchange = initiate_exchange(&client).await?;
                 read_att1(&mut exchange).await?;
 
-                // wait until session is defunct
-                while device
-                    .with_state(|state| state.sessions.iter().any(|sess| !sess.is_defunct()))
-                {
+                // Wait until the device gives up on its response; bounded, so
+                // that a regression fails the test instead of hanging it.
+                let mut waited_ms = 0;
+                while !device.with_state(|state| {
+                    state.sessions.iter().any(|sess| {
+                        sess.get_peer_node_id() == Some(CLIENT_NODE_ID) && sess.is_defunct()
+                    })
+                }) {
+                    assert!(
+                        waited_ms < 30_000,
+                        "the device never marked its session to the client defunct"
+                    );
                     Timer::after(Duration::from_millis(10)).await;
+                    waited_ms += 10;
                 }
 
                 info!("=== Read on the same session once the link is back ===");

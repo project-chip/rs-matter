@@ -109,6 +109,42 @@ impl From<&PeerMrpParams> for SessionParameters {
     }
 }
 
+/// The lifecycle state of a [`Session`].
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SessionState {
+    /// The session slot is held for a handshake still in progress (see
+    /// [`ReservedSession`]). It does not match any message or lookup, and is
+    /// never evicted.
+    Reserved,
+    /// The session is in use.
+    Active,
+    /// A CASE session whose peer stopped acknowledging, so it may no longer be
+    /// in sync with the peer.
+    ///
+    /// Like expired sessions, defunct sessions do not initiate new exchanges and are
+    /// the prime candidates for eviction. Unlike expired sessions, they still accept
+    /// new exchanges from the peer, and the next fresh message received from the peer
+    /// makes them active again.
+    Defunct,
+    /// The session on behalf of which a fabric is removed, or a PASE session that
+    /// is no longer needed (see [`Session::expire`]).
+    ///
+    /// Expired sessions can still process their ongoing exchanges, but do not accept any new ones.
+    /// Furthermore, expired sessions are the prime candidates for eviction.
+    Expired,
+}
+
+impl SessionState {
+    const fn new(reserved: bool) -> Self {
+        if reserved {
+            Self::Reserved
+        } else {
+            Self::Active
+        }
+    }
+}
+
 pub struct Session {
     // Internal ID which is guaranteeed to be unique accross all sessions and not change when sessions are added/removed
     pub id: u32,
@@ -155,22 +191,7 @@ pub struct Session {
     /// (see [`ReservedSession::update`]) and one created by an incoming message
     /// have just heard from it.
     peer_active_until: Instant,
-    /// If `true` then the session is considered "expired". Session expiration happens
-    /// for the session on behalf of which a fabric is removed.
-    ///
-    /// Expired sessions can still process their ongoing exchanges, but do not accept any new ones.
-    /// Furthermore, expired sessions are the prime candidates for eviction.
-    expired: bool,
-    /// If `true` then the session is considered "defunct": it is a CASE session
-    /// whose peer stopped acknowledging (see [`Session::pre_send`]), so it may no
-    /// longer be in sync with the peer.
-    ///
-    /// Like expired sessions, defunct sessions do not initiate new exchanges and are
-    /// the prime candidates for eviction. Unlike expired sessions, they still accept
-    /// new exchanges from the peer, and the next fresh message received from the peer
-    /// revives them (see [`Session::post_recv`]).
-    defunct: bool,
-    reserved: bool,
+    state: SessionState,
 }
 
 impl Session {
@@ -192,7 +213,7 @@ impl Session {
     ) -> Self {
         Self {
             id,
-            reserved,
+            state: SessionState::new(reserved),
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
@@ -211,8 +232,6 @@ impl Session {
             peer_idle_interval_ms,
             peer_active_threshold_ms,
             peer_active_until: Instant::MIN,
-            expired: false,
-            defunct: false,
         }
     }
 
@@ -229,7 +248,7 @@ impl Session {
     ) -> impl Init<Self> {
         init!(Self {
             id,
-            reserved,
+            state: SessionState::new(reserved),
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
@@ -248,8 +267,6 @@ impl Session {
             peer_idle_interval_ms,
             peer_active_threshold_ms,
             peer_active_until: Instant::MIN,
-            expired: false,
-            defunct: false,
         })
     }
 
@@ -452,7 +469,7 @@ impl Session {
         self.get_local_fabric_idx() == fabric_idx.get()
             && self.peer_nodeid == Some(peer_node_id)
             && self.is_encrypted()
-            && !self.reserved
+            && !self.is_reserved()
     }
 
     /// Whether this session is with `peer`, compared canonically: a dual-stack
@@ -475,7 +492,9 @@ impl Session {
     /// session from another - which matters on a commissioner that may have
     /// several PASE sessions (to different devices) in flight at once.
     pub fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
-        matches!(self.mode, SessionMode::Pase { .. }) && self.is_peer(peer_addr) && !self.reserved
+        matches!(self.mode, SessionMode::Pase { .. })
+            && self.is_peer(peer_addr)
+            && !self.is_reserved()
     }
 
     pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
@@ -512,7 +531,7 @@ impl Session {
             && self.local_sess_id == rx_plain.sess_id
             && is_group == rx_plain.is_group_session()
             && self.is_encrypted() == rx_plain.is_encrypted()
-            && !self.reserved
+            && !self.is_reserved()
             && self.is_rx_peer(rx_peer, rx_plain)
     }
 
@@ -550,26 +569,36 @@ impl Session {
         self.id == session_id
     }
 
+    /// Return the lifecycle state of the session.
+    pub fn state(&self) -> SessionState {
+        self.state
+    }
+
     /// Return `true` if the session is reserved, `false` otherwise.
     pub fn is_reserved(&self) -> bool {
-        self.reserved
+        self.state == SessionState::Reserved
     }
 
     /// Return `true` if the session is expired.
     pub fn is_expired(&self) -> bool {
-        self.expired
+        self.state == SessionState::Expired
     }
 
     /// Return `true` if the session is defunct: its peer stopped acknowledging,
     /// and has not been heard from since.
     pub fn is_defunct(&self) -> bool {
-        self.defunct
+        self.state == SessionState::Defunct
     }
 
     /// Expire the session, marking it as no longer valid.
+    ///
+    /// A reserved session is left alone: its handshake either completes it or
+    /// removes it.
     pub fn expire(&mut self) {
-        info!("Expiring session with ID {}", self.id);
-        self.expired = true;
+        if !self.is_reserved() {
+            info!("Expiring session with ID {}", self.id);
+            self.state = SessionState::Expired;
+        }
     }
 
     /// How long to wait for the peer's answer on this session before giving up
@@ -672,7 +701,7 @@ impl Session {
         // `last_use` with the time of its reception.
         self.mark_peer_active(self.last_use);
 
-        if self.defunct {
+        if self.is_defunct() {
             // The message decrypted with the session keys and is not a duplicate:
             // the peer still has the session, so the acks it sent were only lost.
             info!(
@@ -680,7 +709,7 @@ impl Session {
                 self.id
             );
 
-            self.defunct = false;
+            self.state = SessionState::Active;
         }
 
         let exch_index = self.get_exch_for_rx(&rx_header.proto);
@@ -700,7 +729,7 @@ impl Session {
                 Err(ErrorCode::NoExchange)?;
             }
 
-            if self.expired {
+            if self.is_expired() {
                 // An expired session does not accept new exchanges. Refusing them
                 // here keeps a request from running through ACL checks against a
                 // removed fabric; the caller drops it, as it does a message on a
@@ -846,8 +875,7 @@ impl Session {
                 result.as_ref().map_err(Error::code),
                 Err(ErrorCode::TxTimeout)
             ) && matches!(self.mode, SessionMode::Case { .. })
-                && !self.expired
-                && !self.defunct
+                && self.state == SessionState::Active
             {
                 // The peer never acknowledged, which is the strongest evidence we
                 // get that its recorded address no longer reaches it - it may have
@@ -873,7 +901,7 @@ impl Session {
                     self.id
                 );
 
-                self.defunct = true;
+                self.state = SessionState::Defunct;
             }
 
             result?;
@@ -1007,7 +1035,7 @@ impl fmt::Display for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "peer: {:?}, peer_nodeid: {:?}, local: {}, remote: {}, msg_ctr: {}, mode: {:?}, ts: {:?}, expired: {}, defunct: {}",
+            "peer: {:?}, peer_nodeid: {:?}, local: {}, remote: {}, msg_ctr: {}, mode: {:?}, ts: {:?}, state: {:?}",
             self.peer_addr,
             self.peer_nodeid,
             self.local_sess_id,
@@ -1015,8 +1043,7 @@ impl fmt::Display for Session {
             self.msg_ctr,
             self.mode,
             self.last_use,
-            self.expired,
-            self.defunct,
+            self.state,
         )
     }
 }
@@ -1198,7 +1225,7 @@ impl Drop for ReservedSession<'_> {
         self.transport.with_sessions(|sessions| {
             if self.complete {
                 let session = unwrap!(sessions.get(self.id));
-                session.reserved = false;
+                session.state = SessionState::Active;
             } else {
                 sessions.remove(self.id);
             }
@@ -1991,7 +2018,7 @@ impl Sessions {
     /// Reserved sessions and sessions with exchanges are never evicted.
     pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
         let index = self
-            .expired()
+            .expired_or_defunct()
             .or_else(|| self.lru(|sess| !self.is_within_fabric_share(sess)))
             .or_else(|| self.lru(|_| true))?;
 
@@ -2003,17 +2030,18 @@ impl Sessions {
     #[cfg(feature = "groups")]
     fn get_non_case_session_for_eviction(&mut self) -> Option<&mut Session> {
         let index = self
-            .expired()
+            .expired_or_defunct()
             .or_else(|| self.lru(|sess| !matches!(sess.mode, SessionMode::Case { .. })))?;
 
         Some(&mut self.sessions[index])
     }
 
     /// An expired or defunct evictable session: those are the prime candidates for eviction.
-    fn expired(&self) -> Option<usize> {
-        self.sessions
-            .iter()
-            .position(|sess| (sess.expired || sess.defunct) && Self::is_evictable(sess))
+    fn expired_or_defunct(&self) -> Option<usize> {
+        self.sessions.iter().position(|sess| {
+            matches!(sess.state, SessionState::Expired | SessionState::Defunct)
+                && Self::is_evictable(sess)
+        })
     }
 
     /// The least-recently-used evictable session matching `f`.
@@ -2048,7 +2076,7 @@ impl Sessions {
     }
 
     fn is_evictable(sess: &Session) -> bool {
-        !sess.reserved && sess.exchanges.iter().all(Option::is_none)
+        !sess.is_reserved() && sess.exchanges.iter().all(Option::is_none)
     }
 
     pub fn add(
@@ -2114,7 +2142,7 @@ impl Sessions {
         while let Some(index) = self
             .sessions
             .iter()
-            .position(|sess| !sess.reserved && predicate(sess))
+            .position(|sess| !sess.is_reserved() && predicate(sess))
         {
             info!("Removing session with ID {}", self.sessions[index].id);
             self.sessions.swap_remove(index);
@@ -2137,7 +2165,7 @@ impl Sessions {
         let mut expired = 0;
 
         for sess in self.sessions.iter_mut() {
-            if !sess.reserved && predicate(sess) {
+            if !sess.is_reserved() && predicate(sess) {
                 sess.expire();
                 expired += 1;
             }
@@ -2223,7 +2251,9 @@ impl Sessions {
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, s)| !s.expired && !s.defunct && s.is_for_node(fabric_idx, peer_node_id))
+            .filter(|(_, s)| {
+                s.state == SessionState::Active && s.is_for_node(fabric_idx, peer_node_id)
+            })
             .max_by_key(|(_, s)| (s.peer_addr.is_tcp(), s.last_use))
             .map(|(i, _)| i)?;
 
@@ -2243,7 +2273,7 @@ impl Sessions {
         let mut session = self
             .sessions
             .iter_mut()
-            .find(|s| !s.expired && s.is_pase_for_addr(peer_addr));
+            .find(|s| s.state == SessionState::Active && s.is_pase_for_addr(peer_addr));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used();
@@ -2732,6 +2762,20 @@ mod tests {
         assert!(left.contains(&reserved), "reserved session was removed");
     }
 
+    /// Expiring a reserved session, in bulk or directly, leaves it reserved:
+    /// only its handshake completes or removes it.
+    #[test]
+    fn expiry_never_touches_a_reserved_session() {
+        let mut sm = Sessions::new();
+
+        let reserved = unwrap!(sm.add(0, true, Address::default(), None)).id;
+
+        assert_eq!(sm.expire_where(|_| true), 0);
+
+        unwrap!(sm.get(reserved)).expire();
+        assert_eq!(unwrap!(sm.get(reserved)).state(), SessionState::Reserved);
+    }
+
     /// The table fills up to `MAX_SESSIONS`, then refuses; removing a session
     /// hands it back and frees its slot.
     #[test]
@@ -2779,7 +2823,7 @@ mod tests {
         assert_eq!(unwrap!(sm.get_session_for_eviction()).id, b);
 
         // A reserved slot is never evicted, even if it is the oldest.
-        unwrap!(sm.get(b)).reserved = true;
+        unwrap!(sm.get(b)).state = SessionState::Reserved;
         unwrap!(sm.get(b)).set_last_use(Instant::from_ticks(1));
         assert_eq!(unwrap!(sm.get_session_for_eviction()).id, c);
 
@@ -2809,7 +2853,7 @@ mod tests {
 
         unwrap!(sm.get(old)).set_last_use(Instant::from_ticks(1));
         unwrap!(sm.get(expired)).set_last_use(Instant::MAX);
-        unwrap!(sm.get(expired)).expired = true;
+        unwrap!(sm.get(expired)).state = SessionState::Expired;
         advance_clock_past(1);
 
         assert_eq!(unwrap!(sm.get_session_for_eviction()).id, expired);
@@ -3388,7 +3432,7 @@ mod tests {
 
         transport.with_sessions(|sessions| {
             let sess = unwrap!(sessions.get(id));
-            assert!(sess.reserved);
+            assert!(sess.is_reserved());
             assert!(!sess.is_for_rx(&Address::default(), &rx_plain));
         });
 
@@ -3407,14 +3451,14 @@ mod tests {
 
         // Still reserved until completed.
         transport.with_sessions(|sessions| {
-            assert!(unwrap!(sessions.get(id)).reserved);
+            assert!(unwrap!(sessions.get(id)).is_reserved());
         });
 
         reserved.complete();
 
         transport.with_sessions(|sessions| {
             let sess = unwrap!(sessions.get(id));
-            assert!(!sess.reserved);
+            assert!(!sess.is_reserved());
             assert!(sess.is_encrypted());
             assert_eq!(sess.get_peer_node_id(), Some(0x22));
             assert_eq!(sess.get_peer_sess_id(), 0x1234);
@@ -3521,7 +3565,7 @@ mod tests {
         );
 
         // An expired session refuses new exchanges but keeps serving old ones.
-        sess.expired = true;
+        sess.state = SessionState::Expired;
         rx.plain.ctr = 5;
         rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
         assert_eq!(
@@ -3540,6 +3584,7 @@ mod tests {
     #[test]
     fn defunct_session_is_revived_by_the_peer() {
         use crate::exchange::InitiatorState;
+        use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
         use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 
         let fab_idx = unwrap!(NonZeroU8::new(1));
@@ -3585,7 +3630,8 @@ mod tests {
         // ...a fresh message does: it opens its exchange, and revives the session.
         rx.plain.ctr = 2;
         rx.proto.exch_id = 8;
-        rx.proto.proto_opcode = sc::OpCode::PBKDFParamRequest as u8;
+        rx.proto.proto_id = PROTO_ID_INTERACTION_MODEL;
+        rx.proto.proto_opcode = im::OpCode::ReadRequest as u8;
         rx.proto.set_initiator();
         rx.proto.set_reliable();
         assert!(unwrap!(sess.post_recv(&Address::default(), &rx)));

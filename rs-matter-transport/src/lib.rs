@@ -79,7 +79,7 @@ use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState,
 use network::{Address, IpAddr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
-use session::{Session, Sessions, CASE_SESSIONS_PER_FABRIC, MAX_SESSIONS};
+use session::{Session, SessionState, Sessions, CASE_SESSIONS_PER_FABRIC, MAX_SESSIONS};
 
 pub use self::case_setup::{CaseSetupTurn, CaseSetups};
 use self::mrp::mrp_log;
@@ -941,8 +941,8 @@ impl Transport {
         self.with_sessions(|sessions| {
             sessions
                 .get(session_id)
-                // Expired and defunct sessions are not allowed to initiate new exchanges
-                .filter(|sess| !sess.is_expired() && !sess.is_defunct())
+                // Only active sessions initiate new exchanges
+                .filter(|sess| sess.state() == SessionState::Active)
                 .ok_or(ErrorCode::NoSession)?;
 
             let exch_id = sessions.get_next_exch_id(crypto)?;
