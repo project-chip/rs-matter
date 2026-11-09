@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 * Fix: a BTP peripheral takes the smaller of its GATT MTU and the MTU in the handshake request, never below the minimum, as the spec asks, instead of the minimum MTU whenever the two differ (#650)
   * Breaking: `Btp::set_relaxed_mtu_nego` is now `Btp::set_strict_mtu_nego`, which brings back the old behavior
+* New: `WifiMatterStack::run_oper` and `ThreadMatterStack::run_oper`: run the stack without BLE (#649)
+* Fix: removing the last fabric also removes the stored networks, as the spec requires; `CommPolicy::remove_networks_on_last_fabric` can turn this off (#649)
+  * Breaking: `NetCommHandler::new` takes the `CommPolicy` too
+* New: `CommPolicy::open_comm_window_on_last_fabric`: open a basic commissioning window once the last fabric is removed (#649)
 * Fix: a CASE session whose peer stopped acknowledging becomes defunct rather than expired, so the peer can still use it, which revives it (#648)
 * New: `Session::state` returns the session's `SessionState`: `Reserved`, `Active`, `Defunct` or `Expired` (#648)
 * Fix: an ICD operating as a LIT advertises no session idle interval (`SII`), neither over mDNS nor in its CASE / PASE session parameters, so that its peers do not hold back their retransmissions until it is asleep again (#644)

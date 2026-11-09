@@ -20,7 +20,7 @@
 use core::fmt::{self, Debug};
 use core::future::{ready, Future};
 
-use crate::dm::clusters::gen_comm::GenCommHandler;
+use crate::dm::clusters::gen_comm::{CommPolicy, GenCommHandler};
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::dm::networks::wireless::{WirelessMgr, MAX_CREDS_SIZE, MAX_WIRELESS_NETWORK_ID_LEN};
@@ -688,6 +688,7 @@ impl Networks for NotifyingNetworks<'_> {
 pub struct NetCommHandler<'a, N, T> {
     dataver: Dataver,
     matter: &'a Matter<'a>,
+    comm_policy: &'a dyn CommPolicy,
     endpoint_id: EndptId,
     networks: NetworksCell<N>,
     networks_key: u16,
@@ -705,15 +706,18 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
     /// # Arguments
     /// - `dataver`: The data version of the cluster instance.
     /// - `matter`: The node whose fail-safe the commands work under.
+    /// - `comm_policy`: Tells whether the networks are removed with the last fabric.
     /// - `endpoint_id`: The endpoint of the cluster instance.
     /// - `networks`: The networks store of the network interface; a `&mut` to a
     ///   store living elsewhere works too.
     /// - `networks_key`: The KV key the networks store persists under; unique per instance.
     /// - `net_ctl`: The network controller of the network interface.
     /// - `wireless_diag`: Tells whether the network interface is connected.
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         dataver: Dataver,
         matter: &'a Matter<'a>,
+        comm_policy: &'a dyn CommPolicy,
         endpoint_id: EndptId,
         networks: N,
         networks_key: u16,
@@ -723,6 +727,7 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
         Self {
             dataver,
             matter,
+            comm_policy,
             endpoint_id,
             networks: NetworksCell::new(networks),
             networks_key,
@@ -872,11 +877,21 @@ where
 
                 self.apply_enabled()
             }
-            LifecycleOp::FactoryReset => {
+            LifecycleOp::FabricRemoval { .. }
+                if !self.comm_policy.remove_networks_on_last_fabric()
+                    || self.matter.has_fabrics() =>
+            {
+                Ok(())
+            }
+            LifecycleOp::FactoryReset | LifecycleOp::FabricRemoval { .. } => {
                 self.networks
                     .access(|networks| remove_networks(networks, self.networks_key, ctx.kv()))?;
 
-                self.apply_enabled()
+                self.apply_enabled()?;
+
+                ctx.notify_cluster_changed(self.endpoint_id, FULL_CLUSTER.id);
+
+                Ok(())
             }
             LifecycleOp::FailSafeCommit => self.networks.access(|networks| {
                 networks.set_managed(true)?;
@@ -893,7 +908,6 @@ where
 
                 Ok(())
             }
-            LifecycleOp::FabricRemoval { .. } => Ok(()),
         }
     }
 

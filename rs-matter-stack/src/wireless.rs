@@ -947,3 +947,15 @@ where
     user_task: U,
     _net_ctl: PhantomData<fn() -> Q>,
 }
+
+/// Runs an operational task until a commissioning window that has to be advertised
+/// over BLE opens, so that the radio can be handed back to BLE.
+pub(crate) struct UntilBleCommWindow<'a, const B: usize, T, S, E, X>
+where
+    T: WirelessNetwork,
+    S: Embedding,
+    E: Embedding,
+{
+    stack: &'a MatterStack<'a, B, WirelessBle<T, E, S>>,
+    task: X,
+}
