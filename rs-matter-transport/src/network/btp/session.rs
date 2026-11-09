@@ -399,7 +399,7 @@ pub struct Session {
     handshake_pending: bool,
     recv_window: RecvWindow,
     send_window: SendWindow,
-    relaxed_mtu_nego: bool,
+    strict_mtu_nego: bool,
 }
 
 impl Session {
@@ -413,7 +413,7 @@ impl Session {
             handshake_pending: false,
             recv_window: RecvWindow::new(),
             send_window: SendWindow::new(),
-            relaxed_mtu_nego: false,
+            strict_mtu_nego: false,
         }
     }
 
@@ -432,7 +432,7 @@ impl Session {
             handshake_pending: false,
             recv_window <- RecvWindow::init(),
             send_window: SendWindow::new(),
-            relaxed_mtu_nego: false,
+            strict_mtu_nego: false,
         })
     }
 
@@ -450,8 +450,8 @@ impl Session {
         self.send_window.reset();
     }
 
-    pub fn set_relaxed_mtu_nego(&mut self, relaxed_mtu_nego: bool) {
-        self.relaxed_mtu_nego = relaxed_mtu_nego;
+    pub fn set_strict_mtu_nego(&mut self, strict_mtu_nego: bool) {
+        self.strict_mtu_nego = strict_mtu_nego;
     }
 
     pub fn set_initiator(&mut self, initiator: bool) {
@@ -611,18 +611,18 @@ impl Session {
                 .map(|g| g.clamp(MIN_MTU, MAX_MTU))
                 .unwrap_or(MIN_MTU)
         } else if gatt_mtu.map(|gatt_mtu| gatt_mtu != req.mtu).unwrap_or(true) {
-            let mtu = if self.relaxed_mtu_nego {
-                // In the relaxed MTU negotiation mode, if the GATT MTU is not what the peer reports,
-                // we take as an MTU the minimum between our MTU and what the peer reports
-                min(min(req.mtu, gatt_mtu.unwrap_or(MIN_MTU)), MAX_MTU)
-            } else {
-                // We don't know our MTU or what we know is not what the other peer reports
-                // => use the minimum MTU
+            let mtu = if self.strict_mtu_nego {
+                // In the strict MTU negotiation mode, if we don't know our MTU or what we know
+                // is not what the peer reports, we use the minimum MTU
                 MIN_MTU
+            } else {
+                // Otherwise we take the smaller of our MTU and what the peer reports, as the
+                // Matter spec asks; never below the minimum MTU, whatever the peer reports
+                min(req.mtu, gatt_mtu.unwrap_or(MIN_MTU)).clamp(MIN_MTU, MAX_MTU)
             };
 
             if let Some(gatt_mtu) = gatt_mtu {
-                warn!(
+                info!(
                     "MTU mismatch: GATT MTU: {}, BTP MTU: {}, will use MTU: {}",
                     gatt_mtu, req.mtu, mtu
                 );
@@ -630,8 +630,8 @@ impl Session {
 
             mtu
         } else {
-            // Used MTU should not be bigger than the maximum allowed
-            min(req.mtu, MAX_MTU)
+            // Used MTU should be within the allowed range
+            req.mtu.clamp(MIN_MTU, MAX_MTU)
         };
 
         // Remove the header as we need to report back the payload MTU
