@@ -945,6 +945,7 @@ where
         NetCommHandler::new(
             Dataver::new_rand(&mut rand),
             matter,
+            comm_policy,
             ROOT_ENDPOINT_ID,
             networks,
             NETWORKS_KEY,
@@ -996,6 +997,7 @@ where
         NetCommHandler::new(
             Dataver::new_rand(&mut rand),
             matter,
+            comm_policy,
             ROOT_ENDPOINT_ID,
             networks,
             NETWORKS_KEY,

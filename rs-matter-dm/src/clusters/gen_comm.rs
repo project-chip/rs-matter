@@ -26,7 +26,8 @@ use rand_core::Rng;
 use crate::basic_info::RegulatoryLocationType;
 use crate::crypto::Crypto;
 use crate::dm::{
-    Cluster, Dataver, InvokeContext, LifecycleOp, OperationContext, ReadContext, WriteContext,
+    Cluster, Dataver, HandlerContext, InvokeContext, LifecycleOp, OperationContext, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
@@ -93,6 +94,25 @@ pub trait CommPolicy: MaybeSendSync {
 
     /// Return the location capability of the device.
     fn location_cap(&self) -> RegulatoryLocationTypeEnum;
+
+    /// Return true if the stored networks should be removed once the last fabric is removed.
+    ///
+    /// The default implementation returns `true`, as the Matter Core spec requires
+    /// all data created since commissioning to be removed with the last fabric.
+    fn remove_networks_on_last_fabric(&self) -> bool {
+        true
+    }
+
+    /// Return true if a basic commissioning window should be opened once the last fabric
+    /// is removed, so that the device can be commissioned again without a restart.
+    ///
+    /// With non-concurrent commissioning, the radio is then handed back to BLE at once,
+    /// so the response to `RemoveFabric` might not reach the administrator.
+    ///
+    /// The default implementation returns `false`.
+    fn open_comm_window_on_last_fabric(&self) -> bool {
+        false
+    }
 }
 
 impl<T> CommPolicy for &T
@@ -113,6 +133,14 @@ where
 
     fn location_cap(&self) -> RegulatoryLocationTypeEnum {
         (*self).location_cap()
+    }
+
+    fn remove_networks_on_last_fabric(&self) -> bool {
+        (*self).remove_networks_on_last_fabric()
+    }
+
+    fn open_comm_window_on_last_fabric(&self) -> bool {
+        (*self).open_comm_window_on_last_fabric()
     }
 }
 
@@ -296,6 +324,25 @@ impl ClusterHandler for GenCommHandler<'_> {
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        if matches!(op, LifecycleOp::FabricRemoval { .. })
+            && self.commissioning_policy.open_comm_window_on_last_fabric()
+            && !self.matter.has_fabrics()
+        {
+            match self.matter.open_basic_comm_window(
+                MAX_COMM_WINDOW_TIMEOUT_SECS,
+                ctx.crypto(),
+                &ctx,
+            ) {
+                // A window that is open already is left as it is
+                Err(e) if e.code() == ErrorCode::Busy => (),
+                result => result?,
+            }
+        }
+
+        Ok(())
     }
 
     fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {

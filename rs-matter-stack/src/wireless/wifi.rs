@@ -40,7 +40,8 @@ use crate::mdns::Mdns;
 use crate::net::NetStack;
 use crate::network::Embedding;
 use crate::wireless::{
-    GattPeripheral, MatterStackWirelessTask, WirelessNetCtl, MAX_WIRELESS_NETWORKS,
+    GattPeripheral, MatterStackWirelessTask, UntilBleCommWindow, WirelessNetCtl,
+    MAX_WIRELESS_NETWORKS,
 };
 use crate::{pin_alloc, RunOptions, UserTask};
 
@@ -206,6 +207,106 @@ where
         net_task.await
     }
 
+    /// Run the Matter stack over the Wifi network only, without BLE.
+    ///
+    /// This is meant for a commissioned device whose driver does not support BLE.
+    /// A commissioning window is advertised over the Wifi network only.
+    ///
+    /// An uncommissioned device can only be commissioned if its Wifi interface
+    /// is connected by other means, as the stack has no network credentials yet.
+    ///
+    /// # Arguments
+    /// - `wifi` - a user-provided `WifiDriver` implementation
+    /// - `crypto` - a user-provided `Crypto` implementation
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
+    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
+    pub async fn run_oper<W, C, H, K, O>(
+        &self,
+        mut wifi: W,
+        crypto: C,
+        handler: H,
+        kv: K,
+        options: O,
+    ) -> Result<(), Error>
+    where
+        W: WifiDriver,
+        C: Crypto,
+        H: DataModel,
+        K: KvBlobStoreAccess,
+        O: RunOptions,
+    {
+        let _lock = self.run_lock.lock().await;
+
+        // Lent to the Network Commissioning handler
+        let mut networks = self.network.networks.lock().await;
+
+        info!("Matter Stack memory: {}b", core::mem::size_of_val(self));
+
+        if !self.matter().has_fabrics() {
+            warn!("Device is not commissioned; without BLE it is reachable only if Wifi is connected by other means");
+        }
+
+        // Since this is the last code executed in the method, resetting the allocator should be safe
+        // because all boxes returned by it should be dropped by then
+        let _defer = scopeguard::guard((), |_| unsafe {
+            self.bump.reset();
+        });
+
+        self.matter().reset_transport()?;
+
+        let (gen_diag, user) = options.into_parts();
+
+        let net_task = pin_alloc!(
+            self.bump,
+            self.run_wifi_oper(
+                &mut networks,
+                &mut wifi,
+                crypto,
+                handler,
+                kv,
+                &gen_diag,
+                user
+            )
+        );
+
+        net_task.await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_wifi_oper<'t, W, C, H, K, U>(
+        &'t self,
+        networks: &'t mut S,
+        wifi: &'t mut W,
+        crypto: C,
+        handler: H,
+        kv: K,
+        gen_diag: &'t dyn GenDiag,
+        user: U,
+    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
+    where
+        W: WifiDriver,
+        C: Crypto + 't,
+        H: DataModel + 't,
+        K: KvBlobStoreAccess + 't,
+        U: UserTask + 't,
+    {
+        // There is no BLE phase, so the phantom net-ctl type is an irrelevant placeholder.
+        // The task is not wrapped in `UntilBleCommWindow`, so it never hands the radio over.
+        wifi.run(
+            MatterStackWirelessTask::<'_, _, _, _, _, _, _, _, _, NoopWirelessNetCtl> {
+                stack: self,
+                gen_diag,
+                networks,
+                crypto,
+                handler,
+                kv,
+                user_task: user,
+                _net_ctl: PhantomData,
+            },
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn run_wifi_coex<'t, W, C, H, K, U>(
         &'t self,
@@ -302,26 +403,29 @@ where
 
                 WifiDriver::run(
                     &mut wifi,
-                    MatterStackWirelessTask::<
-                        '_,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        _,
-                        <W as WifiDriver>::NetCtl<'_>,
-                    > {
+                    UntilBleCommWindow {
                         stack: self,
-                        gen_diag,
-                        networks: &mut *networks,
-                        crypto: &crypto,
-                        handler: &handler,
-                        kv: &kv,
-                        user_task: &mut user,
-                        _net_ctl: PhantomData,
+                        task: MatterStackWirelessTask::<
+                            '_,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            <W as WifiDriver>::NetCtl<'_>,
+                        > {
+                            stack: self,
+                            gen_diag,
+                            networks: &mut *networks,
+                            crypto: &crypto,
+                            handler: &handler,
+                            kv: &kv,
+                            user_task: &mut user,
+                            _net_ctl: PhantomData,
+                        },
                     },
                 )
                 .await?;
@@ -664,8 +768,34 @@ where
 
         let mut user_task = pin!(self.user_task.run(&net_stack, &netif));
 
-        let mut oper_task =
-            pin!(select4(&mut net_task, &mut mdns_task, &mut im_task, &mut user_task).coalesce());
+        select4(&mut net_task, &mut mdns_task, &mut im_task, &mut user_task)
+            .coalesce()
+            .await
+    }
+}
+
+impl<const B: usize, S, E, X> WifiTask for UntilBleCommWindow<'_, B, wireless::Wifi, S, E, X>
+where
+    S: Networks + Embedding,
+    E: Embedding,
+    X: WifiTask,
+{
+    async fn run<T, N, Q, D>(
+        &mut self,
+        net_stack: T,
+        netif: N,
+        net_ctl: Q,
+        mdns: D,
+    ) -> Result<(), Error>
+    where
+        T: NetStack,
+        N: NetifDiag + NetChangeNotif,
+        Q: NetCtl + WifiDiag + NetChangeNotif,
+        D: Mdns,
+    {
+        let stack = self.stack;
+
+        let mut task = pin!(self.task.run(net_stack, netif, net_ctl, mdns));
 
         // Hand the radio back to BLE once a commissioning window that has to be advertised
         // there appears. The window still open from the commissioning this phase is finishing
@@ -673,16 +803,14 @@ where
         // network, and only then does the window close - so wait for it to go away first, and
         // only then for the next one to open.
         let mut comm_window_task = pin!(async {
-            self.stack.wait_next_comm_window().await;
+            stack.wait_next_comm_window().await;
 
             info!("Commissioning window opened; handing the radio back to BLE");
 
             Ok(())
         });
 
-        select(&mut oper_task, &mut comm_window_task)
-            .coalesce()
-            .await
+        select(&mut task, &mut comm_window_task).coalesce().await
     }
 }
 
