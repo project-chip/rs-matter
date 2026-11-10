@@ -104,9 +104,9 @@ use rs_matter::dm::clusters::decl::globals::{ICECandidateStruct, WebRTCEndReason
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::DEV_TYPE_CAMERA;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::DeviceType;
 use rs_matter::dm::{DataModel, Dataver, Endpoint, Node};
 use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
@@ -136,19 +136,8 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 mod mdns;
 
 // ---------------------------------------------------------------------------
-// Device type / handler sizing
+// Handler sizing
 // ---------------------------------------------------------------------------
-
-/// Matter 1.5 "Camera" device type (0x0142, rev 1). Not exposed from
-/// `rs-matter`'s `devices` module yet, so defined inline.
-///
-/// Note: `0x0042` (which looks similar) is the Water Valve device type —
-/// using that ID makes controllers like SmartThings commission the node
-/// as a water valve.
-const DEV_TYPE_MATTER_CAMERA: DeviceType = DeviceType {
-    dtype: 0x0142,
-    drev: 1,
-};
 
 const N_SESSIONS: usize = 4;
 const SDP_LEN: usize = 8 * 1024;
@@ -1365,7 +1354,7 @@ const NODE: Node<'static> = Node {
         root_endpoint!(eth),
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_MATTER_CAMERA),
+            devices!(DEV_TYPE_CAMERA),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
