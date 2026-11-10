@@ -39,7 +39,7 @@ use crate::with;
 
 use super::cam_av_common::{
     build_stream_priorities, read_enum_array, validate_audio_allocate, write_audio_capabilities,
-    write_audio_stream, MAX_STREAM_USAGES,
+    write_audio_stream, AudioStreamTable, StreamAllocation, MAX_STREAM_USAGES,
 };
 pub use super::cam_av_common::{
     AudioCapabilitiesConfig, AudioStream, AudioStreamParams, CamAvError,
@@ -70,6 +70,7 @@ impl AudioLevelConfig {
     /// `default_volume` is within bounds.
     pub const fn new(min_level: u8, max_level: u8, default_volume: u8) -> Self {
         core::assert!(min_level <= max_level, "min_level must be <= max_level");
+        core::assert!(max_level <= 254, "max_level must be <= 254");
         core::assert!(
             default_volume >= min_level && default_volume <= max_level,
             "default_volume must be within [min_level, max_level]"
@@ -277,25 +278,32 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> AudioAvStreamHandler<'a, H, NA>
         let priorities = self.get_seeded_priorities();
         validate_audio_allocate(params, &self.config.mic_capabilities, &priorities)?;
 
-        let stream = self.with_state_mut(|s| s.table.create(params))?;
+        let allocation = self.with_state_mut(|s| s.table.find_or_create(params))?;
+        let stream = *allocation.stream();
 
-        if let Err(e) = self.hooks.on_audio_allocated(&stream).await {
-            self.with_state_mut(|s| {
-                s.table.remove(stream.audio_stream_id);
-            });
-            return Err(e.into());
+        if let StreamAllocation::Created(_) = allocation {
+            if let Err(e) = self.hooks.on_audio_allocated(&stream).await {
+                self.with_state_mut(|s| {
+                    s.table.remove(stream.audio_stream_id);
+                });
+                return Err(e.into());
+            }
+            self.dataver.changed();
+            self.notify_change.notify();
         }
-        self.dataver.changed();
-        self.notify_change.notify();
 
         Ok(stream.audio_stream_id)
     }
 
     pub async fn deallocate_stream(&self, audio_stream_id: u16) -> Result<(), Error> {
+        self.with_state(|s| s.table.can_deallocate(audio_stream_id))?;
+        self.hooks
+            .on_audio_deallocated(audio_stream_id)
+            .await
+            .map_err(Error::from)?;
         self.with_state_mut(|s| s.table.deallocate(audio_stream_id))?;
         self.dataver.changed();
         self.notify_change.notify();
-        let _ = self.hooks.on_audio_deallocated(audio_stream_id).await;
         Ok(())
     }
 
@@ -314,7 +322,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> AudioAvStreamHandler<'a, H, NA>
     }
 
     /// Background notification loop forwarding out-of-band audio allocation changes to Matter subscribers.
-    pub async fn run_loop(&self, notifier: &impl AttrChangeNotifier) -> Result<(), Error> {
+    pub async fn run(&self, notifier: impl AttrChangeNotifier) -> Result<(), Error> {
         loop {
             self.notify_change.wait().await;
             notifier.notify_attr_changed(
@@ -399,7 +407,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
     }
 
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        self.run_loop(&ctx).await
+        self.run(ctx).await
     }
 
     async fn max_content_buffer_size(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
@@ -571,7 +579,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
 
     async fn handle_audio_stream_allocate<P: TLVBuilderParent>(
         &self,
-        ctx: impl InvokeContext,
+        _ctx: impl InvokeContext,
         request: AudioStreamAllocateRequest<'_>,
         response: AudioStreamAllocateResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -583,22 +591,16 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
             request.bit_rate()?,
             request.bit_depth()?,
         );
-        if let Some(existing) = self.with_state(|s| s.table.find(&params)) {
-            return response.audio_stream_id(existing.audio_stream_id)?.end();
-        }
         let stream_id = self.allocate_stream(&params).await?;
-        ctx.notify_own_attr_changed(decl::AttributeId::AllocatedAudioStreams as _);
         response.audio_stream_id(stream_id)?.end()
     }
 
     async fn handle_audio_stream_deallocate(
         &self,
-        ctx: impl InvokeContext,
+        _ctx: impl InvokeContext,
         request: AudioStreamDeallocateRequest<'_>,
     ) -> Result<(), Error> {
-        self.deallocate_stream(request.audio_stream_id()?).await?;
-        ctx.notify_own_attr_changed(decl::AttributeId::AllocatedAudioStreams as _);
-        Ok(())
+        self.deallocate_stream(request.audio_stream_id()?).await
     }
 
     async fn handle_video_stream_allocate<P: TLVBuilderParent>(
@@ -682,172 +684,6 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
     }
 }
 
-/// Table of allocated audio streams with monotonic stream ID generation.
-#[derive(Debug, Clone)]
-pub struct AudioStreamTable<const NA: usize> {
-    streams: Vec<AudioStream, NA>,
-    next_id: u16,
-}
-
-impl<const NA: usize> Default for AudioStreamTable<NA> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const NA: usize> AudioStreamTable<NA> {
-    pub const fn new() -> Self {
-        Self {
-            streams: Vec::new(),
-            next_id: 1,
-        }
-    }
-
-    /// Returns `true` if no audio streams are currently allocated.
-    pub fn is_empty(&self) -> bool {
-        self.streams.is_empty()
-    }
-
-    /// Returns a reference to the stream with `stream_id` if present.
-    pub fn get(&self, stream_id: u16) -> Option<&AudioStream> {
-        let idx = self.find_index(stream_id)?;
-        Some(&self.streams[idx])
-    }
-
-    /// Returns a cloned snapshot vector of all currently allocated audio streams.
-    pub fn snapshot(&self) -> Vec<AudioStream, NA> {
-        self.streams.clone()
-    }
-
-    /// Returns the first allocated audio stream matching `params`, if any.
-    pub fn find(&self, params: &AudioStreamParams) -> Option<AudioStream> {
-        self.streams.iter().find(|s| s.params() == *params).copied()
-    }
-
-    /// Creates and inserts a new audio stream into the table.
-    pub fn create(&mut self, params: &AudioStreamParams) -> Result<AudioStream, Error> {
-        if self.streams.len() >= NA {
-            return Err(ErrorCode::ResourceExhausted.into());
-        }
-
-        let stream = self.create_audio_stream(params);
-        self.streams
-            .push(stream)
-            .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
-        Ok(stream)
-    }
-
-    /// Pre-seeds an audio stream into the table without validation.
-    pub fn add_preallocated(&mut self, mut stream: AudioStream) -> Result<u16, Error> {
-        if self.streams.len() >= NA {
-            return Err(ErrorCode::ResourceExhausted.into());
-        }
-        if stream.audio_stream_id == 0 {
-            stream.audio_stream_id = self.next_stream_id();
-        }
-        let id = stream.audio_stream_id;
-        self.streams
-            .push(stream)
-            .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
-        Ok(id)
-    }
-
-    /// Removes the stream with `stream_id` from the table if present, returning it.
-    pub fn remove(&mut self, stream_id: u16) -> Option<AudioStream> {
-        let idx = self.find_index(stream_id)?;
-        Some(self.streams.remove(idx))
-    }
-
-    /// Deallocates a stream if it exists and has zero references.
-    pub fn deallocate(&mut self, stream_id: u16) -> Result<(), Error> {
-        let idx = self.find_index(stream_id).ok_or(ErrorCode::NotFound)?;
-        if self.streams[idx].reference_count > 0 {
-            return Err(ErrorCode::InvalidInState.into());
-        }
-        self.streams.remove(idx);
-        Ok(())
-    }
-
-    /// Increments reference count for an active stream.
-    pub fn acquire(&mut self, stream_id: u16) -> Result<(), Error> {
-        let stream = self.find_stream_mut(stream_id).ok_or(ErrorCode::NotFound)?;
-        if stream.reference_count == u8::MAX {
-            return Err(ErrorCode::ResourceExhausted.into());
-        }
-        stream.reference_count += 1;
-        Ok(())
-    }
-
-    /// Decrements reference count for an active stream.
-    pub fn release(&mut self, stream_id: u16) -> Result<(), Error> {
-        let stream = self.find_stream_mut(stream_id).ok_or(ErrorCode::NotFound)?;
-        stream.reference_count = stream.reference_count.saturating_sub(1);
-        Ok(())
-    }
-
-    /// Returns the number of currently allocated audio streams.
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.streams.len()
-    }
-
-    /// Returns a slice of the currently allocated audio streams.
-    #[cfg(test)]
-    pub fn as_slice(&self) -> &[AudioStream] {
-        &self.streams
-    }
-
-    #[cfg(test)]
-    pub fn set_next_id(&mut self, id: u16) {
-        self.next_id = id;
-    }
-
-    // --- Private helpers ---
-
-    /// Generates the next monotonic stream ID in range `1..=u16::MAX`.
-    ///
-    /// Skips any ID that is already active in `self.streams` to prevent collisions
-    /// if a stream was pre-allocated with an explicit ID or if the 16-bit counter
-    /// wraps around while long-lived streams remain active.
-    fn next_stream_id(&mut self) -> u16 {
-        loop {
-            let mut id = self.next_id;
-            if id == 0 {
-                id = 1;
-            }
-            self.next_id = id.wrapping_add(1).max(1);
-            if self.find_index(id).is_none() {
-                return id;
-            }
-        }
-    }
-
-    fn create_audio_stream(&mut self, params: &AudioStreamParams) -> AudioStream {
-        let id = self.next_stream_id();
-        AudioStream {
-            audio_stream_id: id,
-            stream_usage: params.stream_usage,
-            audio_codec: params.audio_codec,
-            channel_count: params.channel_count,
-            sample_rate: params.sample_rate,
-            bit_rate: params.bit_rate,
-            bit_depth: params.bit_depth,
-            reference_count: 0,
-        }
-    }
-
-    fn find_index(&self, stream_id: u16) -> Option<usize> {
-        self.streams
-            .iter()
-            .position(|s| s.audio_stream_id == stream_id)
-    }
-
-    fn find_stream_mut(&mut self, stream_id: u16) -> Option<&mut AudioStream> {
-        let idx = self.find_index(stream_id)?;
-        Some(&mut self.streams[idx])
-    }
-}
-
 /// Internal volume and mute state bundle for microphone and speaker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -895,6 +731,7 @@ mod tests {
         allocated: Cell<u16>,
         deallocated: Cell<u16>,
         last_volumes: Cell<(bool, u8, bool, u8)>,
+        should_fail_deallocate: Cell<bool>,
     }
 
     impl AudioAvStreamHooksMock {
@@ -903,6 +740,7 @@ mod tests {
                 allocated: Cell::new(0),
                 deallocated: Cell::new(0),
                 last_volumes: Cell::new((false, 0, false, 0)),
+                should_fail_deallocate: Cell::new(false),
             }
         }
     }
@@ -914,6 +752,9 @@ mod tests {
         }
 
         async fn on_audio_deallocated(&self, stream_id: u16) -> Result<(), CamAvError> {
+            if self.should_fail_deallocate.get() {
+                return Err(CamAvError::Failure);
+            }
             self.deallocated.set(stream_id);
             Ok(())
         }
@@ -1232,7 +1073,7 @@ mod tests {
             );
 
             let notifier = RecordingNotifier::default();
-            let mut run_fut = core::pin::pin!(handler.run_loop(&notifier));
+            let mut run_fut = core::pin::pin!(handler.run(&notifier));
 
             let id = handler
                 .allocate_stream(&test_params(
@@ -1325,6 +1166,12 @@ mod tests {
     #[should_panic(expected = "default_volume must be within [min_level, max_level]")]
     fn audio_level_config_rejects_default_above_max() {
         AudioLevelConfig::new(20, 80, 85);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_level must be <= 254")]
+    fn audio_level_config_rejects_max_level_exceeding_254() {
+        AudioLevelConfig::new(0, 255, 50);
     }
 
     #[test]
@@ -1504,5 +1351,207 @@ mod tests {
         assert!(table.create(&params1).is_ok());
         let err = table.create(&params2).unwrap_err();
         assert_eq!(err.code(), ErrorCode::ResourceExhausted);
+    }
+
+    #[test]
+    fn deallocate_stream_preserves_stream_when_hook_fails() {
+        futures_lite::future::block_on(async {
+            let handler = AudioAvStreamHandler::<_, 2>::new(
+                Dataver::new(1),
+                1,
+                AudioAvStreamConfig::opus_16khz_mono(),
+                AudioAvStreamHooksMock::new(),
+            );
+
+            let id = handler
+                .allocate_stream(&test_params(
+                    StreamUsageEnum::LiveView,
+                    AudioCodecEnum::OPUS,
+                    24_000,
+                ))
+                .await
+                .expect("allocate succeeds");
+
+            assert_eq!(handler.audio_streams().len(), 1);
+
+            // Configure hook to fail on deallocation
+            handler.hooks().should_fail_deallocate.set(true);
+
+            let err = handler.deallocate_stream(id).await.unwrap_err();
+            assert_eq!(err.code(), ErrorCode::Failure);
+
+            // Stream must still be present in table because hook failed
+            assert_eq!(handler.audio_streams().len(), 1);
+            assert_eq!(handler.audio_streams()[0].audio_stream_id, id);
+
+            // Now allow hook to succeed
+            handler.hooks().should_fail_deallocate.set(false);
+            handler
+                .deallocate_stream(id)
+                .await
+                .expect("deallocate succeeds");
+            assert!(handler.audio_streams().is_empty());
+        });
+    }
+
+    #[test]
+    fn deallocate_stream_rejects_internal_stream_with_dynamic_constraint_error() {
+        futures_lite::future::block_on(async {
+            let handler = AudioAvStreamHandler::<_, 2>::new(
+                Dataver::new(1),
+                1,
+                AudioAvStreamConfig::opus_16khz_mono(),
+                AudioAvStreamHooksMock::new(),
+            );
+
+            let internal_stream = AudioStream {
+                audio_stream_id: 10,
+                stream_usage: StreamUsageEnum::Internal,
+                audio_codec: AudioCodecEnum::OPUS,
+                channel_count: 1,
+                sample_rate: 16_000,
+                bit_rate: 32_000,
+                bit_depth: 16,
+                reference_count: 0,
+            };
+
+            let id = handler
+                .add_preallocated_audio(internal_stream)
+                .expect("preallocate succeeds");
+            assert_eq!(id, 10);
+
+            let err = handler.deallocate_stream(id).await.unwrap_err();
+            assert_eq!(err.code(), ErrorCode::DynamicConstraintError);
+
+            // Stream must remain allocated
+            assert_eq!(handler.audio_streams().len(), 1);
+            assert_eq!(handler.audio_streams()[0].audio_stream_id, id);
+        });
+    }
+
+    #[test]
+    fn allocate_stream_concurrent_tasks_deduplicate_safely() {
+        futures_lite::future::block_on(async {
+            let handler = AudioAvStreamHandler::<_, 4>::new(
+                Dataver::new(1),
+                1,
+                AudioAvStreamConfig::opus_16khz_mono(),
+                AudioAvStreamHooksMock::new(),
+            );
+
+            let params = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 24_000);
+
+            // Run 4 concurrent allocation requests for identical parameters
+            let ((r1, r2), (r3, r4)) = futures_lite::future::zip(
+                futures_lite::future::zip(
+                    handler.allocate_stream(&params),
+                    handler.allocate_stream(&params),
+                ),
+                futures_lite::future::zip(
+                    handler.allocate_stream(&params),
+                    handler.allocate_stream(&params),
+                ),
+            )
+            .await;
+
+            let (id1, id2) = (
+                r1.expect("allocation 1 succeeds"),
+                r2.expect("allocation 2 succeeds"),
+            );
+            let (id3, id4) = (
+                r3.expect("allocation 3 succeeds"),
+                r4.expect("allocation 4 succeeds"),
+            );
+
+            assert_eq!(
+                id1, id2,
+                "concurrent allocations must resolve to the same stream ID"
+            );
+            assert_eq!(id2, id3);
+            assert_eq!(id3, id4);
+
+            let streams = handler.audio_streams();
+            assert_eq!(streams.len(), 1);
+            assert_eq!(streams[0].audio_stream_id, id1);
+            assert_eq!(
+                streams[0].reference_count, 0,
+                "reference count remains 0 until acquired by an active session"
+            );
+        });
+    }
+
+    #[test]
+    fn allocate_stream_concurrent_tasks_multiple_distinct_no_collisions() {
+        futures_lite::future::block_on(async {
+            let handler = AudioAvStreamHandler::<_, 4>::new(
+                Dataver::new(1),
+                1,
+                AudioAvStreamConfig::opus_16khz_mono(),
+                AudioAvStreamHooksMock::new(),
+            );
+
+            let params1 = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 16_000);
+            let params2 = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 24_000);
+            let params3 = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 32_000);
+
+            let (id1, (id2, id3)) = futures_lite::future::zip(
+                handler.allocate_stream(&params1),
+                futures_lite::future::zip(
+                    handler.allocate_stream(&params2),
+                    handler.allocate_stream(&params3),
+                ),
+            )
+            .await;
+
+            let id1 = id1.expect("allocation 1 succeeds");
+            let id2 = id2.expect("allocation 2 succeeds");
+            let id3 = id3.expect("allocation 3 succeeds");
+
+            assert_ne!(id1, id2, "distinct streams must receive distinct IDs");
+            assert_ne!(id2, id3, "distinct streams must receive distinct IDs");
+            assert_ne!(id1, id3, "distinct streams must receive distinct IDs");
+
+            let streams = handler.audio_streams();
+            assert_eq!(streams.len(), 3);
+        });
+    }
+
+    #[test]
+    fn allocate_stream_concurrent_tasks_capacity_exhaustion() {
+        futures_lite::future::block_on(async {
+            // Capacity of 2
+            let handler = AudioAvStreamHandler::<_, 2>::new(
+                Dataver::new(1),
+                1,
+                AudioAvStreamConfig::opus_16khz_mono(),
+                AudioAvStreamHooksMock::new(),
+            );
+
+            let params1 = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 16_000);
+            let params2 = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 24_000);
+            let params3 = test_params(StreamUsageEnum::LiveView, AudioCodecEnum::OPUS, 32_000);
+
+            let (r1, (r2, r3)) = futures_lite::future::zip(
+                handler.allocate_stream(&params1),
+                futures_lite::future::zip(
+                    handler.allocate_stream(&params2),
+                    handler.allocate_stream(&params3),
+                ),
+            )
+            .await;
+
+            let results = [r1, r2, r3];
+            let successes = results.iter().filter(|r| r.is_ok()).count();
+            let failures = results.iter().filter(|r| r.is_err()).count();
+
+            assert_eq!(successes, 2, "exactly 2 streams must fit in capacity 2");
+            assert_eq!(failures, 1, "excess allocation must fail");
+            for err in results.iter().filter_map(|r| r.as_ref().err()) {
+                assert_eq!(err.code(), ErrorCode::ResourceExhausted);
+            }
+
+            let streams = handler.audio_streams();
+            assert_eq!(streams.len(), 2);
+        });
     }
 }

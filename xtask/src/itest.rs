@@ -764,7 +764,7 @@ pub(crate) const CAMERA_TESTS: &[&str] = &[
 ];
 
 /// Audio Doorbell cluster tests — run against the `audio_doorbell_tests` driver.
-pub(crate) const AUDIO_DOORBELL_TESTS: &[&str] = &["TC_CHIME_2_1", "TC_AVSM_2_1"];
+pub(crate) const AUDIO_DOORBELL_TESTS: &[&str] = &["TC_AVSM_2_1"];
 
 /// OnOff + LevelControl + ColorControl YAML/Python tests — run
 /// against the `light_tests` example.

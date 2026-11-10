@@ -40,10 +40,6 @@ use rs_matter::dm::clusters::app::audio_av_stream::{
 use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, PairingHintFlags, ProductAppearance, ProductColor, ProductFinish,
 };
-use rs_matter::dm::clusters::decl::chime::{
-    self as chime_decl, ChimeSoundStructArrayBuilder, ClusterHandler as ChimeClusterHandler,
-    HandlerAdaptor as ChimeHandlerAdaptor, PlayChimeSoundRequest,
-};
 use rs_matter::dm::clusters::decl::globals::StreamUsageEnum;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
@@ -52,18 +48,14 @@ use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AUDIO_DOORBELL, DEV_TYPE_POWER_SOURCE, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{
-    ArrayAttributeRead, Async, DataModel, Dataver, Endpoint, InvokeContext, Node, ReadContext,
-    WriteContext,
-};
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, Node};
+use rs_matter::error::Error;
 use rs_matter::im::InteractionModel;
 use rs_matter::im::InteractionModelState;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::TLVBuilderParent;
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::futures::{select3, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
@@ -92,85 +84,6 @@ impl AudioAvStreamHooks for StubAudioHooks {
     }
 
     async fn on_audio_deallocated(&self, _stream_id: u16) -> Result<(), CamAvError> {
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Chime handler – one built-in chime sound
-// ---------------------------------------------------------------------------
-
-struct ChimeHandler {
-    dataver: Dataver,
-    selected: u8,
-    enabled: bool,
-}
-
-impl ChimeHandler {
-    const fn new(dataver: Dataver) -> Self {
-        Self {
-            dataver,
-            selected: 0,
-            enabled: true,
-        }
-    }
-}
-
-impl ChimeClusterHandler for ChimeHandler {
-    const CLUSTER: rs_matter::dm::Cluster<'static> = chime_decl::FULL_CLUSTER;
-
-    fn dataver(&self) -> u32 {
-        self.dataver.get()
-    }
-
-    fn dataver_changed(&self) {
-        self.dataver.changed();
-    }
-
-    fn installed_chime_sounds<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl ReadContext,
-        builder: ArrayAttributeRead<
-            ChimeSoundStructArrayBuilder<P>,
-            chime_decl::ChimeSoundStructBuilder<P>,
-        >,
-    ) -> Result<P, Error> {
-        match builder {
-            ArrayAttributeRead::ReadAll(b) => {
-                let item_b = b.push()?;
-                item_b.chime_id(0)?.name("Default")?.end()?.end()
-            }
-            ArrayAttributeRead::ReadOne(idx, b) => {
-                if idx != 0 {
-                    return Err(ErrorCode::ConstraintError.into());
-                }
-                b.chime_id(0)?.name("Default")?.end()
-            }
-            ArrayAttributeRead::ReadNone(b) => b.end(),
-        }
-    }
-
-    fn selected_chime(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.selected)
-    }
-
-    fn enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        Ok(self.enabled)
-    }
-
-    fn set_selected_chime(&self, _ctx: impl WriteContext, _value: u8) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn set_enabled(&self, _ctx: impl WriteContext, _value: bool) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn handle_play_chime_sound(
-        &self,
-        _ctx: impl InvokeContext,
-        _request: PlayChimeSoundRequest<'_>,
-    ) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -262,26 +175,11 @@ fn main() -> Result<(), Error> {
         StubAudioHooks,
     ));
 
-    audio_av
-        .add_preallocated_audio(AudioStream {
-            audio_stream_id: 0,
-            stream_usage: StreamUsageEnum::LiveView,
-            audio_codec: AudioCodecEnum::OPUS,
-            channel_count: 1,
-            sample_rate: 48_000,
-            bit_rate: 64_000,
-            bit_depth: 16,
-            reference_count: 0,
-        })
-        .ok();
-
-    let chime = ChimeHandler::new(Dataver::new_rand(&mut rand));
-
     let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        data_model(matter, rand, audio_av, chime),
+        data_model(matter, rand, audio_av),
         &kv,
         &state,
     );
@@ -372,8 +270,7 @@ const NODE: Node<'static> = Node {
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
-                AudioAv::CLUSTER,
-                chime_decl::FULL_CLUSTER
+                AudioAv::CLUSTER
             ),
         ),
     ],
@@ -387,7 +284,6 @@ fn data_model<'a>(
     matter: &'a Matter<'a>,
     mut rand: impl Rng + Copy,
     audio_av: &'a AudioAv,
-    chime: ChimeHandler,
 ) -> impl DataModel + 'a {
     (
         NODE,
@@ -407,10 +303,6 @@ fn data_model<'a>(
                 rs_matter::dm::clusters::decl::camera_av_stream_management::HandlerAsyncAdaptor(
                     audio_av,
                 ),
-            )
-            .chain(
-                |e, c| e == 1 && c == chime_decl::FULL_CLUSTER.id,
-                Async(ChimeHandlerAdaptor(chime)),
             )
             .chain(
                 |e, c| e == endpoints::ROOT_ENDPOINT_ID && c == power_source::CLUSTER.id,

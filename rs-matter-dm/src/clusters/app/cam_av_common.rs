@@ -127,20 +127,25 @@ impl From<CamAvError> for Error {
     }
 }
 
-/// Validates that a requested stream allocation conforms to Matter spec §1.15.
+/// Validates that a requested stream allocation conforms to the Matter spec.
 pub fn validate_audio_allocate(
     params: &AudioStreamParams,
     capabilities: &AudioCapabilitiesConfig<'_>,
     current_priorities: &[StreamUsageEnum],
 ) -> Result<(), Error> {
-    if matches!(params.stream_usage, StreamUsageEnum::Internal) {
+    if params.channel_count == 0
+        || params.channel_count > 8
+        || params.sample_rate == 0
+        || params.bit_rate == 0
+        || !matches!(params.bit_depth, 8 | 16 | 24 | 32)
+        || matches!(params.stream_usage, StreamUsageEnum::Internal)
+    {
         return Err(ErrorCode::ConstraintError.into());
     }
     if !current_priorities.contains(&params.stream_usage) {
         return Err(ErrorCode::InvalidInState.into());
     }
     if !capabilities.supported_codecs.contains(&params.audio_codec)
-        || params.channel_count == 0
         || params.channel_count > capabilities.max_channels
         || !capabilities
             .supported_sample_rates
@@ -148,14 +153,13 @@ pub fn validate_audio_allocate(
         || !capabilities
             .supported_bit_depths
             .contains(&params.bit_depth)
-        || params.bit_rate == 0
     {
         return Err(ErrorCode::DynamicConstraintError.into());
     }
     Ok(())
 }
 
-/// Builds a validated `StreamUsagePriorities` vector conforming to Matter spec §1.15.
+/// Builds a validated `StreamUsagePriorities` vector conforming to the Matter spec.
 ///
 /// Verifies that each entry is present in `supported_usages`, rejects duplicates with
 /// `ErrorCode::AlreadyExists`, and ensures the total count fits within capacity `N`.
@@ -243,6 +247,195 @@ pub(crate) fn write_audio_capabilities<P: TLVBuilderParent>(
     depths.end()?.end()
 }
 
+/// Result of an atomic stream allocation resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum StreamAllocation {
+    Found(AudioStream),
+    Created(AudioStream),
+}
+
+impl StreamAllocation {
+    pub const fn stream(&self) -> &AudioStream {
+        match self {
+            Self::Found(s) | Self::Created(s) => s,
+        }
+    }
+}
+
+/// Table of allocated audio streams with monotonic stream ID generation.
+#[derive(Debug, Clone)]
+pub struct AudioStreamTable<const NA: usize> {
+    streams: Vec<AudioStream, NA>,
+    next_id: u16,
+}
+
+impl<const NA: usize> Default for AudioStreamTable<NA> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const NA: usize> AudioStreamTable<NA> {
+    pub const fn new() -> Self {
+        Self {
+            streams: Vec::new(),
+            next_id: 1,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.streams.is_empty()
+    }
+
+    pub fn get(&self, stream_id: u16) -> Option<&AudioStream> {
+        let idx = self.find_index(stream_id)?;
+        Some(&self.streams[idx])
+    }
+
+    pub fn snapshot(&self) -> Vec<AudioStream, NA> {
+        self.streams.clone()
+    }
+
+    pub fn find(&self, params: &AudioStreamParams) -> Option<AudioStream> {
+        self.streams.iter().find(|s| s.params() == *params).copied()
+    }
+
+    /// Atomically finds an existing matching stream or creates a new one.
+    pub fn find_or_create(
+        &mut self,
+        params: &AudioStreamParams,
+    ) -> Result<StreamAllocation, Error> {
+        if let Some(existing) = self.find(params) {
+            return Ok(StreamAllocation::Found(existing));
+        }
+
+        let stream = self.create(params)?;
+        Ok(StreamAllocation::Created(stream))
+    }
+
+    /// Creates and inserts a new audio stream into the table.
+    pub fn create(&mut self, params: &AudioStreamParams) -> Result<AudioStream, Error> {
+        if self.streams.len() >= NA {
+            return Err(ErrorCode::ResourceExhausted.into());
+        }
+
+        let stream = self.create_audio_stream(params);
+        self.streams
+            .push(stream)
+            .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
+        Ok(stream)
+    }
+
+    pub fn add_preallocated(&mut self, mut stream: AudioStream) -> Result<u16, Error> {
+        if self.streams.len() >= NA {
+            return Err(ErrorCode::ResourceExhausted.into());
+        }
+        if stream.audio_stream_id == 0 {
+            stream.audio_stream_id = self.next_stream_id();
+        }
+        let id = stream.audio_stream_id;
+        self.streams
+            .push(stream)
+            .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
+        Ok(id)
+    }
+
+    pub fn remove(&mut self, stream_id: u16) -> Option<AudioStream> {
+        let idx = self.find_index(stream_id)?;
+        Some(self.streams.remove(idx))
+    }
+
+    /// Validates that a stream can be deallocated: exists, refcount is 0, and not Internal.
+    pub fn can_deallocate(&self, stream_id: u16) -> Result<(), Error> {
+        let stream = self.get(stream_id).ok_or(ErrorCode::NotFound)?;
+        if stream.reference_count > 0 {
+            return Err(ErrorCode::InvalidInState.into());
+        }
+        if matches!(stream.stream_usage, StreamUsageEnum::Internal) {
+            return Err(ErrorCode::DynamicConstraintError.into());
+        }
+        Ok(())
+    }
+
+    /// Deallocates a stream if it exists, has zero references, and is not Internal.
+    pub fn deallocate(&mut self, stream_id: u16) -> Result<(), Error> {
+        self.can_deallocate(stream_id)?;
+        self.remove(stream_id);
+        Ok(())
+    }
+
+    pub fn acquire(&mut self, stream_id: u16) -> Result<(), Error> {
+        let stream = self.find_stream_mut(stream_id).ok_or(ErrorCode::NotFound)?;
+        if stream.reference_count == u8::MAX {
+            return Err(ErrorCode::ResourceExhausted.into());
+        }
+        stream.reference_count += 1;
+        Ok(())
+    }
+
+    pub fn release(&mut self, stream_id: u16) -> Result<(), Error> {
+        let stream = self.find_stream_mut(stream_id).ok_or(ErrorCode::NotFound)?;
+        stream.reference_count = stream.reference_count.saturating_sub(1);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.streams.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn as_slice(&self) -> &[AudioStream] {
+        &self.streams
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_next_id(&mut self, id: u16) {
+        self.next_id = id;
+    }
+
+    // --- Private helpers ---
+
+    fn next_stream_id(&mut self) -> u16 {
+        loop {
+            let mut id = self.next_id;
+            if id == 0 {
+                id = 1;
+            }
+            self.next_id = id.wrapping_add(1).max(1);
+            if self.find_index(id).is_none() {
+                return id;
+            }
+        }
+    }
+
+    fn create_audio_stream(&mut self, params: &AudioStreamParams) -> AudioStream {
+        let id = self.next_stream_id();
+        AudioStream {
+            audio_stream_id: id,
+            stream_usage: params.stream_usage,
+            audio_codec: params.audio_codec,
+            channel_count: params.channel_count,
+            sample_rate: params.sample_rate,
+            bit_rate: params.bit_rate,
+            bit_depth: params.bit_depth,
+            reference_count: 0,
+        }
+    }
+
+    fn find_index(&self, stream_id: u16) -> Option<usize> {
+        self.streams
+            .iter()
+            .position(|s| s.audio_stream_id == stream_id)
+    }
+
+    fn find_stream_mut(&mut self, stream_id: u16) -> Option<&mut AudioStream> {
+        let idx = self.find_index(stream_id)?;
+        Some(&mut self.streams[idx])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +494,120 @@ mod tests {
         ];
         let err = build_stream_priorities::<4>(input, SUPPORTED).unwrap_err();
         assert_eq!(err.code(), ErrorCode::InvalidDataType);
+    }
+
+    const TEST_CAPABILITIES: AudioCapabilitiesConfig<'static> = AudioCapabilitiesConfig {
+        max_channels: 2,
+        supported_codecs: &[AudioCodecEnum::OPUS],
+        supported_sample_rates: &[16_000, 48_000],
+        supported_bit_depths: &[16],
+    };
+
+    fn valid_test_params() -> AudioStreamParams {
+        AudioStreamParams {
+            stream_usage: StreamUsageEnum::LiveView,
+            audio_codec: AudioCodecEnum::OPUS,
+            channel_count: 1,
+            sample_rate: 16_000,
+            bit_rate: 32_000,
+            bit_depth: 16,
+        }
+    }
+
+    #[test]
+    fn validate_audio_allocate_succeeds_for_valid_params() {
+        let params = valid_test_params();
+        assert!(validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).is_ok());
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_zero_channel_count_with_constraint_error() {
+        let mut params = valid_test_params();
+        params.channel_count = 0;
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_excess_channel_count_with_constraint_error() {
+        let mut params = valid_test_params();
+        params.channel_count = 9;
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_zero_sample_rate_with_constraint_error() {
+        let mut params = valid_test_params();
+        params.sample_rate = 0;
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_zero_bit_rate_with_constraint_error() {
+        let mut params = valid_test_params();
+        params.bit_rate = 0;
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_invalid_bit_depth_with_constraint_error() {
+        let mut params = valid_test_params();
+        params.bit_depth = 12; // Valid schema bit depths are 8, 16, 24, 32
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_internal_usage_with_constraint_error() {
+        let mut params = valid_test_params();
+        params.stream_usage = StreamUsageEnum::Internal;
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConstraintError);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_unsupported_priority_with_invalid_in_state() {
+        let mut params = valid_test_params();
+        params.stream_usage = StreamUsageEnum::Recording; // Not in active SUPPORTED priorities if we use a subset
+        let priorities = &[StreamUsageEnum::LiveView];
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, priorities).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::InvalidInState);
+    }
+
+    #[test]
+    fn validate_audio_allocate_rejects_unsupported_sample_rate_with_dynamic_constraint_error() {
+        let mut params = valid_test_params();
+        params.sample_rate = 8_000; // Schema valid (> 0), but not in TEST_CAPABILITIES
+        let err = validate_audio_allocate(&params, &TEST_CAPABILITIES, SUPPORTED).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::DynamicConstraintError);
+    }
+
+    #[test]
+    fn audio_stream_table_find_or_create_idempotency_preserves_zero_refcount() {
+        let mut table = AudioStreamTable::<4>::new();
+        let params = valid_test_params();
+
+        // Initial allocation -> Created with reference_count == 0
+        let alloc1 = table.find_or_create(&params).expect("create succeeds");
+        assert!(matches!(alloc1, StreamAllocation::Created(_)));
+        let stream1 = *alloc1.stream();
+        assert_eq!(stream1.reference_count, 0);
+
+        // Matching allocation -> Found with reference_count still 0
+        let alloc2 = table.find_or_create(&params).expect("lookup succeeds");
+        assert!(matches!(alloc2, StreamAllocation::Found(_)));
+        let stream2 = *alloc2.stream();
+        assert_eq!(stream2.audio_stream_id, stream1.audio_stream_id);
+        assert_eq!(
+            stream2.reference_count, 0,
+            "idempotent lookup must not mutate reference count"
+        );
+
+        // find() returns the stream
+        let found = table.find(&params).expect("find succeeds");
+        assert_eq!(found.audio_stream_id, stream1.audio_stream_id);
     }
 }
