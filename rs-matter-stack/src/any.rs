@@ -52,7 +52,7 @@ use crate::ble::GattPeripheral;
 use crate::eth::{EthernetDriver, EthernetTask};
 use crate::mdns::Mdns;
 use crate::net::NetStack;
-use crate::network::{Embedding, StackNetwork};
+use crate::network::{AnyStackNetwork, Embedding, StackNetwork};
 use crate::wireless::{
     GattDriver, GattTask, MatterStackWirelessTask, ThreadCoexDriver, ThreadCoexTask, ThreadDriver,
     ThreadTask, UntilBleCommWindow, WifiCoexDriver, WifiCoexTask, WifiDriver, WifiTask,
@@ -255,7 +255,7 @@ type AnyCtl<'a, W> = AnyNetCtl<'a, <W as AnyDriver>::WifiCtl<'a>, <W as AnyDrive
 
 impl<const B: usize, S, E> MatterStack<'_, B, S, E>
 where
-    S: StackNetwork,
+    S: AnyStackNetwork,
     E: Embedding,
 {
     /// Run the Matter stack over Ethernet, Wifi or Thread, whichever `driver` runs: on

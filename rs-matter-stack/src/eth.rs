@@ -32,7 +32,7 @@ use rs_matter_utils::sync::MaybeSend;
 
 use crate::mdns::Mdns;
 use crate::net::NetStack;
-use crate::network::{Embedding, StackNetwork};
+use crate::network::{Embedding, EthStackNetwork, StackNetwork};
 use crate::{pin_alloc, MatterStack, RunOptions, UserTask};
 
 /// A trait representing a task that needs access to the operational Ethernet interface
@@ -148,7 +148,7 @@ impl EthernetDriver for NoEthernet {
 /// The methods of the `MatterStack` for Ethernet.
 impl<const B: usize, S, E> MatterStack<'_, B, S, E>
 where
-    S: StackNetwork,
+    S: EthStackNetwork,
     E: Embedding,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node

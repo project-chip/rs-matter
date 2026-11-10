@@ -39,7 +39,7 @@ use rs_matter_utils::sync::MaybeSend;
 
 use crate::mdns::Mdns;
 use crate::net::NetStack;
-use crate::network::{Embedding, StackNetwork};
+use crate::network::{Embedding, StackNetwork, WifiStackNetwork};
 use crate::wireless::{
     GattPeripheral, MatterStackWirelessTask, UntilBleCommWindow, WirelessNetCtl,
 };
@@ -49,7 +49,7 @@ use super::{GattDriver, GattTask, PreexistingWireless};
 
 impl<const B: usize, S, E> MatterStack<'_, B, S, E>
 where
-    S: StackNetwork,
+    S: WifiStackNetwork,
     E: Embedding,
 {
     /// Run the Matter stack for a wireless network where the BLE and the Wifi stacks can co-exist.
