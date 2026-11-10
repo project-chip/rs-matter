@@ -17,7 +17,7 @@
 
 //! Base38 encoding and decoding functions.
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{UtilsError, UtilsErrorCode};
 use crate::storage::{String, Vec};
 
 const BASE38_CHARS: [char; 38] = [
@@ -84,10 +84,10 @@ const RADIX: u32 = BASE38_CHARS.len() as u32;
 ///
 /// # Arguments
 /// * `bytes` - byte array to encode
-pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<String<N>, Error> {
+pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<String<N>, UtilsError> {
     let mut string = String::new();
     for c in encode(bytes) {
-        string.push(c).map_err(|_| ErrorCode::BufferTooSmall)?;
+        string.push(c).map_err(|_| UtilsErrorCode::BufferTooSmall)?;
     }
 
     Ok(string)
@@ -145,11 +145,12 @@ fn encode_base38(mut value: u32, repeat: usize) -> impl Iterator<Item = char> {
     })
 }
 
-pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<Vec<u8, N>, Error> {
+pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<Vec<u8, N>, UtilsError> {
     let mut vec = Vec::new();
 
     for byte in decode(base38_str) {
-        vec.push(byte?).map_err(|_| ErrorCode::BufferTooSmall)?;
+        vec.push(byte?)
+            .map_err(|_| UtilsErrorCode::BufferTooSmall)?;
     }
 
     Ok(vec)
@@ -161,7 +162,7 @@ pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<Vec<u8, N>, Error>
 /// * `base38_str` - base38-encoded string to decode
 ///
 /// Fails if the string contains invalid characters or if the supplied buffer is too small to fit the decoded data
-pub fn decode(base38_str: &str) -> impl Iterator<Item = Result<u8, Error>> + '_ {
+pub fn decode(base38_str: &str) -> impl Iterator<Item = Result<u8, UtilsError>> + '_ {
     let stru = base38_str.as_bytes();
 
     (0..stru.len() / 5)
@@ -176,7 +177,7 @@ pub fn decode(base38_str: &str) -> impl Iterator<Item = Result<u8, Error>> + '_ 
         .take_while(Result::is_ok)
 }
 
-fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, Error>> {
+fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, UtilsError>> {
     let mut value = 0u32;
     let mut cerr = None;
 
@@ -199,7 +200,7 @@ fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, Error>> {
             }
         }
     } else {
-        cerr = Some(ErrorCode::InvalidData)
+        cerr = Some(UtilsErrorCode::InvalidData)
     }
 
     (0..repeat)
@@ -217,14 +218,14 @@ fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, Error>> {
         .take_while(Result::is_ok)
 }
 
-fn decode_char(c: u8) -> Result<u8, Error> {
+fn decode_char(c: u8) -> Result<u8, UtilsError> {
     if !(45..=90).contains(&c) {
-        Err(ErrorCode::InvalidData)?;
+        Err(UtilsErrorCode::InvalidData)?;
     }
 
     let c = DECODE_BASE38[c as usize - 45];
     if c == UNUSED {
-        Err(ErrorCode::InvalidData)?;
+        Err(UtilsErrorCode::InvalidData)?;
     }
 
     Ok(c)

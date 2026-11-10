@@ -312,3 +312,62 @@ Candidates for deletion — referenced only in tests, comments, or not at all.
 Spec-defined, so deletion is not an option — but nothing emits these today.
 
 `AccessRestricted`, `MaintenanceRequired`, `NoCommandResponse`, `NoUpstreamSubscription`, `PathsExhausted`, `TermsAndConditionsChanged`, `UnreportableAttribute`
+
+# Appendix B - Error conversion records
+
+## `rs-matter-utils`
+
+13 variants become 3. The governing rule: a variant stays only if some function
+**in this crate** can produce it. Everything else was present solely because a
+`From<ForeignError> for Error` impl lived here for the convenience of crates above.
+
+| Current `ErrorCode` | usages | New `UtilsErrorCode` | Note |
+|---|---|---|---|
+| NoSpace | 6 | `BufferTooSmall` | Merged. All 6 are `WriteBuf` (`load`, `reserve`, `shrink`, `expand`, `prepend_with`, `append_with`) and are the same event as the existing `BufferTooSmall` sites: a fixed-capacity buffer could not take the data. The "TLV writer ran out of room, so chunk" reading belongs to `TlvError`, which `rs-matter-tlv` derives from this variant. |
+| BufferTooSmall | 4 | `BufferTooSmall` | Unchanged. `ReadBuf::load`, `write_split!`, base38 ×2. |
+| TruncatedPacket | 3 | `UnexpectedEof` | Renamed. `ReadBuf` is a generic byte reader; "packet" is a transport word that leaked down. |
+| InvalidData | 3 | `InvalidData` | Unchanged. base38 decode ×3 — the only producer that keeps this variant alive. |
+| Invalid | 3 | `InvalidData` / *removed* | Split. `WriteBuf::reserve`'s "buffer not pristine" is caller misuse → `debug_assert!`, no variant. The `From<TryFromSliceError>` and `From<TryFromPrimitiveError>` cases leave with their impls (see below). |
+| DBusError | 6 | *removed* | No producer here. The `zbus_proxies` tree stays in this crate, but the proxies return `zbus::Result` and no utils signature ever mentions this code. Needed by `transport` (mDNS, BlueZ) and `dm` (NetworkManager, wpa_supplicant). |
+| BtpError | 2 | *removed* | No producer here. Only reachable via `From<bluer::Error>`, whose sole consumer is the BTP backend in `transport`. |
+| StdIoError | 2 | *removed* | No producer here. Needed by `transport`, `cert`, `dm`, `node`. |
+| TxTimeout | 1 | *removed* | No producer here — every producer is in `transport`. Present only because `Error::is_peer_unresponsive()` lives here; that method moves to `TransportError` too. |
+| RxTimeout | 1 | *removed* | As `TxTimeout`. |
+| RwLock | 1 | *removed* | No producer here, and **no producer anywhere in the workspace** — every `.lock()` is either async or `.unwrap()`ed in a test. Add it to a crate error only when a real `?` site appears. |
+| SysTimeFail | 1 | *removed* | As `RwLock` — no in-tree producer at all. |
+| Utf8Fail | 1 | *removed* | No producer here. Reachable only via `From<Utf8Error>`; nothing in the workspace matches on it. |
+
+Resulting enum:
+
+```rust
+pub enum UtilsErrorCode {
+    /// A fixed-capacity buffer could not accept the data.
+    BufferTooSmall,
+    /// A read ran past the end of the input.
+    UnexpectedEof,
+    /// Input bytes could not be decoded into the expected representation.
+    InvalidData,
+}
+```
+
+### Supporting changes
+
+- `Error2<T>` — the generic replacement for `Error`, parameterised over the code
+  type. `UtilsError = Error2<UtilsErrorCode>`. Renamed to `Error` once the legacy
+  type is deleted.
+- `MatterError` — a blanket-implemented marker trait collecting the bounds a code
+  type must satisfy (`Copy + Debug`, plus `defmt::Format` under the `defmt`
+  feature), so the six `Error2` impls carry one bound instead of a repeated list.
+- `WriteBuf` now returns `UtilsError` throughout. `impl From<UtilsError> for Error`
+  bridges to the legacy type until every crate is converted.
+
+Two things in this crate deliberately still name the legacy `Error`, because
+converting them breaks a dependent that has not had its turn yet:
+
+- `WriteBuf::append_with_buf` takes a caller-supplied callback that fills a byte
+  slice. That callback can fail for reasons utils knows nothing about, so the right signature is a free generic `E` with no bound, since the method only propagates the callback's error and never produces one of its own. Pinning it to `UtilsError`
+  would force `sc` and `dm` to funnel foreign errors through a utils variant.
+- The `write_split!` macro raises `UtilsErrorCode::BufferTooSmall`, but widens the
+  result to the legacy `Error` via the bridge so that its callers, all in
+  `transport`'s mDNS code, keep compiling. Once `transport` is converted the macro
+  returns `UtilsError` and those callers convert it explicitly.

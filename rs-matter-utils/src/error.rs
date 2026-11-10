@@ -17,6 +17,173 @@
 
 //! The error type of `rs-matter`.
 
+/// The bounds that every error code type must satisfy in order to be used as the
+/// code of an [`Error2`].
+///
+/// Blanket-implemented, so a crate defining its own error code enum only needs the
+/// usual derives - it never implements this trait explicitly.
+#[cfg(not(feature = "defmt"))]
+pub trait MatterError: Copy + core::fmt::Debug {}
+
+#[cfg(not(feature = "defmt"))]
+impl<T> MatterError for T where T: Copy + core::fmt::Debug {}
+
+/// The bounds that every error code type must satisfy in order to be used as the
+/// code of an [`Error2`].
+///
+/// Blanket-implemented, so a crate defining its own error code enum only needs the
+/// usual derives - it never implements this trait explicitly.
+#[cfg(feature = "defmt")]
+pub trait MatterError: Copy + core::fmt::Debug + defmt::Format {}
+
+#[cfg(feature = "defmt")]
+impl<T> MatterError for T where T: Copy + core::fmt::Debug + defmt::Format {}
+
+/// Generic error struct holding any Matter error code and backtrace info.
+pub struct Error2<T> {
+    code: T,
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    backtrace: std::backtrace::Backtrace,
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    inner: Option<Box<dyn core::error::Error + Send + Sync>>,
+}
+
+impl<T: MatterError> Error2<T> {
+    pub fn new(code: T) -> Self {
+        Self {
+            code,
+            #[cfg(all(feature = "std", feature = "backtrace"))]
+            backtrace: std::backtrace::Backtrace::capture(),
+            #[cfg(all(feature = "alloc", feature = "backtrace"))]
+            inner: None,
+        }
+    }
+
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    pub fn new_with_details(
+        code: T,
+        detailed_err: Box<dyn core::error::Error + Send + Sync>,
+    ) -> Self {
+        Self {
+            code,
+            #[cfg(feature = "std")]
+            backtrace: std::backtrace::Backtrace::capture(),
+            inner: Some(detailed_err),
+        }
+    }
+
+    pub const fn code(&self) -> T {
+        self.code
+    }
+
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    pub const fn backtrace(&self) -> &std::backtrace::Backtrace {
+        &self.backtrace
+    }
+
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync)> {
+        self.inner.as_ref().map(|err| err.as_ref())
+    }
+}
+
+impl<T: MatterError> From<T> for Error2<T> {
+    fn from(value: T) -> Self {
+        Error2::new(value)
+    }
+}
+
+impl<T: MatterError> core::fmt::Debug for Error2<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[cfg(not(all(feature = "std", feature = "backtrace")))]
+        {
+            // TODO: Does this show the error type?
+            write!(f, "Error::{}", self)?;
+        }
+
+        #[cfg(all(feature = "std", feature = "backtrace"))]
+        {
+            writeln!(f, "Error::{} {{", self)?;
+            write!(f, "{}", self.backtrace())?;
+            writeln!(f, "}}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<T: MatterError> core::fmt::Display for Error2<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[cfg(all(feature = "alloc", feature = "backtrace"))]
+        {
+            let err_msg = self
+                .inner
+                .as_ref()
+                .map_or(Default::default(), |err| err.to_string());
+
+            if err_msg.is_empty() {
+                write!(f, "{:?}", self.code())
+            } else {
+                write!(f, "{:?}: {}", self.code(), err_msg)
+            }
+        }
+        #[cfg(not(all(feature = "alloc", feature = "backtrace")))]
+        {
+            write!(f, "{:?}", self.code())
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<T: MatterError> defmt::Format for Error2<T> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.code())
+    }
+}
+
+impl<T: MatterError> core::error::Error for Error2<T> {
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        self.inner
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn core::error::Error + 'static))
+    }
+}
+
+pub type UtilsError = Error2<UtilsErrorCode>;
+
+/// The errors raised by `rs-matter-utils` itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UtilsErrorCode {
+    /// A fixed-capacity buffer could not accept the data.
+    BufferTooSmall, // absorbs NoSpace
+    /// A read ran past the end of the input.
+    UnexpectedEof, // was TruncatedPacket
+    /// Input bytes could not be decoded into the expected representation.
+    InvalidData,
+}
+
+// TODO: Remove this bridge once all dependent crates have been refactored to explicitly handle UtilsError
+impl From<UtilsErrorCode> for Error {
+    fn from(value: UtilsErrorCode) -> Self {
+        match value {
+            UtilsErrorCode::BufferTooSmall => ErrorCode::BufferTooSmall.into(),
+            UtilsErrorCode::UnexpectedEof => ErrorCode::TruncatedPacket.into(),
+            UtilsErrorCode::InvalidData => ErrorCode::InvalidData.into(),
+        }
+    }
+}
+impl From<UtilsError> for Error {
+    fn from(value: UtilsError) -> Self {
+        value.code().into()
+    }
+}
+
+// ---
+// TODO: The code below shall be removed after the complete implementation
+// of the error refactor is defined by the `docs/error-refactor-issue-192.md` document.
+
 use core::{array::TryFromSliceError, str::Utf8Error};
 
 #[cfg(all(feature = "alloc", feature = "backtrace"))]

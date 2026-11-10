@@ -23,7 +23,7 @@ use cfg_if::cfg_if;
 use domain::base::name::{Label, ToLabelIter};
 
 use crate::basic_info::BasicInfoConfig;
-use crate::error::{Error, ErrorCode};
+use crate::error::Error;
 use crate::icd::{IcdAdvertisement, IcdOperatingMode};
 use crate::mrp;
 use crate::pairing::qr::QrPayload;
