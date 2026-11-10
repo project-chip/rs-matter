@@ -178,8 +178,8 @@ use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::stack::eth::PreexistingEthernet;
-use rs_matter::stack::MatterStack;
 use rs_matter::stack::net::std::StdNetStack;
+use rs_matter::stack::MatterStack;
 use rs_matter::utils::init::InitMaybeUninit;
 
 use static_cell::StaticCell;
@@ -382,7 +382,11 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, MH: ModeSelectHooks>(
         EmptyHandler
             .chain(
                 |e, _| e == ROOT_ENDPOINT_ID,
-                Async(MatterStack::<0, EthNetwork>::root_handler(matter, &(), rand)),
+                Async(MatterStack::<0, EthNetwork>::root_handler(
+                    matter,
+                    &(),
+                    rand,
+                )),
             )
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,

@@ -179,7 +179,6 @@ impl<const N: usize> Bump<N> {
         }
     }
 
-    /// Reserve an uninitialized, properly aligned slot for a `T`
     /// Allocate an object, built in its slot by the in-place initializer `init`.
     pub fn alloc_init<T, I>(&self, init: I, location: &str) -> BumpBox<'_, T>
     where
@@ -197,6 +196,7 @@ impl<const N: usize> Bump<N> {
         }
     }
 
+    /// Reserve an uninitialized, properly aligned slot for a `T`
     fn reserve<T>(&self, location: &str) -> NonNull<MaybeUninit<T>>
     where
         T: Sized,
