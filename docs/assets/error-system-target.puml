@@ -1,0 +1,503 @@
+' rs-matter error system — TARGET pattern (severed dependencies).
+'
+' Supersedes the earlier target that shared one InternalError across layers.
+' Core principle: NO shared error type. Every layer owns a CLOSED enum, and
+' every boundary crossing is an explicit, exhaustive conversion.
+'
+' Packages are labelled L0..L4 by dependency depth. A crate may only name
+' types at its own level or BELOW.
+'
+' Arrows:
+'   -->            exhaustive From impl, no `_` arm; `?` works
+'   ..>            named conversion (not From), or "builds"
+'   -[#B91C1C]->   conversion that loses context -> MUST log at the boundary
+
+@startuml rs-matter-errors-target
+title rs-matter error system — target pattern (severed error dependencies)
+
+hide empty members
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BorderColor #555555
+  BackgroundColor #FCFCFC
+  ArrowColor #333333
+}
+skinparam package {
+  BorderColor #94A3B8
+  FontStyle bold
+}
+
+' ======================================================================
+' The principle
+' ======================================================================
+
+note as N_PRINCIPLE #FEF9C3
+  **THE PRINCIPLE**
+
+  There is no shared error type and no
+  escape hatch. No `Other(Error)`, no
+  `Internal(InternalError)`.
+
+  Every layer owns a CLOSED enum listing
+  only what that layer can actually fail
+  with. A signature therefore states a real
+  contract instead of "can fail with
+  anything".
+
+  Every boundary crossing is an explicit
+  From impl with an **exhaustive match and
+  no `_` arm**. Where the conversion loses
+  context, it **logs at the boundary** --
+  the pattern already used for foreign
+  errors in rs-matter-utils today.
+end note
+
+' ======================================================================
+' L0
+' ======================================================================
+
+package "L0  rs-matter-utils  (no internal deps)" #FEF2F2 {
+
+  enum UtilsError {
+    NoSpace
+    BufferTooSmall
+    InvalidState
+    Utf8Fail
+    RwLock
+    StdIoError
+    SysTimeFail
+    ...
+    ..
+    fieldless -> **1 byte**
+    ..
+    **variant list TBD**
+  }
+}
+
+note right of UtilsError
+  Foreign errors (std::io, zbus, bluer,
+  SystemTime, Utf8) convert IN here, and
+  already log before discarding detail --
+  see error.rs, four impls carrying the
+  comment "we lose all context from the
+  original error here".
+
+  That established pattern IS the answer to
+  "what replaces Other(Error)": log at
+  origin, carry only a category.
+end note
+
+' ======================================================================
+' L1 — below the IM layer: no status is reachable
+' ======================================================================
+
+package "L1  rs-matter-tlv, rs-matter-crypto, rs-matter-cert" #F1F5F9 {
+
+  enum TlvError {
+    TypeMismatch
+    TagNotFound
+    TruncatedPacket
+    NoWriteSpace
+    InvalidData
+    ...
+    ..
+    fieldless -> **1 byte**
+  }
+
+  enum CryptoError {
+    InvalidKeyLength
+    InvalidAAD
+    InvalidSignature
+    ...
+    ..
+    fieldless -> **1 byte**
+  }
+}
+
+UtilsError --> TlvError : From, exhaustive
+UtilsError --> CryptoError : From, exhaustive
+
+note bottom of TlvError
+  These crates depend only on utils (+ macros),
+  so they **cannot name IMStatusCode even in
+  principle**. Their errors are necessarily
+  pure faults -- which is correct for this
+  tier.
+end note
+
+' ======================================================================
+' L1 — the IM layer owns the spec status
+' ======================================================================
+
+package "L1  rs-matter-im-core  (the ONLY home of IMStatusCode)" #EFF6FF {
+
+  enum IMStatusCode <<spec>> {
+    Success = 0x00
+    Failure = 0x01
+    UnsupportedAccess = 0x7E
+    ConstraintError = 0x87
+    ...
+    InvalidTransportType = 0xD1
+    ..
+    34 spec values
+    ..
+    **stays here.** No move to L0,
+    no new L0 crate needed.
+  }
+
+  class Status <<spec: StatusIB>> {
+    + status : IMStatusCode
+    + cluster_status : Option<NonZeroU8>
+  }
+
+  class CmdStatus <<spec>> {
+    + path : CmdPath
+    + status : Status
+    + command_ref : Option<u16>
+  }
+
+  class AttrStatus <<spec>> {
+    + path : AttrPath
+    + status : Status
+  }
+
+  Status *-- IMStatusCode
+  CmdStatus *-- Status
+  AttrStatus *-- Status
+}
+
+TlvError -[#B91C1C]-> IMStatusCode : From, exhaustive\n**logs**: a TLV fault has no\nwire meaning beyond Failure
+
+' ======================================================================
+' L2 — the first tier that can report a status
+' ======================================================================
+
+package "L2  rs-matter-dm-core" #ECFDF5 {
+
+  enum DmCoreError {
+    HandlerMissing
+    DataverMismatch
+    ListIndexInvalid
+    ...
+    == the ONLY payload variant ==
+    Status(IMStatusCode)
+    ..
+    **1 byte** -- the fieldless
+    variants fold into
+    IMStatusCode's niche
+  }
+
+  class CmdDetails {
+    + cluster_status : Cell<Option<NonZeroU8>>
+    --
+    + set_cluster_status(Option<NonZeroU8>)
+    + cluster_status() : Option<NonZeroU8>
+    + status(IMStatusCode) : Option<CmdStatus>
+  }
+
+  class AttrDetails {
+    + cluster_status : Cell<Option<NonZeroU8>>
+    --
+    + set_cluster_status(Option<NonZeroU8>)
+    + cluster_status() : Option<NonZeroU8>
+    + status(IMStatusCode) : Option<AttrStatus>
+  }
+}
+
+DmCoreError *-- IMStatusCode
+TlvError --> DmCoreError : From, exhaustive
+UtilsError --> DmCoreError : From, exhaustive
+CmdDetails ..> CmdStatus : status()
+AttrDetails ..> AttrStatus : status()
+
+note right of DmCoreError
+  **This is the shape that keeps 1 byte.**
+  With the escape hatch gone, a layer that
+  reports status has exactly ONE payload
+  variant available -- Status(IMStatusCode) --
+  so niche folding still applies.
+
+  Previously this tier needed BOTH
+  Status(..) and Internal(..), which is two
+  payload variants and 2 bytes. Severing the
+  dependency removes that cost rather than
+  adding one.
+end note
+
+note bottom of AttrDetails
+  **cluster_status staging: unchanged.**
+  The cluster byte travels beside the Result,
+  never inside the error. Reasons, in weight
+  order:
+   1. zero size cost
+   2. the channels are not interchangeable
+      on the wire and chip-tool certification
+      enforces it (Scenes RecallScene)
+   3. only PushAVStreamTransport has real
+      spec-defined cluster codes
+end note
+
+' ======================================================================
+' L3
+' ======================================================================
+
+package "L3  rs-matter-transport, rs-matter-node-core, rs-matter-sc, rs-matter-bdx" #F8FAFF {
+
+  enum TransportError {
+    NoExchange
+    NoSession
+    TxTimeout
+    RxTimeout
+    NoSpaceExchanges
+    NoSpaceSessions
+    ...
+    == the ONLY payload variant ==
+    Status(IMStatusCode)
+    ..
+    **1 byte**
+  }
+
+  enum NodeCoreError {
+    FailSafeRequired
+    FabricTableFull
+    FabricConflict
+    ...
+    == the ONLY payload variant ==
+    Status(IMStatusCode)
+    ..
+    **1 byte**
+  }
+}
+
+UtilsError  --> TransportError : From, exhaustive
+CryptoError -[#B91C1C]-> TransportError : From, exhaustive\n**logs**
+DmCoreError --> NodeCoreError : From, exhaustive
+
+' ======================================================================
+' L4 — the data model layer and its local trait errors
+' ======================================================================
+
+package "L4  rs-matter-dm" #F8FAFF {
+
+  enum DmError {
+    ClusterUnsupported
+    CommandUnsupported
+    ...
+    == the ONLY payload variant ==
+    Status(IMStatusCode)
+    ..
+    **1 byte**
+  }
+
+  enum NetCtlError <<trait error — LOCAL>> #FEF9C3 {
+    NetworkNotFound
+    UnsupportedSecurity
+    AuthFailure
+    OtherConnectionFailure
+    IpBindFailed
+    IpV6Failed
+    ..
+    fieldless -> **1 byte**
+    ..
+    **Consumed by its own handler.**
+    Never collated upward.
+  }
+
+  enum PushAvError <<hook error — LOCAL>> #FEF9C3 {
+    == IM status subset ==
+    Status(PushAvStatus)
+    == cluster-specific codes ==
+    Cluster(StatusCodeEnum)
+    ..
+    2 payload variants -> 2 bytes,
+    confined to one hook API
+  }
+
+  interface ClusterStatus {
+    + to_status() : (IMStatusCode, Option<NonZeroU8>)
+  }
+
+  class HookResultExt {
+    + stage(sink) : Result<T, DmError>
+    + stage_into(sink) : DmError
+    ..
+    blanket impl for
+    Result<T, E: ClusterStatus>
+  }
+}
+
+DmCoreError    --> DmError : From, exhaustive
+TransportError -[#B91C1C]-> DmError : From, exhaustive\n**logs**
+NodeCoreError  --> DmError : From, exhaustive
+PushAvError ..|> ClusterStatus
+NetCtlError ..|> ClusterStatus
+HookResultExt ..> ClusterStatus : reads via
+HookResultExt --> DmError : returns Status(Failure)\n+ stages the cluster byte
+
+note bottom of NetCtlError
+  **Trait and hook errors do not propagate.**
+  Each is consumed by the handler that called
+  it, mapped to a cluster response field or
+  staged as a cluster status. They never reach
+  DmError or the root -- which is what lets
+  DmError keep exactly one payload variant.
+end note
+
+' ======================================================================
+' The collator — StackError. There is NO extra root error.
+' ======================================================================
+
+package "L5  rs-matter-stack  (owns the top-level run loop)" #FFF7ED {
+
+  enum StackError {
+    == its own failures: only ONE today ==
+    ...
+    == almost entirely From targets ==
+    Utils(UtilsError)
+    Tlv(TlvError)
+    Crypto(CryptoError)
+    DmCore(DmCoreError)
+    Transport(TransportError)
+    NodeCore(NodeCoreError)
+    Dm(DmError)
+    ... one per crate it collates
+    -- **set TBD**
+    --
+    + status() : Option<IMStatusCode>
+    ..
+    ~12 payload variants -> **2 bytes**
+  }
+}
+
+UtilsError     --> StackError : From
+TlvError       --> StackError : From
+CryptoError    --> StackError : From
+DmCoreError    --> StackError : From
+TransportError --> StackError : From
+NodeCoreError  --> StackError : From
+DmError        --> StackError : From
+
+note left of StackError
+  **No separate root error in rs-matter.**
+  The facade has zero Result returns, so a
+  collator there would have no users. The
+  collating need is real but it lives HERE:
+  `Stack::run()` / `startup()` can fail with
+  anything from transport, sc, dm, node or
+  crypto, so whatever they return IS the
+  collator. rs-matter just re-exports it.
+
+  Examples already show the shape:
+  `fn main() -> Result<(), Error>` with `?`
+  on `stack.startup(..)`.
+
+  **This crate is the INVERSE of every other
+  one.** It has 1 distinct ErrorCode variant
+  and 2 mentions of its own, so StackError is
+  almost all From targets. Its enumeration
+  question is not "what can this layer fail
+  with" but "what can reach this layer".
+
+  2 bytes is fine: one type, at the outermost
+  boundary, never on a hot path.
+  ----
+  **thiserror no longer has a home here.**
+  It looked right when the collator sat in a
+  std-side facade. rs-matter-stack is
+  compiled FOR THE DEVICE, so ~12 Display
+  strings land in flash duplicating what
+  defmt already interns. Keep thiserror to
+  rs-matter-codegen (a host-side tool) and
+  nowhere else.
+  ----
+  **Why status() and not a Status variant.**
+  A status arrives inside whichever crate
+  error carried it. A top-level
+  StackError::Status(..) would make it
+  reachable two ways, and a `match` handling
+  one would silently miss the other. The
+  accessor has no invariant to break.
+end note
+
+' ======================================================================
+' Rules and measurements
+' ======================================================================
+
+note as N_SIZE
+  **MEASURED (rustc -O, size_of)**
+
+  fieldless enum, any variant count <= 256   1
+  one payload variant (Status(IMStatusCode)) 1
+  TWO payload variants                       2
+  root with ~10 payload variants             2
+  nesting depth 3 / depth 4                  1
+  flattened equivalent                       1
+
+  **Depth is free. Breadth costs.**
+  Flattening a nested error buys ZERO bytes.
+
+  **Data size is unchanged by this design;
+  code size rises slightly** -- each boundary
+  is an N-arm match rather than a move, and
+  total variant count across all layers will
+  be ~2-3x today's 79. Accepted.
+end note
+
+note as N_RULES
+  **Rules**
+
+  1. **No escape hatch.** No Other(Error),
+     no Internal(..). A layer's enum lists
+     only what that layer can fail with.
+
+  2. **At most ONE payload-carrying variant**
+     per enum keeps it at 1 byte. For layers
+     that report status, that variant is
+     Status(IMStatusCode).
+
+  3. **Boundary conversions are From impls
+     with an exhaustive match and NO `_`
+     arm.** `?` is then fine. A conversion
+     that needs a catch-all is not yet
+     designed -- give it a name instead.
+
+  4. **Log where context is lost.** If a
+     conversion collapses several inputs onto
+     one output, it logs at the boundary. The
+     detail belongs in the log, not carried
+     up the stack.
+
+  5. **Adding a variant low down ripples.**
+     Every consumer's exhaustive match
+     breaks. That is the compiler working --
+     resist the temptation to add `_`.
+
+  6. **Trait/hook errors stay local.** They
+     are consumed by their handler and never
+     collated.
+end note
+
+note as N_NEXT
+  **NEXT: specify the variant lists.**
+  Every variant list in this diagram is
+  illustrative. Enumerating them IS the work,
+  and the only place this design can fail: if
+  one layer is under-specified, its
+  conversions start collapsing and the escape
+  hatch returns by a longer road, with the
+  loss invisible instead of named.
+
+  Suggested order -- hardest first, so a
+  failure is cheap:
+    rs-matter-dm         1681 Results
+    rs-matter-transport   412 Results
+  then tlv (275), im-core (197),
+  dm-core (162), node-core (155),
+  stack (152), im (147), sc (95), bdx (47).
+end note
+
+N_SIZE -[hidden]- N_RULES
+N_RULES -[hidden]- N_NEXT
+
+@enduml
