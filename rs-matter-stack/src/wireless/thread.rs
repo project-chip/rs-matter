@@ -21,16 +21,17 @@ use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
-use rs_matter_dm::clusters::net_comm::{NetCtl, NetworkType, Networks};
+use rs_matter_dm::clusters::net_comm::{NetCtl, NetworkType};
 use rs_matter_dm::clusters::thread_diag::ThreadDiag;
 use rs_matter_dm::endpoints::thread_net_handler;
 use rs_matter_dm::networks::wireless::{
-    self, connect_once, NetCtlWithStatusImpl, NoopWirelessNetCtl, ThreadNetworks, MAX_CREDS_SIZE,
+    self, connect_once, NetCtlWithStatusImpl, NoopWirelessNetCtl, MAX_CREDS_SIZE,
 };
 use rs_matter_dm::networks::NetChangeNotif;
 use rs_matter_dm::root_endpoint;
 use rs_matter_dm_core::persist::KvBlobStoreAccess;
 use rs_matter_dm_core::{DataModel, Endpoint};
+use rs_matter_transport::network::btp::Btp;
 use rs_matter_transport::network::NoNetwork;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select3, select4, Coalesce};
@@ -38,71 +39,19 @@ use rs_matter_utils::sync::MaybeSend;
 
 use crate::mdns::Mdns;
 use crate::net::NetStack;
-use crate::network::Embedding;
+use crate::network::{Embedding, StackNetwork};
 use crate::wireless::{
     GattPeripheral, GattTask, MatterStackWirelessTask, UntilBleCommWindow, WirelessNetCtl,
-    MAX_WIRELESS_NETWORKS,
 };
-use crate::{pin_alloc, RunOptions, UserTask};
+use crate::{alloc_init, pin_alloc, MatterStack, RunOptions, UserTask};
 
-use super::{GattDriver, PreexistingWireless, WirelessMatterStack};
+use super::{GattDriver, PreexistingWireless};
 
-/// A type alias for a Matter stack running over Thread (and BLE, during commissioning).
-///
-/// `S` is the networks store of the Thread interface.
-pub type ThreadMatterStack<'a, const B: usize, E = (), S = ThreadNetworks<MAX_WIRELESS_NETWORKS>> =
-    WirelessMatterStack<'a, B, wireless::Thread, E, S>;
-
-impl<const B: usize, S, E> WirelessMatterStack<'_, B, wireless::Thread, E, S>
+impl<const B: usize, S, E> MatterStack<'_, B, S, E>
 where
-    S: Networks + Embedding,
+    S: StackNetwork,
     E: Embedding,
 {
-    /// Run the Matter stack for an already pre-established wireless network where the BLE and the Thread stacks can co-exist.
-    ///
-    /// # Arguments
-    /// - `net_stack` - a user-provided `NetStack` implementation
-    /// - `netif` - a user-provided `Netif` implementation
-    /// - `controller` - a user-provided `Controller` implementation
-    /// - `mdns` - a user-provided `Mdns` implementation
-    /// - `gatt` - a user-provided `GattPeripheral` implementation
-    /// - `crypto` - a user-provided `Crypto` implementation
-    /// - `handler` - a user-provided DM handler implementation
-    /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
-    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
-    #[allow(clippy::too_many_arguments)]
-    pub fn run_preex<'t, U, N, Q, D, G, C, H, K, O>(
-        &'t self,
-        net_stack: U,
-        netif: N,
-        net_ctl: Q,
-        mdns: D,
-        gatt: G,
-        crypto: C,
-        handler: H,
-        kv: K,
-        options: O,
-    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
-    where
-        U: NetStack + 't,
-        N: NetifDiag + NetChangeNotif + 't,
-        Q: NetCtl + ThreadDiag + NetChangeNotif + 't,
-        D: Mdns + 't,
-        G: GattPeripheral + 't,
-        C: Crypto + 't,
-        H: DataModel + 't,
-        K: KvBlobStoreAccess + 't,
-        O: RunOptions + 't,
-    {
-        self.run_coex(
-            PreexistingWireless::new(net_stack, netif, net_ctl, mdns, gatt),
-            crypto,
-            handler,
-            kv,
-            options,
-        )
-    }
-
     /// Run the Matter stack for a wireless network where the BLE and the Wifi stacks can co-exist.
     ///
     /// # Arguments
@@ -111,7 +60,7 @@ where
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
     /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
-    pub async fn run_coex<W, C, H, K, O>(
+    pub async fn run_thread<W, C, H, K, O>(
         &self,
         mut thread: W,
         crypto: C,
@@ -129,7 +78,7 @@ where
         let _lock = self.run_lock.lock().await;
 
         // Lent to the Network Commissioning handler of each phase
-        let mut networks = self.network.networks.lock().await;
+        let mut networks = self.networks.lock().await;
 
         info!("Matter Stack memory: {}b", core::mem::size_of_val(self));
 
@@ -143,10 +92,13 @@ where
 
         let (gen_diag, user) = options.into_parts();
 
+        let btp = alloc_init!(self.bump, Btp::init());
+
         let net_task = pin_alloc!(
             self.bump,
-            self.run_thread_coex(
+            self.thread_coex_task(
                 &mut networks,
+                &btp,
                 &mut thread,
                 crypto,
                 handler,
@@ -167,7 +119,7 @@ where
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
     /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
-    pub async fn run<W, C, H, K, O>(
+    pub async fn run_thread_no_coex<W, C, H, K, O>(
         &self,
         thread: W,
         crypto: C,
@@ -185,7 +137,7 @@ where
         let _lock = self.run_lock.lock().await;
 
         // Lent to the Network Commissioning handler of each phase
-        let mut networks = self.network.networks.lock().await;
+        let mut networks = self.networks.lock().await;
 
         info!("Matter Stack memory: {}b", core::mem::size_of_val(self));
 
@@ -199,9 +151,20 @@ where
 
         let (gen_diag, user) = options.into_parts();
 
+        let btp = alloc_init!(self.bump, Btp::init());
+
         let net_task = pin_alloc!(
             self.bump,
-            self.run_thread(&mut networks, thread, crypto, handler, kv, &gen_diag, user)
+            self.thread_no_coex_task(
+                &mut networks,
+                &btp,
+                thread,
+                crypto,
+                handler,
+                kv,
+                &gen_diag,
+                user
+            )
         );
 
         net_task.await
@@ -221,7 +184,7 @@ where
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation
     /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
-    pub async fn run_oper<W, C, H, K, O>(
+    pub async fn run_thread_oper<W, C, H, K, O>(
         &self,
         mut thread: W,
         crypto: C,
@@ -239,7 +202,7 @@ where
         let _lock = self.run_lock.lock().await;
 
         // Lent to the Network Commissioning handler
-        let mut networks = self.network.networks.lock().await;
+        let mut networks = self.networks.lock().await;
 
         info!("Matter Stack memory: {}b", core::mem::size_of_val(self));
 
@@ -259,7 +222,7 @@ where
 
         let net_task = pin_alloc!(
             self.bump,
-            self.run_thread_oper(
+            self.thread_oper_task(
                 &mut networks,
                 &mut thread,
                 crypto,
@@ -274,9 +237,9 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn run_thread_oper<'t, W, C, H, K, U>(
+    fn thread_oper_task<'t, W, C, H, K, U>(
         &'t self,
-        networks: &'t mut S,
+        networks: &'t mut S::Store,
         thread: &'t mut W,
         crypto: C,
         handler: H,
@@ -302,15 +265,20 @@ where
                 handler,
                 kv,
                 user_task: user,
+                net_type: NetworkType::Thread,
+                btp: None,
+                _network: PhantomData::<fn() -> wireless::Thread>,
                 _net_ctl: PhantomData,
             },
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn run_thread_coex<'t, W, C, H, K, U>(
+    #[allow(clippy::too_many_arguments)]
+    fn thread_coex_task<'t, W, C, H, K, U>(
         &'t self,
-        networks: &'t mut S,
+        networks: &'t mut S::Store,
+        btp: &'t Btp,
         thread: &'t mut W,
         crypto: C,
         handler: H,
@@ -337,15 +305,20 @@ where
                 handler,
                 kv,
                 user_task: user,
+                net_type: NetworkType::Thread,
+                btp: Some(btp),
+                _network: PhantomData::<fn() -> wireless::Thread>,
                 _net_ctl: PhantomData,
             },
         )
     }
 
     #[allow(clippy::manual_async_fn, clippy::too_many_arguments)]
-    fn run_thread<'t, W, C, H, K, U>(
+    #[allow(clippy::too_many_arguments)]
+    fn thread_no_coex_task<'t, W, C, H, K, U>(
         &'t self,
-        networks: &'t mut S,
+        networks: &'t mut S::Store,
+        btp: &'t Btp,
         mut thread: W,
         crypto: C,
         handler: H,
@@ -395,6 +368,9 @@ where
                             handler: &handler,
                             kv: &kv,
                             user_task: &mut user,
+                            net_type: NetworkType::Thread,
+                            btp: Some(btp),
+                            _network: PhantomData::<fn() -> wireless::Thread>,
                             _net_ctl: PhantomData,
                         },
                     )
@@ -424,6 +400,9 @@ where
                             handler: &handler,
                             kv: &kv,
                             user_task: &mut user,
+                            net_type: NetworkType::Thread,
+                            btp: Some(btp),
+                            _network: PhantomData::<fn() -> wireless::Thread>,
                             _net_ctl: PhantomData,
                         },
                     },
@@ -435,7 +414,7 @@ where
 
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Thread network.
-    pub const fn root_endpoint() -> Endpoint<'static> {
+    pub const fn thread_root_endpoint() -> Endpoint<'static> {
         const ENDPOINT: Endpoint<'static> = root_endpoint!(thread);
 
         ENDPOINT
@@ -636,7 +615,7 @@ where
 impl<'a, const B: usize, S, E, C, H, K, X, Q> GattTask
     for MatterStackWirelessTask<'a, B, wireless::Thread, S, E, C, H, K, X, Q>
 where
-    S: Networks + Embedding,
+    S: StackNetwork,
     E: Embedding,
     C: Crypto,
     H: DataModel,
@@ -649,7 +628,7 @@ where
         P: GattPeripheral,
     {
         let net_ctl = NetCtlWithStatusImpl::new(
-            &self.stack.network.net_state,
+            &self.stack.net_state,
             WirelessNetCtl::<Q>::Commissioning(NetworkType::Thread),
         );
 
@@ -674,7 +653,9 @@ where
             .stack
             .im(&self.crypto, (&self.handler, combined), &self.kv);
 
-        let mut btp_task = pin!(self.stack.run_btp(&self.crypto, peripheral));
+        let mut btp_task = pin!(self
+            .stack
+            .run_btp(unwrap!(self.btp), &self.crypto, peripheral));
 
         let mut im_task = pin!(self.stack.run_im(&im));
 
@@ -685,7 +666,7 @@ where
 impl<'a, const B: usize, S, E, C, H, K, X, Z> ThreadTask
     for MatterStackWirelessTask<'a, B, wireless::Thread, S, E, C, H, K, X, Z>
 where
-    S: Networks + Embedding,
+    S: StackNetwork,
     E: Embedding,
     C: Crypto,
     H: DataModel,
@@ -708,10 +689,8 @@ where
     {
         info!("Thread driver started");
 
-        let net_ctl_s = NetCtlWithStatusImpl::new(
-            &self.stack.network.net_state,
-            WirelessNetCtl::Operational(&net_ctl),
-        );
+        let net_ctl_s =
+            NetCtlWithStatusImpl::new(&self.stack.net_state, WirelessNetCtl::Operational(&net_ctl));
 
         // Non-concurrent commissioning deferred connect.
         //
@@ -730,7 +709,7 @@ where
         // wrapper. `is_prov_ready()` is true only in this pending non-concurrent
         // case (on a normal reboot of an already-commissioned device the state is
         // empty, so we skip the one-shot connect and let the handler's manager run).
-        let deferred_connect_id = self.stack.network.net_state.lock(|state| {
+        let deferred_connect_id = self.stack.net_state.lock(|state| {
             let state = state.borrow();
             state.is_prov_ready().then(|| state.network_id.clone())
         });
@@ -783,9 +762,9 @@ where
     }
 }
 
-impl<const B: usize, S, E, X> ThreadTask for UntilBleCommWindow<'_, B, wireless::Thread, S, E, X>
+impl<const B: usize, S, E, X> ThreadTask for UntilBleCommWindow<'_, B, S, E, X>
 where
-    S: Networks + Embedding,
+    S: StackNetwork,
     E: Embedding,
     X: ThreadTask,
 {
@@ -826,7 +805,7 @@ where
 impl<'a, const B: usize, S, E, C, H, K, X, Z> ThreadCoexTask
     for MatterStackWirelessTask<'a, B, wireless::Thread, S, E, C, H, K, X, Z>
 where
-    S: Networks + Embedding,
+    S: StackNetwork,
     E: Embedding,
     C: Crypto,
     H: DataModel,
@@ -851,10 +830,8 @@ where
     {
         info!("Thread and BLE drivers started");
 
-        let net_ctl_s = NetCtlWithStatusImpl::new(
-            &self.stack.network.net_state,
-            WirelessNetCtl::Operational(&net_ctl),
-        );
+        let net_ctl_s =
+            NetCtlWithStatusImpl::new(&self.stack.net_state, WirelessNetCtl::Operational(&net_ctl));
 
         // The Network Commissioning handler drives the maintenance `WirelessMgr`
         // with the operational `net_ctl`; `run_net_coex` only runs the BTP coex
@@ -879,7 +856,14 @@ where
 
         let mut net_task = pin_alloc!(
             bump,
-            stack.run_net_coex(&self.crypto, &net_stack, &netif, &mut mdns, &mut gatt)
+            stack.run_net_coex(
+                unwrap!(self.btp),
+                &self.crypto,
+                &net_stack,
+                &netif,
+                &mut mdns,
+                &mut gatt
+            )
         );
 
         let mut im_task = pin_alloc!(bump, self.stack.run_im_with_bump(&im));

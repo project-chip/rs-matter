@@ -25,9 +25,10 @@ use crate::tlv::{FromTLV, OctetsOwned, ToTLV};
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
-use super::{WirelessNetwork, WirelessNetworks};
+use super::{WirelessNetwork, WirelessNetworks, DEFAULT_MAX_NETWORKS};
 
-pub type WifiNetworks<const N: usize> = WirelessNetworks<N, Wifi>;
+/// A store of up to `N` Wifi networks.
+pub type WifiNetworks<const N: usize = DEFAULT_MAX_NETWORKS> = WirelessNetworks<N, Wifi>;
 
 /// A struct implementing the `WirelessNetwork` trait for Wifi networks.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, ToTLV, FromTLV)]

@@ -29,7 +29,9 @@
 //!   (Ethernet, Wifi or Thread). Their inputs are the network controller, the
 //!   network interface and the commissioning policy. [`eth_net_handler`],
 //!   [`wifi_net_handler`] and [`thread_net_handler`] return a chain with these,
-//!   chained on top of a caller-provided handler.
+//!   chained on top of a caller-provided handler. [`any_net_handler`] serves the
+//!   Ethernet, Wifi and Thread diagnostics, for a node that picks its network at
+//!   runtime.
 //!
 //! [`eth_sys_handler`], [`wifi_sys_handler`] and [`thread_sys_handler`] combine
 //! the two groups into a single chain for the whole root endpoint. Use the split
@@ -59,7 +61,7 @@ use crate::dm::clusters::gen_diag::{
 };
 use crate::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use crate::dm::clusters::net_comm::{
-    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, Networks,
+    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
 };
 use crate::dm::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use crate::dm::clusters::sw_diag::{self, ClusterHandler as _, SwDiag, SwDiagHandler};
@@ -159,7 +161,7 @@ macro_rules! clusters {
             $(, sw_diag($($sw_opt),*))?
             $(, time_sync($($ts_opt),*))?
             ;
-            $crate::dm::clusters::net_comm::NetworkType::Ethernet.cluster(),
+            $crate::dm::clusters::net_comm::cluster($crate::dm::clusters::net_comm::NetworkType::Ethernet),
             $crate::dm::clusters::eth_diag::cluster::<{
                 $crate::__eth_diag_options!( $($($ed_opt),*)? ).bits()
             }>(),
@@ -179,7 +181,7 @@ macro_rules! clusters {
             $(, sw_diag($($sw_opt),*))?
             $(, time_sync($($ts_opt),*))?
             ;
-            $crate::dm::clusters::net_comm::NetworkType::Thread.cluster(),
+            $crate::dm::clusters::net_comm::cluster($crate::dm::clusters::net_comm::NetworkType::Thread),
             $crate::dm::clusters::thread_diag::cluster::<{
                 $crate::__thread_diag_options!( $($($td_opt),*)? ).bits()
             }>(),
@@ -199,7 +201,7 @@ macro_rules! clusters {
             $(, sw_diag($($sw_opt),*))?
             $(, time_sync($($ts_opt),*))?
             ;
-            $crate::dm::clusters::net_comm::NetworkType::Wifi.cluster(),
+            $crate::dm::clusters::net_comm::cluster($crate::dm::clusters::net_comm::NetworkType::Wifi),
             $crate::dm::clusters::wifi_diag::cluster::<{
                 $crate::__wifi_diag_options!( $($($wd_opt),*)? ).bits()
             }>(),
@@ -515,6 +517,17 @@ pub type WifiNetHandler<'a, S, T, H> =
 pub type ThreadNetHandler<'a, S, T, H> =
     NetHandler<'a, S, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>, H>;
 
+/// A type alias for the handler chain returned by `any_net_handler()`.
+pub type AnyNetHandler<'a, S, T, H> = NetHandler<'a, S, T, AnyDiagHandler<'a>, H>;
+
+/// A type alias for the Ethernet, Wifi and Thread Network Diagnostics handlers of
+/// `any_net_handler()`.
+pub type AnyDiagHandler<'a> = handler_chain_type!(
+    FnMatcher => eth_diag::HandlerAdaptor<EthDiagHandler<'a>>,
+    FnMatcher => wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>,
+    FnMatcher => thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>
+);
+
 /// A type alias for the handler chain returned by `net_handler()`:
 /// the operational network clusters of the root endpoint, on top of the handler `H`,
 /// which receives everything the network clusters do not match.
@@ -711,6 +724,89 @@ where
                     || c == ThreadDiagHandler::CLUSTER.id)
         },
         ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt(),
+        next,
+        rand,
+    )
+}
+
+/// Return a handler for the root endpoint operational network clusters,
+/// chained on top of `next`.
+/// Use this handler for nodes that pick Ethernet, Wifi or Thread as the Matter
+/// Operational Network at runtime: its type is the same for all three, so the code
+/// using it is compiled once.
+///
+/// It serves the Ethernet, Wifi and Thread Network Diagnostics clusters. The root
+/// endpoint lists only the one of the network in use, and the diagnostics of the
+/// others are expected to answer with errors, as `networks::any::InactiveDiag` does.
+///
+/// # Arguments:
+/// - `matter`: The `Matter` instance the clusters serve.
+/// - `comm_policy`: The `CommPolicy` implementation.
+/// - `gen_diag`: The `GenDiag` implementation.
+/// - `netif_diag`: The `NetifDiag` implementation.
+/// - `eth_diag`: The `EthDiag` implementation.
+/// - `wifi_diag`: The `WifiDiag` implementation.
+/// - `thread_diag`: The `ThreadDiag` implementation.
+/// - `networks`: The networks store of the interface: by value, or a `&mut` to a
+///   store living elsewhere.
+/// - `net_ctl`: The `NetCtl` implementation; its `net_type` tells the network in use.
+/// - `next`: The handler to chain on top of; receives everything not matched here.
+/// - `rand`: A random number generator.
+#[allow(clippy::too_many_arguments)]
+pub fn any_net_handler<'a, R: Rng, S, T, H>(
+    matter: &'a Matter<'a>,
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    eth_diag: &'a dyn EthDiag,
+    wifi_diag: &'a dyn WifiDiag,
+    thread_diag: &'a dyn ThreadDiag,
+    networks: S,
+    net_ctl: T,
+    next: H,
+    mut rand: R,
+) -> AnyNetHandler<'a, S, T, H>
+where
+    S: Networks,
+    T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
+{
+    let wireless_diag: &dyn WirelessDiag = match net_ctl.net_type() {
+        NetworkType::Ethernet => &AlwaysConnected,
+        NetworkType::Wifi => wifi_diag,
+        NetworkType::Thread => thread_diag,
+    };
+
+    let netw_diag = ChainedHandler::new(
+        |e, c| e == ROOT_ENDPOINT_ID && c == ThreadDiagHandler::CLUSTER.id,
+        ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt(),
+        EmptyHandler,
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == WifiDiagHandler::CLUSTER.id,
+        WifiDiagHandler::new(Dataver::new_rand(&mut rand), wifi_diag).adapt(),
+    )
+    .chain(
+        |e, c| e == ROOT_ENDPOINT_ID && c == EthDiagHandler::CLUSTER.id,
+        EthDiagHandler::new(Dataver::new_rand(&mut rand), eth_diag).adapt(),
+    );
+
+    net_handler(
+        matter,
+        comm_policy,
+        gen_diag,
+        netif_diag,
+        networks,
+        net_ctl,
+        wireless_diag,
+        |e, c| {
+            e == ROOT_ENDPOINT_ID
+                && (c == GenCommHandler::CLUSTER.id
+                    || c == GenDiagHandler::CLUSTER.id
+                    || c == EthDiagHandler::CLUSTER.id
+                    || c == WifiDiagHandler::CLUSTER.id
+                    || c == ThreadDiagHandler::CLUSTER.id)
+        },
+        netw_diag,
         next,
         rand,
     )

@@ -1000,7 +1000,7 @@ const NODE_BINFO_PROVISIONAL: Node<'static> = Node {
                 groups::GroupsHandler::CLUSTER,
                 user_label::CLUSTER,
                 binding::CLUSTER,
-                net_comm::NetworkType::Ethernet.cluster(),
+                net_comm::cluster(net_comm::NetworkType::Ethernet),
                 eth_diag::EthDiagHandler::CLUSTER,
                 // OTA clusters present on every variant (see `NODE`).
                 OTA_PROVIDER_CLUSTER,

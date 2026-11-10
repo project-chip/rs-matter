@@ -68,8 +68,10 @@ use rs_matter::utils::sync::{IfMutex, MaybeSend};
 use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
-use rs_matter::stack::eth::EthMatterStack;
+use rs_matter::dm::networks::eth::EthNetwork;
+use rs_matter::stack::eth::PreexistingEthernet;
 use rs_matter::stack::net::std::StdNetStack;
+use rs_matter::stack::MatterStack;
 
 use static_cell::StaticCell;
 
@@ -106,7 +108,7 @@ const SCRATCH_LEN: usize = MAX_URI_LEN + MAX_TOKEN_LEN + MAX_HEADER_LEN + CHUNK_
 const BUMP_SIZE: usize = 36 * 1024;
 
 /// The stack is allocated statically to avoid program stack blowups.
-static MATTER_STACK: StaticCell<EthMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
+static MATTER_STACK: StaticCell<MatterStack<BUMP_SIZE, EthNetwork>> = StaticCell::new();
 
 /// The buffers of the update loop, kept out of its future.
 static OTA_SCRATCH: StaticCell<IfMutex<[u8; SCRATCH_LEN]>> = StaticCell::new();
@@ -116,7 +118,7 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    let stack = MATTER_STACK.uninit().init_with(EthMatterStack::init(
+    let stack = MATTER_STACK.uninit().init_with(MatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
@@ -147,14 +149,16 @@ fn main() -> Result<(), Error> {
     let scratch = OTA_SCRATCH.init(IfMutex::new([0; SCRATCH_LEN]));
 
     // Run the stack, which adds the operational network clusters of endpoint 0 by itself
-    let matter = pin!(stack.run_preex(
-        // The UDP sockets of the node
-        StdNetStack::new(),
-        // The network interfaces of the host
-        SysNetifs,
-        // No Ethernet diagnostics to report
-        &(),
-        mdns::create_mdns(),
+    let matter = pin!(stack.run_eth(
+        PreexistingEthernet::new(
+            // The UDP sockets of the node
+            StdNetStack::new(),
+            // The network interfaces of the host
+            SysNetifs,
+            // No Ethernet diagnostics to report
+            &(),
+            mdns::create_mdns(),
+        ),
         &crypto,
         data_model(stack.matter(), rand, &providers, &ota_state, scratch),
         kv,
@@ -192,7 +196,11 @@ fn data_model<'a>(
         EmptyHandler
             .chain(
                 |e, _| e == ROOT_ENDPOINT_ID,
-                Async(EthMatterStack::<0, ()>::root_handler(matter, &(), rand)),
+                Async(MatterStack::<0, EthNetwork>::root_handler(
+                    matter,
+                    &(),
+                    rand,
+                )),
             )
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,

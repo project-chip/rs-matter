@@ -20,32 +20,24 @@ use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
-use rs_matter_dm::clusters::net_comm::{
-    self, remove_networks, NetCtlError, NetworkType, Networks, WirelessCreds,
-};
+use rs_matter_dm::clusters::net_comm::{self, NetCtlError, NetworkType, WirelessCreds};
 use rs_matter_dm::clusters::wifi_diag::WirelessDiag;
 use rs_matter_dm::clusters::{thread_diag, wifi_diag};
-use rs_matter_dm::networks::wireless::{NetCtlState, WirelessNetwork, WirelessNetworks};
+use rs_matter_dm::networks::wireless::NetCtlState;
 use rs_matter_dm::networks::NetChangeNotif;
-use rs_matter_dm_core::persist::{KvBlobStore, NETWORKS_KEY};
-use rs_matter_dm_core::DataModel;
-use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_sc::pase::CommWindowState;
 use rs_matter_transport::network::btp::{AdvData, Btp};
 use rs_matter_transport::network::NoNetwork;
-use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select3, select4, Coalesce};
-use rs_matter_utils::init::{init, Init};
-use rs_matter_utils::sync::{blocking, IfMutex, MaybeSend, MaybeSendSync};
+use rs_matter_utils::sync::MaybeSend;
 use rs_matter_utils::timers::{Duration, Timer};
 
 use crate::ble::GattPeripheral;
 use crate::mdns::Mdns;
 use crate::net::NetStack;
-use crate::network::{Embedding, Network};
-use crate::private::Sealed;
-use crate::{pin_alloc, DummyAttrNotifier, MatterStack};
+use crate::network::{Embedding, StackNetwork};
+use crate::{pin_alloc, MatterStack};
 
 pub use gatt::*;
 pub use thread::*;
@@ -55,91 +47,9 @@ mod gatt;
 mod thread;
 mod wifi;
 
-/// The number of networks of the default wireless networks store.
-pub const MAX_WIRELESS_NETWORKS: usize = 2;
-
-/// A type alias for a Matter stack running over either Wifi or Thread (and BLE, during commissioning).
-///
-/// `S` is the networks store of the Wifi or Thread interface.
-pub type WirelessMatterStack<
-    'a,
-    const B: usize,
-    T,
-    E = (),
-    S = WirelessNetworks<MAX_WIRELESS_NETWORKS, T>,
-> = MatterStack<'a, B, WirelessBle<T, E, S>>;
-
-/// An implementation of the `Network` trait for a Matter stack running over
-/// BLE during commissioning, and then over either WiFi or Thread when operating.
-///
-/// The supported commissioning is either concurrent or non-concurrent (as per the Matter Core spec),
-/// where one over the other is decided at runtime with the concrete wireless implementation
-/// (`WirelessCoex` or `Wireless` + `Gatt`).
-///
-/// Non-concurrent commissioning means that the device - at any point in time - either runs Bluetooth
-/// or Wifi/Thread, but not both.
-///
-/// This is done to save memory and to avoid the usage of BLE+Wifi/Thread co-exist drivers on
-/// devices which share a single wireless radio for both BLE and Wifi/Thread.
-///
-/// `T` selects the operational network (`wireless::Wifi` or `wireless::Thread`) and
-/// `S` is the networks store of its interface - any `Networks` implementation, by
-/// default `WirelessNetworks` with `MAX_WIRELESS_NETWORKS` networks.
-pub struct WirelessBle<T, E = (), S = WirelessNetworks<MAX_WIRELESS_NETWORKS, T>>
-where
-    T: WirelessNetwork,
-{
-    btp: Btp,
-    net_state: blocking::Mutex<RefCell<NetCtlState>>,
-    /// The networks store of the operational network interface.
-    ///
-    /// `run` holds it locked throughout and lends it, as `&mut`, to the Network
-    /// Commissioning handler of each phase, so that the handler is its only
-    /// user meanwhile.
-    networks: IfMutex<S>,
-    embedding: E,
-    _network: PhantomData<fn() -> T>,
-}
-
-impl<T, S, E> WirelessBle<T, E, S>
-where
-    T: WirelessNetwork,
-    S: Embedding,
-    E: Embedding,
-{
-    /// Creates a new instance of the `WirelessBle` network type.
-    pub const fn new() -> Self {
-        Self {
-            btp: Btp::new(),
-            net_state: NetCtlState::new_with_mutex(),
-            networks: IfMutex::new(S::INIT),
-            embedding: E::INIT,
-            _network: PhantomData,
-        }
-    }
-
-    /// Return an in-place initializer for the `WirelessBle` network type.
-    pub fn init() -> impl Init<Self> {
-        init!(Self {
-            btp <- Btp::init(),
-            net_state <- NetCtlState::init_with_mutex(),
-            networks <- IfMutex::init(S::init()),
-            embedding <- E::init(),
-            _network: PhantomData,
-        })
-    }
-}
-
-impl<const N: usize, T> Embedding for WirelessNetworks<N, T>
-where
-    T: WirelessNetwork + MaybeSendSync,
-{
-    const INIT: Self = Self::new();
-
-    fn init() -> impl Init<Self> {
-        WirelessNetworks::init()
-    }
-}
+/// The space the run methods that commission over BLE take in the bump arena for the
+/// BTP transport: add it to `B` of a stack that runs them.
+pub const BTP_BUMP_SIZE: usize = core::mem::size_of::<Btp>() + core::mem::align_of::<Btp>();
 
 /// A composite wireless network controller that is the SAME concrete type during
 /// both the (BLE) commissioning phase and the operational (Thread/Wifi) phase.
@@ -563,120 +473,20 @@ where
     }
 }
 
-impl<T, S, E> Default for WirelessBle<T, E, S>
+impl<const B: usize, NW, E> MatterStack<'_, B, NW, E>
 where
-    T: WirelessNetwork,
-    S: Embedding,
+    NW: StackNetwork,
     E: Embedding,
 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T, S, E> Sealed for WirelessBle<T, E, S>
-where
-    T: WirelessNetwork,
-    S: Embedding,
-    E: Embedding,
-{
-}
-
-impl<T, S, E> Network for WirelessBle<T, E, S>
-where
-    T: WirelessNetwork,
-    S: Embedding,
-    E: Embedding,
-{
-    const INIT: Self = Self::new();
-
-    type Embedding<'a>
-        = E
-    where
-        Self: 'a;
-
-    fn init() -> impl Init<Self> {
-        WirelessBle::init()
-    }
-
-    fn discovery_capabilities(&self) -> DiscoveryCapabilities {
-        DiscoveryCapabilities::BLE
-    }
-
-    fn embedding(&self) -> &Self::Embedding<'_> {
-        &self.embedding
-    }
-}
-
-impl<const B: usize, T, NW, E> MatterStack<'_, B, WirelessBle<T, E, NW>>
-where
-    T: WirelessNetwork,
-    NW: Networks + Embedding,
-    E: Embedding,
-{
-    /// Reset the Matter instance to the factory defaults by removing all fabrics and basic info settings
-    ///
-    /// `handler` is the same data model handler that is passed to `run`: the
-    /// Interaction Model broadcasts a `FactoryReset` lifecycle op to it, so
-    /// cluster handlers owning persisted state of their own can drop it too.
-    pub async fn reset<C, H, S>(&self, crypto: C, handler: H, store: S) -> Result<(), Error>
-    where
-        C: Crypto,
-        H: DataModel,
-        S: KvBlobStore + MaybeSend,
-    {
-        let kv = self.matter.kv(store);
-
-        self.matter.factory_reset(&kv)?;
-
-        // The stack's Network Commissioning handler is not part of `handler`,
-        // so the `FactoryReset` broadcast below does not reach its networks
-        // store (the commissioned Wifi/Thread credentials): reset it here.
-        remove_networks(&mut *self.network.networks.lock().await, NETWORKS_KEY, &kv)?;
-
-        // Reset the events counter so we don't carry a stale watermark across a
-        // factory reset (Matter Core spec R1.5.1, §7.14.1.1).
-        self.im(crypto, handler, &kv).factory_reset().await
-    }
-
-    /// Run the startup sequence of the stack: re-hydrate the persisted state and
-    /// open the basic communication window if the device is not commissioned yet.
-    ///
-    /// This is the `Matter`-level half of the startup (fabrics, basic info, RTC,
-    /// sessions). The Interaction Model half - the events watermark, the networks
-    /// store and the persisted subscriptions - is re-hydrated by `run`, because
-    /// `InteractionModel::startup` has to run on the very Interaction Model
-    /// instance that is then run: a resumed subscription borrows that instance's
-    /// IM buffers, and constructing an `InteractionModel` clears the
-    /// subscriptions table.
-    pub async fn startup<C, S>(&self, crypto: C, store: S) -> Result<(), Error>
-    where
-        C: Crypto,
-        S: KvBlobStore + MaybeSend,
-    {
-        let kv = self.matter.kv(store);
-
-        self.matter.startup(&kv)?;
-
-        if !self.matter().has_fabrics() {
-            info!("Device is not commissioned yet, opening commissioning window...");
-
-            self.open_basic_comm_window(crypto, &DummyAttrNotifier)?;
-        } else {
-            info!("Device is already commissioned");
-        }
-
-        Ok(())
-    }
-
     /// Run the concurrent (BLE + Wireless) commissioning transport.
     ///
     /// The operational wireless connection manager is no longer run here; it is
     /// driven by the data model engine (`InteractionModel::run`), which was built
     /// with the operational `net_ctl` and the stack's networks store. This method
     /// therefore only runs the BTP coexistence transport.
-    async fn run_net_coex<C, S, N, D, G>(
+    pub(crate) async fn run_net_coex<C, S, N, D, G>(
         &self,
+        btp: &Btp,
         crypto: &C,
         net_stack: &S,
         netif: &N,
@@ -690,12 +500,13 @@ where
         D: Mdns,
         G: GattPeripheral,
     {
-        self.run_btp_coex(crypto, net_stack, netif, mdns, gatt)
+        self.run_btp_coex(btp, crypto, net_stack, netif, mdns, gatt)
             .await
     }
 
     async fn run_btp_coex<C, S, N, D, P>(
         &self,
+        btp: &Btp,
         crypto: &C,
         net_stack: &S,
         netif: &N,
@@ -720,7 +531,7 @@ where
 
         let mut btp_task = pin_alloc!(
             self.bump,
-            self.run_gatt_while_ble_commissionable(peripheral, &adv_data)
+            self.run_gatt_while_ble_commissionable(btp, peripheral, &adv_data)
         );
 
         let mut net_task = pin_alloc!(
@@ -730,7 +541,7 @@ where
                 net_stack,
                 0, // TODO
                 core::future::pending(),
-                Some((&self.network.btp, &self.network.btp))
+                Some((btp, btp))
             )
         );
 
@@ -744,7 +555,12 @@ where
             .await
     }
 
-    async fn run_btp<C, P>(&self, crypto: &C, mut peripheral: P) -> Result<(), Error>
+    pub(crate) async fn run_btp<C, P>(
+        &self,
+        btp: &Btp,
+        crypto: &C,
+        mut peripheral: P,
+    ) -> Result<(), Error>
     where
         C: Crypto,
         P: GattPeripheral,
@@ -758,13 +574,9 @@ where
             self.matter().dev_comm().discriminator,
         );
 
-        let mut btp_task = pin_alloc!(
-            self.bump,
-            peripheral.run(&self.network.btp, "BT", &adv_data)
-        );
+        let mut btp_task = pin_alloc!(self.bump, peripheral.run(btp, "BT", &adv_data));
 
-        let mut net_task =
-            pin!(self.run_transport_net(crypto, &self.network.btp, &self.network.btp, NoNetwork));
+        let mut net_task = pin!(self.run_transport_net(crypto, btp, btp, NoNetwork));
 
         // The window this phase is advertising can also simply go away - it expires, or an
         // administrator revokes it - without the commissioner ever getting as far as handing
@@ -778,7 +590,7 @@ where
         });
 
         let mut oper_net_act_task = pin!(async {
-            NetCtlState::wait_prov_ready(&self.network.net_state, &self.network.btp).await;
+            NetCtlState::wait_prov_ready(&self.net_state, btp).await;
 
             // TODO: Workaround for a bug in the `esp-wifi` BLE stack:
             // ====================== PANIC ======================
@@ -804,6 +616,7 @@ where
     /// fails.
     async fn run_gatt_while_ble_commissionable<P>(
         &self,
+        btp: &Btp,
         peripheral: &mut P,
         adv_data: &AdvData,
     ) -> Result<(), Error>
@@ -832,7 +645,7 @@ where
             info!("Commissioning window opened; BLE peripheral started");
 
             {
-                let mut peripheral_task = pin!(peripheral.run(&self.network.btp, "BT", adv_data));
+                let mut peripheral_task = pin!(peripheral.run(btp, "BT", adv_data));
                 let mut closed_task = pin!(async {
                     self.wait_comm_window(|state| !state.is_open()).await;
                     Ok(())
@@ -873,8 +686,8 @@ where
     /// it, a device commissioned earlier in this same boot would leave a freshly entered BLE
     /// phase again after one poll interval, on the strength of a verdict from the previous
     /// commissioning.
-    fn reset_net_ctl_state(&self) {
-        self.network.net_state.lock(|state| {
+    pub(crate) fn reset_net_ctl_state(&self) {
+        self.net_state.lock(|state| {
             let mut state = state.borrow_mut();
 
             state.network_id.clear();
@@ -932,30 +745,35 @@ impl<S, N, C, M, G> PreexistingWireless<S, N, C, M, G> {
     }
 }
 
+/// `T` tells which network's tasks it implements: `wireless::Thread`, `wireless::Wifi`
+/// or `AnyNetwork`.
 pub(crate) struct MatterStackWirelessTask<'a, const B: usize, T, S, E, C, H, K, U, Q>
 where
-    T: WirelessNetwork,
-    S: Embedding,
+    S: StackNetwork,
     E: Embedding,
 {
-    stack: &'a MatterStack<'a, B, WirelessBle<T, E, S>>,
-    gen_diag: &'a dyn GenDiag,
-    networks: &'a mut S,
-    crypto: C,
-    handler: H,
-    kv: K,
-    user_task: U,
-    _net_ctl: PhantomData<fn() -> Q>,
+    pub(crate) stack: &'a MatterStack<'a, B, S, E>,
+    pub(crate) gen_diag: &'a dyn GenDiag,
+    pub(crate) networks: &'a mut S::Store,
+    /// The network the task runs.
+    pub(crate) net_type: NetworkType,
+    /// The BTP transport of the runs that commission over BLE, in the bump arena.
+    pub(crate) btp: Option<&'a Btp>,
+    pub(crate) crypto: C,
+    pub(crate) handler: H,
+    pub(crate) kv: K,
+    pub(crate) user_task: U,
+    pub(crate) _network: PhantomData<fn() -> T>,
+    pub(crate) _net_ctl: PhantomData<fn() -> Q>,
 }
 
 /// Runs an operational task until a commissioning window that has to be advertised
 /// over BLE opens, so that the radio can be handed back to BLE.
-pub(crate) struct UntilBleCommWindow<'a, const B: usize, T, S, E, X>
+pub(crate) struct UntilBleCommWindow<'a, const B: usize, S, E, X>
 where
-    T: WirelessNetwork,
-    S: Embedding,
+    S: StackNetwork,
     E: Embedding,
 {
-    stack: &'a MatterStack<'a, B, WirelessBle<T, E, S>>,
-    task: X,
+    pub(crate) stack: &'a MatterStack<'a, B, S, E>,
+    pub(crate) task: X,
 }

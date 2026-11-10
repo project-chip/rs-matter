@@ -304,7 +304,7 @@ const NODE_THREAD: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ROOT_NODE),
             clusters: clusters!(
                 sys;
-                NetworkType::Thread.cluster(),
+                rs_matter::dm::clusters::net_comm::cluster(NetworkType::Thread),
                 THREAD_DIAG_CLUSTER,
             ),
             client_clusters: &[],

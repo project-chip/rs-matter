@@ -121,6 +121,10 @@ impl net_comm::Networks for EthNetwork<'_> {
     fn save(&self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
         Ok(None)
     }
+
+    fn net_type(&self) -> Option<NetworkType> {
+        Some(NetworkType::Ethernet)
+    }
 }
 
 /// A `net_comm::NetCtl` implementation for Ethernet that errors out on all methods.

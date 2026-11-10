@@ -41,32 +41,36 @@ use rs_matter_crypto::{Crypto, Rng};
 use rs_matter_dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter_dm::clusters::dev_att::DeviceAttestation;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag, NetifInfo};
+use rs_matter_dm::clusters::net_comm::{remove_networks, NetworkType, Networks};
 use rs_matter_dm::clusters::sw_diag::SwDiag;
 use rs_matter_dm::endpoints::RootHandler;
+use rs_matter_dm::networks::wireless::NetCtlState;
 use rs_matter_dm::networks::NetChangeNotif;
-use rs_matter_dm_core::persist::{KvBlobStore, KvBlobStoreAccess};
+use rs_matter_dm_core::persist::{KvBlobStore, KvBlobStoreAccess, NETWORKS_KEY};
 use rs_matter_dm_core::{AttrChangeNotifier, AttrId, ClusterId, DataModel, EndptId};
 use rs_matter_im::{InteractionModel, InteractionModelState};
 use rs_matter_node::{BasicCommData, Matter, MATTER_PORT};
 use rs_matter_pairing::qr::QrTextType;
+use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_respond::{DefaultResponder, ExchangeHandler, Responder};
 use rs_matter_sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter_transport::exchange::MatterBuffers;
 use rs_matter_transport::network::{
     Address, ChainedNetwork, NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork,
 };
+use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select_slice, Coalesce};
 use rs_matter_utils::init::{init, Init};
 use rs_matter_utils::storage::Vec;
-use rs_matter_utils::sync::blocking::Mutex;
+use rs_matter_utils::sync::blocking::{self, Mutex};
 use rs_matter_utils::sync::{IfMutex, MaybeSend};
 use rs_matter_utils::timers::{Duration, Timer};
 
 use crate::bump::Bump;
 use crate::mdns::{Mdns, MAX_NETIF_IPV6_ADDRS};
 use crate::net::{NetSocket, NetStack};
-use crate::network::Network;
+use crate::network::{Embedding, StackNetwork};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -74,6 +78,7 @@ extern crate alloc;
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
 
+pub mod any;
 pub mod ble;
 pub mod bump;
 pub mod eth;
@@ -81,13 +86,6 @@ pub mod mdns;
 pub mod net;
 pub mod network;
 pub mod wireless;
-
-mod private {
-    /// A marker super-trait for sealed traits
-    pub trait Sealed {}
-
-    impl Sealed for () {}
-}
 
 cfg_if! {
     if #[cfg(feature = "max-subscriptions-32")] {
@@ -251,9 +249,15 @@ pub type MatterStackInteractionModelState =
 /// The `MatterStack` struct is the main entry point for the Matter stack.
 ///
 /// It wraps the actual `rs-matter` Matter instance and provides a simplified API for running the stack.
-pub struct MatterStack<'a, const B: usize, N>
+///
+/// It runs over Ethernet, Wifi or Thread, as the `run_*` method called says. `S` is the
+/// network of the stack (see `StackNetwork`): a networks store, such as `EthNetwork`,
+/// `WifiNetworks`, `ThreadNetworks`, or `AnyNetworks` for a node that picks its network at
+/// runtime, or a type of a platform crate that pairs a store with the memory of its
+/// drivers. `E` is optional user data embedded in the stack.
+pub struct MatterStack<'a, const B: usize, S, E = ()>
 where
-    N: Network,
+    S: StackNetwork,
 {
     matter: Matter<'a>,
     buffers: MatterBuffers<MAX_IM_BUFFERS>,
@@ -277,13 +281,23 @@ where
     /// credentials that non-concurrent commissioning has in memory but - with the
     /// failsafe still armed - not yet persisted.
     im_hydrated: Mutex<Cell<bool>>,
-    #[allow(unused)]
-    network: N,
+    /// The outcome of the last scan / connect of the operational network.
+    net_state: blocking::Mutex<RefCell<NetCtlState>>,
+    /// The networks store of the operational network interface.
+    ///
+    /// The run methods hold it locked throughout and lend it, as `&mut`, to the Network
+    /// Commissioning handler of each phase, so that the handler is its only
+    /// user meanwhile.
+    networks: IfMutex<S::Store>,
+    /// The memory the drivers of the platform need.
+    context: S::Context,
+    embedding: E,
 }
 
-impl<'a, const B: usize, N> MatterStack<'a, B, N>
+impl<'a, const B: usize, NW, E> MatterStack<'a, B, NW, E>
 where
-    N: Network,
+    NW: StackNetwork,
+    E: Embedding,
 {
     /// Return the user-owned system handler for the root endpoint (Endpoint 0).
     ///
@@ -336,7 +350,10 @@ where
             bump: Bump::new(),
             run_lock: IfMutex::new(()),
             im_hydrated: Mutex::new(Cell::new(false)),
-            network: N::INIT,
+            net_state: NetCtlState::new_with_mutex(),
+            networks: IfMutex::new(NW::Store::INIT),
+            context: NW::Context::INIT,
+            embedding: E::INIT,
         }
     }
 
@@ -372,7 +389,10 @@ where
             bump <- Bump::init(),
             run_lock <- IfMutex::init(()),
             im_hydrated: Mutex::new(Cell::new(false)),
-            network <- N::init(),
+            net_state <- NetCtlState::init_with_mutex(),
+            networks <- IfMutex::init(NW::Store::init()),
+            context <- NW::Context::init(),
+            embedding <- E::init(),
         })
     }
 
@@ -388,10 +408,92 @@ where
         &self.matter
     }
 
-    /// Get a reference to the `Network` instance.
-    /// Useful when the user instantiates `MatterStack` with a custom network type.
-    pub const fn network(&self) -> &N {
-        &self.network
+    /// Get a reference to the memory the drivers of the platform need.
+    pub const fn context(&self) -> &NW::Context {
+        &self.context
+    }
+
+    /// Get a mutable reference to the memory the drivers of the platform need, e.g. to set
+    /// it up before the stack is shared.
+    pub fn context_mut(&mut self) -> &mut NW::Context {
+        &mut self.context
+    }
+
+    /// Get a reference to the user data embedded in the stack.
+    pub const fn embedding(&self) -> &E {
+        &self.embedding
+    }
+
+    /// Get a mutable reference to the user data embedded in the stack, e.g. to set it up
+    /// before the stack is shared.
+    pub fn embedding_mut(&mut self) -> &mut E {
+        &mut self.embedding
+    }
+
+    /// Call `f` with the networks store, waiting while a run method holds it.
+    ///
+    /// Useful before the stack runs, e.g. to tell an `AnyNetworks` store which network
+    /// it is for.
+    pub async fn networks<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut NW::Store) -> R,
+    {
+        f(&mut *self.networks.lock().await)
+    }
+
+    /// Reset the Matter instance to the factory defaults by removing all fabrics and basic info settings
+    ///
+    /// `handler` is the same data model handler that is passed to the run method: the
+    /// Interaction Model broadcasts a `FactoryReset` lifecycle op to it, so
+    /// cluster handlers owning persisted state of their own can drop it too.
+    pub async fn reset<C, H, K>(&self, crypto: C, handler: H, store: K) -> Result<(), Error>
+    where
+        C: Crypto,
+        H: DataModel,
+        K: KvBlobStore + MaybeSend,
+    {
+        let kv = self.matter.kv(store);
+
+        self.matter.factory_reset(&kv)?;
+
+        // The stack's Network Commissioning handler is not part of `handler`,
+        // so the `FactoryReset` broadcast below does not reach its networks
+        // store (the commissioned Wifi/Thread credentials): reset it here.
+        remove_networks(&mut *self.networks.lock().await, NETWORKS_KEY, &kv)?;
+
+        // Reset the events counter so we don't carry a stale watermark across a
+        // factory reset (Matter Core spec R1.5.1, §7.14.1.1).
+        self.im(crypto, handler, &kv).factory_reset().await
+    }
+
+    /// Run the startup sequence of the stack: re-hydrate the persisted state and
+    /// open the basic communication window if the device is not commissioned yet.
+    ///
+    /// This is the `Matter`-level half of the startup (fabrics, basic info, RTC,
+    /// sessions). The Interaction Model half - the events watermark, the networks
+    /// store and the persisted subscriptions - is re-hydrated by the run method, because
+    /// `InteractionModel::startup` has to run on the very Interaction Model
+    /// instance that is then run: a resumed subscription borrows that instance's
+    /// IM buffers, and constructing an `InteractionModel` clears the
+    /// subscriptions table.
+    pub async fn startup<C, K>(&self, crypto: C, store: K) -> Result<(), Error>
+    where
+        C: Crypto,
+        K: KvBlobStore + MaybeSend,
+    {
+        let kv = self.matter.kv(store);
+
+        self.matter.startup(&kv)?;
+
+        if !self.matter().has_fabrics() {
+            info!("Device is not commissioned yet, opening commissioning window...");
+
+            self.open_basic_comm_window(crypto, &DummyAttrNotifier)?;
+        } else {
+            info!("Device is already commissioned");
+        }
+
+        Ok(())
     }
 
     /// Create a new shared `KvBlobStore` instance, which is used to read and write blobs from the storage.
@@ -424,10 +526,26 @@ where
             .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, notify)?;
 
         self.matter()
-            .print_standard_qr_text(self.network.discovery_capabilities())?;
+            .print_standard_qr_text(self.discovery_capabilities())?;
 
         self.matter()
-            .print_standard_qr_code(QrTextType::Unicode, self.network.discovery_capabilities())
+            .print_standard_qr_code(QrTextType::Unicode, self.discovery_capabilities())
+    }
+
+    /// The ways a commissioner can discover the device: over BLE on Wifi and Thread, over
+    /// the IP network on Ethernet, and both if the networks store does not tell.
+    fn discovery_capabilities(&self) -> DiscoveryCapabilities {
+        let net_type = self
+            .networks
+            .try_lock()
+            .ok()
+            .and_then(|networks| networks.net_type());
+
+        match net_type {
+            Some(NetworkType::Ethernet) => DiscoveryCapabilities::IP,
+            Some(NetworkType::Wifi | NetworkType::Thread) => DiscoveryCapabilities::BLE,
+            None => DiscoveryCapabilities::BLE | DiscoveryCapabilities::IP,
+        }
     }
 
     /// This method is a specialization of `run_transport_net` over the UDP transport (both IPv4 and IPv6).

@@ -23,65 +23,17 @@ use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::endpoints::eth_net_handler;
 use rs_matter_dm::networks::NetChangeNotif;
 use rs_matter_dm::root_endpoint;
-use rs_matter_dm_core::persist::{KvBlobStore, KvBlobStoreAccess};
+use rs_matter_dm_core::persist::KvBlobStoreAccess;
 use rs_matter_dm_core::{DataModel, Endpoint};
-use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_transport::network::NoNetwork;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select4, Coalesce};
-use rs_matter_utils::init::{init, Init};
 use rs_matter_utils::sync::MaybeSend;
 
 use crate::mdns::Mdns;
 use crate::net::NetStack;
-use crate::network::{Embedding, Network};
-use crate::private::Sealed;
-use crate::{pin_alloc, DummyAttrNotifier, MatterStack, RunOptions, UserTask};
-
-/// An implementation of the `Network` trait for Ethernet.
-///
-/// Note that "Ethernet" - in the context of this crate - means
-/// not just the Ethernet transport, but also any other IP-based transport
-/// (like Wifi or Thread), where the Matter stack would not be concerned
-/// with the management of the network transport (as in re-connecting to the
-/// network on lost signal, managing network credentials and so on).
-///
-/// The expectation is nevertheless that for production use-cases
-/// the `Eth` network would really only be used for Ethernet.
-pub struct Eth<E = ()> {
-    embedding: E,
-}
-
-impl<E> Sealed for Eth<E> {}
-
-impl<E> Network for Eth<E>
-where
-    E: Embedding,
-{
-    const INIT: Self = Self { embedding: E::INIT };
-
-    type Embedding<'a>
-        = E
-    where
-        E: 'a;
-
-    fn init() -> impl Init<Self> {
-        init!(Self {
-            embedding <- E::init(),
-        })
-    }
-
-    fn discovery_capabilities(&self) -> DiscoveryCapabilities {
-        DiscoveryCapabilities::IP
-    }
-
-    fn embedding(&self) -> &Self::Embedding<'_> {
-        &self.embedding
-    }
-}
-
-/// A type alias for a Matter stack running over Ethernet.
-pub type EthMatterStack<'a, const B: usize, E = ()> = MatterStack<'a, B, Eth<E>>;
+use crate::network::{Embedding, StackNetwork};
+use crate::{pin_alloc, MatterStack, RunOptions, UserTask};
 
 /// A trait representing a task that needs access to the operational Ethernet interface
 /// (Network stack, Netif and Ethernet diagnostics) to perform its work.
@@ -180,109 +132,31 @@ where
     }
 }
 
-/// A specialization of the `MatterStack` for Ethernet.
-impl<const B: usize, E> MatterStack<'_, B, Eth<E>>
+/// The Ethernet driver of a node without Ethernet, such as an `AnyDriver` for Wifi and
+/// Thread only. It has no values, so it is never run.
+pub enum NoEthernet {}
+
+impl EthernetDriver for NoEthernet {
+    async fn run<T>(&mut self, _task: T) -> Result<(), Error>
+    where
+        T: EthernetTask,
+    {
+        match *self {}
+    }
+}
+
+/// The methods of the `MatterStack` for Ethernet.
+impl<const B: usize, S, E> MatterStack<'_, B, S, E>
 where
+    S: StackNetwork,
     E: Embedding,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for Ethernet network.
-    pub const fn root_endpoint() -> Endpoint<'static> {
+    pub const fn eth_root_endpoint() -> Endpoint<'static> {
         const ENDPOINT: Endpoint<'static> = root_endpoint!(eth);
 
         ENDPOINT
-    }
-
-    /// Reset the Matter instance to the factory defaults by removing all fabrics and basic info settings
-    ///
-    /// `handler` is the same data model handler that is passed to `run`: the
-    /// Interaction Model broadcasts a `FactoryReset` lifecycle op to it, so
-    /// cluster handlers owning persisted state of their own can drop it too.
-    pub async fn reset<C, H, S>(&self, crypto: C, handler: H, store: S) -> Result<(), Error>
-    where
-        C: Crypto,
-        H: DataModel,
-        S: KvBlobStore + MaybeSend,
-    {
-        let kv = self.matter.kv(store);
-
-        self.matter.factory_reset(&kv)?;
-
-        // Reset the events counter so we don't carry a stale watermark across a
-        // factory reset (Matter Core spec R1.5.1, §7.14.1.1).
-        self.im(crypto, handler, &kv).factory_reset().await
-    }
-
-    /// Run the startup sequence of the stack: re-hydrate the persisted state and
-    /// open the basic commissioning window if the device is not commissioned yet.
-    ///
-    /// This is the `Matter`-level half of the startup (fabrics, basic info, RTC,
-    /// sessions). The Interaction Model half - the events watermark, the networks
-    /// store and the persisted subscriptions - is re-hydrated by `run`, because
-    /// `InteractionModel::startup` has to run on the very Interaction Model
-    /// instance that is then run: a resumed subscription borrows that instance's
-    /// IM buffers, and constructing an `InteractionModel` clears the
-    /// subscriptions table.
-    pub async fn startup<C, S>(&self, crypto: C, store: S) -> Result<(), Error>
-    where
-        C: Crypto,
-        S: KvBlobStore + MaybeSend,
-    {
-        let kv = self.matter.kv(store);
-
-        self.matter.startup(&kv)?;
-
-        if !self.matter().has_fabrics() {
-            info!("Device is not commissioned yet, opening commissioning window...");
-
-            self.open_basic_comm_window(crypto, &DummyAttrNotifier)?;
-        } else {
-            info!("Device is already commissioned");
-        }
-
-        Ok(())
-    }
-
-    /// Run the Matter stack for a pre-existing Ethernet network.
-    ///
-    /// # Arguments
-    /// - `net_stack` - a user-provided network stack implementation
-    /// - `netif` - a user-provided `Netif` implementation for the Ethernet network
-    /// - `eth_diag` - a user-provided `EthDiag` implementation (`&()` if it has nothing to report)
-    /// - `mdns` - a user-provided mDNS implementation
-    /// - `crypto` - a user-provided crypto implementation
-    /// - `handler` - a user-provided DM handler implementation
-    /// - `kv` - a user-provided `KvBlobStoreAccess` implementation for loading the persisted state of the stack
-    /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
-    #[allow(clippy::too_many_arguments)]
-    pub fn run_preex<'t, U, N, D, M, C, H, K, O>(
-        &'t self,
-        net_stack: U,
-        netif: N,
-        eth_diag: D,
-        mdns: M,
-        crypto: C,
-        handler: H,
-        kv: K,
-        options: O,
-    ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
-    where
-        U: NetStack + 't,
-        N: NetifDiag + NetChangeNotif + 't,
-        D: EthDiag + 't,
-        M: Mdns + 't,
-        C: Crypto + 't,
-        H: DataModel + 't,
-        K: KvBlobStoreAccess + 't,
-        O: RunOptions + 't,
-    {
-        self.run(
-            PreexistingEthernet::new(net_stack, netif, eth_diag, mdns),
-            crypto,
-            handler,
-            kv,
-            options,
-        )
     }
 
     /// Run the Matter stack for an Ethernet network.
@@ -293,7 +167,7 @@ where
     /// - `handler` - a user-provided DM handler implementation
     /// - `kv` - a user-provided `KvBlobStoreAccess` implementation for loading the persisted state of the stack
     /// - `options` - the optional settings: `()` for the defaults, a `UserTask`, or an `Options`
-    pub async fn run<N, C, H, K, O>(
+    pub async fn run_eth<N, C, H, K, O>(
         &self,
         mut ethernet: N,
         crypto: C,
@@ -360,15 +234,16 @@ where
     }
 }
 
-struct MatterStackEthernetTask<'a, const B: usize, E, C, H, K, X>
+struct MatterStackEthernetTask<'a, const B: usize, S, E, C, H, K, X>
 where
+    S: StackNetwork,
     E: Embedding,
     C: Crypto,
     H: DataModel,
     K: KvBlobStoreAccess,
     X: UserTask,
 {
-    stack: &'a MatterStack<'a, B, Eth<E>>,
+    stack: &'a MatterStack<'a, B, S, E>,
     gen_diag: &'a dyn GenDiag,
     crypto: C,
     handler: H,
@@ -376,8 +251,10 @@ where
     user_task: X,
 }
 
-impl<const B: usize, E, C, H, K, X> EthernetTask for MatterStackEthernetTask<'_, B, E, C, H, K, X>
+impl<const B: usize, S, E, C, H, K, X> EthernetTask
+    for MatterStackEthernetTask<'_, B, S, E, C, H, K, X>
 where
+    S: StackNetwork,
     E: Embedding,
     C: Crypto,
     H: DataModel,
