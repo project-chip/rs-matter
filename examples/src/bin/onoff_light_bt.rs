@@ -78,13 +78,15 @@ use rs_matter::persist::DirKvBlobStore;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
+use rs_matter::dm::networks::wireless::WifiNetworks;
 #[cfg(all(target_os = "linux", feature = "zbus"))]
 use rs_matter::stack::ble::BluezGattPeripheral;
 use rs_matter::stack::ble::GattPeripheral;
 #[cfg(windows)]
 use rs_matter::stack::ble::Win32GattPeripheral;
 use rs_matter::stack::net::std::StdNetStack;
-use rs_matter::stack::wireless::{PreexistingWireless, WifiMatterStack};
+use rs_matter::stack::wireless::PreexistingWireless;
+use rs_matter::stack::MatterStack;
 use rs_matter::utils::init::InitMaybeUninit;
 
 use static_cell::StaticCell;
@@ -99,7 +101,7 @@ mod mdns;
 const BUMP_SIZE: usize = 64 * 1024;
 
 /// The stack is allocated statically to avoid program stack blowups.
-static MATTER_STACK: StaticCell<WifiMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
+static MATTER_STACK: StaticCell<MatterStack<BUMP_SIZE, WifiNetworks>> = StaticCell::new();
 
 #[cfg(all(target_os = "linux", feature = "zbus"))]
 fn main() -> Result<(), Error> {
@@ -179,7 +181,7 @@ where
     N: NetCtl + WifiDiag + NetChangeNotif,
     G: GattPeripheral,
 {
-    let stack = MATTER_STACK.uninit().init_with(WifiMatterStack::init(
+    let stack = MATTER_STACK.uninit().init_with(MatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
@@ -211,7 +213,7 @@ where
     // Run the stack in its non-concurrent commissioning mode: BLE while the commissioning
     // window is open, and Wifi once the commissioner has provisioned the network. The stack
     // adds the operational network clusters of endpoint 0 by itself.
-    let matter = pin!(stack.run(
+    let matter = pin!(stack.run_wifi_no_coex(
         PreexistingWireless::new(
             // The UDP sockets of the node
             StdNetStack::new(),
@@ -260,7 +262,11 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         EmptyHandler
             .chain(
                 |e, _| e == ROOT_ENDPOINT_ID,
-                Async(WifiMatterStack::<0, ()>::root_handler(matter, &(), rand)),
+                Async(MatterStack::<0, WifiNetworks>::root_handler(
+                    matter,
+                    &(),
+                    rand,
+                )),
             )
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,

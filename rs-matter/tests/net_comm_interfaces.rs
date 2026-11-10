@@ -58,11 +58,15 @@ const THREAD_DATASET: &[u8] = &[0x02, 0x08, 1, 2, 3, 4, 5, 6, 7, 8];
 
 const NODE: Node<'static> = Node {
     endpoints: &[
-        Endpoint::new(0, &[DEV_TYPE_ROOT_NODE], &[NetworkType::Wifi.cluster()]),
+        Endpoint::new(
+            0,
+            &[DEV_TYPE_ROOT_NODE],
+            &[net_comm::cluster(NetworkType::Wifi)],
+        ),
         Endpoint::new(
             2,
             &[DEV_TYPE_SECONDARY_NETWORK_INTERFACE],
-            &[NetworkType::Thread.cluster()],
+            &[net_comm::cluster(NetworkType::Thread)],
         ),
     ],
 };

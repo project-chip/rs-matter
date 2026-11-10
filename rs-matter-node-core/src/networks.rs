@@ -24,6 +24,26 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::utils::sync::MaybeSendSync;
 
+/// Network type supported by the `NetCtl` implementations
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum NetworkType {
+    Ethernet,
+    Wifi,
+    Thread,
+}
+
+impl NetworkType {
+    /// Check if the given credentials match the network type
+    pub fn check_creds(&self, creds: &WirelessCreds<'_>) -> Result<(), Error> {
+        match creds {
+            WirelessCreds::Wifi { .. } if matches!(self, NetworkType::Wifi) => Ok(()),
+            WirelessCreds::Thread { .. } if matches!(self, NetworkType::Thread) => Ok(()),
+            _ => Err(ErrorCode::InvalidAction.into()),
+        }
+    }
+}
+
 /// Wireless credentials used for connecting to a network
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum WirelessCreds<'a> {
@@ -205,6 +225,13 @@ pub trait Networks: MaybeSendSync {
     /// Save the networks' credentials into the given buffer and return the number of bytes written
     /// or `None` if the networks do not need persistence.
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error>;
+
+    /// Return the type of the networks the store holds, if it knows it.
+    ///
+    /// The default implementation returns `None`.
+    fn net_type(&self) -> Option<NetworkType> {
+        None
+    }
 }
 
 impl<T> Networks for &mut T
@@ -274,6 +301,10 @@ where
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
         (**self).save(buf)
     }
+
+    fn net_type(&self) -> Option<NetworkType> {
+        (**self).net_type()
+    }
 }
 
 impl Networks for &mut dyn Networks {
@@ -339,6 +370,10 @@ impl Networks for &mut dyn Networks {
 
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
         (**self).save(buf)
+    }
+
+    fn net_type(&self) -> Option<NetworkType> {
+        (**self).net_type()
     }
 }
 
