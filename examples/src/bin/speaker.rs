@@ -31,7 +31,7 @@ use rs_matter::dm::clusters::app::on_off::{
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
+use rs_matter::dm::devices::DEV_TYPE_SPEAKER;
 use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, Node};
@@ -138,7 +138,7 @@ const NODE: Node<'static> = Node {
         root_endpoint!(eth),
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_SMART_SPEAKER),
+            devices!(DEV_TYPE_SPEAKER),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,

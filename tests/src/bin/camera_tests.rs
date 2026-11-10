@@ -69,12 +69,12 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSourceHandler};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
-use rs_matter::dm::devices::{DEV_TYPE_POWER_SOURCE, DEV_TYPE_ROOT_NODE};
+use rs_matter::dm::devices::{DEV_TYPE_CAMERA, DEV_TYPE_POWER_SOURCE, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, DataModel, Dataver, DeviceType, Endpoint, InvokeContext, Node,
-    ReadContext, WriteContext,
+    ArrayAttributeRead, Async, DataModel, Dataver, Endpoint, InvokeContext, Node, ReadContext,
+    WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::FabricIndex;
@@ -100,15 +100,6 @@ mod args;
 
 #[path = "../common/logging.rs"]
 mod logging;
-
-// ---------------------------------------------------------------------------
-// Device type
-// ---------------------------------------------------------------------------
-
-const DEV_TYPE_MATTER_CAMERA: DeviceType = DeviceType {
-    dtype: 0x0142,
-    drev: 1,
-};
 
 // ---------------------------------------------------------------------------
 // CameraAvStream hooks – stub
@@ -635,7 +626,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
         finish: ProductFinish::Satin,
         color: Some(ProductColor::Purple),
     },
-    device_type: Some(DEV_TYPE_MATTER_CAMERA.dtype),
+    device_type: Some(DEV_TYPE_CAMERA.dtype),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     tcp_supported: true,
     ..TEST_DEV_DET
@@ -666,7 +657,7 @@ const NODE: Node<'static> = Node {
         },
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_MATTER_CAMERA),
+            devices!(DEV_TYPE_CAMERA),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
