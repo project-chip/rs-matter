@@ -17,7 +17,7 @@
 
 //! The ICD Management cluster of a Short Idle Time (SIT) only device.
 
-use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, ReadContext};
+use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, LifecycleOp, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 use crate::{with, Matter};
@@ -77,6 +77,16 @@ impl ClusterHandler for SitIcdMgmtHandler<'_> {
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, _ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        // Advertise right away, so that the subscriptions resumed after startup
+        // are checked against this device's `IdleModeDuration`.
+        if matches!(op, LifecycleOp::Startup) {
+            self.icd.publish_advertisement(self.matter, false);
+        }
+
+        Ok(())
     }
 
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
