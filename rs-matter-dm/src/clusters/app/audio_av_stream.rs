@@ -391,6 +391,11 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> AudioAvStreamHandler<'a, H, NA>
     fn mic_volume(&self) -> u8 {
         self.with_state(|s| s.volume.mic_volume)
     }
+
+    #[inline]
+    fn validate<T>(&self, field: Result<T, Error>) -> Result<T, Error> {
+        field.map_err(|_| ErrorCode::ConstraintError.into())
+    }
 }
 
 impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
@@ -584,24 +589,12 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
         response: AudioStreamAllocateResponseBuilder<P>,
     ) -> Result<P, Error> {
         let params = AudioStreamParams::new(
-            request
-                .stream_usage()
-                .map_err(|_| ErrorCode::ConstraintError)?,
-            request
-                .audio_codec()
-                .map_err(|_| ErrorCode::ConstraintError)?,
-            request
-                .channel_count()
-                .map_err(|_| ErrorCode::ConstraintError)?,
-            request
-                .sample_rate()
-                .map_err(|_| ErrorCode::ConstraintError)?,
-            request
-                .bit_rate()
-                .map_err(|_| ErrorCode::ConstraintError)?,
-            request
-                .bit_depth()
-                .map_err(|_| ErrorCode::ConstraintError)?,
+            self.validate(request.stream_usage())?,
+            self.validate(request.audio_codec())?,
+            self.validate(request.channel_count())?,
+            self.validate(request.sample_rate())?,
+            self.validate(request.bit_rate())?,
+            self.validate(request.bit_depth())?,
         );
         let stream_id = self.allocate_stream(&params).await?;
         response.audio_stream_id(stream_id)?.end()
@@ -612,9 +605,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
         _ctx: impl InvokeContext,
         request: AudioStreamDeallocateRequest<'_>,
     ) -> Result<(), Error> {
-        let stream_id = request
-            .audio_stream_id()
-            .map_err(|_| ErrorCode::ConstraintError)?;
+        let stream_id = self.validate(request.audio_stream_id())?;
         self.deallocate_stream(stream_id).await
     }
 
@@ -677,13 +668,9 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
         if any_allocated {
             return Err(ErrorCode::InvalidInState.into());
         }
-        let priorities = request
-            .stream_priorities()
-            .map_err(|_| ErrorCode::ConstraintError)?;
+        let priorities = self.validate(request.stream_priorities())?;
         let new_prios = build_stream_priorities(
-            priorities
-                .iter()
-                .map(|item| item.map_err(|_| Error::from(ErrorCode::ConstraintError))),
+            priorities.iter().map(|item| self.validate(item)),
             self.config.supported_stream_usages,
         )?;
         self.with_state_mut(|s| {
