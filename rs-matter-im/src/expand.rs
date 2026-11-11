@@ -451,7 +451,20 @@ where
                 }
                 Err(status) => {
                     // Report an error status and remove the current item
-                    break Some(Ok(Err(unwrap!(self.item.take()).into_status(status))));
+                    let item = unwrap!(self.item.take());
+
+                    // The filter applies to a concrete path even if the path does not exist,
+                    // so that a subscription does not report the same error status again and again
+                    let path = item.path();
+                    if let (Some(endpoint_id), Some(cluster_id), Some(leaf_id)) =
+                        (path.endpoint, path.cluster, path.leaf)
+                    {
+                        if !(self.filter)(endpoint_id, cluster_id, leaf_id) {
+                            continue;
+                        }
+                    }
+
+                    break Some(Ok(Err(item.into_status(status))));
                 }
             }
         }
@@ -1167,12 +1180,33 @@ mod test {
             &[],
         );
 
-        // Non-wildcard path, leaf does not exist: filter must not be consulted
-        // and the expander must still produce `UnsupportedAttribute`.
+        // Non-wildcard path, leaf does not exist, filter accepts it: the
+        // expander must produce `UnsupportedAttribute`.
         test_with_filter(
             &NODE,
             &[GenericPath::new(Some(0), Some(1), Some(99))],
             |_, _, _| true,
+            &[Ok(Err(IMStatusCode::UnsupportedAttribute))],
+        );
+
+        // Non-wildcard path, endpoint does not exist, filter rejects it: the
+        // expander must yield nothing.
+        test_with_filter(
+            &NODE,
+            &[GenericPath::new(Some(3), Some(1), Some(1))],
+            |_, _, _| false,
+            &[],
+        );
+
+        // Mixed: a non-wildcard path to a missing leaf that the filter rejects,
+        // followed by one that the filter accepts.
+        test_with_filter(
+            &NODE,
+            &[
+                GenericPath::new(Some(0), Some(1), Some(98)),
+                GenericPath::new(Some(0), Some(1), Some(99)),
+            ],
+            |_, _, leaf| leaf == 99,
             &[Ok(Err(IMStatusCode::UnsupportedAttribute))],
         );
 

@@ -1020,48 +1020,45 @@ where
         req: &SubscribeReq<'_>,
         accessor: &Accessor<'_>,
     ) -> Result<(), Error> {
-        // As per spec, we need to validate that the subscription request
-        // contains existing endpoints, clusters and attributes, and if not
-        // we should (a bit surprisingly) return InvalidAction
+        // A path that is unsupported or not accessible does not fail the request:
+        // the priming report carries an error status for it, and the subscription
+        // keeps the remaining paths. The request is rejected with `InvalidAction`
+        // only if it is malformed, or if none of its paths is valid.
 
         self.handler.access(|node| {
-            let mut has_attrs = false;
-            let mut has_events = false;
+            let mut valid = false;
 
             if let Some(attr_requests) = req.attr_requests()? {
-                has_attrs = true;
-
                 for attr_req in attr_requests {
                     let path = attr_req?;
 
                     if path.is_wildcard() {
                         Self::validate_attr_wildcard_path(&path)?;
+                    }
 
-                        if !node.has_accessible_attr(&path, accessor) {
-                            return Err(ErrorCode::InvalidAction.into());
-                        }
-                    } else {
-                        node.validate_attr_path(&path, false, false, accessor)
-                            .map_err(|_| ErrorCode::InvalidAction)?;
+                    if !valid {
+                        valid = if path.is_wildcard() {
+                            node.has_accessible_attr(&path, accessor)
+                        } else {
+                            node.validate_attr_path(&path, false, false, accessor)
+                                .is_ok()
+                        };
                     }
                 }
             }
 
             if let Some(event_reqs) = req.event_requests()? {
-                has_events = true;
-
                 for event_req in event_reqs {
                     let path = event_req?;
 
-                    if !path.is_wildcard() {
-                        node.validate_event_path(&path, accessor)
-                            .map_err(|_| ErrorCode::InvalidAction)?;
+                    if !valid {
+                        valid =
+                            path.is_wildcard() || node.validate_event_path(&path, accessor).is_ok();
                     }
                 }
             }
 
-            if !has_attrs && !has_events {
-                // Empty subscribe requests are not allowed either
+            if !valid {
                 return Err(ErrorCode::InvalidAction.into());
             }
 
@@ -1974,11 +1971,14 @@ where
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
 
             // Validate concrete event paths against node metadata
-            // and emit EventStatusIB for non-wildcard paths that don't match
+            // and emit EventStatusIB for non-wildcard paths that don't match.
+            // Not done in the later reports of a subscription, which cover its valid paths only
+            let report_statuses = !matches!(self.req, ReportDataReq::SubscribeReport(_));
+
             for event_req in event_reqs.iter() {
                 let path = event_req?;
 
-                if !path.is_wildcard() {
+                if report_statuses && !path.is_wildcard() {
                     if let Err(status) =
                         metadata.access(|node| node.validate_event_path(&path, &accessor))
                     {
