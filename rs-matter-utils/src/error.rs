@@ -168,7 +168,10 @@ pub enum UtilsErrorCode {
 impl From<UtilsErrorCode> for Error {
     fn from(value: UtilsErrorCode) -> Self {
         match value {
-            UtilsErrorCode::BufferTooSmall => ErrorCode::BufferTooSmall.into(),
+            // NOTE: *not* `ErrorCode::BufferTooSmall`. `rs-matter-im` matches on
+            // `ErrorCode::NoSpace` to decide that a long read must be chunked, so
+            // until `tlv`/`im` are converted the bridge has to keep producing it.
+            UtilsErrorCode::BufferTooSmall => ErrorCode::NoSpace.into(),
             UtilsErrorCode::UnexpectedEof => ErrorCode::TruncatedPacket.into(),
             UtilsErrorCode::InvalidData => ErrorCode::InvalidData.into(),
         }
