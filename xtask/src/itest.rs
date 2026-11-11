@@ -1661,6 +1661,11 @@ impl ITests {
             return self.run_commissioner_suite(test_timeout_secs, profile, target);
         }
 
+        let chip_tool_path = self.chip_builder.chip_tool_path();
+        if !chip_tool_path.exists() {
+            anyhow::bail!("`chip-tool` not found. Run `cargo xtask itest-setup` first.");
+        }
+
         // Determine which tests to run
         let tests = if tests.clone().into_iter().next().is_some() {
             tests.into_iter().map(|s| s.as_str()).collect::<Vec<_>>()
@@ -1673,13 +1678,6 @@ impl ITests {
         if tests.is_empty() {
             info!("No tests specified and no default tests enabled.");
             return Ok(());
-        }
-
-        if tests.iter().any(|t| !Self::is_python_test(t)) {
-            let chip_tool_path = self.chip_builder.chip_tool_path();
-            if !chip_tool_path.exists() {
-                anyhow::bail!("`chip-tool` not found. Run `cargo xtask itest-setup` first.");
-            }
         }
 
         debug!("About to run tests: {tests:?}");
