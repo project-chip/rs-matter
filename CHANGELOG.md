@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 * Fix: a subscription with some unsupported or inaccessible paths is accepted with its valid paths, rather than rejected with `InvalidAction` (#655)
+* Fix: a subscription is rejected with `InvalidAction` if its min interval is greater than its max interval, or if its wildcard event paths match no accessible event (#655)
 * New: `dm::devices` has a constant for each device type of the Matter 1.6 Device Library (#653)
   * Breaking: `DEV_TYPE_SMART_SPEAKER` is now `DEV_TYPE_SPEAKER`, and `DEV_TYPE_VIDEO_PLAYER` is now `DEV_TYPE_BASIC_VIDEO_PLAYER`, as the Device Library names them
 * Fix: `DEV_TYPE_AGGREGATOR`, `DEV_TYPE_BRIDGED_NODE`, `DEV_TYPE_GENERIC_SWITCH`, `DEV_TYPE_SPEAKER`, `DEV_TYPE_CASTING_VIDEO_PLAYER` and `DEV_TYPE_BASIC_VIDEO_PLAYER` report the revision of the Matter 1.6 Device Library, which the certification tests require (#653)

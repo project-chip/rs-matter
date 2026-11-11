@@ -138,8 +138,9 @@ fn test_subscribe_mixed_paths() {
 }
 
 #[test]
-fn test_subscribe_no_valid_paths() {
-    // A subscription none of whose paths is valid is rejected with `InvalidAction`
+fn test_subscribe_rejected() {
+    // A subscription none of whose paths is valid, or whose min interval is
+    // greater than its max interval, is rejected with `InvalidAction`
     init_env_logger();
 
     let im = new_default_runner();
@@ -159,12 +160,37 @@ fn test_subscribe_no_valid_paths() {
         Some(1),
     ))];
 
+    // A wildcard event path that matches no event
+    let wc_event_reqs = &[EventPath::from_gp(&GenericPath::new(Some(999), None, None))];
+
+    let valid_attr_reqs = &[AttrPath::from_gp(&EP1_ON_TIME)];
+
     for req in [
-        TestSubscribeReq::reqs(attr_reqs),
-        TestSubscribeReq::event_reqs(event_reqs),
         TestSubscribeReq {
+            min_int_floor: 0,
+            max_int_ceil: 1,
+            ..TestSubscribeReq::reqs(attr_reqs)
+        },
+        TestSubscribeReq {
+            min_int_floor: 0,
+            max_int_ceil: 1,
+            ..TestSubscribeReq::event_reqs(event_reqs)
+        },
+        TestSubscribeReq {
+            min_int_floor: 0,
+            max_int_ceil: 1,
             event_requests: Some(event_reqs),
             ..TestSubscribeReq::reqs(attr_reqs)
+        },
+        TestSubscribeReq {
+            min_int_floor: 0,
+            max_int_ceil: 1,
+            ..TestSubscribeReq::event_reqs(wc_event_reqs)
+        },
+        TestSubscribeReq {
+            min_int_floor: 10,
+            max_int_ceil: 5,
+            ..TestSubscribeReq::reqs(valid_attr_reqs)
         },
     ] {
         im.test_one(
@@ -176,11 +202,7 @@ fn test_subscribe_no_valid_paths() {
                     proto_opcode: OpCode::SubscribeRequest as _,
                     reliable: true,
                 },
-                input_payload: TestSubscribeReq {
-                    min_int_floor: 0,
-                    max_int_ceil: 1,
-                    ..req
-                },
+                input_payload: req,
                 expected_meta: MessageMeta {
                     proto_id: PROTO_ID_INTERACTION_MODEL,
                     proto_opcode: OpCode::StatusResponse as _,

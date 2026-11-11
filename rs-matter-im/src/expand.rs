@@ -451,20 +451,7 @@ where
                 }
                 Err(status) => {
                     // Report an error status and remove the current item
-                    let item = unwrap!(self.item.take());
-
-                    // The filter applies to a concrete path even if the path does not exist,
-                    // so that a subscription does not report the same error status again and again
-                    let path = item.path();
-                    if let (Some(endpoint_id), Some(cluster_id), Some(leaf_id)) =
-                        (path.endpoint, path.cluster, path.leaf)
-                    {
-                        if !(self.filter)(endpoint_id, cluster_id, leaf_id) {
-                            continue;
-                        }
-                    }
-
-                    break Some(Ok(Err(item.into_status(status))));
+                    break Some(Ok(Err(unwrap!(self.item.take()).into_status(status))));
                 }
             }
         }
@@ -485,6 +472,18 @@ where
 
         let command = matches!(T::OPERATION, Operation::Invoke);
         let attr_read = matches!(T::OPERATION, Operation::Read);
+
+        // For a read, the filter applies to a concrete path even if the path does not exist,
+        // so that a subscription does not report the same error status again and again
+        if attr_read {
+            if let (Some(endpoint_id), Some(cluster_id), Some(leaf_id)) =
+                (path.endpoint, path.cluster, path.leaf)
+            {
+                if !(self.filter)(endpoint_id, cluster_id, leaf_id) {
+                    return Ok(None);
+                }
+            }
+        }
 
         // Do some basic checks on wildcards, as not all wildcards are supported for each type of operation
         if !attr_read {

@@ -843,10 +843,13 @@ where
             .transaction_id()
             .accessor(self.matter, self.handler.aux_acl_enabled())?;
 
-        if let Err(err) = self.validate_subscribe(&req, &accessor) {
-            error!("Invalid subscribe request: {:?}", err);
-            return Self::send_status(exchange, err.code().into()).await;
-        }
+        let (min_int_secs, max_int_ceil) = match self.validate_subscribe(&req, &accessor) {
+            Ok(intervals) => intervals,
+            Err(err) => {
+                error!("Invalid subscribe request: {:?}", err);
+                return Self::send_status(exchange, err.code().into()).await;
+            }
+        };
 
         let (fab_idx, peer_node_id) =
             exchange.transaction_id().with_state(self.matter, |state| {
@@ -868,11 +871,10 @@ where
                 });
         }
 
-        let min_int_secs = req.min_int_floor()?;
         let max_int_secs = match self.matter.icd_advertisement() {
             Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_secs),
             None => subscription_max_int_secs(
-                req.max_int_ceil()?,
+                max_int_ceil,
                 min_int_secs,
                 self.matter.dev_det().min_subscription_max_interval_secs,
                 self.matter.dev_det().max_subscription_max_interval_secs,
@@ -1014,16 +1016,23 @@ where
         Ok(())
     }
 
-    /// Validates the subscription request
+    /// Validates the subscription request and returns its min interval floor and max interval ceiling
     fn validate_subscribe(
         &self,
         req: &SubscribeReq<'_>,
         accessor: &Accessor<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<(u16, u16), Error> {
         // A path that is unsupported or not accessible does not fail the request:
         // the priming report carries an error status for it, and the subscription
         // keeps the remaining paths. The request is rejected with `InvalidAction`
         // only if it is malformed, or if none of its paths is valid.
+
+        let intervals = match (req.min_int_floor(), req.max_int_ceil()) {
+            (Ok(min_int_floor), Ok(max_int_ceil)) if min_int_floor <= max_int_ceil => {
+                (min_int_floor, max_int_ceil)
+            }
+            _ => return Err(ErrorCode::InvalidAction.into()),
+        };
 
         self.handler.access(|node| {
             let mut valid = false;
@@ -1052,8 +1061,11 @@ where
                     let path = event_req?;
 
                     if !valid {
-                        valid =
-                            path.is_wildcard() || node.validate_event_path(&path, accessor).is_ok();
+                        valid = if path.is_wildcard() {
+                            node.has_accessible_event(&path, accessor)
+                        } else {
+                            node.validate_event_path(&path, accessor).is_ok()
+                        };
                     }
                 }
             }
@@ -1062,7 +1074,7 @@ where
                 return Err(ErrorCode::InvalidAction.into());
             }
 
-            Ok(())
+            Ok(intervals)
         })
     }
 
@@ -1983,9 +1995,9 @@ where
                         metadata.access(|node| node.validate_event_path(&path, &accessor))
                     {
                         if matches!(status, IMStatusCode::UnsupportedEvent) {
-                            // Event does not exist on this endpoint
-                            // TODO: Look at TestEventsById.yaml
-                            // Seems we should not error out in that case?
+                            // The spec asks for an `UnsupportedEvent` status, but the C++ SDK sends none
+                            // for an unknown event of an existing cluster, and its `TestEventsById.yaml`
+                            // expects an empty response
                             continue;
                         }
 
