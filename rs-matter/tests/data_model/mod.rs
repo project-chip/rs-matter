@@ -26,5 +26,6 @@ mod fan_control;
 mod groups;
 mod long_reads;
 mod provisional;
+mod subscribe;
 mod thermostat;
 mod timed_requests;
