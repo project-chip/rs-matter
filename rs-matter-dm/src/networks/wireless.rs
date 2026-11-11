@@ -49,6 +49,10 @@ mod wifi;
 /// Coincides with the SSID maximum length because
 pub const MAX_WIRELESS_NETWORK_ID_LEN: usize = 32;
 
+/// The number of networks `WifiNetworks`, `ThreadNetworks` and `AnyNetworks` keep, unless
+/// told otherwise.
+pub const DEFAULT_MAX_NETWORKS: usize = 2;
+
 /// A type alias for representing an owned ID of a wireless (Thread or Wifi) network.
 /// Both Thread and Wifi networks use the same ID type which is just an octet string.
 ///
@@ -577,7 +581,7 @@ where
     }
 
     /// A network type as stored: its Network Commissioning feature bit
-    fn net_type_tag(net_type: NetworkType) -> u32 {
+    pub(crate) fn net_type_tag(net_type: NetworkType) -> u32 {
         match net_type {
             NetworkType::Ethernet => net_comm::Feature::ETHERNET_NETWORK_INTERFACE.bits(),
             NetworkType::Wifi => net_comm::Feature::WI_FI_NETWORK_INTERFACE.bits(),
@@ -675,6 +679,10 @@ where
 
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
         WirelessNetworks::store(self, buf).map(Some)
+    }
+
+    fn net_type(&self) -> Option<NetworkType> {
+        Some(T::NET_TYPE)
     }
 }
 

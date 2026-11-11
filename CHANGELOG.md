@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a subscription with some unsupported or inaccessible paths is accepted with its valid paths, rather than rejected with `InvalidAction` (#655)
+* Fix: a subscription is rejected with `InvalidAction` if its min interval is greater than its max interval, or if its wildcard event paths match no accessible event (#655)
+* New: `dm::devices` has a constant for each device type of the Matter 1.6 Device Library (#653)
+  * Breaking: `DEV_TYPE_SMART_SPEAKER` is now `DEV_TYPE_SPEAKER`, and `DEV_TYPE_VIDEO_PLAYER` is now `DEV_TYPE_BASIC_VIDEO_PLAYER`, as the Device Library names them
+* Fix: `DEV_TYPE_AGGREGATOR`, `DEV_TYPE_BRIDGED_NODE`, `DEV_TYPE_GENERIC_SWITCH`, `DEV_TYPE_SPEAKER`, `DEV_TYPE_CASTING_VIDEO_PLAYER` and `DEV_TYPE_BASIC_VIDEO_PLAYER` report the revision of the Matter 1.6 Device Library, which the certification tests require (#653)
+* Breaking: `rs-matter-stack` has one stack type for Ethernet, Wifi and Thread: `MatterStack<'a, B, S, E = ()>`, where `S` is a `StackNetwork`: a networks store (`EthNetwork`, `WifiNetworks`, `ThreadNetworks`, `AnyNetworks`), or a type of a platform crate that pairs a store with the memory of its drivers (`MatterStack::context`), so that `E` stays for user data. `EthStackNetwork`, `WifiStackNetwork`, `ThreadStackNetwork` and `AnyStackNetwork` decide which run methods a stack has, so that e.g. a stack with a Thread store cannot run Wifi. The `Network` trait, `Eth`, `WirelessBle` and the `EthMatterStack`, `WifiMatterStack`, `ThreadMatterStack` and `WirelessMatterStack` aliases are gone; `network()` is `embedding()` (#652)
+  * Breaking: the run methods name the network: `run_eth`; `run_thread` and `run_wifi` for concurrent commissioning (formerly `run_coex`), `run_thread_no_coex` and `run_wifi_no_coex` (formerly `run`), `run_thread_oper` and `run_wifi_oper`. The `run_preex` methods are gone: pass a `PreexistingEthernet` or `PreexistingWireless` driver. The root endpoints are `eth_root_endpoint`, `thread_root_endpoint` and `wifi_root_endpoint`
+  * New: `MatterStack::run`, `run_no_coex` and `run_oper` with an `AnyDriver`: they run Ethernet, Wifi or Thread, whichever the driver runs, with one data model handler type for all three, so the Interaction Model and the cluster handlers are compiled once. `MatterStack::select_net_type` picks the network from the saved networks; `MatterStack::networks` gives access to the store
+  * New: `stack::any::AnyNetDriver`, an `AnyDriver` holding the Ethernet, Wifi or Thread driver the node runs; `eth::NoEthernet` for a node without Ethernet
+  * Breaking: the BTP transport is no longer part of `MatterStack`: the run methods that commission over BLE keep it in the bump arena, so their stacks need `wireless::BTP_BUMP_SIZE` more in `B`, and Ethernet-only stacks are about 4.5 KB smaller
+  * New: `MatterStack::embedding_mut` and `context_mut`; `Bump::alloc_init` and `alloc_init!`, which build an object in its slot
+  * New: `dm::networks::any`: `AnyNetworks`, a networks store for any of the three that remembers its network type, Ethernet included; `AnyNetCtl`; `InactiveDiag`. And `endpoints::any_net_handler`
+  * New: `Networks::net_type`
+  * New: `networks::wireless::DEFAULT_MAX_NETWORKS` (2), the default size of `WifiNetworks`, `ThreadNetworks` and `AnyNetworks`; `stack::wireless::MAX_WIRELESS_NETWORKS` is gone
+  * Breaking: `NetworkType` moved to `rs-matter-node-core` (still re-exported from `net_comm`); `NetworkType::cluster()` is `net_comm::cluster(NetworkType)`
 * Fix: a BTP peripheral takes the smaller of its GATT MTU and the MTU in the handshake request, never below the minimum, as the spec asks, instead of the minimum MTU whenever the two differ (#650)
   * Breaking: `Btp::set_relaxed_mtu_nego` is now `Btp::set_strict_mtu_nego`, which brings back the old behavior
 * New: `WifiMatterStack::run_oper` and `ThreadMatterStack::run_oper`: run the stack without BLE (#649)

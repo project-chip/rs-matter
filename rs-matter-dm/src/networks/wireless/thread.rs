@@ -25,11 +25,12 @@ use crate::tlv::{FromTLV, OctetsOwned, ToTLV};
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
-use super::{WirelessNetwork, WirelessNetworks};
+use super::{WirelessNetwork, WirelessNetworks, DEFAULT_MAX_NETWORKS};
 
 pub use rs_matter_node_core::networks::ThreadTLV;
 
-pub type ThreadNetworks<const N: usize> = WirelessNetworks<N, Thread>;
+/// A store of up to `N` Thread networks.
+pub type ThreadNetworks<const N: usize = DEFAULT_MAX_NETWORKS> = WirelessNetworks<N, Thread>;
 
 /// A struct implementing the `WirelessNetwork` trait for Thread networks.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, ToTLV, FromTLV)]

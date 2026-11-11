@@ -15,18 +15,54 @@
  *    limitations under the License.
  */
 
-use rs_matter_pairing::DiscoveryCapabilities;
+use rs_matter_dm::clusters::net_comm::{NetworkType, Networks};
+use rs_matter_dm::networks::any::AnyNetworks;
+use rs_matter_dm::networks::eth::EthNetwork;
+use rs_matter_dm::networks::wireless::{
+    ThreadNetworks, WifiNetworks, WirelessNetwork, WirelessNetworks,
+};
 use rs_matter_utils::init::{init_from_closure, Init};
 use rs_matter_utils::sync::MaybeSendSync;
 
-use crate::private::Sealed;
-
-/// User data that can be embedded in the stack network
+/// Data the stack holds: user data, the networks store, and the memory the drivers of the
+/// platform need.
 pub trait Embedding: MaybeSendSync {
     const INIT: Self;
 
     fn init() -> impl Init<Self>;
 }
+
+/// The network of a `MatterStack`: the networks store of its operational network interface,
+/// and the memory the drivers of the platform need, which the stack holds for them.
+///
+/// The networks stores (`EthNetwork`, `WifiNetworks`, `ThreadNetworks` and `AnyNetworks`)
+/// are stack networks themselves, with no memory for the drivers. Platform crates pair a
+/// store with the memory of their drivers in types of their own.
+///
+/// Which run methods a stack has depends on which of `EthStackNetwork`, `WifiStackNetwork`,
+/// `ThreadStackNetwork` and `AnyStackNetwork` its network implements, so that e.g. a stack
+/// with a Thread store cannot run Wifi.
+pub trait StackNetwork {
+    /// The networks store of the operational network interface.
+    type Store: Networks + Embedding;
+    /// The memory the drivers of the platform need.
+    type Context: Embedding;
+}
+
+/// A `StackNetwork` for Ethernet, which the stack runs with `run_eth`.
+pub trait EthStackNetwork: StackNetwork {}
+
+/// A `StackNetwork` for Wifi, which the stack runs with `run_wifi`, `run_wifi_no_coex` and
+/// `run_wifi_oper`.
+pub trait WifiStackNetwork: StackNetwork {}
+
+/// A `StackNetwork` for Thread, which the stack runs with `run_thread`, `run_thread_no_coex`
+/// and `run_thread_oper`.
+pub trait ThreadStackNetwork: StackNetwork {}
+
+/// A `StackNetwork` for Ethernet, Wifi or Thread, whichever the node picks at runtime, which
+/// the stack runs with `run`, `run_no_coex` and `run_oper`.
+pub trait AnyStackNetwork: StackNetwork {}
 
 impl Embedding for () {
     const INIT: Self = ();
@@ -36,24 +72,62 @@ impl Embedding for () {
     }
 }
 
-/// A trait modeling a specific network type.
-/// `MatterStack` is parameterized by a network type implementing this trait.
-///
-/// The trait is sealed and has only two implementations: `Eth` and `WirelessBle`.
-pub trait Network: Sealed + MaybeSendSync {
-    const INIT: Self;
+impl<const N: usize, T> Embedding for WirelessNetworks<N, T>
+where
+    T: WirelessNetwork + MaybeSendSync,
+{
+    const INIT: Self = Self::new();
 
-    /// Optional additional state embedded in the network state
-    type Embedding<'a>: Embedding
-    where
-        Self: 'a;
-
-    /// Return an in-place initializer for the network type.
-    fn init() -> impl Init<Self>;
-
-    /// Return the discovery capabilities of this network when commissioning the device.
-    fn discovery_capabilities(&self) -> DiscoveryCapabilities;
-
-    /// Return a reference to the embedded user data.
-    fn embedding(&self) -> &Self::Embedding<'_>;
+    fn init() -> impl Init<Self> {
+        WirelessNetworks::init()
+    }
 }
+
+impl<const N: usize, T> StackNetwork for WirelessNetworks<N, T>
+where
+    T: WirelessNetwork + MaybeSendSync,
+{
+    type Store = Self;
+    type Context = ();
+}
+
+impl<const N: usize> WifiStackNetwork for WifiNetworks<N> {}
+
+impl<const N: usize> ThreadStackNetwork for ThreadNetworks<N> {}
+
+impl Embedding for EthNetwork<'static> {
+    const INIT: Self = Self::new_default();
+
+    fn init() -> impl Init<Self> {
+        unsafe {
+            init_from_closure(|slot: *mut Self| {
+                slot.write(Self::INIT);
+                Ok(())
+            })
+        }
+    }
+}
+
+impl StackNetwork for EthNetwork<'static> {
+    type Store = Self;
+    type Context = ();
+}
+
+impl EthStackNetwork for EthNetwork<'static> {}
+
+/// An `AnyNetworks` store starts out as a Thread one; tell it its network with
+/// `MatterStack::networks` before the stack runs.
+impl<const N: usize> Embedding for AnyNetworks<N> {
+    const INIT: Self = Self::new(NetworkType::Thread);
+
+    fn init() -> impl Init<Self> {
+        AnyNetworks::init(NetworkType::Thread)
+    }
+}
+
+impl<const N: usize> StackNetwork for AnyNetworks<N> {
+    type Store = Self;
+    type Context = ();
+}
+
+impl<const N: usize> AnyStackNetwork for AnyNetworks<N> {}

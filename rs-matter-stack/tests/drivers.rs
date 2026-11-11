@@ -26,23 +26,26 @@ use std::sync::Mutex;
 
 use rs_matter_crypto::test_only_crypto;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, InterfaceTypeEnum, NetifDiag, NetifInfo};
-use rs_matter_dm::clusters::net_comm::NetworkType;
+use rs_matter_dm::clusters::net_comm::{NetworkType, Networks};
 use rs_matter_dm::endpoints::ROOT_ENDPOINT_ID;
-use rs_matter_dm::networks::wireless::NoopWirelessNetCtl;
+use rs_matter_dm::networks::any::AnyNetworks;
+use rs_matter_dm::networks::eth::EthNetwork;
+use rs_matter_dm::networks::wireless::{NoopWirelessNetCtl, ThreadNetworks, WifiNetworks};
 use rs_matter_dm::networks::NetChangeNotif;
-use rs_matter_dm_core::persist::MemKvBlobStore;
+use rs_matter_dm_core::persist::{KvBlobStore, MemKvBlobStore, NETWORKS_KEY};
 use rs_matter_dm_core::{Async, EmptyHandler, Node};
 use rs_matter_node::Matter;
 use rs_matter_node::MATTER_PORT;
 use rs_matter_node_core::test_device::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter_stack::any::{AnyDriver, AnyNetDriver};
 use rs_matter_stack::ble::GattPeripheral;
-use rs_matter_stack::eth::EthMatterStack;
+use rs_matter_stack::eth::{EthernetDriver, EthernetTask, PreexistingEthernet};
 use rs_matter_stack::net::{NetSocket, NetStack};
 use rs_matter_stack::wireless::{
-    GattDriver, GattTask, PreexistingWireless, ThreadDriver, ThreadMatterStack, ThreadTask,
-    WifiMatterStack,
+    GattDriver, GattTask, PreexistingWireless, ThreadCoexDriver, ThreadCoexTask, ThreadDriver,
+    ThreadTask, WifiCoexDriver, WifiCoexTask, WifiDriver, WifiTask,
 };
-use rs_matter_stack::{Options, RunOptions, UserTask};
+use rs_matter_stack::{MatterStack, Options, RunOptions, UserTask};
 use rs_matter_transport::network::btp::{AdvData, Btp};
 use rs_matter_transport::network::mdns::builtin::BuiltinMdns;
 use rs_matter_transport::network::mdns::{
@@ -60,6 +63,11 @@ const BUMP_SIZE: usize = 64 * 1024;
 const IPV4_INTERFACE: Ipv4Addr = Ipv4Addr::new(192, 168, 0, 10);
 const IPV6_ADDR: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
 const IPV6_INTERFACE: u32 = 7;
+
+type EthMatterStack<'a, const B: usize> = MatterStack<'a, B, EthNetwork<'static>>;
+type WifiMatterStack<'a, const B: usize> = MatterStack<'a, B, WifiNetworks>;
+type ThreadMatterStack<'a, const B: usize> = MatterStack<'a, B, ThreadNetworks>;
+type AnyMatterStack<'a, const B: usize> = MatterStack<'a, B, AnyNetworks>;
 
 /// What the fakes saw.
 #[derive(Default)]
@@ -237,6 +245,145 @@ impl ThreadDriver for FakeRadio<'_> {
     }
 }
 
+/// A driver for Ethernet, Wifi or Thread, whichever `net_type` names. Logs the network
+/// it brings up.
+struct FakeAny<'a> {
+    log: &'a Log,
+    net_type: NetworkType,
+    net_ctl: NoopWirelessNetCtl,
+    mdns: BuiltinMdns,
+}
+
+impl<'a> FakeAny<'a> {
+    fn new(log: &'a Log, net_type: NetworkType) -> Self {
+        Self {
+            log,
+            net_type,
+            net_ctl: NoopWirelessNetCtl::new(net_type),
+            mdns: BuiltinMdns::new(),
+        }
+    }
+}
+
+impl AnyDriver for FakeAny<'_> {
+    type WifiCtl<'a>
+        = &'a NoopWirelessNetCtl
+    where
+        Self: 'a;
+
+    type ThreadCtl<'a>
+        = &'a NoopWirelessNetCtl
+    where
+        Self: 'a;
+
+    fn net_type(&self) -> NetworkType {
+        self.net_type
+    }
+}
+
+impl EthernetDriver for FakeAny<'_> {
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: EthernetTask,
+    {
+        self.log.event("eth up");
+
+        task.run(FakeNetStack(self.log), &FakeNetif, &(), &mut self.mdns)
+            .await
+    }
+}
+
+impl ThreadCoexDriver for FakeAny<'_> {
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: ThreadCoexTask,
+    {
+        self.log.event("thread up");
+
+        task.run(
+            FakeNetStack(self.log),
+            &FakeNetif,
+            &self.net_ctl,
+            &mut self.mdns,
+            FakeGatt(self.log),
+        )
+        .await
+    }
+}
+
+impl WifiCoexDriver for FakeAny<'_> {
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: WifiCoexTask,
+    {
+        self.log.event("wifi up");
+
+        task.run(
+            FakeNetStack(self.log),
+            &FakeNetif,
+            &self.net_ctl,
+            &mut self.mdns,
+            FakeGatt(self.log),
+        )
+        .await
+    }
+}
+
+impl ThreadDriver for FakeAny<'_> {
+    type NetCtl<'a>
+        = &'a NoopWirelessNetCtl
+    where
+        Self: 'a;
+
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: ThreadTask,
+    {
+        self.log.event("thread up");
+
+        task.run(
+            FakeNetStack(self.log),
+            &FakeNetif,
+            &self.net_ctl,
+            &mut self.mdns,
+        )
+        .await
+    }
+}
+
+impl WifiDriver for FakeAny<'_> {
+    type NetCtl<'a>
+        = &'a NoopWirelessNetCtl
+    where
+        Self: 'a;
+
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: WifiTask,
+    {
+        self.log.event("wifi up");
+
+        task.run(
+            FakeNetStack(self.log),
+            &FakeNetif,
+            &self.net_ctl,
+            &mut self.mdns,
+        )
+        .await
+    }
+}
+
+impl GattDriver for FakeAny<'_> {
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: GattTask,
+    {
+        self.log.event("ble up");
+
+        task.run(FakeGatt(self.log)).await
+    }
+}
+
 /// The interfaces of a host: only the third one is what Matter should use.
 struct FakeHostNetifs;
 
@@ -320,7 +467,7 @@ impl GenDiag for NodeDiag<'_> {
 }
 
 fn run_ethernet<C, U, N, O>(
-    stack: &EthMatterStack<'_, BUMP_SIZE, ()>,
+    stack: &EthMatterStack<'_, BUMP_SIZE>,
     crypto: C,
     net_stack: U,
     netif: N,
@@ -333,14 +480,14 @@ where
     O: RunOptions,
 {
     const NODE: Node = Node {
-        endpoints: &[EthMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[EthMatterStack::<0>::eth_root_endpoint()],
     };
 
     let mut rand = crypto.weak_rand().unwrap();
 
     let handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(EthMatterStack::<0, ()>::root_handler(
+        Async(EthMatterStack::<0>::root_handler(
             stack.matter(),
             &(),
             &mut rand,
@@ -353,11 +500,8 @@ where
     let kv = stack.matter().kv(store);
 
     futures_lite::future::block_on(run_for(
-        stack.run_preex(
-            net_stack,
-            netif,
-            &(),
-            BuiltinMdns::new(),
+        stack.run_eth(
+            PreexistingEthernet::new(net_stack, netif, &(), BuiltinMdns::new()),
             &crypto,
             (NODE, handler),
             kv,
@@ -404,14 +548,14 @@ where
 #[test]
 fn ethernet_binds_the_matter_and_the_mdns_sockets() {
     const NODE: Node = Node {
-        endpoints: &[EthMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[EthMatterStack::<0>::eth_root_endpoint()],
     };
 
     on_big_stack(|| {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+        let stack = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -421,7 +565,7 @@ fn ethernet_binds_the_matter_and_the_mdns_sockets() {
 
         let handler = EmptyHandler.chain(
             |e, _| e == ROOT_ENDPOINT_ID,
-            Async(EthMatterStack::<0, ()>::root_handler(
+            Async(EthMatterStack::<0>::root_handler(
                 stack.matter(),
                 &(),
                 &mut rand,
@@ -434,11 +578,8 @@ fn ethernet_binds_the_matter_and_the_mdns_sockets() {
         let kv = stack.matter().kv(store);
 
         let result = futures_lite::future::block_on(run_for(
-            stack.run_preex(
-                FakeNetStack(&log),
-                &FakeNetif,
-                &(),
-                BuiltinMdns::new(),
+            stack.run_eth(
+                PreexistingEthernet::new(FakeNetStack(&log), &FakeNetif, &(), BuiltinMdns::new()),
                 &crypto,
                 (NODE, handler),
                 kv,
@@ -476,14 +617,14 @@ fn ethernet_binds_the_matter_and_the_mdns_sockets() {
 #[test]
 fn concurrent_commissioning_runs_ble_next_to_the_operational_network() {
     const NODE: Node = Node {
-        endpoints: &[WifiMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[WifiMatterStack::<0>::wifi_root_endpoint()],
     };
 
     on_big_stack(|| {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<WifiMatterStack<BUMP_SIZE, ()>>().init_with(WifiMatterStack::init(
+        let stack = leak::<WifiMatterStack<BUMP_SIZE>>().init_with(WifiMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -493,7 +634,7 @@ fn concurrent_commissioning_runs_ble_next_to_the_operational_network() {
 
         let handler = EmptyHandler.chain(
             |e, _| e == ROOT_ENDPOINT_ID,
-            Async(WifiMatterStack::<0, ()>::root_handler(
+            Async(WifiMatterStack::<0>::root_handler(
                 stack.matter(),
                 &(),
                 &mut rand,
@@ -506,7 +647,7 @@ fn concurrent_commissioning_runs_ble_next_to_the_operational_network() {
         let kv = stack.matter().kv(store);
 
         let result = futures_lite::future::block_on(run_for(
-            stack.run_coex(
+            stack.run_wifi(
                 PreexistingWireless::new(
                     FakeNetStack(&log),
                     &FakeNetif,
@@ -530,17 +671,277 @@ fn concurrent_commissioning_runs_ble_next_to_the_operational_network() {
     });
 }
 
+const ANY_ETH_NODE: Node = Node {
+    endpoints: &[EthMatterStack::<0>::eth_root_endpoint()],
+};
+const ANY_WIFI_NODE: Node = Node {
+    endpoints: &[WifiMatterStack::<0>::wifi_root_endpoint()],
+};
+const ANY_THREAD_NODE: Node = Node {
+    endpoints: &[ThreadMatterStack::<0>::thread_root_endpoint()],
+};
+
+#[test]
+fn any_runs_the_network_the_driver_names() {
+    assert_eq!(
+        run_any(NetworkType::Ethernet, ANY_ETH_NODE, false),
+        vec!["eth up"]
+    );
+    assert_eq!(
+        run_any(NetworkType::Wifi, ANY_WIFI_NODE, false),
+        vec!["wifi up", "gatt running"]
+    );
+    assert_eq!(
+        run_any(NetworkType::Thread, ANY_THREAD_NODE, false),
+        vec!["thread up", "gatt running"]
+    );
+}
+
+#[test]
+fn any_oper_runs_the_network_without_ble() {
+    assert_eq!(
+        run_any(NetworkType::Ethernet, ANY_ETH_NODE, true),
+        vec!["eth up"]
+    );
+    assert_eq!(
+        run_any(NetworkType::Wifi, ANY_WIFI_NODE, true),
+        vec!["wifi up"]
+    );
+    assert_eq!(
+        run_any(NetworkType::Thread, ANY_THREAD_NODE, true),
+        vec!["thread up"]
+    );
+}
+
+#[test]
+fn any_refuses_a_driver_for_another_network() {
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+
+        let stack = leak::<AnyMatterStack<BUMP_SIZE>>().init_with(AnyMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+
+        futures_lite::future::block_on(
+            stack.networks(|networks| networks.set_net_type(NetworkType::Wifi)),
+        );
+
+        let kv = stack.matter().kv(MemKvBlobStore::new());
+
+        let result = futures_lite::future::block_on(run_for(
+            stack.run(
+                FakeAny::new(&log, NetworkType::Thread),
+                &crypto,
+                (ANY_THREAD_NODE, EmptyHandler),
+                kv,
+                (),
+            ),
+            300,
+        ));
+
+        assert!(matches!(result, Some(Err(_))), "{result:?}");
+        assert!(log.events().is_empty());
+    });
+}
+
+#[test]
+fn select_net_type_takes_the_saved_network() {
+    let stack = leak::<AnyMatterStack<BUMP_SIZE>>().init_with(AnyMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
+
+    let mut store = MemKvBlobStore::new();
+    let mut buf = [0; 1024];
+
+    // Nothing saved: the default
+    let net_type = futures_lite::future::block_on(stack.select_net_type(
+        &mut store,
+        &mut buf,
+        NetworkType::Wifi,
+    ))
+    .unwrap();
+
+    assert_eq!(net_type, NetworkType::Wifi);
+
+    // An Ethernet store saves its type, though it has no networks
+    let mut data = [0; 64];
+    let len = AnyNetworks::<2>::new(NetworkType::Ethernet)
+        .save(&mut data)
+        .unwrap()
+        .unwrap();
+
+    store.store(NETWORKS_KEY, &data[..len], &mut buf).unwrap();
+
+    let net_type = futures_lite::future::block_on(stack.select_net_type(
+        &mut store,
+        &mut buf,
+        NetworkType::Wifi,
+    ))
+    .unwrap();
+
+    assert_eq!(net_type, NetworkType::Ethernet);
+    assert_eq!(
+        futures_lite::future::block_on(stack.networks(|networks| networks.net_type())),
+        Some(NetworkType::Ethernet)
+    );
+}
+
+#[test]
+fn any_net_driver_runs_the_driver_it_holds() {
+    type Driver<'a> = AnyNetDriver<
+        PreexistingEthernet<FakeNetStack<'a>, &'static FakeNetif, &'static (), BuiltinMdns>,
+        PreexistingWireless<
+            FakeNetStack<'a>,
+            &'static FakeNetif,
+            NoopWirelessNetCtl,
+            BuiltinMdns,
+            FakeGatt<'a>,
+        >,
+        PreexistingWireless<
+            FakeNetStack<'a>,
+            &'static FakeNetif,
+            NoopWirelessNetCtl,
+            BuiltinMdns,
+            FakeGatt<'a>,
+        >,
+    >;
+
+    for (net_type, node) in [
+        (NetworkType::Ethernet, ANY_ETH_NODE),
+        (NetworkType::Wifi, ANY_WIFI_NODE),
+        (NetworkType::Thread, ANY_THREAD_NODE),
+    ] {
+        let events = on_big_stack(move || {
+            let log = Log::default();
+            let crypto = test_only_crypto();
+
+            let stack = leak::<AnyMatterStack<BUMP_SIZE>>().init_with(AnyMatterStack::init(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+            ));
+
+            futures_lite::future::block_on(
+                stack.networks(|networks| networks.set_net_type(net_type)),
+            );
+
+            let wireless = || {
+                PreexistingWireless::new(
+                    FakeNetStack(&log),
+                    &FakeNetif,
+                    NoopWirelessNetCtl::new(net_type),
+                    BuiltinMdns::new(),
+                    FakeGatt(&log),
+                )
+            };
+
+            let driver: Driver = match net_type {
+                NetworkType::Ethernet => AnyNetDriver::Eth(PreexistingEthernet::new(
+                    FakeNetStack(&log),
+                    &FakeNetif,
+                    &(),
+                    BuiltinMdns::new(),
+                )),
+                NetworkType::Wifi => AnyNetDriver::Wifi(wireless()),
+                NetworkType::Thread => AnyNetDriver::Thread(wireless()),
+            };
+
+            let mut store = MemKvBlobStore::new();
+            futures_lite::future::block_on(stack.startup(&crypto, &mut store)).unwrap();
+
+            let kv = stack.matter().kv(store);
+
+            let result = futures_lite::future::block_on(run_for(
+                stack.run(driver, &crypto, (node, EmptyHandler), kv, ()),
+                300,
+            ));
+
+            assert!(result.is_none(), "The stack exited: {result:?}");
+            assert!(log.bound_ports().contains(&MATTER_PORT));
+
+            log.events()
+        });
+
+        let expected: Vec<&str> = if net_type == NetworkType::Ethernet {
+            vec![]
+        } else {
+            vec!["gatt running"]
+        };
+
+        assert_eq!(events, expected, "{net_type:?}");
+    }
+}
+
+/// Run an `AnyNetworks` stack for a moment over a driver for `net_type`, with `run_oper`
+/// if `oper` or `run` otherwise, and return the driver's log. Panics if the stack exits
+/// or does not bind its port.
+fn run_any(net_type: NetworkType, node: Node<'static>, oper: bool) -> Vec<&'static str> {
+    on_big_stack(move || {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+
+        let stack = leak::<AnyMatterStack<BUMP_SIZE>>().init_with(AnyMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+
+        futures_lite::future::block_on(stack.networks(|networks| networks.set_net_type(net_type)));
+
+        let mut rand = rs_matter_crypto::Crypto::weak_rand(&crypto).unwrap();
+
+        let handler = EmptyHandler.chain(
+            |e, _| e == ROOT_ENDPOINT_ID,
+            Async(AnyMatterStack::<0>::root_handler(
+                stack.matter(),
+                &(),
+                &mut rand,
+            )),
+        );
+
+        let mut store = MemKvBlobStore::new();
+        futures_lite::future::block_on(stack.startup(&crypto, &mut store)).unwrap();
+
+        let kv = stack.matter().kv(store);
+
+        let driver = FakeAny::new(&log, net_type);
+
+        let result = if oper {
+            futures_lite::future::block_on(run_for(
+                stack.run_oper(driver, &crypto, (node, handler), kv, ()),
+                300,
+            ))
+        } else {
+            futures_lite::future::block_on(run_for(
+                stack.run(driver, &crypto, (node, handler), kv, ()),
+                300,
+            ))
+        };
+
+        assert!(result.is_none(), "The stack exited: {result:?}");
+
+        assert!(log.bound_ports().contains(&MATTER_PORT));
+
+        log.events()
+    })
+}
+
 #[test]
 fn wifi_oper_accepts_a_driver_without_gatt() {
     const NODE: Node = Node {
-        endpoints: &[WifiMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[WifiMatterStack::<0>::wifi_root_endpoint()],
     };
 
     on_big_stack(|| {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<WifiMatterStack<BUMP_SIZE, ()>>().init_with(WifiMatterStack::init(
+        let stack = leak::<WifiMatterStack<BUMP_SIZE>>().init_with(WifiMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -550,7 +951,7 @@ fn wifi_oper_accepts_a_driver_without_gatt() {
 
         let handler = EmptyHandler.chain(
             |e, _| e == ROOT_ENDPOINT_ID,
-            Async(WifiMatterStack::<0, ()>::root_handler(
+            Async(WifiMatterStack::<0>::root_handler(
                 stack.matter(),
                 &(),
                 &mut rand,
@@ -563,7 +964,7 @@ fn wifi_oper_accepts_a_driver_without_gatt() {
         let kv = stack.matter().kv(store);
 
         let result = futures_lite::future::block_on(run_for(
-            stack.run_oper(
+            stack.run_wifi_oper(
                 // `()` is not a `GattPeripheral`, so this driver is not a `GattDriver`
                 PreexistingWireless::new(
                     FakeNetStack(&log),
@@ -591,14 +992,14 @@ fn wifi_oper_accepts_a_driver_without_gatt() {
 #[test]
 fn thread_oper_accepts_a_driver_without_gatt() {
     const NODE: Node = Node {
-        endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[ThreadMatterStack::<0>::thread_root_endpoint()],
     };
 
     on_big_stack(|| {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<ThreadMatterStack<BUMP_SIZE, ()>>().init_with(ThreadMatterStack::init(
+        let stack = leak::<ThreadMatterStack<BUMP_SIZE>>().init_with(ThreadMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -608,7 +1009,7 @@ fn thread_oper_accepts_a_driver_without_gatt() {
 
         let handler = EmptyHandler.chain(
             |e, _| e == ROOT_ENDPOINT_ID,
-            Async(ThreadMatterStack::<0, ()>::root_handler(
+            Async(ThreadMatterStack::<0>::root_handler(
                 stack.matter(),
                 &(),
                 &mut rand,
@@ -621,7 +1022,7 @@ fn thread_oper_accepts_a_driver_without_gatt() {
         let kv = stack.matter().kv(store);
 
         let result = futures_lite::future::block_on(run_for(
-            stack.run_oper(
+            stack.run_thread_oper(
                 // `()` is not a `GattPeripheral`, so this driver is not a `GattDriver`
                 PreexistingWireless::new(
                     FakeNetStack(&log),
@@ -669,16 +1070,16 @@ fn non_concurrent_hands_the_radio_back_when_the_device_opens_a_window() {
     });
 }
 
-/// Run a commissioned Thread stack with `run_oper` (or with `run`, if `oper` is `false`), and
+/// Run a commissioned Thread stack with `run_thread_oper` (or with `run_thread_no_coex`, if `oper` is `false`), and
 /// open a commissioning window for the device itself while it runs. Panics if the stack exits.
 fn run_commissioned_thread(log: &Log, oper: bool) {
     const NODE: Node = Node {
-        endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[ThreadMatterStack::<0>::thread_root_endpoint()],
     };
 
     let crypto = test_only_crypto();
 
-    let stack = leak::<ThreadMatterStack<BUMP_SIZE, ()>>().init_with(ThreadMatterStack::init(
+    let stack = leak::<ThreadMatterStack<BUMP_SIZE>>().init_with(ThreadMatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
@@ -688,7 +1089,7 @@ fn run_commissioned_thread(log: &Log, oper: bool) {
 
     let handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(ThreadMatterStack::<0, ()>::root_handler(
+        Async(ThreadMatterStack::<0>::root_handler(
             stack.matter(),
             &(),
             &mut rand,
@@ -716,10 +1117,12 @@ fn run_commissioned_thread(log: &Log, oper: bool) {
     let run = async {
         if oper {
             stack
-                .run_oper(radio, &crypto, (NODE, handler), kv, ())
+                .run_thread_oper(radio, &crypto, (NODE, handler), kv, ())
                 .await
         } else {
-            stack.run(radio, &crypto, (NODE, handler), kv, ()).await
+            stack
+                .run_thread_no_coex(radio, &crypto, (NODE, handler), kv, ())
+                .await
         }
     };
 
@@ -754,14 +1157,14 @@ fn run_commissioned_thread(log: &Log, oper: bool) {
 #[test]
 fn non_concurrent_commissioning_hands_the_radio_over() {
     const NODE: Node = Node {
-        endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[ThreadMatterStack::<0>::thread_root_endpoint()],
     };
 
     on_big_stack(|| {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<ThreadMatterStack<BUMP_SIZE, ()>>().init_with(ThreadMatterStack::init(
+        let stack = leak::<ThreadMatterStack<BUMP_SIZE>>().init_with(ThreadMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -771,7 +1174,7 @@ fn non_concurrent_commissioning_hands_the_radio_over() {
 
         let handler = EmptyHandler.chain(
             |e, _| e == ROOT_ENDPOINT_ID,
-            Async(ThreadMatterStack::<0, ()>::root_handler(
+            Async(ThreadMatterStack::<0>::root_handler(
                 stack.matter(),
                 &(),
                 &mut rand,
@@ -785,7 +1188,7 @@ fn non_concurrent_commissioning_hands_the_radio_over() {
 
         let matter: &Matter<'_> = stack.matter();
 
-        let run = stack.run(
+        let run = stack.run_thread_no_coex(
             FakeRadio {
                 log: &log,
                 net_ctl: NoopWirelessNetCtl::new(NetworkType::Thread),
@@ -841,9 +1244,12 @@ fn ethernet_binds_the_configured_port() {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(
-            EthMatterStack::init_with_port(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, PORT),
-        );
+        let stack = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init_with_port(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+            PORT,
+        ));
 
         assert_eq!(stack.matter().port(), PORT);
 
@@ -864,7 +1270,7 @@ fn ethernet_advertises_on_the_first_of_the_most_suitable_netifs() {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+        let stack = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -891,7 +1297,7 @@ fn ethernet_runs_the_user_task() {
             let log = Log::default();
             let crypto = test_only_crypto();
 
-            let stack = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+            let stack = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
                 &TEST_DEV_DET,
                 TEST_DEV_COMM,
                 &TEST_DEV_ATT,
@@ -920,7 +1326,7 @@ fn ethernet_takes_a_gen_diag_that_borrows_the_node() {
         let log = Log::default();
         let crypto = test_only_crypto();
 
-        let stack = &*leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+        let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -947,30 +1353,30 @@ fn futures_are_send() {
     fn assert_send<F: Send>(_: &F) {}
 
     const ETH_NODE: Node = Node {
-        endpoints: &[EthMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[EthMatterStack::<0>::eth_root_endpoint()],
     };
     const WIFI_NODE: Node = Node {
-        endpoints: &[WifiMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[WifiMatterStack::<0>::wifi_root_endpoint()],
     };
     const THREAD_NODE: Node = Node {
-        endpoints: &[ThreadMatterStack::<0, ()>::root_endpoint()],
+        endpoints: &[ThreadMatterStack::<0>::thread_root_endpoint()],
     };
 
     // What the futures borrow outlives the stacks
     let log = &*Box::leak(Box::<Log>::default());
     let crypto = test_only_crypto();
 
-    let eth = leak::<EthMatterStack<BUMP_SIZE, ()>>().init_with(EthMatterStack::init(
+    let eth = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
     ));
-    let wifi = leak::<WifiMatterStack<BUMP_SIZE, ()>>().init_with(WifiMatterStack::init(
+    let wifi = leak::<WifiMatterStack<BUMP_SIZE>>().init_with(WifiMatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
     ));
-    let thread = leak::<ThreadMatterStack<BUMP_SIZE, ()>>().init_with(ThreadMatterStack::init(
+    let thread = leak::<ThreadMatterStack<BUMP_SIZE>>().init_with(ThreadMatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
@@ -980,7 +1386,7 @@ fn futures_are_send() {
 
     let eth_handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(EthMatterStack::<0, ()>::root_handler(
+        Async(EthMatterStack::<0>::root_handler(
             eth.matter(),
             &(),
             &mut rand,
@@ -988,7 +1394,7 @@ fn futures_are_send() {
     );
     let wifi_handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(WifiMatterStack::<0, ()>::root_handler(
+        Async(WifiMatterStack::<0>::root_handler(
             wifi.matter(),
             &(),
             &mut rand,
@@ -996,7 +1402,7 @@ fn futures_are_send() {
     );
     let thread_handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(ThreadMatterStack::<0, ()>::root_handler(
+        Async(ThreadMatterStack::<0>::root_handler(
             thread.matter(),
             &(),
             &mut rand,
@@ -1006,17 +1412,14 @@ fn futures_are_send() {
     let eth_diag = NodeDiag(eth.matter());
     let thread_diag = NodeDiag(thread.matter());
 
-    let eth_run = eth.run_preex(
-        FakeNetStack(log),
-        &FakeNetif,
-        &(),
-        BuiltinMdns::new(),
+    let eth_run = eth.run_eth(
+        PreexistingEthernet::new(FakeNetStack(log), &FakeNetif, &(), BuiltinMdns::new()),
         &crypto,
         (ETH_NODE, eth_handler),
         eth.matter().kv(MemKvBlobStore::new()),
         Options::new().gen_diag(&eth_diag),
     );
-    let wifi_run = wifi.run_coex(
+    let wifi_run = wifi.run_wifi(
         PreexistingWireless::new(
             FakeNetStack(log),
             &FakeNetif,
@@ -1031,13 +1434,13 @@ fn futures_are_send() {
     );
     let wifi_oper_handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(WifiMatterStack::<0, ()>::root_handler(
+        Async(WifiMatterStack::<0>::root_handler(
             wifi.matter(),
             &(),
             &mut rand,
         )),
     );
-    let wifi_oper_run = wifi.run_oper(
+    let wifi_oper_run = wifi.run_wifi_oper(
         PreexistingWireless::new(
             FakeNetStack(log),
             &FakeNetif,
@@ -1050,7 +1453,43 @@ fn futures_are_send() {
         wifi.matter().kv(MemKvBlobStore::new()),
         (),
     );
-    let thread_run = thread.run(
+    let any = leak::<AnyMatterStack<BUMP_SIZE>>().init_with(AnyMatterStack::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+    ));
+    let any_handler = || {
+        EmptyHandler.chain(
+            |e, _| e == ROOT_ENDPOINT_ID,
+            Async(AnyMatterStack::<0>::root_handler(
+                any.matter(),
+                &(),
+                rs_matter_crypto::Crypto::weak_rand(&crypto).unwrap(),
+            )),
+        )
+    };
+    let any_run = any.run(
+        FakeAny::new(log, NetworkType::Wifi),
+        &crypto,
+        (WIFI_NODE, any_handler()),
+        any.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
+    let any_no_coex_run = any.run_no_coex(
+        FakeAny::new(log, NetworkType::Wifi),
+        &crypto,
+        (WIFI_NODE, any_handler()),
+        any.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
+    let any_oper_run = any.run_oper(
+        FakeAny::new(log, NetworkType::Wifi),
+        &crypto,
+        (WIFI_NODE, any_handler()),
+        any.matter().kv(MemKvBlobStore::new()),
+        (),
+    );
+    let thread_run = thread.run_thread_no_coex(
         FakeRadio {
             log,
             net_ctl: NoopWirelessNetCtl::new(NetworkType::Thread),
@@ -1063,13 +1502,13 @@ fn futures_are_send() {
     );
     let thread_oper_handler = EmptyHandler.chain(
         |e, _| e == ROOT_ENDPOINT_ID,
-        Async(ThreadMatterStack::<0, ()>::root_handler(
+        Async(ThreadMatterStack::<0>::root_handler(
             thread.matter(),
             &(),
             &mut rand,
         )),
     );
-    let thread_oper_run = thread.run_oper(
+    let thread_oper_run = thread.run_thread_oper(
         PreexistingWireless::new(
             FakeNetStack(log),
             &FakeNetif,
@@ -1086,6 +1525,9 @@ fn futures_are_send() {
     assert_send(&eth_run);
     assert_send(&wifi_run);
     assert_send(&wifi_oper_run);
+    assert_send(&any_run);
+    assert_send(&any_no_coex_run);
+    assert_send(&any_oper_run);
     assert_send(&thread_run);
     assert_send(&thread_oper_run);
 }

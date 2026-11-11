@@ -40,6 +40,13 @@ macro_rules! alloc {
 }
 
 #[macro_export]
+macro_rules! alloc_init {
+    ($bump:expr, $init:expr) => {
+        $bump.alloc_init($init, concat!(file!(), ":", line!()))
+    };
+}
+
+#[macro_export]
 macro_rules! pin_alloc {
     ($bump:expr, $obj:expr) => {
         $bump.pin_alloc_with(|| $obj, concat!(file!(), ":", line!()))
@@ -165,6 +172,23 @@ impl<const N: usize> Bump<N> {
         unsafe {
             slot.as_mut().write(f());
         }
+
+        BumpBox {
+            ptr: slot.cast(),
+            _allocator: PhantomData,
+        }
+    }
+
+    /// Allocate an object, built in its slot by the in-place initializer `init`.
+    pub fn alloc_init<T, I>(&self, init: I, location: &str) -> BumpBox<'_, T>
+    where
+        T: Sized,
+        I: Init<T>,
+    {
+        let slot = self.reserve::<T>(location);
+
+        // Safety: `reserve` handed out a properly aligned, exclusively owned slot
+        unsafe { init.__init(slot.as_ptr().cast::<T>()) }.unwrap_or_else(|never| match never {});
 
         BumpBox {
             ptr: slot.cast(),

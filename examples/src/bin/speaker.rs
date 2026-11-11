@@ -31,7 +31,7 @@ use rs_matter::dm::clusters::app::on_off::{
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
+use rs_matter::dm::devices::DEV_TYPE_SPEAKER;
 use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, Node};
@@ -39,8 +39,10 @@ use rs_matter::error::Error;
 use rs_matter::persist::DirKvBlobStore;
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
-use rs_matter::stack::eth::EthMatterStack;
+use rs_matter::dm::networks::eth::EthNetwork;
+use rs_matter::stack::eth::PreexistingEthernet;
 use rs_matter::stack::net::std::StdNetStack;
+use rs_matter::stack::MatterStack;
 use rs_matter::utils::init::InitMaybeUninit;
 
 use static_cell::StaticCell;
@@ -55,14 +57,14 @@ mod mdns;
 const BUMP_SIZE: usize = 32 * 1024;
 
 /// The stack is allocated statically to avoid program stack blowups.
-static MATTER_STACK: StaticCell<EthMatterStack<BUMP_SIZE, ()>> = StaticCell::new();
+static MATTER_STACK: StaticCell<MatterStack<BUMP_SIZE, EthNetwork>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    let stack = MATTER_STACK.uninit().init_with(EthMatterStack::init(
+    let stack = MATTER_STACK.uninit().init_with(MatterStack::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
@@ -104,14 +106,16 @@ fn main() -> Result<(), Error> {
     level_control_handler.init(Some(&on_off_handler));
 
     // Run the stack, which adds the operational network clusters of endpoint 0 by itself
-    let matter = pin!(stack.run_preex(
-        // The UDP sockets of the node
-        StdNetStack::new(),
-        // The network interfaces of the host
-        SysNetifs,
-        // No Ethernet diagnostics to report
-        &(),
-        mdns::create_mdns(),
+    let matter = pin!(stack.run_eth(
+        PreexistingEthernet::new(
+            // The UDP sockets of the node
+            StdNetStack::new(),
+            // The network interfaces of the host
+            SysNetifs,
+            // No Ethernet diagnostics to report
+            &(),
+            mdns::create_mdns(),
+        ),
         &crypto,
         data_model(
             stack.matter(),
@@ -134,7 +138,7 @@ const NODE: Node<'static> = Node {
         root_endpoint!(eth),
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_SMART_SPEAKER),
+            devices!(DEV_TYPE_SPEAKER),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
@@ -157,7 +161,11 @@ fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
         EmptyHandler
             .chain(
                 |e, _| e == ROOT_ENDPOINT_ID,
-                Async(EthMatterStack::<0, ()>::root_handler(matter, &(), rand)),
+                Async(MatterStack::<0, EthNetwork>::root_handler(
+                    matter,
+                    &(),
+                    rand,
+                )),
             )
             .chain(
                 |e, c| e == 1 && c == desc::DescHandler::CLUSTER.id,

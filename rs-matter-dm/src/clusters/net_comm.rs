@@ -44,45 +44,25 @@ use rs_matter_node::Transaction as _;
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
 pub use rs_matter_node_core::networks::{
-    load_networks, remove_networks, store_networks, DummyNetworks, Networks, NetworksError,
-    WirelessCreds,
+    load_networks, remove_networks, store_networks, DummyNetworks, NetworkType, Networks,
+    NetworksError, WirelessCreds,
 };
 
-/// Network type supported by the `NetCtl` implementations
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum NetworkType {
-    Ethernet,
-    Wifi,
-    Thread,
-}
-
-impl NetworkType {
-    /// Return an instance of the Network Commissioning cluster meta-data for the given network type.
-    pub const fn cluster(&self) -> Cluster<'static> {
-        match self {
-            Self::Ethernet => FULL_CLUSTER
-                .with_features(Feature::ETHERNET_NETWORK_INTERFACE.bits())
-                .with_attrs(with!(required))
-                .with_cmds(with!()),
-            Self::Wifi => FULL_CLUSTER
-                .with_features(Feature::WI_FI_NETWORK_INTERFACE.bits())
-                .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::SupportedWiFiBands))
-                .with_cmds(with!(CommandId::AddOrUpdateWiFiNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),
-            Self::Thread => FULL_CLUSTER
-                .with_features(Feature::THREAD_NETWORK_INTERFACE.bits())
-                .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::ThreadVersion | AttributeId::SupportedThreadFeatures))
-                .with_cmds(with!(CommandId::AddOrUpdateThreadNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),
-        }
-    }
-
-    /// Check if the given credentials match the network type
-    pub fn check_creds(&self, creds: &WirelessCreds<'_>) -> Result<(), Error> {
-        match creds {
-            WirelessCreds::Wifi { .. } if matches!(self, NetworkType::Wifi) => Ok(()),
-            WirelessCreds::Thread { .. } if matches!(self, NetworkType::Thread) => Ok(()),
-            _ => Err(ErrorCode::InvalidAction.into()),
-        }
+/// Return an instance of the Network Commissioning cluster meta-data for the given network type.
+pub const fn cluster(net_type: NetworkType) -> Cluster<'static> {
+    match net_type {
+        NetworkType::Ethernet => FULL_CLUSTER
+            .with_features(Feature::ETHERNET_NETWORK_INTERFACE.bits())
+            .with_attrs(with!(required))
+            .with_cmds(with!()),
+        NetworkType::Wifi => FULL_CLUSTER
+            .with_features(Feature::WI_FI_NETWORK_INTERFACE.bits())
+            .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::SupportedWiFiBands))
+            .with_cmds(with!(CommandId::AddOrUpdateWiFiNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),
+        NetworkType::Thread => FULL_CLUSTER
+            .with_features(Feature::THREAD_NETWORK_INTERFACE.bits())
+            .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::ThreadVersion | AttributeId::SupportedThreadFeatures))
+            .with_cmds(with!(CommandId::AddOrUpdateThreadNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),
     }
 }
 
@@ -675,6 +655,10 @@ impl Networks for NotifyingNetworks<'_> {
 
         Ok(len)
     }
+
+    fn net_type(&self) -> Option<NetworkType> {
+        self.networks.net_type()
+    }
 }
 
 /// The system implementation of a handler for the Network Commissioning Matter cluster.
@@ -859,7 +843,7 @@ where
     N: Networks,
     T: NetCtl + NetCtlStatus + WirelessDiag + NetChangeNotif,
 {
-    const CLUSTER: Cluster<'static> = NetworkType::Ethernet.cluster(); // TODO
+    const CLUSTER: Cluster<'static> = cluster(NetworkType::Ethernet); // TODO
 
     fn dataver(&self) -> u32 {
         self.dataver.get()

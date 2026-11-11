@@ -49,7 +49,7 @@ const NODE: Node<'static> = Node {
     endpoints: &[Endpoint::new(
         0,
         &[DEV_TYPE_ROOT_NODE],
-        &[gen_comm::FULL_CLUSTER, NetworkType::Wifi.cluster()],
+        &[gen_comm::FULL_CLUSTER, net_comm::cluster(NetworkType::Wifi)],
     )],
 };
 
