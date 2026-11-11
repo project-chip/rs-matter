@@ -250,13 +250,13 @@ pub(crate) fn write_audio_capabilities<P: TLVBuilderParent>(
 /// Result of an atomic stream allocation resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum StreamAllocation {
+pub(crate) enum StreamAllocation {
     Found(AudioStream),
     Created(AudioStream),
 }
 
 impl StreamAllocation {
-    pub const fn stream(&self) -> &AudioStream {
+    pub(crate) const fn stream(&self) -> &AudioStream {
         match self {
             Self::Found(s) | Self::Created(s) => s,
         }
@@ -265,7 +265,7 @@ impl StreamAllocation {
 
 /// Table of allocated audio streams with monotonic stream ID generation.
 #[derive(Debug, Clone)]
-pub struct AudioStreamTable<const NA: usize> {
+pub(crate) struct AudioStreamTable<const NA: usize> {
     streams: Vec<AudioStream, NA>,
     next_id: u16,
 }

@@ -4,14 +4,15 @@
 #   - CameraAvStreamManagement (AVSM) – audio-only (Feature::AUDIO | Feature::SPEAKER)
 
 # -----------------------------------------------------------------------
-# CameraAvStreamManagement (0x0560 / 0x0551)
-# audio + speaker features (F01, F02)
+# CameraAvStreamManagement (0x0551)
+# audio + speaker features (F00, F04)
 # -----------------------------------------------------------------------
 AVSM.S=1
-AVSM.S.F00=0
-AVSM.S.F01=1
-AVSM.S.F02=1
+AVSM.S.F00=1
+AVSM.S.F01=0
+AVSM.S.F02=0
 AVSM.S.F03=0
+AVSM.S.F04=1
 AVSM.S.A0000=0
 AVSM.S.A0001=0
 AVSM.S.A0002=0

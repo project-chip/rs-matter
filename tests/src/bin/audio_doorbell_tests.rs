@@ -18,8 +18,7 @@
 //! A dedicated Matter Audio Doorbell device for ConnectedHomeIP Python integration tests.
 //!
 //! Implements on endpoint 1:
-//! - `CameraAvStreamManagement` (0x0551) – audio-only, with a pre-seeded stream
-//! - `Chime` (0x0556)
+//! - `CameraAvStreamManagement` (0x0551) – audio-only
 #![recursion_limit = "256"]
 
 use core::pin::pin;

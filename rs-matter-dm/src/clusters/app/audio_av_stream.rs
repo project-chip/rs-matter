@@ -159,8 +159,9 @@ pub trait AudioAvStreamHooks: MaybeSendSync {
         stream: &AudioStream,
     ) -> impl Future<Output = Result<(), CamAvError>> + MaybeSend;
 
-    /// Called after an audio stream has reached a reference count of zero and has been
-    /// successfully removed from `AllocatedAudioStreams`.
+    /// Called when an audio stream has reached a reference count of zero, before removing it
+    /// from `AllocatedAudioStreams`. If this hook returns an error, the stream remains allocated
+    /// and the command fails.
     fn on_audio_deallocated(
         &self,
         stream_id: u16,
@@ -322,7 +323,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> AudioAvStreamHandler<'a, H, NA>
     }
 
     /// Background notification loop forwarding out-of-band audio allocation changes to Matter subscribers.
-    pub async fn run(&self, notifier: impl AttrChangeNotifier) -> Result<(), Error> {
+    pub async fn run_notify(&self, notifier: impl AttrChangeNotifier) -> Result<(), Error> {
         loop {
             self.notify_change.wait().await;
             notifier.notify_attr_changed(
@@ -412,7 +413,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
     }
 
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        self.run(ctx).await
+        self.run_notify(ctx).await
     }
 
     async fn max_content_buffer_size(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
@@ -1067,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn out_of_band_audio_lifecycle_notifies_subscribers_via_run() {
+    fn out_of_band_audio_lifecycle_notifies_subscribers_via_run_notify() {
         use crate::dm::clusters::app::test_util::RecordingNotifier;
         use crate::dm::AttrId;
 
@@ -1080,7 +1081,7 @@ mod tests {
             );
 
             let notifier = RecordingNotifier::default();
-            let mut run_fut = core::pin::pin!(handler.run(&notifier));
+            let mut run_fut = core::pin::pin!(handler.run_notify(&notifier));
 
             let id = handler
                 .allocate_stream(&test_params(
