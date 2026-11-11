@@ -389,15 +389,15 @@ where
     /// it or serving exchanges. In order:
     /// - Re-hydrates the [`InteractionModelState`] - the events-queue epoch, so
     ///   event numbers are not reused across reboots;
-    /// - Replays any persisted subscriptions into the reporter's table (if the
-    ///   `persistent-subscriptions` feature is enabled), so a subscriber that
-    ///   had a subscription before this reboot keeps receiving reports instead
-    ///   of having to notice the loss and re-subscribe;
     /// - Broadcasts [`LifecycleOp::Startup`] to every cluster handler in the
     ///   data model, so handlers with a persistence story of their own (which
     ///   the Interaction Model otherwise treats as opaque) - like the network
     ///   stores of the Network Commissioning handlers - can re-hydrate their
-    ///   state from [`HandlerContext::kv`].
+    ///   state from [`HandlerContext::kv`];
+    /// - Replays any persisted subscriptions into the reporter's table (if the
+    ///   `persistent-subscriptions` feature is enabled), so a subscriber that
+    ///   had a subscription before this reboot keeps receiving reports instead
+    ///   of having to notice the loss and re-subscribe.
     ///
     /// The `Matter`-level counterpart is [`Matter::startup`] - call that one
     /// first.
@@ -406,10 +406,12 @@ where
 
         self.state.load_persist(&self.kv, utc_us)?;
 
-        // Needs the events watermark loaded just above.
-        self.resume_subscriptions()?;
+        // The ICD Management handlers publish the ICD advertisement on startup,
+        // which the resumed subscriptions are checked against.
+        self.broadcast_lifecycle(LifecycleOp::Startup)?;
 
-        self.broadcast_lifecycle(LifecycleOp::Startup)
+        // Needs the events watermark loaded above.
+        self.resume_subscriptions()
     }
 
     /// Factory-reset the Data Model persistable state.
@@ -843,10 +845,13 @@ where
             .transaction_id()
             .accessor(self.matter, self.handler.aux_acl_enabled())?;
 
-        if let Err(err) = self.validate_subscribe(&req, &accessor) {
-            error!("Invalid subscribe request: {:?}", err);
-            return Self::send_status(exchange, err.code().into()).await;
-        }
+        let (min_int_secs, max_int_ceil) = match self.validate_subscribe(&req, &accessor) {
+            Ok(intervals) => intervals,
+            Err(err) => {
+                error!("Invalid subscribe request: {:?}", err);
+                return Self::send_status(exchange, err.code().into()).await;
+            }
+        };
 
         let (fab_idx, peer_node_id) =
             exchange.transaction_id().with_state(self.matter, |state| {
@@ -868,16 +873,7 @@ where
                 });
         }
 
-        let min_int_secs = req.min_int_floor()?;
-        let max_int_secs = match self.matter.icd_advertisement() {
-            Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_secs),
-            None => subscription_max_int_secs(
-                req.max_int_ceil()?,
-                min_int_secs,
-                self.matter.dev_det().min_subscription_max_interval_secs,
-                self.matter.dev_det().max_subscription_max_interval_secs,
-            ),
-        };
+        let max_int_secs = self.max_int_secs(min_int_secs, max_int_ceil);
 
         let now = Instant::now();
 
@@ -923,6 +919,20 @@ where
         }
 
         Ok(())
+    }
+
+    /// The max interval this node grants a subscription that requests
+    /// `min_int_floor` and `max_int_ceil`.
+    fn max_int_secs(&self, min_int_floor: u16, max_int_ceil: u16) -> u16 {
+        match self.matter.icd_advertisement() {
+            Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_floor),
+            None => subscription_max_int_secs(
+                max_int_ceil,
+                min_int_floor,
+                self.matter.dev_det().min_subscription_max_interval_secs,
+                self.matter.dev_det().max_subscription_max_interval_secs,
+            ),
+        }
     }
 
     /// Handle a server-initiated `ReportData` message — the controller /
@@ -1014,58 +1024,65 @@ where
         Ok(())
     }
 
-    /// Validates the subscription request
+    /// Validates the subscription request and returns its min interval floor and max interval ceiling
     fn validate_subscribe(
         &self,
         req: &SubscribeReq<'_>,
         accessor: &Accessor<'_>,
-    ) -> Result<(), Error> {
-        // As per spec, we need to validate that the subscription request
-        // contains existing endpoints, clusters and attributes, and if not
-        // we should (a bit surprisingly) return InvalidAction
+    ) -> Result<(u16, u16), Error> {
+        // A path that is unsupported or not accessible does not fail the request:
+        // the priming report carries an error status for it, and the subscription
+        // keeps the remaining paths. The request is rejected with `InvalidAction`
+        // only if it is malformed, or if none of its paths is valid.
+
+        let intervals = match (req.min_int_floor(), req.max_int_ceil()) {
+            (Ok(min_int_floor), Ok(max_int_ceil)) if min_int_floor <= max_int_ceil => {
+                (min_int_floor, max_int_ceil)
+            }
+            _ => return Err(ErrorCode::InvalidAction.into()),
+        };
 
         self.handler.access(|node| {
-            let mut has_attrs = false;
-            let mut has_events = false;
+            let mut valid = false;
 
             if let Some(attr_requests) = req.attr_requests()? {
-                has_attrs = true;
-
                 for attr_req in attr_requests {
                     let path = attr_req?;
 
                     if path.is_wildcard() {
                         Self::validate_attr_wildcard_path(&path)?;
+                    }
 
-                        if !node.has_accessible_attr(&path, accessor) {
-                            return Err(ErrorCode::InvalidAction.into());
-                        }
-                    } else {
-                        node.validate_attr_path(&path, false, false, accessor)
-                            .map_err(|_| ErrorCode::InvalidAction)?;
+                    if !valid {
+                        valid = if path.is_wildcard() {
+                            node.has_accessible_attr(&path, accessor)
+                        } else {
+                            node.validate_attr_path(&path, false, false, accessor)
+                                .is_ok()
+                        };
                     }
                 }
             }
 
             if let Some(event_reqs) = req.event_requests()? {
-                has_events = true;
-
                 for event_req in event_reqs {
                     let path = event_req?;
 
-                    if !path.is_wildcard() {
-                        node.validate_event_path(&path, accessor)
-                            .map_err(|_| ErrorCode::InvalidAction)?;
+                    if !valid {
+                        valid = if path.is_wildcard() {
+                            node.has_accessible_event(&path, accessor)
+                        } else {
+                            node.validate_event_path(&path, accessor).is_ok()
+                        };
                     }
                 }
             }
 
-            if !has_attrs && !has_events {
-                // Empty subscribe requests are not allowed either
+            if !valid {
                 return Err(ErrorCode::InvalidAction.into());
             }
 
-            Ok(())
+            Ok(intervals)
         })
     }
 
@@ -1104,6 +1121,10 @@ where
     /// subscriber on demand by establishing a session when the next report is
     /// due. No session is opened proactively here.
     ///
+    /// A subscription that this node would now grant a different max interval
+    /// (e.g. after an `IdleModeDuration` change) is not resumed: its subscriber
+    /// knows only the max interval it was granted.
+    ///
     /// Compiled to a no-op (returning `Ok`) unless the `persistent-subscriptions`
     /// feature is enabled.
     #[cfg(feature = "persistent-subscriptions")]
@@ -1119,6 +1140,11 @@ where
                 buf,
                 now,
                 watermark,
+                |req| {
+                    let req = SubscribeReq::new(TLVElement::new(req));
+
+                    Ok(self.max_int_secs(req.min_int_floor()?, req.max_int_ceil()?))
+                },
             )
         })?;
 
@@ -1974,18 +2000,21 @@ where
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
 
             // Validate concrete event paths against node metadata
-            // and emit EventStatusIB for non-wildcard paths that don't match
+            // and emit EventStatusIB for non-wildcard paths that don't match.
+            // Not done in the later reports of a subscription, which cover its valid paths only
+            let report_statuses = !matches!(self.req, ReportDataReq::SubscribeReport(_));
+
             for event_req in event_reqs.iter() {
                 let path = event_req?;
 
-                if !path.is_wildcard() {
+                if report_statuses && !path.is_wildcard() {
                     if let Err(status) =
                         metadata.access(|node| node.validate_event_path(&path, &accessor))
                     {
                         if matches!(status, IMStatusCode::UnsupportedEvent) {
-                            // Event does not exist on this endpoint
-                            // TODO: Look at TestEventsById.yaml
-                            // Seems we should not error out in that case?
+                            // The spec asks for an `UnsupportedEvent` status, but the C++ SDK sends none
+                            // for an unknown event of an existing cluster, and its `TestEventsById.yaml`
+                            // expects an empty response
                             continue;
                         }
 

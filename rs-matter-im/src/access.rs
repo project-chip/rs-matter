@@ -19,7 +19,9 @@
 //! model: the paths of a request, and the privileges of the accessor on them.
 
 use crate::acl::{AccessReq, Accessor};
-use crate::dm::{Access, AttrId, Cluster, CmdId, DeviceType, Endpoint, EventId, Node, NodeId};
+use crate::dm::{
+    Access, AttrId, Cluster, ClusterId, CmdId, DeviceType, Endpoint, EndptId, EventId, Node, NodeId,
+};
 use crate::encoding::{AttrPath, EventPath, GenericPath, IMStatusCode};
 
 /// The access checks on the metadata of a cluster.
@@ -199,6 +201,10 @@ pub(crate) trait NodeAccess {
     /// Return `true` if at least one attribute matching the (potentially wildcard) path
     /// is accessible to the given accessor. Used for subscription validation.
     fn has_accessible_attr(&self, path: &AttrPath, accessor: &Accessor<'_>) -> bool;
+
+    /// Return `true` if at least one event matching the (potentially wildcard) path
+    /// is accessible to the given accessor. Used for subscription validation.
+    fn has_accessible_event(&self, path: &EventPath, accessor: &Accessor<'_>) -> bool;
 }
 
 impl NodeAccess for Node<'_> {
@@ -248,51 +254,97 @@ impl NodeAccess for Node<'_> {
         cluster.check_event_access(accessor, gp, endpoint.device_types, event.id)
     }
 
-    /// Return `true` if at least one attribute matching the (potentially wildcard) path
-    /// is accessible to the given accessor. Used for subscription validation.
     fn has_accessible_attr(&self, path: &AttrPath, accessor: &Accessor<'_>) -> bool {
-        for endpoint in self.endpoints.iter() {
-            if let Some(ep_id) = path.endpoint {
-                if endpoint.id != ep_id {
+        has_accessible_leaf(
+            self,
+            path.endpoint,
+            path.cluster,
+            path.attr,
+            false,
+            accessor,
+        )
+    }
+
+    fn has_accessible_event(&self, path: &EventPath, accessor: &Accessor<'_>) -> bool {
+        has_accessible_leaf(
+            self,
+            path.endpoint,
+            path.cluster,
+            path.event,
+            true,
+            accessor,
+        )
+    }
+}
+
+/// Return `true` if at least one attribute (or event, if `event` is `true`) matching
+/// the (potentially wildcard) path is accessible to the given accessor.
+fn has_accessible_leaf(
+    node: &Node<'_>,
+    endpoint_id: Option<EndptId>,
+    cluster_id: Option<ClusterId>,
+    leaf_id: Option<u32>,
+    event: bool,
+    accessor: &Accessor<'_>,
+) -> bool {
+    let endpoints = node
+        .endpoints
+        .iter()
+        .filter(|endpoint| endpoint_id.is_none_or(|id| id == endpoint.id));
+
+    for endpoint in endpoints {
+        let clusters = endpoint
+            .clusters
+            .iter()
+            .filter(|cluster| cluster_id.is_none_or(|id| id == cluster.id));
+
+        for cluster in clusters {
+            // One loop for both attributes and events, as two loops cost more flash
+            let count = if event {
+                cluster.events.len()
+            } else {
+                cluster.attributes.len()
+            };
+
+            for index in 0..count {
+                let (id, supported) = if event {
+                    let Some(event) = cluster.events.get(index) else {
+                        continue;
+                    };
+                    let supported =
+                        (cluster.with_events)(event, cluster.revision, cluster.feature_map);
+
+                    (event.id, supported)
+                } else {
+                    let Some(attr) = cluster.attributes.get(index) else {
+                        continue;
+                    };
+                    let supported =
+                        (cluster.with_attrs)(attr, cluster.revision, cluster.feature_map);
+
+                    (attr.id, supported)
+                };
+
+                if !supported || leaf_id.is_some_and(|leaf_id| leaf_id != id) {
                     continue;
                 }
-            }
 
-            for cluster in endpoint.clusters.iter() {
-                if let Some(cluster_id) = path.cluster {
-                    if cluster.id != cluster_id {
-                        continue;
-                    }
-                }
+                let gp = GenericPath::new(Some(endpoint.id), Some(cluster.id), Some(id));
 
-                for attr in cluster.attributes.iter() {
-                    if let Some(attr_id) = path.attr {
-                        if attr.id != attr_id {
-                            continue;
-                        }
-                    }
+                let result = if event {
+                    cluster.check_event_access(accessor, gp, endpoint.device_types, id)
+                } else {
+                    cluster.check_attr_access(accessor, false, gp, endpoint.device_types, false, id)
+                };
 
-                    let gp = GenericPath::new(Some(endpoint.id), Some(cluster.id), Some(attr.id));
-
-                    if cluster
-                        .check_attr_access(
-                            accessor,
-                            false,
-                            gp,
-                            endpoint.device_types,
-                            false,
-                            attr.id,
-                        )
-                        .is_ok()
-                    {
-                        return true;
-                    }
+                if result.is_ok() {
+                    return true;
                 }
             }
         }
-
-        false
     }
+
+    false
 }
 
 fn validate_cluster_path<'a, 'n>(
