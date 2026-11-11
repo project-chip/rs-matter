@@ -463,7 +463,7 @@ impl TLVWrite for WriteBuf<'_> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
-        WriteBuf::append(self, &[byte])?;
+        WriteBuf::append(self, &[byte]).map_err(|_| ErrorCode::NoSpace)?;
         Ok(())
     }
 
