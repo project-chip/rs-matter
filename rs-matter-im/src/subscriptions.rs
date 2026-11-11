@@ -750,7 +750,10 @@ impl<const N: usize> Subscriptions<N> {
                     continue;
                 }
                 Err(e) => {
-                    warn!("Invalid persisted subscription request: {:?}; skipping", e);
+                    warn!(
+                        "Not resuming persisted subscription {}: invalid request: {:?}",
+                        record.id, e
+                    );
                     continue;
                 }
             }
