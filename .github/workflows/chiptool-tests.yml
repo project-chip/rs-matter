@@ -261,6 +261,13 @@ jobs:
           cargo xtask itest --skip-setup --suite camera --coverage-out /tmp/itest-cov/camera.info \
             2>&1 | tee /tmp/itest-camera.log
 
+      - name: Run Audio Doorbell integration tests
+        if: matrix.suite == 'rest'
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite audio-doorbell --coverage-out /tmp/itest-cov/audio-doorbell.info \
+            2>&1 | tee /tmp/itest-audio-doorbell.log
+
       - name: Run Commissioner integration tests
         if: matrix.suite == 'rest'
         run: |

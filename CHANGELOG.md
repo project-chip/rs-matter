@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: `AudioAvStreamHandler`, an audio-only handler of the Camera AV Stream Management cluster for the Audio Doorbell device type (#646)
+* Fix: `CameraAvStreamHandler` returns the status codes the spec asks for in `SetStreamPriorities`, and reports `CamAvError::DynamicConstraint` as `DYNAMIC_CONSTRAINT_ERROR` (#646)
 * Fix: a persisted subscription is not resumed if the node would now grant it a different max interval (e.g. after an `IdleModeDuration` change), so that its subscriber subscribes anew (#656)
 * Fix: a subscription with some unsupported or inaccessible paths is accepted with its valid paths, rather than rejected with `InvalidAction` (#655)
 * Fix: a subscription is rejected with `InvalidAction` if its min interval is greater than its max interval, or if its wildcard event paths match no accessible event (#655)

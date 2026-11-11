@@ -26,6 +26,9 @@ name = "system_tests"
 name = "camera_tests"
 
 [[bin]]
+name = "audio_doorbell_tests"
+
+[[bin]]
 name = "light_tests"
 
 [[bin]]
