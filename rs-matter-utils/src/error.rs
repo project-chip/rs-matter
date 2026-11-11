@@ -178,7 +178,10 @@ pub enum Base38ErrorCode {
 }
 
 // TODO: Remove these bridges once all dependent crates have been refactored to
-// explicitly handle `BufferError` and `Base38Error`.
+// explicitly handle `BufferError`.
+//
+// `Base38Error` needs no bridge: its only consumer (`rs-matter-pairing`) already
+// converts it explicitly at the call site.
 
 impl From<BufferErrorCode> for Error {
     fn from(value: BufferErrorCode) -> Self {
@@ -191,23 +194,6 @@ impl From<BufferErrorCode> for Error {
 
 impl From<BufferError> for Error {
     fn from(value: BufferError) -> Self {
-        value.code().into()
-    }
-}
-
-impl From<Base38ErrorCode> for Error {
-    fn from(value: Base38ErrorCode) -> Self {
-        match value {
-            Base38ErrorCode::InvalidCharacter | Base38ErrorCode::InvalidLength => {
-                ErrorCode::InvalidData.into()
-            }
-            Base38ErrorCode::OutputTooSmall => ErrorCode::BufferTooSmall.into(),
-        }
-    }
-}
-
-impl From<Base38Error> for Error {
-    fn from(value: Base38Error) -> Self {
         value.code().into()
     }
 }

@@ -325,9 +325,13 @@ be able to produce it. Everything else was present solely because a
 The split follows the usage boundary. `BufferError` covers `storage::WriteBuf` and
 `storage::ReadBuf` — two halves of one abstraction, used together on the same byte
 stream by nearly every crate. `Base38Error` covers the base38 codec, which is
-independent of the buffers and has only two consumers (`pairing`, `onboard`).
+independent of the buffers and has a single consumer, `rs-matter-pairing`.
 Separating it also allows more precise names than a shared enum could carry: the
 old `InvalidData` becomes `InvalidCharacter` and `InvalidLength`.
+
+Because that one consumer is so contained, `Base38Error` needs **no bridge at all**.
+`qr.rs` converts it explicitly where it decodes the payload body. `BufferError`
+still has one, since `storage` is used by nearly every crate.
 
 | Current `ErrorCode` | usages | New code | Note |
 |---|---|---|---|
@@ -380,8 +384,10 @@ already carried by `BufferTooSmall` (destination undersized) versus
   type must satisfy (`Copy + Debug`, plus `defmt::Format` under the `defmt`
   feature), so the six `Error2` impls carry one bound instead of a repeated list.
 - `WriteBuf` and `ReadBuf` now return `BufferError`, and base38 returns
-  `Base38Error`. A `From<_> for Error` bridge per type keeps the legacy type
-  reachable until every crate is converted.
+  `Base38Error`. Only `BufferError` carries a `From<_> for Error` bridge, to keep
+  the many unconverted `storage` callers compiling; it goes when they are converted.
+  `Base38Error` has no bridge — its sole consumer converts at the call site, which
+  is already the final shape.
 
 Two things in this crate deliberately still name the legacy `Error`, because
 converting them breaks a dependent that has not had its turn yet:
