@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::{UtilsError, UtilsErrorCode};
+use crate::error::{BufferError, BufferErrorCode};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -91,9 +91,9 @@ impl<'a> WriteBuf<'a> {
         self.end = 0;
     }
 
-    pub fn load(&mut self, wb: &WriteBuf) -> Result<(), UtilsError> {
+    pub fn load(&mut self, wb: &WriteBuf) -> Result<(), BufferError> {
         if self.buf_size < wb.end {
-            Err(UtilsErrorCode::BufferTooSmall)?;
+            Err(BufferErrorCode::BufferTooSmall)?;
         }
 
         self.buf[0..wb.end].copy_from_slice(&wb.buf[..wb.end]);
@@ -103,12 +103,12 @@ impl<'a> WriteBuf<'a> {
         Ok(())
     }
 
-    pub fn reserve(&mut self, reserve: usize) -> Result<(), UtilsError> {
+    pub fn reserve(&mut self, reserve: usize) -> Result<(), BufferError> {
         // The buffer isn't pristine. This is caller misuse and the caller must fix the code.
         debug_assert!(self.end == 0 && self.start == 0 && self.buf_size == self.buf.len());
 
         if reserve > self.buf_size {
-            Err(UtilsErrorCode::BufferTooSmall.into())
+            Err(BufferErrorCode::BufferTooSmall.into())
         } else {
             self.start = reserve;
             self.end = reserve;
@@ -116,25 +116,25 @@ impl<'a> WriteBuf<'a> {
         }
     }
 
-    pub fn shrink(&mut self, with: usize) -> Result<(), UtilsError> {
+    pub fn shrink(&mut self, with: usize) -> Result<(), BufferError> {
         if self.end + with <= self.buf_size {
             self.buf_size -= with;
             Ok(())
         } else {
-            Err(UtilsErrorCode::BufferTooSmall.into())
+            Err(BufferErrorCode::BufferTooSmall.into())
         }
     }
 
-    pub fn expand(&mut self, by: usize) -> Result<(), UtilsError> {
+    pub fn expand(&mut self, by: usize) -> Result<(), BufferError> {
         if self.buf.len() - self.buf_size >= by {
             self.buf_size += by;
             Ok(())
         } else {
-            Err(UtilsErrorCode::BufferTooSmall.into())
+            Err(BufferErrorCode::BufferTooSmall.into())
         }
     }
 
-    pub fn prepend_with<F>(&mut self, size: usize, f: F) -> Result<(), UtilsError>
+    pub fn prepend_with<F>(&mut self, size: usize, f: F) -> Result<(), BufferError>
     where
         F: FnOnce(&mut Self),
     {
@@ -143,10 +143,10 @@ impl<'a> WriteBuf<'a> {
             self.start -= size;
             return Ok(());
         }
-        Err(UtilsErrorCode::BufferTooSmall.into())
+        Err(BufferErrorCode::BufferTooSmall.into())
     }
 
-    pub fn prepend(&mut self, src: &[u8]) -> Result<(), UtilsError> {
+    pub fn prepend(&mut self, src: &[u8]) -> Result<(), BufferError> {
         self.prepend_with(src.len(), |x| {
             let dst_slice = &mut x.buf[(x.start - src.len())..x.start];
             dst_slice.copy_from_slice(src);
@@ -163,7 +163,7 @@ impl<'a> WriteBuf<'a> {
         Ok(len)
     }
 
-    pub fn append_with<F>(&mut self, size: usize, f: F) -> Result<(), UtilsError>
+    pub fn append_with<F>(&mut self, size: usize, f: F) -> Result<(), BufferError>
     where
         F: FnOnce(&mut Self),
     {
@@ -172,50 +172,50 @@ impl<'a> WriteBuf<'a> {
             self.end += size;
             return Ok(());
         }
-        Err(UtilsErrorCode::BufferTooSmall.into())
+        Err(BufferErrorCode::BufferTooSmall.into())
     }
 
-    pub fn append(&mut self, src: &[u8]) -> Result<(), UtilsError> {
+    pub fn append(&mut self, src: &[u8]) -> Result<(), BufferError> {
         self.copy_from_slice(src)
     }
 
-    pub fn copy_from_slice(&mut self, src: &[u8]) -> Result<(), UtilsError> {
+    pub fn copy_from_slice(&mut self, src: &[u8]) -> Result<(), BufferError> {
         self.append_with(src.len(), |x| {
             x.buf[x.end..(x.end + src.len())].copy_from_slice(src);
         })
     }
 
-    pub fn le_i8(&mut self, data: i8) -> Result<(), UtilsError> {
+    pub fn le_i8(&mut self, data: i8) -> Result<(), BufferError> {
         self.le_u8(data as u8)
     }
 
-    pub fn le_u8(&mut self, data: u8) -> Result<(), UtilsError> {
+    pub fn le_u8(&mut self, data: u8) -> Result<(), BufferError> {
         self.append_with(1, |x| {
             x.buf[x.end] = data;
         })
     }
 
-    pub fn le_u16(&mut self, data: u16) -> Result<(), UtilsError> {
+    pub fn le_u16(&mut self, data: u16) -> Result<(), BufferError> {
         self.append(&data.to_le_bytes())
     }
 
-    pub fn le_i16(&mut self, data: i16) -> Result<(), UtilsError> {
+    pub fn le_i16(&mut self, data: i16) -> Result<(), BufferError> {
         self.append(&data.to_le_bytes())
     }
 
-    pub fn le_u32(&mut self, data: u32) -> Result<(), UtilsError> {
+    pub fn le_u32(&mut self, data: u32) -> Result<(), BufferError> {
         self.append(&data.to_le_bytes())
     }
 
-    pub fn le_i32(&mut self, data: i32) -> Result<(), UtilsError> {
+    pub fn le_i32(&mut self, data: i32) -> Result<(), BufferError> {
         self.append(&data.to_le_bytes())
     }
 
-    pub fn le_u64(&mut self, data: u64) -> Result<(), UtilsError> {
+    pub fn le_u64(&mut self, data: u64) -> Result<(), BufferError> {
         self.append(&data.to_le_bytes())
     }
 
-    pub fn le_i64(&mut self, data: i64) -> Result<(), UtilsError> {
+    pub fn le_i64(&mut self, data: i64) -> Result<(), BufferError> {
         self.append(&data.to_le_bytes())
     }
 }
@@ -235,7 +235,7 @@ impl core::fmt::Write for WriteBuf<'_> {
 macro_rules! write_split {
     ($f:expr, $s:literal $(, $x:expr)* $(,)?) => {
         {
-            write!(&mut $f, $s $(, $x)*).map_err(|_| $crate::error::UtilsErrorCode::BufferTooSmall)?;
+            write!(&mut $f, $s $(, $x)*).map_err(|_| $crate::error::BufferErrorCode::BufferTooSmall)?;
 
             Ok::<_, $crate::error::Error>($f.split_str())
         }

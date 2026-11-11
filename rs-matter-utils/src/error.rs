@@ -150,32 +150,64 @@ impl<T: MatterError> core::error::Error for Error2<T> {
     }
 }
 
-pub type UtilsError = Error2<UtilsErrorCode>;
+pub type BufferError = Error2<BufferErrorCode>;
 
-/// The errors raised by `rs-matter-utils` itself.
+/// The errors raised by the byte buffers in [`crate::storage`] - [`crate::storage::WriteBuf`]
+/// and [`crate::storage::ReadBuf`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum UtilsErrorCode {
+pub enum BufferErrorCode {
     /// A fixed-capacity buffer could not accept the data.
-    BufferTooSmall, // absorbs NoSpace
+    BufferTooSmall,
     /// A read ran past the end of the input.
-    UnexpectedEof, // was TruncatedPacket
-    /// Input bytes could not be decoded into the expected representation.
-    InvalidData,
+    UnexpectedEof,
 }
 
-// TODO: Remove this bridge once all dependent crates have been refactored to explicitly handle UtilsError
-impl From<UtilsErrorCode> for Error {
-    fn from(value: UtilsErrorCode) -> Self {
+pub type Base38Error = Error2<Base38ErrorCode>;
+
+/// The errors raised by the base38 codec in [`crate::codec::base38`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Base38ErrorCode {
+    /// A character outside the base38 alphabet was encountered while decoding.
+    InvalidCharacter,
+    /// A base38 chunk had a length that cannot encode a whole number of bytes.
+    InvalidLength,
+    /// The caller-supplied output container could not fit the result.
+    OutputTooSmall,
+}
+
+// TODO: Remove these bridges once all dependent crates have been refactored to
+// explicitly handle `BufferError` and `Base38Error`.
+
+impl From<BufferErrorCode> for Error {
+    fn from(value: BufferErrorCode) -> Self {
         match value {
-            UtilsErrorCode::BufferTooSmall => ErrorCode::BufferTooSmall.into(),
-            UtilsErrorCode::UnexpectedEof => ErrorCode::TruncatedPacket.into(),
-            UtilsErrorCode::InvalidData => ErrorCode::InvalidData.into(),
+            BufferErrorCode::BufferTooSmall => ErrorCode::BufferTooSmall.into(),
+            BufferErrorCode::UnexpectedEof => ErrorCode::TruncatedPacket.into(),
         }
     }
 }
-impl From<UtilsError> for Error {
-    fn from(value: UtilsError) -> Self {
+
+impl From<BufferError> for Error {
+    fn from(value: BufferError) -> Self {
+        value.code().into()
+    }
+}
+
+impl From<Base38ErrorCode> for Error {
+    fn from(value: Base38ErrorCode) -> Self {
+        match value {
+            Base38ErrorCode::InvalidCharacter | Base38ErrorCode::InvalidLength => {
+                ErrorCode::InvalidData.into()
+            }
+            Base38ErrorCode::OutputTooSmall => ErrorCode::BufferTooSmall.into(),
+        }
+    }
+}
+
+impl From<Base38Error> for Error {
+    fn from(value: Base38Error) -> Self {
         value.code().into()
     }
 }

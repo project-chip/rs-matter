@@ -17,7 +17,7 @@
 
 use core::borrow::{Borrow, BorrowMut};
 
-use crate::error::{UtilsError, UtilsErrorCode};
+use crate::error::{BufferError, BufferErrorCode};
 use core::convert::TryInto;
 
 /// A buffer for reading data from a byte slice.
@@ -46,13 +46,13 @@ where
         self.left = self.buf.borrow().len();
     }
 
-    pub fn load<Q>(&mut self, pb: &ReadBuf<Q>) -> Result<(), UtilsError>
+    pub fn load<Q>(&mut self, pb: &ReadBuf<Q>) -> Result<(), BufferError>
     where
         T: BorrowMut<[u8]>,
         Q: Borrow<[u8]>,
     {
         if self.buf.borrow().len() < pb.read_off + pb.left {
-            Err(UtilsErrorCode::BufferTooSmall)?;
+            Err(BufferErrorCode::BufferTooSmall)?;
         }
 
         self.buf.borrow_mut()[0..pb.read_off + pb.left]
@@ -92,14 +92,14 @@ where
         &self.buf.borrow()[0..self.read_off]
     }
 
-    pub fn tail(&mut self, size: usize) -> Result<&[u8], UtilsError> {
+    pub fn tail(&mut self, size: usize) -> Result<&[u8], BufferError> {
         if size <= self.left {
             let end_offset = self.read_off + self.left;
             let tail = &self.buf.borrow()[(end_offset - size)..end_offset];
             self.left -= size;
             return Ok(tail);
         }
-        Err(UtilsErrorCode::UnexpectedEof.into())
+        Err(BufferErrorCode::UnexpectedEof.into())
     }
 
     fn advance(&mut self, len: usize) {
@@ -107,7 +107,7 @@ where
         self.left -= len;
     }
 
-    pub fn parse_head_with<F, R>(&mut self, size: usize, f: F) -> Result<R, UtilsError>
+    pub fn parse_head_with<F, R>(&mut self, size: usize, f: F) -> Result<R, BufferError>
     where
         F: FnOnce(&mut Self) -> R,
     {
@@ -116,10 +116,10 @@ where
             self.advance(size);
             return Ok(data);
         }
-        Err(UtilsErrorCode::UnexpectedEof.into())
+        Err(BufferErrorCode::UnexpectedEof.into())
     }
 
-    pub fn parse_as_array<F, R, const N: usize>(&mut self, f: F) -> Result<R, UtilsError>
+    pub fn parse_as_array<F, R, const N: usize>(&mut self, f: F) -> Result<R, BufferError>
     where
         F: FnOnce([u8; N]) -> R,
     {
@@ -131,22 +131,22 @@ where
             self.advance(N);
             return Ok(data);
         }
-        Err(UtilsErrorCode::UnexpectedEof.into())
+        Err(BufferErrorCode::UnexpectedEof.into())
     }
 
-    pub fn le_u8(&mut self) -> Result<u8, UtilsError> {
+    pub fn le_u8(&mut self) -> Result<u8, BufferError> {
         self.parse_head_with(1, |x| x.buf.borrow()[x.read_off])
     }
 
-    pub fn le_u16(&mut self) -> Result<u16, UtilsError> {
+    pub fn le_u16(&mut self) -> Result<u16, BufferError> {
         self.parse_as_array(u16::from_le_bytes)
     }
 
-    pub fn le_u32(&mut self) -> Result<u32, UtilsError> {
+    pub fn le_u32(&mut self) -> Result<u32, BufferError> {
         self.parse_as_array(u32::from_le_bytes)
     }
 
-    pub fn le_u64(&mut self) -> Result<u64, UtilsError> {
+    pub fn le_u64(&mut self) -> Result<u64, BufferError> {
         self.parse_as_array(u64::from_le_bytes)
     }
 }

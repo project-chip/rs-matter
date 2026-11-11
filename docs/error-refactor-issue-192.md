@@ -56,7 +56,7 @@ Two consequences worth stating:
 
 - **`rs-matter-utils` goes first.** It has no internal dependencies, so
   it is the only crate needing no incoming conversion at all. `Error` and
-  `ErrorCode` stay in `utils` alongside `UtilsError` until step 8 — everything
+  `ErrorCode` stay in `utils` alongside its new error types until step 8 — everything
   above keeps compiling against them until its own turn comes.
 - **Step 5 is cheaper than the dependent count suggests.** With
   `From<NewCrateError> for Error` in place, a dependent doing `foo()?` into its own
@@ -317,17 +317,25 @@ Spec-defined, so deletion is not an option — but nothing emits these today.
 
 ## `rs-matter-utils`
 
-13 variants become 3. The governing rule: a variant stays only if some function
-**in this crate** can produce it. Everything else was present solely because a
+13 variants become 5, split across **two** error types rather than one crate-wide
+enum. The governing rule for keeping a variant: some function **in this crate** must
+be able to produce it. Everything else was present solely because a
 `From<ForeignError> for Error` impl lived here for the convenience of crates above.
 
-| Current `ErrorCode` | usages | New `UtilsErrorCode` | Note |
+The split follows the usage boundary. `BufferError` covers `storage::WriteBuf` and
+`storage::ReadBuf` — two halves of one abstraction, used together on the same byte
+stream by nearly every crate. `Base38Error` covers the base38 codec, which is
+independent of the buffers and has only two consumers (`pairing`, `onboard`).
+Separating it also allows more precise names than a shared enum could carry: the
+old `InvalidData` becomes `InvalidCharacter` and `InvalidLength`.
+
+| Current `ErrorCode` | usages | New code | Note |
 |---|---|---|---|
-| NoSpace | 6 | `BufferTooSmall` | Merged. All 6 are `WriteBuf` (`load`, `reserve`, `shrink`, `expand`, `prepend_with`, `append_with`) and are the same event as the existing `BufferTooSmall` sites: a fixed-capacity buffer could not take the data. The "TLV writer ran out of room, so chunk" reading belongs to `TlvError`, which `rs-matter-tlv` derives from this variant. |
-| BufferTooSmall | 4 | `BufferTooSmall` | Unchanged. `ReadBuf::load`, `write_split!`, base38 ×2. |
-| TruncatedPacket | 3 | `UnexpectedEof` | Renamed. `ReadBuf` is a generic byte reader; "packet" is a transport word that leaked down. |
-| InvalidData | 3 | `InvalidData` | Unchanged. base38 decode ×3 — the only producer that keeps this variant alive. |
-| Invalid | 3 | `InvalidData` / *removed* | Split. `WriteBuf::reserve`'s "buffer not pristine" is caller misuse → `debug_assert!`, no variant. The `From<TryFromSliceError>` and `From<TryFromPrimitiveError>` cases leave with their impls (see below). |
+| NoSpace | 6 | `BufferErrorCode::BufferTooSmall` | Merged. All 6 are `WriteBuf` (`load`, `reserve`, `shrink`, `expand`, `prepend_with`, `append_with`) and are the same event as the existing `BufferTooSmall` sites: a fixed-capacity buffer could not take the data. The "TLV writer ran out of room, so chunk" reading belongs to `TlvError`, which `rs-matter-tlv` derives from this variant. |
+| BufferTooSmall | 4 | `BufferErrorCode::BufferTooSmall` / `Base38ErrorCode::OutputTooSmall` | Split by owner. `ReadBuf::load` and `write_split!` are buffer failures; base38's two sites are the caller's output `String`/`Vec` refusing the result, hence the clearer name. |
+| TruncatedPacket | 3 | `BufferErrorCode::UnexpectedEof` | Renamed. `ReadBuf` is a generic byte reader; "packet" is a transport word that leaked down. |
+| InvalidData | 3 | `Base38ErrorCode::InvalidCharacter` / `InvalidLength` | Split. base38 is the only producer: two sites reject a byte outside the alphabet, one rejects a chunk whose length cannot encode whole bytes. |
+| Invalid | 3 | *removed* | `WriteBuf::reserve`'s "buffer not pristine" is caller misuse → `debug_assert!`, no variant. The `From<TryFromSliceError>` and `From<TryFromPrimitiveError>` cases leave with their impls (see below). |
 | DBusError | 6 | *removed* | No producer here. The `zbus_proxies` tree stays in this crate, but the proxies return `zbus::Result` and no utils signature ever mentions this code. Needed by `transport` (mDNS, BlueZ) and `dm` (NetworkManager, wpa_supplicant). |
 | BtpError | 2 | *removed* | No producer here. Only reachable via `From<bluer::Error>`, whose sole consumer is the BTP backend in `transport`. |
 | StdIoError | 2 | *removed* | No producer here. Needed by `transport`, `cert`, `dm`, `node`. |
@@ -337,37 +345,51 @@ Spec-defined, so deletion is not an option — but nothing emits these today.
 | SysTimeFail | 1 | *removed* | As `RwLock` — no in-tree producer at all. |
 | Utf8Fail | 1 | *removed* | No producer here. Reachable only via `From<Utf8Error>`; nothing in the workspace matches on it. |
 
-Resulting enum:
+Resulting types, both wrapped as `Error2<_>` (`BufferError`, `Base38Error`), each
+with a bridge to the legacy `Error`:
 
 ```rust
-pub enum UtilsErrorCode {
+pub enum BufferErrorCode {
     /// A fixed-capacity buffer could not accept the data.
     BufferTooSmall,
     /// A read ran past the end of the input.
     UnexpectedEof,
-    /// Input bytes could not be decoded into the expected representation.
-    InvalidData,
+}
+
+pub enum Base38ErrorCode {
+    /// A character outside the base38 alphabet was encountered while decoding.
+    InvalidCharacter,
+    /// A base38 chunk had a length that cannot encode a whole number of bytes.
+    InvalidLength,
+    /// The caller-supplied output container could not fit the result.
+    OutputTooSmall,
 }
 ```
+
+`WriteBuf` alone would have yielded a one-variant error type, so it shares
+`BufferError` with `ReadBuf` instead; the read/write distinction that matters is
+already carried by `BufferTooSmall` (destination undersized) versus
+`UnexpectedEof` (source exhausted).
 
 ### Supporting changes
 
 - `Error2<T>` — the generic replacement for `Error`, parameterised over the code
-  type. `UtilsError = Error2<UtilsErrorCode>`. Renamed to `Error` once the legacy
+  type — `BufferError = Error2<BufferErrorCode>`, and so on. Renamed to `Error` once the legacy
   type is deleted.
 - `MatterError` — a blanket-implemented marker trait collecting the bounds a code
   type must satisfy (`Copy + Debug`, plus `defmt::Format` under the `defmt`
   feature), so the six `Error2` impls carry one bound instead of a repeated list.
-- `WriteBuf` now returns `UtilsError` throughout. `impl From<UtilsError> for Error`
-  bridges to the legacy type until every crate is converted.
+- `WriteBuf` and `ReadBuf` now return `BufferError`, and base38 returns
+  `Base38Error`. A `From<_> for Error` bridge per type keeps the legacy type
+  reachable until every crate is converted.
 
 Two things in this crate deliberately still name the legacy `Error`, because
 converting them breaks a dependent that has not had its turn yet:
 
 - `WriteBuf::append_with_buf` takes a caller-supplied callback that fills a byte
-  slice. That callback can fail for reasons utils knows nothing about, so the right signature is a free generic `E` with no bound, since the method only propagates the callback's error and never produces one of its own. Pinning it to `UtilsError`
+  slice. That callback can fail for reasons utils knows nothing about, so the right signature is a free generic `E` with no bound, since the method only propagates the callback's error and never produces one of its own. Pinning it to `BufferError`
   would force `sc` and `dm` to funnel foreign errors through a utils variant.
-- The `write_split!` macro raises `UtilsErrorCode::BufferTooSmall`, but widens the
+- The `write_split!` macro raises `BufferErrorCode::BufferTooSmall`, but widens the
   result to the legacy `Error` via the bridge so that its callers, all in
   `transport`'s mDNS code, keep compiling. Once `transport` is converted the macro
-  returns `UtilsError` and those callers convert it explicitly.
+  returns `BufferError` and those callers convert it explicitly.
