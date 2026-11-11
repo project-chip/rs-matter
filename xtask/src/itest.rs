@@ -764,7 +764,14 @@ pub(crate) const CAMERA_TESTS: &[&str] = &[
 ];
 
 /// Audio Doorbell cluster tests — run against the `audio_doorbell_tests` driver.
-pub(crate) const AUDIO_DOORBELL_TESTS: &[&str] = &["TC_AVSM_2_1"];
+pub(crate) const AUDIO_DOORBELL_TESTS: &[&str] = &[
+    "TC_AVSM_2_1",
+    "TC_AVSM_2_5",
+    "TC_AVSM_2_6",
+    "TC_AVSM_2_11",
+    "TC_AVSM_2_12",
+    "TC_AVSM_2_14",
+];
 
 /// OnOff + LevelControl + ColorControl YAML/Python tests — run
 /// against the `light_tests` example.
@@ -1654,11 +1661,6 @@ impl ITests {
             return self.run_commissioner_suite(test_timeout_secs, profile, target);
         }
 
-        let chip_tool_path = self.chip_builder.chip_tool_path();
-        if !chip_tool_path.exists() {
-            anyhow::bail!("`chip-tool` not found. Run `cargo xtask itest-setup` first.");
-        }
-
         // Determine which tests to run
         let tests = if tests.clone().into_iter().next().is_some() {
             tests.into_iter().map(|s| s.as_str()).collect::<Vec<_>>()
@@ -1671,6 +1673,13 @@ impl ITests {
         if tests.is_empty() {
             info!("No tests specified and no default tests enabled.");
             return Ok(());
+        }
+
+        if tests.iter().any(|t| !Self::is_python_test(t)) {
+            let chip_tool_path = self.chip_builder.chip_tool_path();
+            if !chip_tool_path.exists() {
+                anyhow::bail!("`chip-tool` not found. Run `cargo xtask itest-setup` first.");
+            }
         }
 
         debug!("About to run tests: {tests:?}");

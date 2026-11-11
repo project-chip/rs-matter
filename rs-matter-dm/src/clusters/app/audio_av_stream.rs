@@ -584,12 +584,24 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
         response: AudioStreamAllocateResponseBuilder<P>,
     ) -> Result<P, Error> {
         let params = AudioStreamParams::new(
-            request.stream_usage()?,
-            request.audio_codec()?,
-            request.channel_count()?,
-            request.sample_rate()?,
-            request.bit_rate()?,
-            request.bit_depth()?,
+            request
+                .stream_usage()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+            request
+                .audio_codec()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+            request
+                .channel_count()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+            request
+                .sample_rate()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+            request
+                .bit_rate()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+            request
+                .bit_depth()
+                .map_err(|_| ErrorCode::ConstraintError)?,
         );
         let stream_id = self.allocate_stream(&params).await?;
         response.audio_stream_id(stream_id)?.end()
@@ -600,7 +612,10 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
         _ctx: impl InvokeContext,
         request: AudioStreamDeallocateRequest<'_>,
     ) -> Result<(), Error> {
-        self.deallocate_stream(request.audio_stream_id()?).await
+        let stream_id = request
+            .audio_stream_id()
+            .map_err(|_| ErrorCode::ConstraintError)?;
+        self.deallocate_stream(stream_id).await
     }
 
     async fn handle_video_stream_allocate<P: TLVBuilderParent>(
@@ -662,8 +677,13 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> ClusterAsyncHandler
         if any_allocated {
             return Err(ErrorCode::InvalidInState.into());
         }
+        let priorities = request
+            .stream_priorities()
+            .map_err(|_| ErrorCode::ConstraintError)?;
         let new_prios = build_stream_priorities(
-            request.stream_priorities()?.iter(),
+            priorities
+                .iter()
+                .map(|item| item.map_err(|_| Error::from(ErrorCode::ConstraintError))),
             self.config.supported_stream_usages,
         )?;
         self.with_state_mut(|s| {
