@@ -705,7 +705,11 @@ impl<const N: usize> Subscriptions<N> {
     /// for why that timing matters. A record that cannot be loaded or re-added (e.g.
     /// no free buffer) is skipped, and one whose priming report then fails is dropped
     /// rather than retried (see [`ReportContext::set_keep_retry`]).
-    pub(crate) fn load_persist<'a, 's, B, S>(
+    ///
+    /// `max_int_secs` returns the max interval the node grants a raw subscribe
+    /// request now. A record granted a different one is skipped too.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_persist<'a, 's, B, S, F>(
         &'s self,
         pool: &'a B,
         buffers: &'s SubscriptionsBuffers<'a, B, N>,
@@ -713,11 +717,13 @@ impl<const N: usize> Subscriptions<N> {
         buf: &mut [u8],
         now: Instant,
         event_numbers_watermark: EventNumber,
+        max_int_secs: F,
     ) -> Result<(), Error>
     where
         'a: 's,
         B: Buffers<IMBuffer> + 'a,
         S: KvBlobStore,
+        F: Fn(&[u8]) -> Result<u16, Error>,
     {
         // Force the slot-range assertion to be evaluated.
         let () = Self::SLOTS_FIT;
@@ -733,6 +739,21 @@ impl<const N: usize> Subscriptions<N> {
                 Ok(None) => break,
                 Err(_) => continue,
             };
+
+            match max_int_secs(record.subscribe_req.0) {
+                Ok(max_int_secs) if max_int_secs == record.max_int_secs => (),
+                Ok(max_int_secs) => {
+                    info!(
+                        "Not resuming persisted subscription {}: granted max interval {} s, now {} s",
+                        record.id, record.max_int_secs, max_int_secs
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    warn!("Invalid persisted subscription request: {:?}; skipping", e);
+                    continue;
+                }
+            }
 
             let Some(mut rx) = pool.get_immediate() else {
                 warn!("No free buffer to resume a persisted subscription; skipping");
@@ -4615,7 +4636,9 @@ mod tests {
 
             let mut buf = [0u8; 512];
             subs2
-                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0)
+                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0, |req| {
+                    Ok(if req == [9, 8, 7] { 120 } else { 60 })
+                })
                 .unwrap();
 
             // Both subscriptions are back, with their routing + intervals intact...
@@ -4670,6 +4693,11 @@ mod tests {
             assert!(!subs2.has_subscription_for(fab(1), 0x9999));
         }
 
+        /// A `load_persist` grant of `max_int` seconds to every request.
+        fn granted(max_int: u16) -> impl Fn(&[u8]) -> Result<u16, Error> {
+            move |_| Ok(max_int)
+        }
+
         /// Persist a single subscription to `kv`, as a first "boot" would.
         fn persist_one(kv: &mut MemKv, now: Instant) {
             let subs: Subscriptions<4> = Subscriptions::new();
@@ -4697,7 +4725,7 @@ mod tests {
             let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
 
             let mut buf = [0u8; 512];
-            subs.load_persist(&pool, &subs_bufs, &mut kv, &mut buf, now, 0)
+            subs.load_persist(&pool, &subs_bufs, &mut kv, &mut buf, now, 0, granted(60))
                 .unwrap();
             assert!(subs.has_subscription_for(fab(1), 0xAABB));
 
@@ -4716,6 +4744,41 @@ mod tests {
             assert!(kv.blobs.is_empty());
         }
 
+        /// A subscription that the node would now grant a different max interval
+        /// (e.g. after an `IdleModeDuration` change) is not resumed, and neither
+        /// is one whose request cannot be read.
+        #[test]
+        fn changed_max_int_is_not_resumed() {
+            let mut kv = MemKv::default();
+            let now = Instant::now();
+
+            persist_one(&mut kv, now);
+
+            /// Reload `kv` into a fresh table; `true` if the subscription is back.
+            fn reload(
+                kv: &mut MemKv,
+                now: Instant,
+                max_int_secs: impl Fn(&[u8]) -> Result<u16, Error>,
+            ) -> bool {
+                let subs: Subscriptions<4> = Subscriptions::new();
+                let pool = TestPool::<5>::new();
+                let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+                let mut buf = [0u8; 512];
+                subs.load_persist(&pool, &subs_bufs, kv, &mut buf, now, 0, max_int_secs)
+                    .unwrap();
+
+                subs.has_subscription_for(fab(1), 0xAABB)
+            }
+
+            let unreadable = |_: &[u8]| Err(crate::error::ErrorCode::Invalid.into());
+
+            assert!(!reload(&mut kv, now, granted(120)));
+            assert!(!reload(&mut kv, now, unreadable));
+            // The record itself is left alone: the same grant resumes it.
+            assert!(reload(&mut kv, now, granted(60)));
+        }
+
         /// A resumed subscription whose first report gets through is a live
         /// subscription again, retried on failure like any other from then on.
         #[test]
@@ -4730,7 +4793,7 @@ mod tests {
             let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
 
             let mut buf = [0u8; 512];
-            subs.load_persist(&pool, &subs_bufs, &mut kv, &mut buf, now, 0)
+            subs.load_persist(&pool, &subs_bufs, &mut kv, &mut buf, now, 0, granted(60))
                 .unwrap();
 
             {
@@ -4789,7 +4852,7 @@ mod tests {
             let pool2 = TestPool::<5>::new();
             let subs_bufs2: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
             subs2
-                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0)
+                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0, granted(60))
                 .unwrap();
             subs2.state.lock(|s| {
                 let s = s.borrow();
@@ -4838,7 +4901,7 @@ mod tests {
 
             let mut buf = [0u8; 512];
             subs2
-                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0)
+                .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0, granted(60))
                 .unwrap();
 
             subs2.state.lock(|s| {
