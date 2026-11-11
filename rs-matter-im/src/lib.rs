@@ -389,15 +389,15 @@ where
     /// it or serving exchanges. In order:
     /// - Re-hydrates the [`InteractionModelState`] - the events-queue epoch, so
     ///   event numbers are not reused across reboots;
-    /// - Replays any persisted subscriptions into the reporter's table (if the
-    ///   `persistent-subscriptions` feature is enabled), so a subscriber that
-    ///   had a subscription before this reboot keeps receiving reports instead
-    ///   of having to notice the loss and re-subscribe;
     /// - Broadcasts [`LifecycleOp::Startup`] to every cluster handler in the
     ///   data model, so handlers with a persistence story of their own (which
     ///   the Interaction Model otherwise treats as opaque) - like the network
     ///   stores of the Network Commissioning handlers - can re-hydrate their
-    ///   state from [`HandlerContext::kv`].
+    ///   state from [`HandlerContext::kv`];
+    /// - Replays any persisted subscriptions into the reporter's table (if the
+    ///   `persistent-subscriptions` feature is enabled), so a subscriber that
+    ///   had a subscription before this reboot keeps receiving reports instead
+    ///   of having to notice the loss and re-subscribe.
     ///
     /// The `Matter`-level counterpart is [`Matter::startup`] - call that one
     /// first.
@@ -406,10 +406,12 @@ where
 
         self.state.load_persist(&self.kv, utc_us)?;
 
-        // Needs the events watermark loaded just above.
-        self.resume_subscriptions()?;
+        // The ICD Management handlers publish the ICD advertisement on startup,
+        // which the resumed subscriptions are checked against.
+        self.broadcast_lifecycle(LifecycleOp::Startup)?;
 
-        self.broadcast_lifecycle(LifecycleOp::Startup)
+        // Needs the events watermark loaded above.
+        self.resume_subscriptions()
     }
 
     /// Factory-reset the Data Model persistable state.
@@ -871,15 +873,7 @@ where
                 });
         }
 
-        let max_int_secs = match self.matter.icd_advertisement() {
-            Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_secs),
-            None => subscription_max_int_secs(
-                max_int_ceil,
-                min_int_secs,
-                self.matter.dev_det().min_subscription_max_interval_secs,
-                self.matter.dev_det().max_subscription_max_interval_secs,
-            ),
-        };
+        let max_int_secs = self.max_int_secs(min_int_secs, max_int_ceil);
 
         let now = Instant::now();
 
@@ -925,6 +919,20 @@ where
         }
 
         Ok(())
+    }
+
+    /// The max interval this node grants a subscription that requests
+    /// `min_int_floor` and `max_int_ceil`.
+    fn max_int_secs(&self, min_int_floor: u16, max_int_ceil: u16) -> u16 {
+        match self.matter.icd_advertisement() {
+            Some(icd) => icd_max_int_secs(icd.idle_mode_duration_s, min_int_floor),
+            None => subscription_max_int_secs(
+                max_int_ceil,
+                min_int_floor,
+                self.matter.dev_det().min_subscription_max_interval_secs,
+                self.matter.dev_det().max_subscription_max_interval_secs,
+            ),
+        }
     }
 
     /// Handle a server-initiated `ReportData` message — the controller /
@@ -1113,6 +1121,10 @@ where
     /// subscriber on demand by establishing a session when the next report is
     /// due. No session is opened proactively here.
     ///
+    /// A subscription that this node would now grant a different max interval
+    /// (e.g. after an `IdleModeDuration` change) is not resumed: its subscriber
+    /// knows only the max interval it was granted.
+    ///
     /// Compiled to a no-op (returning `Ok`) unless the `persistent-subscriptions`
     /// feature is enabled.
     #[cfg(feature = "persistent-subscriptions")]
@@ -1128,6 +1140,11 @@ where
                 buf,
                 now,
                 watermark,
+                |req| {
+                    let req = SubscribeReq::new(TLVElement::new(req));
+
+                    Ok(self.max_int_secs(req.min_int_floor()?, req.max_int_ceil()?))
+                },
             )
         })?;
 
