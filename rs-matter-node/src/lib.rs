@@ -432,15 +432,21 @@ impl<'a> Matter<'a> {
     ///
     /// # Arguments
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    ///
+    /// A device with a verifier rather than its passcode has no QR code: only a
+    /// note saying so is logged.
     pub fn print_standard_qr_text(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
+        let Some(comm_data) = self.dev_comm.passcode() else {
+            info!("No QR code or pairing code: the device has a verifier, not its passcode");
+            return Ok(());
+        };
+
         let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
 
-        let Some(payload) = self.standard_qr_payload(disc_caps) else {
-            return Ok(());
-        };
+        let payload = self.standard_qr_payload(comm_data, disc_caps);
 
         let (text, _) = payload.as_str(buf)?;
 
@@ -455,15 +461,19 @@ impl<'a> Matter<'a> {
     ///
     /// # Arguments
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    ///
+    /// Does nothing for a device with a verifier rather than its passcode.
     pub fn print_standard_nfc_ndef(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
+        let Some(comm_data) = self.dev_comm.passcode() else {
+            return Ok(());
+        };
+
         let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
 
-        let Some(payload) = self.standard_qr_payload(disc_caps) else {
-            return Ok(());
-        };
+        let payload = self.standard_qr_payload(comm_data, disc_caps);
 
         let (ndef, remaining) = payload.as_ndef(buf)?;
 
@@ -505,24 +515,26 @@ impl<'a> Matter<'a> {
     /// # Arguments
     /// - `text_type`: The type of text representation to use when printing the QR code
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    ///
+    /// Does nothing for a device with a verifier rather than its passcode.
     pub fn print_standard_qr_code(
         &self,
         text_type: QrTextType,
         disc_caps: DiscoveryCapabilities,
     ) -> Result<(), Error> {
-        let Some(payload) = self.standard_qr_payload(disc_caps) else {
+        let Some(comm_data) = self.dev_comm.passcode() else {
             return Ok(());
         };
 
         // Also print the pairing code for convenience
-        if let Some(comm_data) = self.dev_comm.passcode() {
-            info!("PairingCode: [{}]", comm_data.compute_pretty_pairing_code());
-        }
+        info!("PairingCode: [{}]", comm_data.compute_pretty_pairing_code());
 
         let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
+
+        let payload = self.standard_qr_payload(comm_data, disc_caps);
 
         let (text, buf) = payload.as_str(buf)?;
 
@@ -548,21 +560,15 @@ impl<'a> Matter<'a> {
     /// The returned QR code payload corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
     /// and contains no optional data.
     ///
-    /// Logs that there is none, and returns `None`, if the device has a verifier
-    /// rather than its passcode.
-    ///
     /// # Arguments
+    /// - `comm_data`: The device's passcode and discriminator
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
     fn standard_qr_payload(
         &self,
+        comm_data: &BasicCommData,
         disc_caps: DiscoveryCapabilities,
-    ) -> Option<QrPayload<'_, NoOptionalData>> {
-        let Some(comm_data) = self.dev_comm.passcode() else {
-            info!("No pairing code or QR code: the device has a verifier, not its passcode");
-            return None;
-        };
-
-        let payload = QrPayload::new(
+    ) -> QrPayload<'_, NoOptionalData> {
+        QrPayload::new(
             disc_caps,
             CommFlowType::Standard,
             comm_data.clone(),
@@ -570,9 +576,7 @@ impl<'a> Matter<'a> {
             self.dev_det.pid,
             self.dev_det.serial_no,
             no_optional_data as _,
-        );
-
-        Some(payload)
+        )
     }
 
     /// Return `true` if there is at least one fabric.

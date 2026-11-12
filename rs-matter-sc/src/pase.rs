@@ -140,29 +140,26 @@ pub struct CommWindow {
 }
 
 impl CommWindow {
-    /// Initialize a commissioning window with a passcode
+    /// Initialize a basic commissioning window
     ///
     /// # Arguments
     /// - `mdns_id` - The mDNS identifier
-    /// - `password` - The passcode
-    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
-    /// - `discriminator` - The discriminator
+    /// - `dev_comm` - The device's passcode or verifier, and its discriminator
+    /// - `salt` - The salt used with a passcode (16..=32 bytes, validated upstream)
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
-    /// - `rand` - The random number generator
-    fn init_with_pw<'a>(
+    fn init_basic<'a>(
         mdns_id: u64,
-        password: Spake2pVerifierPasswordRef<'a>,
+        dev_comm: &'a DevCommData<'a>,
         salt: &'a [u8],
-        discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Instant,
     ) -> impl Init<Self> + 'a {
         init!(Self {
             mdns_id,
-            discriminator,
+            discriminator: dev_comm.discriminator(),
             window_type: CommWindowType::Basic,
-            verifier <- Spake2pVerifierData::init_with_pw(password, salt),
+            verifier <- Spake2pVerifierData::init_with_dev_comm(dev_comm, salt),
             opener,
             window_expiry,
             pake_failures: 0,
@@ -341,35 +338,18 @@ impl Pase {
             Err(ErrorCode::InvalidCommand)?;
         }
 
+        Self::validate_salt_len(salt)?;
+
         let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
 
-        match dev_comm {
-            DevCommData::Passcode(data) => {
-                Self::validate_salt_len(salt)?;
-
-                self.comm_window
-                    .reinit(Maybe::init_some(CommWindow::init_with_pw(
-                        mdns_id,
-                        data.password.reference(),
-                        salt,
-                        data.discriminator,
-                        opener,
-                        window_expiry,
-                    )));
-            }
-            DevCommData::Verifier(data) => {
-                self.comm_window.reinit(Maybe::init_some(CommWindow::init(
-                    mdns_id,
-                    data.verifier(),
-                    data.salt(),
-                    data.iterations(),
-                    data.discriminator(),
-                    CommWindowType::Basic,
-                    opener,
-                    window_expiry,
-                )));
-            }
-        }
+        self.comm_window
+            .reinit(Maybe::init_some(CommWindow::init_basic(
+                mdns_id,
+                dev_comm,
+                salt,
+                opener,
+                window_expiry,
+            )));
 
         notify_mdns();
         notify_adm_comm_window_attrs_changed(&mut notify_change);

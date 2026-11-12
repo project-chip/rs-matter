@@ -74,7 +74,7 @@ use rs_matter::dm::clusters::net_comm::{
 };
 use rs_matter::dm::clusters::thread_diag::ThreadDiag;
 use rs_matter::dm::clusters::wifi_diag::{WifiDiag, WirelessDiag};
-use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::thread::otbr::OtbrCtl;
@@ -214,7 +214,7 @@ fn run_wifi(connection: Connection, adapter: Option<String>) -> Result<(), Error
         // a network, then drop the transport.
         let btp = Btp::new();
 
-        let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
+        let adv_data = AdvData::new(&TEST_DEV_DET, matter.dev_comm().discriminator());
 
         // Both backends implement the same GATT peripheral against `org.bluez`;
         // which one is exercised is a runtime choice so that a single build can
@@ -362,7 +362,7 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
         // answered without touching the radio (see `DeferredNetCtl`).
         let btp = Btp::new();
 
-        let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
+        let adv_data = AdvData::new(&TEST_DEV_DET, matter.dev_comm().discriminator());
 
         let mut bluetooth = pin!(bluez::run_peripheral(
             &connection,

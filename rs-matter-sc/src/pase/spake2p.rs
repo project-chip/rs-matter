@@ -32,6 +32,7 @@ use crate::crypto::{
     HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN,
 };
 use crate::error::{Error, ErrorCode};
+use crate::pairing::DevCommData;
 pub use crate::pairing::{
     Spake2pVerifierPassword, Spake2pVerifierPasswordRef, Spake2pVerifierSalt,
     Spake2pVerifierSaltRef, Spake2pVerifierStr, Spake2pVerifierStrRef, SPAKE2P_ITERATIONS_MAX,
@@ -99,6 +100,33 @@ impl Spake2pVerifierData {
     ) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
             this.configure_verifier(verifier, salt, count);
+
+            Ok(())
+        })
+    }
+
+    /// The device's passcode with `salt`, or its verifier with the salt that
+    /// came with it.
+    pub fn init_with_dev_comm<'a>(
+        dev_comm: &'a DevCommData<'a>,
+        salt: &'a [u8],
+    ) -> impl Init<Self> + 'a {
+        // Only what differs from `init_empty`, so that the two cases share the
+        // rest.
+        Self::init_empty().chain(move |this| {
+            let (salt, count) = match dev_comm {
+                DevCommData::Passcode(data) => {
+                    this.password = Some(data.password.reference().into());
+                    (salt, SPAKE2P_ITERATION_COUNT)
+                }
+                DevCommData::Verifier(data) => {
+                    this.verifier.load(data.verifier());
+                    (data.salt(), data.iterations())
+                }
+            };
+
+            this.set_salt(salt);
+            this.count = count;
 
             Ok(())
         })
