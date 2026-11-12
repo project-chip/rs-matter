@@ -2546,8 +2546,8 @@ impl ITests {
         }
 
         // Standard rs-matter test commissioning values, sourced directly
-        // from `rs_matter::dm::devices::test::TEST_DEV_COMM`.
-        let test_comm = &rs_matter::dm::devices::test::TEST_DEV_COMM;
+        // from `rs_matter::dm::devices::test::TEST_BASIC_COMM`.
+        let test_comm = &rs_matter::dm::devices::test::TEST_BASIC_COMM;
         let discriminator: u16 = test_comm.discriminator;
         let passcode: u32 = u32::from_le_bytes(*test_comm.password.access());
 
@@ -2919,7 +2919,7 @@ impl ITests {
     /// rs-matter's standard test pairing code is printed by the test
     /// executable at startup as `PairingCode: [3497-011-2332]`
     /// (digits `34970112332`); it encodes `discriminator=3840` and
-    /// `passcode=20202021` from `TEST_DEV_COMM`.
+    /// `passcode=20202021` from `TEST_BASIC_COMM`.
     fn setup_payload_override(test_name: &str) -> Option<&'static str> {
         match test_name {
             // TC_SC_4_1 inspects `matter_test_config.manual_code` /
@@ -2939,7 +2939,7 @@ impl ITests {
             // so we have to hand the framework both forms. The values are
             // the spec-default system_tests credentials (discriminator
             // 3840, passcode 20202021) — same as
-            // `rs_matter::dm::devices::test::TEST_DEV_COMM`. The QR code is
+            // `rs_matter::dm::devices::test::TEST_BASIC_COMM`. The QR code is
             // what `system_tests` prints at startup as
             // `INFO: SetupQRCode: [...]`.
             "TC_DD_1_16_17" => Some(
@@ -3085,7 +3085,7 @@ impl ITests {
     /// Optional `--app-args` passed straight through to `system_tests`.
     ///
     /// `system_tests` recognises `--discriminator <u16>` and
-    /// `--passcode <u32>`; both override the spec-default `TEST_DEV_COMM`
+    /// `--passcode <u32>`; both override the spec-default `TEST_BASIC_COMM`
     /// values for tests that demand non-defaults.
     fn app_args_override(test_name: &str, target: &str) -> Option<&'static str> {
         // The BLE-Thread flow drives the `--thread` flavour of `ble_tests`.

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Breaking: `Matter` and the `MatterStack` constructors take a `DevCommData`: the device's passcode (`DevCommData::Passcode`, as before), or the SPAKE2+ verifier it was given at manufacturing (`DevCommData::Verifier`), which the Core spec asks of a device with a static passcode. Such a device prints no pairing code or QR code. `TEST_DEV_COMM` is now a `DevCommData`; `TEST_BASIC_COMM` has the test passcode and discriminator (#659)
+  * New: `Spake2P::compute_verifier`, the verifier of a passcode, for manufacturing tools
+  * Fix: a commissioning window reports whether it is basic or enhanced from how it was opened, rather than from whether it has a passcode
 * Breaking: the errors of `utils::storage::{WriteBuf, ReadBuf}` and `utils::codec::base38` are crate-local types rather than the global `Error`: `BufferError` and `Base38Error`. This is the first step of the per-crate error refactor described in `docs/error-refactor-issue-192.md` (#657)
   * New: `error::Error2<T>`, an error generic over its code type, and `error::MatterError`, the bounds such a code type must satisfy. `Error2` replaces `Error` once every crate is converted
   * New: `error::BufferErrorCode` (`BufferTooSmall`, `UnexpectedEof`) and `error::Base38ErrorCode` (`InvalidCharacter`, `InvalidLength`, `OutputTooSmall`) in place of the 13 `ErrorCode` variants the crate used, so a base38 failure now says which byte was wrong rather than just `InvalidData`

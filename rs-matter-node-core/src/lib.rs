@@ -57,7 +57,7 @@ use rs_matter_tlv as tlv;
 use rs_matter_utils as utils;
 use rs_matter_utils::error;
 
-pub use crate::pairing::BasicCommData;
+pub use crate::pairing::{BasicCommData, DevCommData, VerifierCommData};
 
 /// The Matter UDP port
 pub const MATTER_PORT: u16 = 5540;

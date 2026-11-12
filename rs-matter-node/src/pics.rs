@@ -81,7 +81,7 @@ impl Matter<'_> {
         {
             let svc = MatterLocalService::Commissionable {
                 id: 0,
-                discriminator: self.dev_comm().discriminator,
+                discriminator: self.dev_comm().discriminator(),
                 enhanced: false,
             };
             let (svc, _) = svc.service(self, buf)?;
