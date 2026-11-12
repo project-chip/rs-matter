@@ -33,37 +33,16 @@ use crate::crypto::{
 };
 use crate::error::{Error, ErrorCode};
 pub use crate::pairing::{
-    Spake2pVerifierPassword, Spake2pVerifierPasswordRef, SPAKE2P_VERIFIER_PASSWORD_LEN,
-    SPAKE2P_VERIFIER_PASSWORD_ZEROED,
+    Spake2pVerifierPassword, Spake2pVerifierPasswordRef, Spake2pVerifierSalt,
+    Spake2pVerifierSaltRef, Spake2pVerifierStr, Spake2pVerifierStrRef, SPAKE2P_ITERATIONS_MAX,
+    SPAKE2P_ITERATIONS_MIN, SPAKE2P_VERIFIER_PASSWORD_LEN, SPAKE2P_VERIFIER_PASSWORD_ZEROED,
+    SPAKE2P_VERIFIER_SALT_LEN, SPAKE2P_VERIFIER_SALT_MIN_LEN, SPAKE2P_VERIFIER_SALT_ZEROED,
+    SPAKE2P_VERIFIER_STR_LEN, SPAKE2P_VERIFIER_STR_ZEROED,
 };
 use crate::utils::init::{init, Init};
 use crate::SCStatusCodes;
 
 pub const SPAKE2P_ITERATION_COUNT: u32 = 2000;
-
-pub const SPAKE2P_VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
-
-/// Maximum size of the PASE salt buffer, in bytes.
-///
-/// The Matter Core spec (Cryptographic Building Blocks) defines the
-/// PASE salt as a variable-length octet string in **the range 16..=32**.
-pub const SPAKE2P_VERIFIER_SALT_LEN: usize = 32;
-
-/// Minimum PASE salt length per Matter Core spec.
-pub const SPAKE2P_VERIFIER_SALT_MIN_LEN: usize = 16;
-
-canon!(
-    SPAKE2P_VERIFIER_STR_LEN,
-    SPAKE2P_VERIFIER_STR_ZEROED,
-    Spake2pVerifierStr,
-    Spake2pVerifierStrRef
-);
-canon!(
-    SPAKE2P_VERIFIER_SALT_LEN,
-    SPAKE2P_VERIFIER_SALT_ZEROED,
-    Spake2pVerifierSalt,
-    Spake2pVerifierSaltRef
-);
 
 pub const SPAKE2P_KE_LEN: usize = 16;
 
@@ -263,6 +242,40 @@ impl Spake2P {
     ) -> Result<(), Error> {
         context.update(response)?;
         context.finish(&mut self.context_hash)
+    }
+
+    /// Compute the verifier of a passcode (`w0`, then `L`), as a device with
+    /// a static passcode is given it at manufacturing.
+    pub fn compute_verifier<C: Crypto>(
+        crypto: C,
+        password: Spake2pVerifierPasswordRef<'_>,
+        iterations: u32,
+        salt: &[u8],
+        verifier: &mut Spake2pVerifierStr,
+    ) -> Result<(), Error> {
+        let mut w0s_w1s = Spake2pW::new();
+        Self::compute_w0s_w1s(&crypto, password, iterations, salt, &mut w0s_w1s)?;
+
+        let (w0s, w1s) = w0s_w1s
+            .reference()
+            .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
+
+        let w0 = crypto.ec_scalar_mod_p(w0s)?;
+        let l_pt = crypto
+            .ec_generator_point()?
+            .mul(&crypto.ec_scalar_mod_p(w1s)?)?;
+
+        let mut w0_canon = CanonEcScalar::new();
+        w0.write_canon(&mut w0_canon)?;
+
+        let mut l_canon = CanonEcPoint::new();
+        l_pt.write_canon(&mut l_canon)?;
+
+        let out = verifier.access_mut();
+        out[..EC_CANON_SCALAR_LEN].copy_from_slice(w0_canon.access());
+        out[EC_CANON_SCALAR_LEN..].copy_from_slice(l_canon.access());
+
+        Ok(())
     }
 
     pub fn setup_verifier<C: Crypto>(
@@ -1030,6 +1043,101 @@ mod tests {
             v_ke.access(),
             "Prover and verifier should derive the same Ke"
         );
+    }
+
+    #[test]
+    fn test_computed_verifier_matches_chip() {
+        // connectedhomeip's test verifier (`CHIP_DEVICE_CONFIG_USE_TEST_SPAKE2P_VERIFIER`),
+        // for passcode 20202021, salt "SPAKE2P Key Salt" and 1000 iterations.
+        const CHIP: [u8; SPAKE2P_VERIFIER_STR_LEN] = [
+            0xb9, 0x61, 0x70, 0xaa, 0xe8, 0x03, 0x34, 0x68, 0x84, 0x72, 0x4f, 0xe9, 0xa3, 0xb2,
+            0x87, 0xc3, 0x03, 0x30, 0xc2, 0xa6, 0x60, 0x37, 0x5d, 0x17, 0xbb, 0x20, 0x5a, 0x8c,
+            0xf1, 0xae, 0xcb, 0x35, 0x04, 0x57, 0xf8, 0xab, 0x79, 0xee, 0x25, 0x3a, 0xb6, 0xa8,
+            0xe4, 0x6b, 0xb0, 0x9e, 0x54, 0x3a, 0xe4, 0x22, 0x73, 0x6d, 0xe5, 0x01, 0xe3, 0xdb,
+            0x37, 0xd4, 0x41, 0xfe, 0x34, 0x49, 0x20, 0xd0, 0x95, 0x48, 0xe4, 0xc1, 0x82, 0x40,
+            0x63, 0x0c, 0x4f, 0xf4, 0x91, 0x3c, 0x53, 0x51, 0x38, 0x39, 0xb7, 0xc0, 0x7f, 0xcc,
+            0x06, 0x27, 0xa1, 0xb8, 0x57, 0x3a, 0x14, 0x9f, 0xcd, 0x1f, 0xa4, 0x66, 0xcf,
+        ];
+
+        let password_bytes = 20202021u32.to_le_bytes();
+
+        let mut computed = Spake2pVerifierStr::new();
+        unwrap!(Spake2P::compute_verifier(
+            test_only_crypto(),
+            Spake2pVerifierPasswordRef::new(&password_bytes),
+            1000,
+            b"SPAKE2P Key Salt",
+            &mut computed
+        ));
+
+        assert_eq!(computed.access(), &CHIP);
+    }
+
+    #[test]
+    fn test_computed_verifier_authenticates() {
+        let password_bytes = 20202021u32.to_le_bytes();
+        let password_ref = Spake2pVerifierPasswordRef::new(&password_bytes);
+        let salt = [0x5a; 16];
+        let iterations = 1000;
+
+        let mut computed = Spake2pVerifierStr::new();
+        unwrap!(Spake2P::compute_verifier(
+            test_only_crypto(),
+            password_ref,
+            iterations,
+            &salt,
+            &mut computed
+        ));
+
+        let mut prover = Spake2P::new();
+        prover.local_sessid = 1;
+        prover.peer_sessid = 2;
+
+        let mut a_pt = CanonEcPoint::new();
+        let prover_ctx = unwrap!(prover.setup_prover(
+            test_only_crypto(),
+            password_ref,
+            &salt,
+            iterations,
+            &mut a_pt
+        ));
+
+        // The device side has the verifier only.
+        let mut verifier = Spake2P::new();
+        verifier.local_sessid = 2;
+        verifier.peer_sessid = 1;
+
+        let mut verifier_data = Spake2pVerifierData {
+            password: None,
+            verifier: computed,
+            salt: Spake2pVerifierSalt::new(),
+            salt_len: salt.len() as u8,
+            count: iterations,
+        };
+        verifier_data.salt.access_mut()[..salt.len()].copy_from_slice(&salt);
+
+        let mut b_pt = CanonEcPoint::new();
+        let mut cb = HmacHash::new();
+        unwrap!(verifier.setup_verifier(
+            test_only_crypto(),
+            &verifier_data,
+            a_pt.reference(),
+            &mut b_pt,
+            &mut cb
+        ));
+
+        let mut ca = HmacHash::new();
+        unwrap!(prover.complete_prover(
+            test_only_crypto(),
+            &prover_ctx,
+            a_pt.reference(),
+            b_pt.reference(),
+            cb.reference(),
+            &mut ca
+        ));
+
+        let (_, _, v_ke) = unwrap!(verifier.verify(ca.reference()));
+        assert_eq!(prover.ke().access(), v_ke.access());
     }
 
     #[test]

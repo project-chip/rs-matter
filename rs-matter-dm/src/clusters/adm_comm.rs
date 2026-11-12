@@ -24,7 +24,9 @@ use rand_core::Rng;
 use crate::crypto::Crypto;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
-use crate::sc::pase::spake2p::SPAKE2P_VERIFIER_SALT_ZEROED;
+use crate::sc::pase::spake2p::{
+    SPAKE2P_ITERATIONS_MAX, SPAKE2P_ITERATIONS_MIN, SPAKE2P_VERIFIER_SALT_ZEROED,
+};
 use crate::sc::pase::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
 use crate::{Matter, MatterState};
@@ -33,10 +35,6 @@ pub use crate::dm::clusters::decl::administrator_commissioning::*;
 use crate::dm::TransactionId;
 use crate::transport::session::SessionMode;
 use rs_matter_node::Transaction as _;
-
-/// PAKE iteration count bounds (Matter Core spec).
-const MIN_PBKDF_ITERATIONS: u32 = 1000;
-const MAX_PBKDF_ITERATIONS: u32 = 100_000;
 
 /// PAKE salt length bounds (Matter Core spec).
 const MIN_PAKE_SALT_LEN: usize = 16;
@@ -180,7 +178,7 @@ impl ClusterHandler for AdminCommHandler<'_> {
         // `PAKEParameterError` as the cluster-specific status (Matter Core
         // spec).
         let iterations = request.iterations()?;
-        if !(MIN_PBKDF_ITERATIONS..=MAX_PBKDF_ITERATIONS).contains(&iterations) {
+        if !(SPAKE2P_ITERATIONS_MIN..=SPAKE2P_ITERATIONS_MAX).contains(&iterations) {
             return Err(cluster_status_err(&ctx, StatusCode::PAKEParameterError));
         }
 
@@ -248,9 +246,8 @@ impl ClusterHandler for AdminCommHandler<'_> {
                 .pase
                 .open_basic_comm_window(
                     mdns_id,
+                    dev_comm,
                     salt.access(),
-                    dev_comm.password.reference(),
-                    dev_comm.discriminator,
                     request.commissioning_timeout()?,
                     opener,
                     notify_mdns,

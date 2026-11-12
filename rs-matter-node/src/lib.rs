@@ -94,7 +94,7 @@ use rs_matter_tlv as tlv;
 use rs_matter_utils as utils;
 use rs_matter_utils::error;
 
-pub use rs_matter_node_core::{BasicCommData, MATTER_PORT};
+pub use rs_matter_node_core::{BasicCommData, DevCommData, VerifierCommData, MATTER_PORT};
 pub use transaction::Transaction;
 
 pub use rs_matter_transport as transport;
@@ -147,7 +147,7 @@ pub struct Matter<'a> {
     /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE)).
     kv_buf: Mutex<RefCell<[u8; crate::persist::KV_BUF_SIZE]>>,
     /// The basic commissioning data for this Matter device
-    dev_comm: BasicCommData,
+    dev_comm: DevCommData<'a>,
     /// The port number on which the Matter stack will listen for incoming connections
     port: u16,
     /// The Groupcast testing-mode bridge - shared between the transport RX
@@ -164,8 +164,8 @@ impl<'a> Matter<'a> {
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
-    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
-    ///   data required for the device.
+    /// * dev_comm: An object of type [DevCommData]: the passcode or the verifier the device
+    ///   authenticates commissioners with, and its discriminator.
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
@@ -173,7 +173,7 @@ impl<'a> Matter<'a> {
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
-        dev_comm: BasicCommData,
+        dev_comm: DevCommData<'a>,
         dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> Self {
@@ -195,15 +195,15 @@ impl<'a> Matter<'a> {
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
-    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
-    ///   data required for the device.
+    /// * dev_comm: An object of type [DevCommData]: the passcode or the verifier the device
+    ///   authenticates commissioners with, and its discriminator.
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
-        dev_comm: BasicCommData,
+        dev_comm: DevCommData<'a>,
         dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> impl Init<Self> {
@@ -251,7 +251,7 @@ impl<'a> Matter<'a> {
         self.dev_att
     }
 
-    pub fn dev_comm(&self) -> &BasicCommData {
+    pub fn dev_comm(&self) -> &DevCommData<'a> {
         &self.dev_comm
     }
 
@@ -438,7 +438,9 @@ impl<'a> Matter<'a> {
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
 
-        let payload = self.standard_qr_payload(disc_caps)?;
+        let Some(payload) = self.standard_qr_payload(disc_caps) else {
+            return Ok(());
+        };
 
         let (text, _) = payload.as_str(buf)?;
 
@@ -459,7 +461,9 @@ impl<'a> Matter<'a> {
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
 
-        let payload = self.standard_qr_payload(disc_caps)?;
+        let Some(payload) = self.standard_qr_payload(disc_caps) else {
+            return Ok(());
+        };
 
         let (ndef, remaining) = payload.as_ndef(buf)?;
 
@@ -506,18 +510,19 @@ impl<'a> Matter<'a> {
         text_type: QrTextType,
         disc_caps: DiscoveryCapabilities,
     ) -> Result<(), Error> {
+        let Some(payload) = self.standard_qr_payload(disc_caps) else {
+            return Ok(());
+        };
+
         // Also print the pairing code for convenience
-        info!(
-            "PairingCode: [{}]",
-            self.dev_comm.compute_pretty_pairing_code()
-        );
+        if let Some(comm_data) = self.dev_comm.passcode() {
+            info!("PairingCode: [{}]", comm_data.compute_pretty_pairing_code());
+        }
 
         let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
-
-        let payload = self.standard_qr_payload(disc_caps)?;
 
         let (text, buf) = payload.as_str(buf)?;
 
@@ -543,23 +548,31 @@ impl<'a> Matter<'a> {
     /// The returned QR code payload corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
     /// and contains no optional data.
     ///
+    /// Logs that there is none, and returns `None`, if the device has a verifier
+    /// rather than its passcode.
+    ///
     /// # Arguments
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
     fn standard_qr_payload(
         &self,
         disc_caps: DiscoveryCapabilities,
-    ) -> Result<QrPayload<'_, NoOptionalData>, Error> {
+    ) -> Option<QrPayload<'_, NoOptionalData>> {
+        let Some(comm_data) = self.dev_comm.passcode() else {
+            info!("No pairing code or QR code: the device has a verifier, not its passcode");
+            return None;
+        };
+
         let payload = QrPayload::new(
             disc_caps,
             CommFlowType::Standard,
-            self.dev_comm.clone(),
+            comm_data.clone(),
             self.dev_det.vid,
             self.dev_det.pid,
             self.dev_det.serial_no,
             no_optional_data as _,
         );
 
-        Ok(payload)
+        Some(payload)
     }
 
     /// Return `true` if there is at least one fabric.
@@ -616,9 +629,8 @@ impl<'a> Matter<'a> {
 
             state.pase.open_basic_comm_window(
                 mdns_id,
+                &self.dev_comm,
                 salt.access(),
-                self.dev_comm.password.reference(),
-                self.dev_comm.discriminator,
                 timeout_secs,
                 None,
                 notify_mdns,

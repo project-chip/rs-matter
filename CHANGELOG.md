@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Breaking: `Matter` and the `MatterStack` constructors take a `DevCommData`: the device's passcode (`DevCommData::Passcode`, as before), or the SPAKE2+ verifier it was given at manufacturing (`DevCommData::Verifier`), which the Core spec asks of a device with a static passcode. Such a device prints no pairing code or QR code. `TEST_DEV_COMM` is now a `DevCommData`; `TEST_BASIC_COMM` has the test passcode and discriminator (#659)
+  * New: `Spake2P::compute_verifier`, the verifier of a passcode, for manufacturing tools
+  * Fix: a commissioning window reports whether it is basic or enhanced from how it was opened, rather than from whether it has a passcode
 * New: `AudioAvStreamHandler`, an audio-only handler of the Camera AV Stream Management cluster for the Audio Doorbell device type (#646)
 * Fix: `CameraAvStreamHandler` returns the status codes the spec asks for in `SetStreamPriorities`, and reports `CamAvError::DynamicConstraint` as `DYNAMIC_CONSTRAINT_ERROR` (#646)
 * Fix: a persisted subscription is not resumed if the node would now grant it a different max interval (e.g. after an `IdleModeDuration` change), so that its subscriber subscribes anew (#656)

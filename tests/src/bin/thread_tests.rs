@@ -108,7 +108,7 @@ fn run() -> Result<(), Error> {
     // model does not depend on either.
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
-        args::comm_overrides(),
+        args::comm_overrides().into(),
         &TEST_DEV_ATT,
         args::port_override(),
     ));

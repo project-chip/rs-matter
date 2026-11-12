@@ -159,7 +159,7 @@ fn run() -> Result<(), Error> {
 fn run_wifi(connection: Connection, adapter: Option<String>) -> Result<(), Error> {
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
-        args::comm_overrides(),
+        args::comm_overrides().into(),
         &TEST_DEV_ATT,
         args::port_override(),
     ));
@@ -311,7 +311,7 @@ fn run_thread(connection: Connection, adapter: Option<String>) -> Result<(), Err
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
-        args::comm_overrides(),
+        args::comm_overrides().into(),
         &TEST_DEV_ATT,
         args::port_override(),
     ));
