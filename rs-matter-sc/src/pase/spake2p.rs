@@ -246,6 +246,9 @@ impl Spake2P {
 
     /// Compute the verifier of a passcode (`w0`, then `L`), as a device with
     /// a static passcode is given it at manufacturing.
+    ///
+    /// Fails unless the salt is 16 to 32 bytes and the iteration count 1,000
+    /// to 100,000, as for a `VerifierCommData`.
     pub fn compute_verifier<C: Crypto>(
         crypto: C,
         password: Spake2pVerifierPasswordRef<'_>,
@@ -253,6 +256,12 @@ impl Spake2P {
         salt: &[u8],
         verifier: &mut Spake2pVerifierStr,
     ) -> Result<(), Error> {
+        if !(SPAKE2P_VERIFIER_SALT_MIN_LEN..=SPAKE2P_VERIFIER_SALT_LEN).contains(&salt.len())
+            || !(SPAKE2P_ITERATIONS_MIN..=SPAKE2P_ITERATIONS_MAX).contains(&iterations)
+        {
+            Err(ErrorCode::InvalidData)?;
+        }
+
         let mut w0s_w1s = Spake2pW::new();
         Self::compute_w0s_w1s(&crypto, password, iterations, salt, &mut w0s_w1s)?;
 
@@ -1071,6 +1080,29 @@ mod tests {
         ));
 
         assert_eq!(computed.access(), &CHIP);
+    }
+
+    #[test]
+    fn test_compute_verifier_refuses_what_matter_does_not_allow() {
+        let password_bytes = 20202021u32.to_le_bytes();
+        let password_ref = Spake2pVerifierPasswordRef::new(&password_bytes);
+        let mut verifier = Spake2pVerifierStr::new();
+
+        for (salt, iterations) in [
+            (&[0x5a; 15][..], 1000),
+            (&[0x5a; 33][..], 1000),
+            (&[0x5a; 16][..], 999),
+            (&[0x5a; 32][..], 100_001),
+        ] {
+            assert!(Spake2P::compute_verifier(
+                test_only_crypto(),
+                password_ref,
+                iterations,
+                salt,
+                &mut verifier
+            )
+            .is_err());
+        }
     }
 
     #[test]
