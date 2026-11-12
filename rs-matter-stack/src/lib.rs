@@ -49,7 +49,7 @@ use rs_matter_dm::networks::NetChangeNotif;
 use rs_matter_dm_core::persist::{KvBlobStore, KvBlobStoreAccess, NETWORKS_KEY};
 use rs_matter_dm_core::{AttrChangeNotifier, AttrId, ClusterId, DataModel, EndptId};
 use rs_matter_im::{InteractionModel, InteractionModelState};
-use rs_matter_node::{BasicCommData, Matter, MATTER_PORT};
+use rs_matter_node::{DevCommData, Matter, MATTER_PORT};
 use rs_matter_pairing::qr::QrTextType;
 use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_respond::{DefaultResponder, ExchangeHandler, Responder};
@@ -328,7 +328,7 @@ where
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig,
-        dev_comm: BasicCommData,
+        dev_comm: DevCommData<'a>,
         dev_att: &'a dyn DeviceAttestation,
     ) -> Self {
         Self::new_with_port(dev_det, dev_comm, dev_att, MATTER_PORT)
@@ -339,7 +339,7 @@ where
     #[inline(always)]
     pub const fn new_with_port(
         dev_det: &'a BasicInfoConfig,
-        dev_comm: BasicCommData,
+        dev_comm: DevCommData<'a>,
         dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> Self {
@@ -362,7 +362,7 @@ where
     #[allow(clippy::large_stack_frames)]
     pub fn init(
         dev_det: &'a BasicInfoConfig,
-        dev_comm: BasicCommData,
+        dev_comm: DevCommData<'a>,
         dev_att: &'a dyn DeviceAttestation,
     ) -> impl Init<Self> {
         Self::init_with_port(dev_det, dev_comm, dev_att, MATTER_PORT)
@@ -373,7 +373,7 @@ where
     #[allow(clippy::large_stack_frames)]
     pub fn init_with_port(
         dev_det: &'a BasicInfoConfig,
-        dev_comm: BasicCommData,
+        dev_comm: DevCommData<'a>,
         dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> impl Init<Self> {

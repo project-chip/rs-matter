@@ -29,6 +29,7 @@ use self::spake2p::{
 use crate::dm::ROOT_ENDPOINT_ID;
 use crate::error::{Error, ErrorCode};
 use crate::im::{ClusterId, EndptId};
+use crate::pairing::DevCommData;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::network::MatterLocalService;
 use crate::utils::init::{init, Init};
@@ -70,9 +71,11 @@ fn notify_adm_comm_window_attrs_changed(notify_change: &mut impl FnMut(EndptId, 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CommWindowType {
-    /// Basic commissioning window (using passcode)
+    /// Basic commissioning window, opened with the device's own passcode or
+    /// verifier
     Basic,
-    /// Enhanced commissioning window (using verifier)
+    /// Enhanced commissioning window, opened with a verifier from an
+    /// administrator
     Enhanced,
 }
 
@@ -122,6 +125,8 @@ pub struct CommWindow {
     mdns_id: u64,
     /// The discriminator
     discriminator: u16,
+    /// Basic or enhanced
+    window_type: CommWindowType,
     /// The verifier data
     pub verifier: Spake2pVerifierData,
     /// The opener info
@@ -135,28 +140,26 @@ pub struct CommWindow {
 }
 
 impl CommWindow {
-    /// Initialize a commissioning window with a passcode
+    /// Initialize a basic commissioning window
     ///
     /// # Arguments
     /// - `mdns_id` - The mDNS identifier
-    /// - `password` - The passcode
-    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
-    /// - `discriminator` - The discriminator
+    /// - `dev_comm` - The device's passcode or verifier, and its discriminator
+    /// - `salt` - The salt used with a passcode (16..=32 bytes, validated upstream)
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
-    /// - `rand` - The random number generator
-    fn init_with_pw<'a>(
+    fn init_basic<'a>(
         mdns_id: u64,
-        password: Spake2pVerifierPasswordRef<'a>,
+        dev_comm: &'a DevCommData<'a>,
         salt: &'a [u8],
-        discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Instant,
     ) -> impl Init<Self> + 'a {
         init!(Self {
             mdns_id,
-            discriminator,
-            verifier <- Spake2pVerifierData::init_with_pw(password, salt),
+            discriminator: dev_comm.discriminator(),
+            window_type: CommWindowType::Basic,
+            verifier <- Spake2pVerifierData::init_with_dev_comm(dev_comm, salt),
             opener,
             window_expiry,
             pake_failures: 0,
@@ -170,20 +173,24 @@ impl CommWindow {
     /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
     /// - `count` - The iteration count
     /// - `discriminator` - The discriminator
+    /// - `window_type` - Basic or enhanced
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
+    #[allow(clippy::too_many_arguments)]
     fn init<'a>(
         mdns_id: u64,
         verifier: Spake2pVerifierStrRef<'a>,
         salt: &'a [u8],
         count: u32,
         discriminator: u16,
+        window_type: CommWindowType,
         opener: Option<CommWindowOpener>,
         window_expiry: Instant,
     ) -> impl Init<Self> + 'a {
         init!(Self {
             mdns_id,
             discriminator,
+            window_type,
             verifier <- Spake2pVerifierData::init(verifier, salt, count),
             opener,
             window_expiry,
@@ -193,11 +200,7 @@ impl CommWindow {
 
     /// Get the type of commissioning window
     pub fn comm_window_type(&self) -> CommWindowType {
-        if self.verifier.password.is_some() {
-            CommWindowType::Basic
-        } else {
-            CommWindowType::Enhanced
-        }
+        self.window_type
     }
 
     /// Get the opener info, if any
@@ -300,13 +303,13 @@ impl Pase {
         }
     }
 
-    /// Open a basic commissioning window using a passcode
+    /// Open a basic commissioning window
     ///
     /// # Arguments
     /// - `mdns_id` - The mDNS identifier
-    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
-    /// - `password` - The passcode
-    /// - `discriminator` - The discriminator
+    /// - `dev_comm` - The device's passcode or verifier, and its discriminator
+    /// - `salt` - A fresh salt (16..=32 bytes, validated upstream), used with a
+    ///   passcode; a verifier comes with its own
     /// - `timeout_secs` - The timeout in seconds of the validity of the window
     /// - `opener` - The opener info
     /// - `mdns_notif` - The mDNS notification callback
@@ -320,9 +323,8 @@ impl Pase {
     pub fn open_basic_comm_window(
         &mut self,
         mdns_id: u64,
+        dev_comm: &DevCommData<'_>,
         salt: &[u8],
-        password: Spake2pVerifierPasswordRef<'_>,
-        discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
         mut notify_mdns: impl FnMut(),
@@ -341,11 +343,10 @@ impl Pase {
         let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
 
         self.comm_window
-            .reinit(Maybe::init_some(CommWindow::init_with_pw(
+            .reinit(Maybe::init_some(CommWindow::init_basic(
                 mdns_id,
-                password,
+                dev_comm,
                 salt,
-                discriminator,
                 opener,
                 window_expiry,
             )));
@@ -406,6 +407,7 @@ impl Pase {
             salt,
             count,
             discriminator,
+            CommWindowType::Enhanced,
             opener,
             window_expiry,
         )));
@@ -603,9 +605,10 @@ pub(crate) struct Pake3<'a> {
 mod tests {
     use rs_matter_node_core::test_device::TEST_DEV_COMM;
 
+    use crate::pairing::{DevCommData, VerifierCommData};
     use crate::utils::timers::{Duration, Instant};
 
-    use super::Pase;
+    use super::{CommWindowType, Pase};
 
     #[test]
     fn expires_at_follows_the_open_window() {
@@ -613,20 +616,31 @@ mod tests {
         assert_eq!(pase.comm_window_expires_at(), None);
 
         let before = Instant::now();
-        pase.open_basic_comm_window(
-            1,
-            &[0x11; 16],
-            TEST_DEV_COMM.password.reference(),
-            TEST_DEV_COMM.discriminator,
-            180,
-            None,
-            || {},
-            |_, _| {},
-        )
-        .unwrap();
+        pase.open_basic_comm_window(1, &TEST_DEV_COMM, &[0x11; 16], 180, None, || {}, |_, _| {})
+            .unwrap();
 
         let expires_at = pase.comm_window_expires_at().unwrap();
         assert!(expires_at >= before + Duration::from_secs(180));
         assert!(expires_at <= Instant::now() + Duration::from_secs(180));
+    }
+
+    #[test]
+    fn a_window_from_the_passcode_or_the_verifier_is_basic() {
+        let bytes = [0x42; 97];
+        let verifier = VerifierCommData::new(3840, &bytes, b"SPAKE2P Key Salt", 1000).unwrap();
+
+        for dev_comm in [TEST_DEV_COMM, DevCommData::Verifier(verifier)] {
+            let mut pase = Pase::new();
+
+            pase.open_basic_comm_window(1, &dev_comm, &[0x11; 16], 180, None, || {}, |_, _| {})
+                .unwrap();
+
+            let window = pase.comm_window().unwrap();
+            assert_eq!(window.comm_window_type(), CommWindowType::Basic);
+            assert_eq!(
+                window.verifier.password.is_some(),
+                dev_comm.passcode().is_some()
+            );
+        }
     }
 }

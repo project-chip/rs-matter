@@ -27,7 +27,7 @@
 // every parser is used by every binary.
 #![allow(dead_code)]
 
-use rs_matter::dm::devices::test::TEST_DEV_COMM;
+use rs_matter::dm::devices::test::TEST_BASIC_COMM;
 use rs_matter::dm::Node;
 use rs_matter::error::Error;
 use rs_matter::persist::FileKvBlobStore;
@@ -57,12 +57,12 @@ pub fn arg_present(opt: &str) -> bool {
     std::env::args().any(|a| a == opt)
 }
 
-/// Commissioning data based on `TEST_DEV_COMM`, with optional `--discriminator
+/// Commissioning data based on `TEST_BASIC_COMM`, with optional `--discriminator
 /// <u16>` / `--passcode <u32>` overrides. Used by tests (e.g. TC-SC-7.1) that
 /// assert the device is *not* on the spec defaults, and by the OTA harness which
 /// pins the provider's discriminator.
 pub fn comm_overrides() -> BasicCommData {
-    let mut data = TEST_DEV_COMM;
+    let mut data = TEST_BASIC_COMM;
 
     if let Some(discriminator) =
         parse_arg_opt_override("--discriminator", |s| s.parse::<u16>().ok()).flatten()

@@ -526,7 +526,7 @@ where
 
         let adv_data = AdvData::new(
             self.matter().dev_det(),
-            self.matter().dev_comm().discriminator,
+            self.matter().dev_comm().discriminator(),
         );
 
         let mut btp_task = pin_alloc!(
@@ -571,7 +571,7 @@ where
 
         let adv_data = AdvData::new(
             self.matter().dev_det(),
-            self.matter().dev_comm().discriminator,
+            self.matter().dev_comm().discriminator(),
         );
 
         let mut btp_task = pin_alloc!(self.bump, peripheral.run(btp, "BT", &adv_data));

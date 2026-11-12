@@ -197,10 +197,12 @@ fn main() -> Result<(), Error> {
         comm_data.discriminator, passcode, port,
     );
 
-    let matter =
-        MATTER
-            .uninit()
-            .init_with(Matter::init(&BASIC_INFO, comm_data, &TEST_DEV_ATT, port));
+    let matter = MATTER.uninit().init_with(Matter::init(
+        &BASIC_INFO,
+        comm_data.into(),
+        &TEST_DEV_ATT,
+        port,
+    ));
 
     // Persistence
     let store = args::file_kv_store();
