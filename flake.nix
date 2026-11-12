@@ -53,6 +53,8 @@
           # Provide non-privileged execution of `ip` commands
           iproute2
           iptables
+          procps
+          util-linux
 
           # connectedhomeip requirements
           bash
@@ -72,10 +74,6 @@
           avahi.dev
           unzip
           cairo.dev
-          # `pycairo` (a build dependency of `pygobject`, itself pulled in by
-          # the `matter_repl` wheel) compiles against cairo's X backends:
-          # `cairo-xcb.h` includes `<xcb/xcb.h>` and `cairo-xlib.h` includes
-          # `<X11/Xlib.h>`, neither of which comes with `cairo.dev`.
           libxcb.dev
           libx11.dev
           xorgproto
@@ -84,14 +82,10 @@
           libffi.dev
           zap-chip
           protobuf
-          # `ot-br-posix` (`ChipBuilder::build_otbr`) configures with
-          # `-DOTBR_DBUS=ON`, whose CMake does `pkg_check_modules(libsystemd)`.
-          # `systemdLibs` is the client libraries only, not full systemd.
+          abseil-cpp.dev
+          abseil-cpp.out
           systemdLibs.dev
           systemdLibs.out
-          # Both the headers/`.pc` (`.dev`) and the shared libraries: chip's
-          # GN config links `-levent_core` / `-levent_pthreads` bare, with no
-          # `-L`, so the `.so`s have to be on the default search path.
           libevent.dev
           libevent.out
           pcsclite.dev
