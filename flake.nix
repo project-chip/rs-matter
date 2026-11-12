@@ -72,13 +72,30 @@
           avahi.dev
           unzip
           cairo.dev
+          # `pycairo` (a build dependency of `pygobject`, itself pulled in by
+          # the `matter_repl` wheel) compiles against cairo's X backends:
+          # `cairo-xcb.h` includes `<xcb/xcb.h>` and `cairo-xlib.h` includes
+          # `<X11/Xlib.h>`, neither of which comes with `cairo.dev`.
+          libxcb.dev
+          libx11.dev
+          xorgproto
           readline.dev
           jre
           libffi.dev
           zap-chip
           protobuf
+          # `ot-br-posix` (`ChipBuilder::build_otbr`) configures with
+          # `-DOTBR_DBUS=ON`, whose CMake does `pkg_check_modules(libsystemd)`.
+          # `systemdLibs` is the client libraries only, not full systemd.
+          systemdLibs.dev
+          systemdLibs.out
+          # Both the headers/`.pc` (`.dev`) and the shared libraries: chip's
+          # GN config links `-levent_core` / `-levent_pthreads` bare, with no
+          # `-L`, so the `.so`s have to be on the default search path.
           libevent.dev
+          libevent.out
           pcsclite.dev
+          pcsclite.lib
           libcap
 
           ## python support
@@ -104,6 +121,15 @@
             name = "rs-matter-test-env";
             runScript = "bash";
             targetPkgs = itestDeps;
+
+            # `buildFHSEnv` seeds `PKG_CONFIG_PATH` with `/usr/lib/pkgconfig`
+            # only, and pkg-config's compiled-in default path points at its
+            # own store path rather than `/usr`. Modules shipping their `.pc`
+            # under `share/pkgconfig` - `systemd.pc`, which `ot-br-posix`
+            # checks for, and all of `xorgproto` - are invisible without this.
+            profile = ''
+              export PKG_CONFIG_PATH="''${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}/usr/share/pkgconfig"
+            '';
           };
         };
 
