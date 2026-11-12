@@ -14,6 +14,9 @@ rust-version.workspace = true
 [features]
 default = ["std", "log"]
 
+# Opt-in embedded operational TCP listener (fixed receive and transmit buffers).
+operational-tcp = []
+
 # Number of subscriptions.
 max-subscriptions-32 = []
 max-subscriptions-16 = []

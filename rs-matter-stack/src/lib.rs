@@ -71,6 +71,8 @@ use crate::bump::Bump;
 use crate::mdns::{Mdns, MAX_NETIF_IPV6_ADDRS};
 use crate::net::{NetSocket, NetStack};
 use crate::network::{Embedding, StackNetwork};
+#[cfg(feature = "operational-tcp")]
+use crate::tcp::{TcpServer, TcpStack};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -85,6 +87,7 @@ pub mod eth;
 pub mod mdns;
 pub mod net;
 pub mod network;
+pub mod tcp;
 pub mod wireless;
 
 cfg_if! {
@@ -548,7 +551,7 @@ where
         }
     }
 
-    /// This method is a specialization of `run_transport_net` over the UDP transport (both IPv4 and IPv6).
+    /// Run operational UDP and, when enabled by the driver, the TCP listener.
     /// It calls `run_transport_net`.
     ///
     /// #Arguments
@@ -565,12 +568,31 @@ where
         net_stack: &U,
         net_interface: u32,
         until: X,
-        mut comm: Option<(R, S)>,
+        comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
         C: Crypto,
         U: NetStack,
         X: Future<Output = Result<(), Error>> + MaybeSend,
+        R: NetworkReceive,
+        S: NetworkSend,
+    {
+        let mut until_task = pin!(until);
+        let mut netw_task = pin!(self.run_oper_loop(crypto, net_stack, net_interface, comm));
+
+        select(&mut netw_task, &mut until_task).coalesce().await
+    }
+
+    async fn run_oper_loop<C, U, R, S>(
+        &self,
+        crypto: &C,
+        net_stack: &U,
+        net_interface: u32,
+        comm: Option<(R, S)>,
+    ) -> Result<(), Error>
+    where
+        C: Crypto,
+        U: NetStack,
         R: NetworkReceive,
         S: NetworkSend,
     {
@@ -590,25 +612,92 @@ where
 
         let (send, recv, multicast) = socket.split();
 
-        let mut until_task = pin!(until);
+        #[cfg(feature = "operational-tcp")]
+        if let Some(tcp_stack) = net_stack.tcp() {
+            let tcp = tcp_stack
+                .bind(SocketAddr::V6(SocketAddrV6::new(
+                    Ipv6Addr::UNSPECIFIED,
+                    self.matter().port(),
+                    0,
+                    net_interface,
+                )))
+                .await?;
 
+            return self
+                .run_transport_tcp_with_udp(crypto, send, recv, multicast, comm, &tcp)
+                .await;
+        }
+
+        self.run_transport_oper(crypto, send, recv, multicast, comm, Address::is_udp)
+            .await
+    }
+
+    #[cfg(feature = "operational-tcp")]
+    async fn run_transport_tcp_with_udp<C, S, R, M, CR, CS, L, const TX: usize>(
+        &self,
+        crypto: &C,
+        send: S,
+        recv: R,
+        multicast: M,
+        comm: Option<(CR, CS)>,
+        tcp: &TcpServer<L, TX>,
+    ) -> Result<(), Error>
+    where
+        C: Crypto,
+        S: NetworkSend,
+        R: NetworkReceive,
+        M: NetworkMulticast,
+        CR: NetworkReceive,
+        CS: NetworkSend,
+        L: crate::tcp::NetTcpListener,
+    {
+        let is_oper = |a: &Address| a.is_udp() || a.is_tcp();
+
+        let mut transport = pin!(self.run_transport_oper(
+            crypto,
+            ChainedNetwork::new(Address::is_udp, send, tcp),
+            ChainedNetwork::new(Address::is_udp, recv, tcp),
+            multicast,
+            comm,
+            is_oper,
+        ));
+        let mut writer = pin!(tcp.run());
+
+        select(&mut transport, &mut writer).coalesce().await
+    }
+
+    async fn run_transport_oper<C, S, R, M, CR, CS, F>(
+        &self,
+        crypto: &C,
+        send: S,
+        recv: R,
+        multicast: M,
+        mut comm: Option<(CR, CS)>,
+        is_oper: F,
+    ) -> Result<(), Error>
+    where
+        C: Crypto,
+        S: NetworkSend,
+        R: NetworkReceive,
+        M: NetworkMulticast,
+        CR: NetworkReceive,
+        CS: NetworkSend,
+        F: Fn(&Address) -> bool + Copy,
+    {
         if let Some((comm_recv, comm_send)) = comm.as_mut() {
             info!("Running operational and commissioning networks");
 
-            let mut netw_task = pin!(self.run_transport_net(
+            self.run_transport_net(
                 crypto,
-                ChainedNetwork::new(Address::is_udp, send, comm_send),
-                ChainedNetwork::new(Address::is_udp, recv, comm_recv),
+                ChainedNetwork::new(is_oper, send, comm_send),
+                ChainedNetwork::new(is_oper, recv, comm_recv),
                 ChainedNetwork::new(Address::is_udp, multicast, NoNetwork),
-            ));
-
-            select(&mut netw_task, &mut until_task).coalesce().await
+            )
+            .await
         } else {
             info!("Running operational network");
 
-            let mut netw_task = pin!(self.run_transport_net(crypto, send, recv, multicast));
-
-            select(&mut netw_task, &mut until_task).coalesce().await
+            self.run_transport_net(crypto, send, recv, multicast).await
         }
     }
 

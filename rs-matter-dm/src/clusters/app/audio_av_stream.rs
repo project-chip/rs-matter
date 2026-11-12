@@ -248,12 +248,16 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> AudioAvStreamHandler<'a, H, NA>
                 | decl::CommandId::SetStreamPriorities
         ));
 
-    pub const fn new(
+    pub fn new(
         dataver: Dataver,
         endpoint_id: EndptId,
         config: AudioAvStreamConfig<'a>,
         hooks: H,
     ) -> Self {
+        #[cfg(not(feature = "operational-tcp"))]
+        warn!(
+            "AudioAvStreamHandler: `operational-tcp` is not enabled; live stream will not work without Matter-over-TCP"
+        );
         Self {
             dataver,
             endpoint_id,
