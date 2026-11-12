@@ -93,23 +93,29 @@ Also look at all [open issues](https://github.com/project-chip/rs-matter/issues)
 
 ## Nix support
 
-`rs-matter` provides nix files for setting up reproducible shells on systems using the nix package manager.
-There are two different environments for different use-cases.
+`rs-matter` ships a `flake.nix` providing two reproducible environments. Both pin `nixpkgs` and the
+Rust toolchain, so every machine and CI run gets the same versions. Requires nix with flakes enabled.
 
-#### `devenv.nix`
+#### Normal development
 
-This is used for normal development of applications.
-To enter this shell, run `devenv shell` in the project root.
-You can optionally follow this with your preferred shell e.g. `devenv shell zsh`.
+```sh
+nix develop          # or `nix develop -c zsh` for your preferred shell
+```
 
-This requires [devenv](https://devenv.sh/) to be installed on your system.
-For nix managed systems, add `pkgs.devenv` to `environment.systemPackages`.
+#### Running `cargo xtask itest`
 
-#### `shell.nix`
+The integration tests set up `connectedhomeip`, which expects a standard Linux filesystem layout
+(FHS). The `fhs` output provides one:
 
-This is for cases where tools expect a standard Linux filesystem layout (FHS).
-Use this shell when running `cargo xtask itest` (see testing topics below) as it sets up `connectedhomeip` which expects a FHS layout.
-To enter this shell, run `nix-shell` in the project root.
+```sh
+nix run .#fhs                             # interactive shell, then run cargo xtask itest
+nix run .#fhs -- -c 'cargo xtask itest'   # one-shot
+```
+
+#### Updating
+
+`flake.lock` pins `nixpkgs`; update it with `nix flake update nixpkgs`. The Rust version is set
+explicitly at the top of `flake.nix` - edit `rustVersion` there. Commit the result either way.
 
 ## How does it look like?
 
