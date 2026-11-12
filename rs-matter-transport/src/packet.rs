@@ -278,7 +278,7 @@ mod tests {
                 .encode(test_only_crypto(), None, NODE_ID, &mut wb)
                 .err())
             .code(),
-            ErrorCode::NoSpace
+            ErrorCode::BufferTooSmall
         );
 
         // Room for the proto header only is not enough either.
@@ -289,7 +289,7 @@ mod tests {
                 .encode(test_only_crypto(), None, NODE_ID, &mut wb)
                 .err())
             .code(),
-            ErrorCode::NoSpace
+            ErrorCode::BufferTooSmall
         );
     }
 

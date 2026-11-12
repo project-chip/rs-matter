@@ -465,7 +465,7 @@ impl<'a> QrPayload<'a, &'a [u8]> {
         // Base38-decode the body into `buf`.
         let mut len = 0;
         for byte in base38::decode(body) {
-            let byte = byte?;
+            let byte = byte.map_err(|_| ErrorCode::InvalidData)?;
             *buf.get_mut(len).ok_or(ErrorCode::BufferTooSmall)? = byte;
             len += 1;
         }

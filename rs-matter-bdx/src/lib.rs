@@ -470,7 +470,8 @@ impl BlockQuery {
 
     /// Encode this message's payload (without the protocol header).
     pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
-        wb.le_u32(self.block_counter)
+        wb.le_u32(self.block_counter)?;
+        Ok(())
     }
 }
 

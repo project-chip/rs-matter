@@ -1,0 +1,374 @@
+' rs-matter error & status types — position in the 21-crate workspace.
+'
+' Packages are labelled L0..L4 by dependency depth. A crate may only name
+' types at its own level or BELOW. That is the binding constraint on the
+' error redesign — see docs/error-system-requirements.md.
+'
+' Arrows:
+'   -->                   From impl (implicit; `?` converts silently)
+'   ..>                   hand-rolled or named conversion
+'   -[#B91C1C]->          lossy conversion (collapses distinct inputs)
+'   -[#B91C1C,dashed]->   BLOCKED: would be a crate cycle
+
+@startuml rs-matter-errors-crates
+title rs-matter errors — current position after the crate split
+
+hide empty members
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BorderColor #555555
+  BackgroundColor #FCFCFC
+  ArrowColor #333333
+}
+skinparam package {
+  BorderColor #94A3B8
+  FontStyle bold
+}
+
+' ======================================================================
+' L0 — bottom of the graph. Depends on NO internal crate.
+' ======================================================================
+
+package "L0  rs-matter-utils  (no internal deps)" #FEF2F2 {
+
+  class Error {
+    - code : ErrorCode
+    - backtrace   <<cfg std+backtrace>>
+    - inner       <<cfg alloc+backtrace>>
+    --
+    + code() : ErrorCode
+    --
+    embedded: == ErrorCode == **1 byte**
+  }
+
+  enum ErrorCode {
+    **79 variants, flat**
+    ..
+    == status-like (~22, re-verify) ==
+    ConstraintError, NotFound
+    InvalidInState, InvalidCommand
+    ResourceExhausted, Busy, Failure
+    AttributeNotFound, CommandNotFound
+    ...
+    ..
+    == internal faults (~56) ==
+    NoSpace / NoSpaceExchanges
+      / NoSpaceSessions
+    InvalidState
+    Utf8Fail, RwLock, StdIoError
+    BtpError, MdnsError, DBusError
+    ...
+  }
+
+  Error *-- ErrorCode
+}
+
+note right of ErrorCode
+  **THE BINDING CONSTRAINT**
+  This crate is the bottom of the graph, so
+  ErrorCode cannot name a type from any crate
+  above it.
+
+  => ErrorCode::Status(IMStatusCode) -- the
+  design agreed before the split -- is **not
+  implementable here**. It is a Cargo cycle,
+  which no Box or indirection fixes.
+
+  Open: move IMStatusCode down, or add a new
+  L0 crate (rs-matter-error) holding Error,
+  ErrorCode and IMStatusCode together, since
+  they are mutually referential by design.
+end note
+
+' ======================================================================
+' L1 — im-core
+' ======================================================================
+
+package "L1  rs-matter-im-core  (<- utils, tlv)" #EFF6FF {
+
+  enum IMStatusCode <<spec>> {
+    Success = 0, Failure = 1
+    0x7D .. 0xD1
+    34 values
+    --
+    + to_error_code() : Option<ErrorCode>
+  }
+
+  class Status <<spec: StatusIB>> {
+    + status : IMStatusCode
+    + cluster_status : **Option<NonZeroU8>**
+    ..
+    narrowed from Option<u16> -- **DONE**
+    6 bytes -> 2 bytes
+  }
+
+  class CmdStatus   <<spec>> {
+    + path
+    status
+    command_ref
+  }
+  class AttrStatus  <<spec>> {
+    + path
+    status
+  }
+  class EventStatus <<spec>> {
+    + path
+    status
+  }
+
+  Status *-- IMStatusCode
+  CmdStatus   *-- Status
+  AttrStatus  *-- Status
+  EventStatus *-- Status
+}
+
+ErrorCode -[#B91C1C]-> IMStatusCode : **From** — maps the status-like\nvariants, **collapses the rest**\nto Failure (_ => Failure)
+IMStatusCode ..> ErrorCode : to_error_code()\nNone for Success
+
+note bottom of IMStatusCode
+  Both conversions live HERE, in im-core --
+  the only legal direction. im-core may name
+  ErrorCode (below it); utils may never name
+  IMStatusCode.
+
+  The duplication these reconcile IS the
+  defect: ~22 ErrorCode variants restate
+  values that already exist in this enum.
+end note
+
+' ======================================================================
+' L2 — dm-core: the staging channel
+' ======================================================================
+
+package "L2  rs-matter-dm-core  (<- utils, tlv, crypto, im-core)" #ECFDF5 {
+
+  class CmdDetails {
+    + cluster_status : **Cell<Option<NonZeroU8>>**
+    --
+    + set_cluster_status(Option<NonZeroU8>)
+    + cluster_status() : Option<NonZeroU8>
+    + status(IMStatusCode) : Option<CmdStatus>
+  }
+  class AttrDetails {
+    + cluster_status : **Cell<Option<NonZeroU8>>**
+    --
+    same shape, builds AttrStatus
+  }
+
+  interface InvokeContext {
+    + cmd()  : &CmdDetails
+  }
+  interface WriteContext  {
+    + attr() : &AttrDetails
+  }
+  interface ReadContext   {
+    + attr() : &AttrDetails
+  }
+
+  InvokeContext ..> CmdDetails
+  WriteContext  ..> AttrDetails
+  ReadContext   ..> AttrDetails
+}
+
+CmdDetails  ..> CmdStatus  : status()
+AttrDetails ..> AttrStatus : status()
+
+note bottom of CmdDetails
+  **The staging channel — deliberate.**
+  The cluster byte travels HERE, beside the
+  Result, not inside Error. Costs 0 bytes on
+  every Result<(),Error> in the workspace.
+
+  Hook traits receive NO context, so a hook
+  cannot reach set_cluster_status itself.
+  Bridging that is what the planned
+  ClusterStatus / stage() pattern is for.
+end note
+
+' ======================================================================
+' L3 — node-core
+' ======================================================================
+
+package "L3  rs-matter-node-core" #F8FAFF {
+
+  enum IMError <<failsafe.rs>> {
+    Error(Error)
+    Status(IMStatusCode)
+    ..
+    subsumed once ErrorCode
+    can hold a status
+  }
+
+  enum NetworksError <<networks.rs>> {
+    NetworkIdNotFound
+    DuplicateNetworkId
+    OutOfRange, BoundsExceeded
+    --
+    Other(Error)
+  }
+}
+
+Error        --> IMError : From
+IMStatusCode --> IMError : From
+Error        --> NetworksError : From -> Other
+NetworksError *-- Error
+
+' ======================================================================
+' L3 — transport / bdx: self-contained protocol status
+' ======================================================================
+
+package "L3  rs-matter-transport  /  rs-matter-bdx" #FFF7ED {
+
+  enum SCStatusCodes <<spec, proto/sc.rs>> {
+    6 values
+    + as_report() : StatusReport
+  }
+  enum GeneralCode <<spec>> {
+    18 values
+  }
+  class StatusReport <<spec — the envelope>> {
+    + general_code : GeneralCode
+    + proto_id   : u32
+    + proto_code : u16
+    + proto_data : &[u8]
+  }
+  enum BdxStatus <<spec, repr(u16)>> {
+    14 values
+    + as_report() : StatusReport
+  }
+
+  StatusReport *-- GeneralCode
+  SCStatusCodes --> StatusReport : as_report()
+  BdxStatus     --> StatusReport : as_report()
+}
+
+note bottom of StatusReport
+  **Out of scope, and genuinely so.**
+  ZERO conversions to or from Error anywhere
+  in the workspace. These converge on
+  StatusReport, not on StatusIB.
+
+  Also the existing precedent for layered
+  status: a generic outer code plus a
+  protocol-specific inner code, spec-mandated
+  and already working.
+
+  Adding them to ErrorCode would cost 1 -> 2
+  bytes (a 2nd payload variant kills niche
+  folding), or 1 -> 4 with BdxStatus's
+  repr(u16). Measured. Declined.
+end note
+
+' ======================================================================
+' L4 — rs-matter-dm: cluster handlers and hook errors
+' ======================================================================
+
+package "L4  rs-matter-dm  (<- im, node, sc, transport, bdx, dm-clusters, etc)" #F8FAFF {
+
+  enum NetCtlError <<net_comm.rs>> {
+    NetworkNotFound
+    UnsupportedSecurity, AuthFailure
+    OtherConnectionFailure
+    IpBindFailed, IpV6Failed
+    --
+    Other(Error)
+  }
+
+  enum "WebRtcError / PushAvError /\nZoneError / CamAvError /\nCamAvSettingsError" as Hooks <<5 types, app/star.rs>> {
+    IMStatusCode subsets,
+    hand-rolled 5x
+    ..
+    **no fault channel at all** --
+    an implementor whose SPI dies
+    must return ::Failure
+    ..
+    each has From<X> for Error
+  }
+
+  enum CommonStatusCode <<mode.rs, ranged u8>> {
+    common  0x00..=0x3F
+    derived 0x40..=0x7F
+    mfg     0x80..=0xBF
+  }
+  class ModeChangeError <<mode.rs, opaque>> {
+    - status : u8
+    - text : &'static str
+  }
+}
+
+Error --> NetCtlError : From -> Other
+NetCtlError *-- Error
+Hooks -[#B91C1C]-> Error : **From**, via ErrorCode\nall 5 target only ~7 codes,\nevery one status-like
+
+note bottom of Hooks
+  The **cross-cutting** case: subsets of the
+  GLOBAL IMStatusCode, not of any cluster
+  enum. Only PushAVStreamTransport has real
+  spec-defined cluster codes (12, currently
+  unreachable from a hook).
+
+  zone_management's generated StatusCodeEnum
+  is an **errata artifact**, not spec --
+  do NOT wire it up.
+
+  CommonStatusCode + ModeChangeError are why
+  a closed enum over all cluster codes cannot
+  work: one is a RANGED u8 with derived/mfg
+  namespaces, the other carries mandatory
+  status text.
+end note
+
+' ======================================================================
+' The blocked edge
+' ======================================================================
+
+ErrorCode -[#B91C1C,dashed]-> IMStatusCode : **BLOCKED**\nErrorCode::Status(IMStatusCode)\nL0 cannot name L1
+
+note as N_SIZE
+  **Measured (rustc -O, size_of)**
+
+  ErrorCode flat, today            1
+  + Status(IMStatusCode)           1   <- free, ONE payload variant
+  + Status(Status) w/ Option<u16>  6
+  + Status(Status) w/ NonZeroU8    2
+  + Status + Sc                    2   <- 2nd payload variant
+  + Status + Sc + Bdx (repr u16)   4
+
+  Niche folding works for EXACTLY ONE
+  payload-carrying variant. A second forces
+  an explicit discriminant.
+
+  **Consequence for per-crate collation:**
+  a root error with one variant per internal
+  crate is ~10 payload variants, so folding
+  does not apply and the root error grows.
+  Paid on Result<(),Error> -- 55% of all
+  Result returns pre-split.
+end note
+
+note as N_RULES
+  **Rules that survive the split**
+
+  1. Widening (lossless) gets `From`.
+     Narrowing gets a NAME. Never both --
+     `?` will find the lossy one.
+
+  2. Nesting has a direction, now enforced by
+     Cargo as well as by the type system:
+     - nested BELOW Error: plain data, Copy,
+       no Error inside, the ONLY payload
+       variant, and in Error's crate or lower
+     - WRAPPING Error: carries Other/Fault(Error),
+       lives above it
+     - nothing can be both
+
+  3. A collating error sits ABOVE what it
+     collates; a shared vocabulary error sits
+     BELOW its users. Two types, two jobs.
+     rs-matter-utils can only host the second.
+end note
+
+N_SIZE -[hidden]- N_RULES
+
+@enduml
