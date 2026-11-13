@@ -79,7 +79,9 @@ use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState,
 use network::{Address, IpAddr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
-use session::{Session, SessionState, Sessions, CASE_SESSIONS_PER_FABRIC, MAX_SESSIONS};
+use session::{
+    Session, SessionMode, SessionState, Sessions, CASE_SESSIONS_PER_FABRIC, MAX_SESSIONS,
+};
 
 pub use self::case_setup::{CaseSetupTurn, CaseSetups};
 use self::mrp::mrp_log;
@@ -938,30 +940,37 @@ impl Transport {
         crypto: C,
         session_id: u32,
     ) -> Result<Exchange<'a>, Error> {
-        self.with_sessions(|sessions| {
-            sessions
-                .get(session_id)
-                // Only active sessions initiate new exchanges
-                .filter(|sess| sess.state() == SessionState::Active)
-                .ok_or(ErrorCode::NoSession)?;
+        self.with_sessions(|sessions| self.add_initiator_exchange(sessions, crypto, session_id))
+    }
 
-            let exch_id = sessions.get_next_exch_id(crypto)?;
+    fn add_initiator_exchange<'a, C: Crypto>(
+        &'a self,
+        sessions: &mut Sessions,
+        crypto: C,
+        session_id: u32,
+    ) -> Result<Exchange<'a>, Error> {
+        sessions
+            .get(session_id)
+            // Only active sessions initiate new exchanges
+            .filter(|sess| sess.state() == SessionState::Active)
+            .ok_or(ErrorCode::NoSession)?;
 
-            // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
-            // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
-            // we don't have a session in the first place
-            let session = unwrap!(sessions.get(session_id));
+        let exch_id = sessions.get_next_exch_id(crypto)?;
 
-            let exch_index = session
-                .add_exch(exch_id, Role::Initiator(Default::default()))
-                .ok_or(ErrorCode::NoSpaceExchanges)?;
+        // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
+        // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
+        // we don't have a session in the first place
+        let session = unwrap!(sessions.get(session_id));
 
-            let id = ExchangeId::new(session.id, exch_index);
+        let exch_index = session
+            .add_exch(exch_id, Role::Initiator(Default::default()))
+            .ok_or(ErrorCode::NoSpaceExchanges)?;
 
-            debug!("Exchange {}: Initiated", id.display(session));
+        let id = ExchangeId::new(session.id, exch_index);
 
-            Ok(Exchange::new(id, self))
-        })
+        debug!("Exchange {}: Initiated", id.display(session));
+
+        Ok(Exchange::new(id, self))
     }
 
     /// Create a new initiator exchange on a new plaintext session to
@@ -987,58 +996,56 @@ impl Transport {
 
     /// Create a new plaintext session and initiate an exchange on it in one step.
     ///
-    /// This is a convenience method that combines `create_plaintext_session()` and
-    /// `initiate_for_session()`. Fails immediately if there is no space for a new session.
-    ///
-    /// For flows that need the session ID (e.g. to upgrade the session after PASE/CASE),
-    /// use `create_plaintext_session()` + `initiate_for_session()` separately.
+    /// Fails immediately if there is no space for a new session.
     fn try_initiate_plaintext<'a, C: Crypto>(
         &'a self,
         crypto: C,
         peer_addr: Address,
     ) -> Result<Exchange<'a>, Error> {
-        let session_id = self.create_plaintext_session(&crypto, peer_addr)?;
+        // Both under one lock, as the transport removes a plaintext session
+        // without exchanges as soon as it sees one
+        self.with_sessions(|sessions| {
+            let session_id = Self::create_plaintext_session(sessions, &crypto, peer_addr)?;
 
-        self.initiate_for_session(crypto, session_id)
+            self.add_initiator_exchange(sessions, crypto, session_id)
+        })
     }
 
     /// Create a new unsecured (plain-text) session to a given peer address.
     ///
-    /// Returns the internal session ID that can be used with `initiate_for_session()`.
+    /// Returns the internal session ID.
     ///
     /// This is the low-level building block for controller-initiated communication
     /// (e.g. PASE/CASE initiator flows), analogous to the SDK's
     /// `SessionManager::CreateUnauthenticatedSession()`.
     fn create_plaintext_session<C: Crypto>(
-        &self,
+        sessions: &mut Sessions,
         crypto: C,
         peer_addr: Address,
     ) -> Result<u32, Error> {
-        self.with_sessions(|sessions| {
-            let mut rand = crypto.rand()?;
+        let mut rand = crypto.rand()?;
 
-            let session = sessions.add(rand.next_u32(), false, peer_addr, None)?;
+        let session = sessions.add(rand.next_u32(), false, peer_addr, None)?;
 
-            // Generate ephemeral initiator node ID per spec:
-            // "Randomly selected for each session by the initiator from the Operational Node ID range"
-            // Operational Node ID range is 0x0000_0000_0000_0001 to 0xFFFF_FFEF_FFFF_FFFF
-            // (Matter Core spec).
-            const MAX_OPERATIONAL_NODE_ID: u64 = 0xFFFF_FFEF_FFFF_FFFF;
-            let mut ephemeral_id = rand.next_u64();
-            while ephemeral_id == 0 || ephemeral_id > MAX_OPERATIONAL_NODE_ID {
-                ephemeral_id = rand.next_u64();
-            }
-            session.set_local_nodeid(ephemeral_id);
+        // Generate ephemeral initiator node ID per spec:
+        // "Randomly selected for each session by the initiator from the Operational Node ID range"
+        // Operational Node ID range is 0x0000_0000_0000_0001 to 0xFFFF_FFEF_FFFF_FFFF
+        // (Matter Core spec).
+        const MAX_OPERATIONAL_NODE_ID: u64 = 0xFFFF_FFEF_FFFF_FFFF;
+        let mut ephemeral_id = rand.next_u64();
+        while ephemeral_id == 0 || ephemeral_id > MAX_OPERATIONAL_NODE_ID {
+            ephemeral_id = rand.next_u64();
+        }
+        session.set_local_nodeid(ephemeral_id);
 
-            let session_id = session.id;
+        let session_id = session.id;
 
-            debug!(
-                "Unsecured session {} created for peer {}",
-                session_id, peer_addr
-            );
+        debug!(
+            "Unsecured session {} created for peer {}",
+            session_id, peer_addr
+        );
 
-            Ok(session_id)
-        })
+        Ok(session_id)
     }
 
     pub(crate) async fn get_if_rx<F>(&self, f: F) -> PacketAccess<'_, MAX_RX_BUF_SIZE>
@@ -1447,6 +1454,14 @@ impl Transport {
             session.get_local_sess_id(),
             session.get_peer_sess_id()
         );
+
+        if !matches!(
+            session.get_session_mode(),
+            SessionMode::Pase { .. } | SessionMode::Case { .. }
+        ) {
+            // A `CloseSession` may only be sent within a PASE or CASE session
+            return Ok(());
+        }
 
         self.write_packet(crypto, packet, Some(&mut session), None, encode, |wb| {
             sc_write(wb, SCStatusCodes::CloseSession, &[])
@@ -2191,6 +2206,12 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 });
 
             let Some((session_id, exch_index, close_session)) = exch else {
+                // `packet` is the only TX buffer and it is empty, so no packet waiting
+                // to be sent refers to a plaintext session any more
+                if sessions.remove_idle_plaintext() > 0 {
+                    self.transport.notify_session_removed();
+                }
+
                 return Ok(exch.is_none());
             };
 
@@ -2205,7 +2226,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     exchange_id.display(unwrap!(sessions.get(session_id))) // Session exists or else we wouldn't be here
                 );
 
-                self.transport.write_evict_session_packet(&self.crypto, packet, sessions, session_id, false)?;
+                // Encoded right away: the session is gone by the time the TX loop gets to the packet
+                self.transport.write_evict_session_packet(&self.crypto, packet, sessions, session_id, true)?;
             } else {
                 // Found a dropped exchange which has no outstanding (re)transmission
                 // Send a standalone ACK if necessary and then close it
@@ -2809,7 +2831,13 @@ impl MessageCounters {
 mod tests {
     use super::*;
 
+    use core::num::NonZeroU8;
+
+    use futures_lite::future::block_on;
+
     use crate::crypto::test_only_crypto;
+    use crate::session::ReservedSession;
+    use crate::utils::timers::Instant;
 
     #[test]
     fn test_create_plaintext_session() {
@@ -2817,7 +2845,9 @@ mod tests {
         let crypto = test_only_crypto();
         let peer = Address::new();
 
-        let session_id = transport.create_plaintext_session(&crypto, peer).unwrap();
+        let session_id = transport
+            .with_sessions(|sessions| Transport::create_plaintext_session(sessions, &crypto, peer))
+            .unwrap();
 
         transport.with_sessions(|sessions| {
             let session = sessions.get(session_id).unwrap();
@@ -2848,6 +2878,119 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    /// Evicting a plaintext session removes it without queueing a
+    /// `CloseSession`, which may only be sent within a PASE or CASE session.
+    #[test]
+    fn evicting_a_plaintext_session_sends_nothing() {
+        let transport = Transport::new(None);
+        let crypto = test_only_crypto();
+
+        let session_id = transport
+            .with_sessions(|sessions| {
+                Transport::create_plaintext_session(sessions, &crypto, Address::new())
+            })
+            .unwrap();
+
+        // Eviction only takes sessions last used before the current tick.
+        let created = Instant::now();
+        while Instant::now() <= created {
+            core::hint::spin_loop();
+        }
+
+        block_on(transport.evict_some_session(&crypto)).unwrap();
+
+        transport.with_sessions(|sessions| assert!(sessions.get(session_id).is_none()));
+        assert!(block_on(transport.get_if_tx(|_| true)).buf.is_empty());
+    }
+
+    /// The `CloseSession` for a session closed over a dropped exchange that
+    /// still retransmits is encoded right away, as the session is gone by the
+    /// time the TX loop gets to the packet.
+    #[test]
+    fn close_session_over_a_dropped_exchange_is_encoded() {
+        let host = TestHost(Transport::new(None));
+        let runner = TransportRunner::new(&host, test_only_crypto());
+
+        let mut session = ReservedSession::reserve_now(&host.0, test_only_crypto()).unwrap();
+        session
+            .update(
+                1,
+                2,
+                1,
+                1,
+                Address::new(),
+                SessionMode::Case {
+                    fab_idx: NonZeroU8::new(1).unwrap(),
+                    cat_ids: Default::default(),
+                },
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        session.complete();
+
+        host.0.with_sessions(|sessions| {
+            let sess = sessions.iter_mut().next().unwrap();
+            let index = sess
+                .add_exch(1, Role::Initiator(Default::default()))
+                .unwrap();
+            let exch = sess.exchanges[index].as_mut().unwrap();
+
+            exch.mrp.retrans = Some(mrp::RetransEntry::new(None, 1));
+            exch.role.set_dropped_state();
+        });
+
+        let mut tx = block_on(host.0.get_if_tx(|packet| packet.buf.is_empty()));
+        runner.handle_dropped_exchange(&mut tx).unwrap();
+
+        host.0
+            .with_sessions(|sessions| assert!(sessions.iter().next().is_none()));
+        assert!(!tx.buf.is_empty());
+        assert!(!matches!(
+            tx.tx_info.payload_state,
+            TxPayloadState::NotEncoded { .. }
+        ));
+    }
+
+    /// A node with nothing but its transport.
+    struct TestHost(Transport);
+
+    impl TransportHost for TestHost {
+        fn transport(&self) -> &Transport {
+            &self.0
+        }
+
+        fn with_fabrics(&self, _f: &mut dyn FnMut(&mut Sessions, &fabric::Fabrics)) {
+            unimplemented!()
+        }
+
+        fn mdns_services(
+            &self,
+            _f: &mut dyn FnMut(network::MatterLocalService) -> Result<(), Error>,
+        ) -> Result<(), Error> {
+            unimplemented!()
+        }
+
+        fn dev_det(&self) -> &basic_info::BasicInfoConfig<'_> {
+            unimplemented!()
+        }
+
+        fn port(&self) -> u16 {
+            unimplemented!()
+        }
+
+        fn icd_advertisement(&self) -> Option<icd::IcdAdvertisement> {
+            unimplemented!()
+        }
+
+        #[cfg(feature = "groups")]
+        fn groupcast_testing(&self) -> &groupcast::TestingBridge {
+            unimplemented!()
+        }
     }
 }
 

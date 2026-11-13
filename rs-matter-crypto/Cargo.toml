@@ -13,7 +13,7 @@ rust-version.workspace = true
 
 [features]
 default = ["std", "rustcrypto", "log"]
-std = ["alloc", "rand", "rs-matter-utils/std", "rs-matter-tlv/std"]
+std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std"]
 alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc"]
 # Multicast groups support.
 groups = []
@@ -33,7 +33,6 @@ rand_core = { workspace = true }
 der = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
-rand = { workspace = true, features = ["std", "std_rng", "thread_rng"], optional = true }
 
 # OpenSSL
 openssl = { workspace = true, optional = true }

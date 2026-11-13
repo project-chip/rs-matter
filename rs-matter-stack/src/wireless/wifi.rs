@@ -274,7 +274,6 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn wifi_coex_task<'t, W, C, H, K, U>(
         &'t self,
         networks: &'t mut S::Store,
@@ -314,7 +313,6 @@ where
     }
 
     #[allow(clippy::manual_async_fn, clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn wifi_no_coex_task<'t, W, C, H, K, U>(
         &'t self,
         networks: &'t mut S::Store,

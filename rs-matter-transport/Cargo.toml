@@ -108,9 +108,6 @@ futures-lite = { workspace = true, optional = true }
 astro-dnssd = { workspace = true, optional = true }
 zeroconf = { workspace = true, optional = true }
 
-[target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
-nix = { workspace = true }
-
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }

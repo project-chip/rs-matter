@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a plaintext session is removed once its last exchange is gone, rather than staying until evicted and possibly pushing out an established CASE session (#661)
+  * Fix: plaintext sessions not removed yet are evicted before any other session
+  * Fix: evicting a plaintext or group session sends no `CloseSession`, which the spec allows only within PASE and CASE sessions
+  * Fix: the `CloseSession` for a session closed over a dropped exchange that still retransmits is actually sent
 * Breaking: `Matter` and the `MatterStack` constructors take a `DevCommData`: the device's passcode (`DevCommData::Passcode`, as before), or the SPAKE2+ verifier it was given at manufacturing (`DevCommData::Verifier`), which the Core spec asks of a device with a static passcode. Such a device prints no pairing code or QR code. `TEST_DEV_COMM` is now a `DevCommData`; `TEST_BASIC_COMM` has the test passcode and discriminator (#659)
   * New: `Spake2P::compute_verifier`, the verifier of a passcode, for manufacturing tools
   * Fix: a commissioning window reports whether it is basic or enhanced from how it was opened, rather than from whether it has a passcode
