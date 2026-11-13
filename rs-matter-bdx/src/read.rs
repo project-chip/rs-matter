@@ -239,12 +239,13 @@ pub trait BdxDownloadInitiator<'a> {
     /// the returned reader's [`len`](BdxReader::len), if known, is the number of
     /// bytes *remaining* from the offset.
     ///
-    /// `max_block_size` is the largest block to ask the sender for; the sender
-    /// may choose a smaller one. If the exchange RX buffer cannot hold it, the
-    /// largest power of two the buffer holds is asked for instead, as an OTA
-    /// Requestor must ask for a power of two above 128 bytes. An OTA Requestor
-    /// asks for at most 1024 bytes over a transport other than TCP, and 8192
-    /// over TCP (`ota_req::OTA_MAX_BLOCK_SIZE{,_TCP}` in the data model).
+    /// `max_block_size` is the largest block to ask the sender for (0 is taken
+    /// as 1); the sender may choose a smaller one. If the exchange RX buffer
+    /// cannot hold it, the largest power of two the buffer holds is asked for
+    /// instead, as an OTA Requestor must ask for a power of two above 128
+    /// bytes. An OTA Requestor asks for at most 1024 bytes over a transport
+    /// other than TCP, and 8192 over TCP (`ota_req::OTA_MAX_BLOCK_SIZE{,_TCP}`
+    /// in the data model).
     fn download(
         self,
         file_designator: &[u8],
