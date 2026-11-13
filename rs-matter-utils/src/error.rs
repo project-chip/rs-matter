@@ -192,8 +192,16 @@ impl From<BufferErrorCode> for Error {
     }
 }
 
-impl From<BufferError> for Error {
-    fn from(value: BufferError) -> Self {
+/// Bridge any `Error2` to the legacy `Error`, given a conversion for its code.
+///
+/// A crate defining its own error code only needs `impl From<ItsCode> for Error`,
+/// which the orphan rule does allow it - unlike an impl over `Error2<ItsCode>`,
+/// where neither type is local to it.
+impl<T> From<Error2<T>> for Error
+where
+    T: MatterError + Into<Error>,
+{
+    fn from(value: Error2<T>) -> Self {
         value.code().into()
     }
 }

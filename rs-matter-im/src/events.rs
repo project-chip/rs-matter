@@ -272,7 +272,9 @@ impl<const N: usize> EventsInner<N> {
     ) -> Result<(), Error> {
         self.reset();
 
-        match load_logged(kv, EVENT_EPOCH_KEY, buf, |data| TLVElement::new(data).u64()) {
+        match load_logged(kv, EVENT_EPOCH_KEY, buf, |data| {
+            Ok(TLVElement::new(data).u64()?)
+        }) {
             Ok(Some(epoch)) => {
                 self.next_event_number = epoch;
 

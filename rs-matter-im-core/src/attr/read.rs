@@ -51,7 +51,7 @@ impl<'a> ReadReq<'a> {
 
     /// Return Ok(`true`) if this read request is fabric-filtered.
     pub fn fabric_filtered(&self) -> Result<bool, Error> {
-        self.0.r#struct()?.find_ctx(3)?.bool()
+        Ok(self.0.r#struct()?.find_ctx(3)?.bool()?)
     }
 
     /// Return the data version filters in this read request, if any.
