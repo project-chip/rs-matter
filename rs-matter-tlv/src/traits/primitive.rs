@@ -17,15 +17,15 @@
 
 //! TLV support for Rust primitive types.
 
-use crate::error::{TlvError, TlvErrorCode};
 use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 
 macro_rules! fromtlv_for {
     ($($t:ident)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
                 fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
-                    Ok(element.$t()?)
+                    element.$t()
                 }
             }
         )*
@@ -37,7 +37,7 @@ macro_rules! fromtlv_for_num {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
                 fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
-                    Ok(element.$t()?)
+                    element.$t()
                 }
 
                 fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {

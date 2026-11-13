@@ -34,8 +34,8 @@ use core::fmt::Debug;
 use core::hash::Hash;
 use core::ops::{Deref, DerefMut};
 
+use crate::error::Error;
 use crate::error::{TlvError, TlvErrorCode};
-use crate::error::{Error, ErrorCode};
 use crate::utils::init::{self, init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 

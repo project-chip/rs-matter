@@ -20,7 +20,7 @@ use crate::utils::init;
 
 use super::{
     EitherIter, TLVElement, TLVSequenceIter, TLVSequenceTLVIter, TLVTag, TLVValue, TLVValueType,
-    TLVWrite, TLV, TlvError
+    TLVWrite, TlvError, TLV,
 };
 
 pub use builder::*;

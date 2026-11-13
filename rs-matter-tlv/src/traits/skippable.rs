@@ -17,8 +17,8 @@
 
 use pinned_init::init_from_closure;
 
-use crate::error::TlvError;
 use crate::error::Error;
+use crate::error::TlvError;
 use crate::utils::init::{try_init, Init, InitDefault, IntoFallibleInit};
 use crate::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 

@@ -27,7 +27,7 @@ use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::persist::{load_logged, KvBlobStore};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvErrorCode, ToTLV};
 use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -291,7 +291,7 @@ where
                 let network = network?;
 
                 self.networks.push_init(T::init_from_tlv(network), || {
-                    ErrorCode::ResourceExhausted.into()
+                    TlvErrorCode::CapacityExceeded.into()
                 })?;
             }
 
@@ -307,7 +307,7 @@ where
                 let network = network?;
 
                 self.networks.push_init(T::init_from_tlv(network), || {
-                    ErrorCode::ResourceExhausted.into()
+                    TlvErrorCode::CapacityExceeded.into()
                 })?;
             }
 

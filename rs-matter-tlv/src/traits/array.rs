@@ -31,8 +31,8 @@
 //! Therefore, use `Vec` instead of built-in arrays if you need to efficiently in-place initialize
 //! (potentially large) arrays.
 
-use crate::error::{TlvError, TlvErrorCode};
 use crate::error::Error;
+use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::storage::Vec;
 
 use super::{tlv_array_iter, FromTLV, TLVArray, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -45,7 +45,8 @@ where
         let mut vec = Vec::<T, N>::new();
 
         for item in TLVArray::new(element.clone())? {
-            vec.push(item?).map_err(|_| TlvErrorCode::CapacityExceeded)?;
+            vec.push(item?)
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?;
         }
 
         while !vec.is_full() {

@@ -45,7 +45,7 @@ use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{
     FromTLV, Nullable, OptionalBuilder, TLVArray, TLVBuilder, TLVBuilderParent, TLVElement,
-    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, ToTLV, TLV,
+    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, TlvError, TlvErrorCode, ToTLV, TLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -545,12 +545,12 @@ impl<const M: usize> ToTLV for SceneEntry<M> {
 }
 
 impl<'a, const M: usize> FromTLV<'a> for SceneEntry<M> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let s = element.structure()?;
         let mut extension_fields = Vec::<u8, M>::new();
         extension_fields
             .extend_from_slice(s.ctx(5)?.str()?)
-            .map_err(|_| ErrorCode::NoSpace)?;
+            .map_err(|_| TlvErrorCode::CapacityExceeded)?;
         Ok(Self {
             fab_idx: NonZeroU8::from_tlv(&s.ctx(0)?)?,
             endpoint_id: EndptId::from_tlv(&s.ctx(1)?)?,
@@ -577,7 +577,7 @@ impl<const N: usize, const M: usize> ToTLV for ScenesStateInner<N, M> {
 }
 
 impl<'a, const N: usize, const M: usize> FromTLV<'a> for ScenesStateInner<N, M> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let s = element.structure()?;
         Ok(Self {
             table: Vec::<SceneEntry<M>, N>::from_tlv(&s.ctx(0)?)?,

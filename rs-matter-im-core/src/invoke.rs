@@ -249,7 +249,7 @@ impl<'a> InvReq<'a> {
 
     /// Return the invocation requests contained in this request.
     pub fn inv_requests(&self) -> Result<Option<TLVArray<'a, CmdData<'a>>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?)
+        Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?).map_err(Error::from)
     }
 }
 
@@ -440,7 +440,7 @@ where
                 return None;
             }
             let endpoint = data.path.endpoint?;
-            Some((endpoint, R::from_tlv(&data.data)))
+            Some((endpoint, R::from_tlv(&data.data).map_err(Error::from)))
         }
         CmdResp::Status(s) => {
             if s.path.cluster != Some(cluster) || s.path.cmd != Some(cmd) {

@@ -36,17 +36,17 @@ impl<'a> ReadReq<'a> {
 
     /// Return the attribute requests in this read request, if any.
     pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(0)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(0)?)?)
     }
 
     /// Return the event requests in this read request, if any.
     pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(1)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(1)?)?)
     }
 
     /// Return the event filters in this read request, if any.
     pub fn event_filters(&self) -> Result<Option<TLVArray<'a, EventFilter>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?)?)
     }
 
     /// Return Ok(`true`) if this read request is fabric-filtered.
@@ -56,7 +56,7 @@ impl<'a> ReadReq<'a> {
 
     /// Return the data version filters in this read request, if any.
     pub fn dataver_filters(&self) -> Result<Option<TLVArray<'a, DataVersionFilter>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)?)
     }
 }
 

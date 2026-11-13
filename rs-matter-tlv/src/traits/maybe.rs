@@ -43,8 +43,8 @@
 use core::fmt::Debug;
 use core::iter::empty;
 
-use crate::error::TlvError;
 use crate::error::Error;
+use crate::error::TlvError;
 use crate::utils::init;
 use crate::utils::maybe::Maybe;
 

@@ -59,7 +59,7 @@ impl<'a> WriteReq<'a> {
 
     /// Return the attribute data to write in this write request.
     pub fn write_requests(&self) -> Result<TLVArray<'a, AttrData<'_>>, Error> {
-        TLVArray::new(self.0.r#struct()?.find_ctx(2)?)
+        Ok(TLVArray::new(self.0.r#struct()?.find_ctx(2)?)?)
     }
 
     /// Return `Ok(true)` if this write request has more chunks
