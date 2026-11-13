@@ -238,10 +238,19 @@ pub trait BdxDownloadInitiator<'a> {
     /// The sender may refuse with [`StartOffsetNotSupported`](BdxStatus::StartOffsetNotSupported);
     /// the returned reader's [`len`](BdxReader::len), if known, is the number of
     /// bytes *remaining* from the offset.
+    ///
+    /// `max_block_size` is the largest block to ask the sender for (0 is taken
+    /// as 1); the sender may choose a smaller one. If the exchange RX buffer
+    /// cannot hold it, the largest power of two the buffer holds is asked for
+    /// instead, as an OTA Requestor must ask for a power of two above 128
+    /// bytes. An OTA Requestor asks for at most 1024 bytes over a transport
+    /// other than TCP, and 8192 over TCP (`ota_req::OTA_MAX_BLOCK_SIZE{,_TCP}`
+    /// in the data model).
     fn download(
         self,
         file_designator: &[u8],
         offset: Option<u64>,
+        max_block_size: u16,
     ) -> impl Future<Output = Result<BdxReader<'a>, Error>> + MaybeSend;
 }
 
@@ -250,13 +259,12 @@ impl<'a> BdxDownloadInitiator<'a> for Exchange<'a> {
         mut self,
         file_designator: &[u8],
         offset: Option<u64>,
+        max_block_size: u16,
     ) -> Result<BdxReader<'a>, Error> {
-        // We stream blocks straight out of the exchange RX buffer, so we propose
-        // the largest block that buffer can hold.
         send_init(
             &mut self,
             OpCode::ReceiveInit,
-            MAX_RX_BLOCK_SIZE,
+            block_size_to_ask(max_block_size),
             offset,
             file_designator,
         )
@@ -361,5 +369,39 @@ impl<'a> BdxUploadResponder<'a> {
     pub async fn reject(mut self, status: BdxStatus) -> Result<(), Error> {
         self.exchange.rx_done()?;
         send_status_report(&mut self.exchange, status).await
+    }
+}
+
+/// The block size `download` asks for, given the largest the caller wants.
+///
+/// We stream blocks straight out of the exchange RX buffer, so a block larger
+/// than that buffer holds becomes the largest power of two it does.
+const fn block_size_to_ask(max_block_size: u16) -> u16 {
+    // In `u32`, as with `large-buffers` the buffer holds any `u16` block.
+    if max_block_size as u32 > MAX_RX_BLOCK_SIZE as u32 {
+        1 << (u16::BITS - 1 - MAX_RX_BLOCK_SIZE.leading_zeros())
+    } else if max_block_size == 0 {
+        1
+    } else {
+        max_block_size
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_block_the_rx_buffer_cannot_hold_becomes_the_largest_power_of_two_it_does() {
+        assert_eq!(block_size_to_ask(0), 1);
+        assert_eq!(block_size_to_ask(512), 512);
+        assert_eq!(block_size_to_ask(MAX_RX_BLOCK_SIZE), MAX_RX_BLOCK_SIZE);
+
+        // With `large-buffers` the buffer holds any block a `u16` can ask for.
+        if let Some(too_large) = MAX_RX_BLOCK_SIZE.checked_add(1) {
+            let asked = block_size_to_ask(too_large);
+            assert!(asked.is_power_of_two());
+            assert!(asked < too_large && asked > MAX_RX_BLOCK_SIZE / 2);
+        }
     }
 }

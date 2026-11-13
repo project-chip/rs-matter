@@ -48,6 +48,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
+    OTA_MAX_BLOCK_SIZE,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_OTA_REQUESTOR;
@@ -347,7 +348,9 @@ impl OtaUpdater<'_> {
 
         // Download the image over BDX from the node named in the URL.
         let exchange = Exchange::initiate(matter, ctx.crypto(), provider.fab_idx, node_id).await?;
-        let mut reader = exchange.download(fd.as_bytes(), None).await?;
+        let mut reader = exchange
+            .download(fd.as_bytes(), None, OTA_MAX_BLOCK_SIZE)
+            .await?;
 
         // Check the header before taking any of the payload.
         let header = OtaImageHeader::load(&mut reader, header_buf).await?;

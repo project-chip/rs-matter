@@ -69,6 +69,7 @@ use rs_matter::dm::clusters::ota_prov::{
 };
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
+    OTA_MAX_BLOCK_SIZE,
 };
 use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSourceHandler};
 use rs_matter::utils::futures::{select, select4, Coalesce};
@@ -1678,7 +1679,9 @@ async fn download_image(
 
     // No vendor or product check: the upstream test image is for 0xDEAD / 0xBEEF.
     let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
-    let mut reader = exchange.download(fd.as_bytes(), None).await?;
+    let mut reader = exchange
+        .download(fd.as_bytes(), None, OTA_MAX_BLOCK_SIZE)
+        .await?;
 
     let mut header_buf = [0u8; 512];
     let header = OtaImageHeader::load(&mut reader, &mut header_buf).await?;
