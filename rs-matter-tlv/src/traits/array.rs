@@ -56,7 +56,7 @@ where
 
         Ok(unwrap!(vec
             .into_array()
-            .map_err(|_| TlvErrorCode::Malformed))) // todo is the the correct error?
+            .map_err(|_| TlvErrorCode::CapacityExceeded)))
     }
 }
 

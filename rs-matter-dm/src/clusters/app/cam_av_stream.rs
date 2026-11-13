@@ -921,7 +921,7 @@ where
                 Some(_) => Ok(()),
             }
         });
-        status.map_err(Error::from)?;
+        status?;
 
         self.hooks.deallocate_video(id).await?;
 
@@ -949,7 +949,7 @@ where
             request
                 .stream_priorities()?
                 .iter()
-                .map(|req| req.map_err(Error::from)),
+                .map(|req| req.map_err(Into::into)),
             self.config.supported_stream_usages,
         )?;
 

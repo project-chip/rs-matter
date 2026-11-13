@@ -478,7 +478,7 @@ where
         T: for<'a> FromTLV<'a>,
     {
         self.load(key, |data| {
-            T::from_tlv(&TLVElement::new(data)).map_err(Error::from)
+            T::from_tlv(&TLVElement::new(data)).map_err(Into::into)
         })
     }
 

@@ -341,9 +341,10 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
                 };
                 let encrypted = match req
                     .structure()
+                    .and_then(|s| s.ctx(1))
+                    .and_then(|c| c.str())
+                    // the `match` below pins no type, so the target is named here
                     .map_err(Error::from)
-                    .and_then(|s| s.ctx(1).map_err(Error::from))
-                    .and_then(|c| c.str().map_err(Error::from))
                 {
                     Ok(s) => s,
                     Err(e) => {
@@ -377,8 +378,9 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
                     };
                 let decrypted = &decrypted[..len];
                 let decrypted_req: Sigma3Decrypt<'_> = match get_root_node_struct(decrypted)
+                    .and_then(|n| Sigma3Decrypt::from_tlv(&n))
+                    // the `match` below pins no type, so the target is named here
                     .map_err(Error::from)
-                    .and_then(|n| Sigma3Decrypt::from_tlv(&n).map_err(Error::from))
                 {
                     Ok(req) => req,
                     Err(e) => {
