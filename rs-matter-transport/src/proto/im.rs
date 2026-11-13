@@ -39,9 +39,7 @@ use crate::exchange::MessageMeta;
 use crate::exchange::{Exchange, OwnedSender, OwnedSenderTx};
 #[cfg(feature = "groups")]
 use crate::tlv::TLVWriteParent;
-use crate::tlv::{
-    FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, ToTLV,
-};
+use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 #[cfg(feature = "groups")]
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::MaybeSend;
