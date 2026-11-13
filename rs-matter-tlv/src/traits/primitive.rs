@@ -24,7 +24,7 @@ macro_rules! fromtlv_for {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
                 fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
-                    element.$t()
+                    Ok(element.$t()?)
                 }
             }
         )*
@@ -36,7 +36,7 @@ macro_rules! fromtlv_for_num {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
                 fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
-                    element.$t()
+                    Ok(element.$t()?)
                 }
 
                 fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {

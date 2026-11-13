@@ -17,7 +17,7 @@
 
 use core::{cmp::Ordering, fmt};
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{Error, TlvError, TlvErrorCode};
 
 use super::{pad, FromTLV, TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, TLV};
 
@@ -131,23 +131,23 @@ impl<'a> TLVElement<'a> {
 
     /// Return the TLV control byte of the first TLV in the slice.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the first byte of the slice does
+    /// Returns an error with code `TlvErrorCode::Malformed` if the first byte of the slice does
     /// not represent a valid TLV control byte or if the wrapped byte slice is empty.
     #[inline(always)]
-    pub fn control(&self) -> Result<TLVControl, Error> {
+    pub fn control(&self) -> Result<TLVControl, TlvError> {
         self.0.control()
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the encoded value
     /// of this `TLVElement` (i.e. the raw "value" aspect of the Tag-Length-Value encoding)
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
     /// For getting a parsed value, use `value` or any of the other helper methods that
     /// retrieve a value of a certain type.
     #[inline(always)]
-    pub fn raw_value(&self) -> Result<&'a [u8], Error> {
+    pub fn raw_value(&self) -> Result<&'a [u8], TlvError> {
         self.0.raw_value()
     }
 
@@ -162,17 +162,17 @@ impl<'a> TLVElement<'a> {
 
     /// Return a `TLVTag` enum representing the tag of this `TLVElement`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV
     /// byte slice contains malformed TLV data.
     #[inline(always)]
-    pub fn tag(&self) -> Result<TLVTag, Error> {
+    pub fn tag(&self) -> Result<TLVTag, TlvError> {
         let tag_type = self.control()?.tag_type;
 
         let slice = self
             .0
             .tag_start()?
             .get(..tag_type.size())
-            .ok_or(ErrorCode::TLVTypeMismatch)?;
+            .ok_or(TlvErrorCode::Malformed)?;
 
         let tag = match tag_type {
             TLVTagType::Anonymous => TLVTag::Anonymous,
@@ -226,18 +226,18 @@ impl<'a> TLVElement<'a> {
             TLVValueType::True => TLVValue::True,
             TLVValueType::F32 => TLVValue::F32(f32::from_le_bytes(unwrap!(slice.try_into()))),
             TLVValueType::F64 => TLVValue::F64(f64::from_le_bytes(unwrap!(slice.try_into()))),
-            TLVValueType::Utf8l => TLVValue::Utf8l(
-                core::str::from_utf8(slice).map_err(|_| ErrorCode::TLVTypeMismatch)?,
-            ),
-            TLVValueType::Utf16l => TLVValue::Utf16l(
-                core::str::from_utf8(slice).map_err(|_| ErrorCode::TLVTypeMismatch)?,
-            ),
-            TLVValueType::Utf32l => TLVValue::Utf32l(
-                core::str::from_utf8(slice).map_err(|_| ErrorCode::TLVTypeMismatch)?,
-            ),
-            TLVValueType::Utf64l => TLVValue::Utf64l(
-                core::str::from_utf8(slice).map_err(|_| ErrorCode::TLVTypeMismatch)?,
-            ),
+            TLVValueType::Utf8l => {
+                TLVValue::Utf8l(core::str::from_utf8(slice).map_err(|_| TlvErrorCode::Malformed)?)
+            }
+            TLVValueType::Utf16l => {
+                TLVValue::Utf16l(core::str::from_utf8(slice).map_err(|_| TlvErrorCode::Malformed)?)
+            }
+            TLVValueType::Utf32l => {
+                TLVValue::Utf32l(core::str::from_utf8(slice).map_err(|_| TlvErrorCode::Malformed)?)
+            }
+            TLVValueType::Utf64l => {
+                TLVValue::Utf64l(core::str::from_utf8(slice).map_err(|_| TlvErrorCode::Malformed)?)
+            }
             TLVValueType::Str8l => TLVValue::Str8l(slice),
             TLVValueType::Str16l => TLVValue::Str16l(slice),
             TLVValueType::Str32l => TLVValue::Str32l(slice),
@@ -254,12 +254,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as an `i8`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV S8 value.
-    pub fn i8(&self) -> Result<i8, Error> {
+    pub fn i8(&self) -> Result<i8, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::S8) {
@@ -267,21 +267,21 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the value of this TLV element as a `u8`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV U8 value.
-    pub fn u8(&self) -> Result<u8, Error> {
+    pub fn u8(&self) -> Result<u8, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::U8) {
@@ -289,21 +289,21 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the value of this TLV element as an `i16`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV S8 or S16 value.
-    pub fn i16(&self) -> Result<i16, Error> {
+    pub fn i16(&self) -> Result<i16, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::S16) {
@@ -311,7 +311,7 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
             self.i8().map(|a| a.into())
@@ -320,12 +320,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as a `u16`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV U8 or U16 value.
-    pub fn u16(&self) -> Result<u16, Error> {
+    pub fn u16(&self) -> Result<u16, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::U16) {
@@ -333,7 +333,7 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
             self.u8().map(|a| a.into())
@@ -342,12 +342,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as an `i32`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV S8, S16 or S32 value.
-    pub fn i32(&self) -> Result<i32, Error> {
+    pub fn i32(&self) -> Result<i32, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::S32) {
@@ -355,7 +355,7 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
             self.i16().map(|a| a.into())
@@ -364,12 +364,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as a `u32`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV U8, U16 or U32 value.
-    pub fn u32(&self) -> Result<u32, Error> {
+    pub fn u32(&self) -> Result<u32, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::U32) {
@@ -377,7 +377,7 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
             self.u16().map(|a| a.into())
@@ -386,12 +386,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as an `i64`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV S8, S16, S32 or S64 value.
-    pub fn i64(&self) -> Result<i64, Error> {
+    pub fn i64(&self) -> Result<i64, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::S64) {
@@ -399,7 +399,7 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
             self.i32().map(|a| a.into())
@@ -408,12 +408,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as a `u64`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV U8, U16, U32 or U64 value.
-    pub fn u64(&self) -> Result<u64, Error> {
+    pub fn u64(&self) -> Result<u64, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::U64) {
@@ -421,7 +421,7 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
             self.u32().map(|a| a.into())
@@ -430,12 +430,12 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as an `f32`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV F32 value.
-    pub fn f32(&self) -> Result<f32, Error> {
+    pub fn f32(&self) -> Result<f32, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::F32) {
@@ -443,21 +443,21 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the value of this TLV element as an `f64`.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV F64 value.
-    pub fn f64(&self) -> Result<f64, Error> {
+    pub fn f64(&self) -> Result<f64, TlvError> {
         let control = self.control()?;
 
         if matches!(control.value_type, TLVValueType::F64) {
@@ -465,25 +465,25 @@ impl<'a> TLVElement<'a> {
                 self.0
                     .value(control)?
                     .try_into()
-                    .map_err(|_| ErrorCode::InvalidData)?,
+                    .map_err(|_| TlvErrorCode::Malformed)?,
             ))
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the value of this TLV element as a byte slice.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV Octet String.
-    pub fn str(&self) -> Result<&'a [u8], Error> {
+    pub fn str(&self) -> Result<&'a [u8], TlvError> {
         let control = self.control()?;
 
         if !control.value_type.is_str() {
-            Err(ErrorCode::Invalid)?;
+            Err(TlvErrorCode::TypeMismatch)?;
         }
 
         self.0.value(control)
@@ -491,33 +491,33 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as a UTF-8 string.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV UTF-8 String.
-    pub fn utf8(&self) -> Result<&'a str, Error> {
+    pub fn utf8(&self) -> Result<&'a str, TlvError> {
         let control = self.control()?;
 
         if !control.value_type.is_utf8() {
-            Err(ErrorCode::Invalid)?;
+            Err(TlvErrorCode::TypeMismatch)?;
         }
 
-        core::str::from_utf8(self.0.value(control)?).map_err(|_| ErrorCode::InvalidData.into())
+        core::str::from_utf8(self.0.value(control)?).map_err(|_| TlvErrorCode::Malformed.into())
     }
 
     /// Return the value of this TLV element as a UTF-16 string.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV UTF-8 String or a TLV octet string.
-    pub fn octets(&self) -> Result<&'a [u8], Error> {
+    pub fn octets(&self) -> Result<&'a [u8], TlvError> {
         let control = self.control()?;
 
         if control.value_type.variable_size_len() == 0 {
-            Err(ErrorCode::Invalid)?;
+            Err(TlvErrorCode::TypeMismatch)?;
         }
 
         self.0.value(control)
@@ -525,145 +525,145 @@ impl<'a> TLVElement<'a> {
 
     /// Return the value of this TLV element as a UTF-16 string.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV boolean.
-    pub fn bool(&self) -> Result<bool, Error> {
+    pub fn bool(&self) -> Result<bool, TlvError> {
         let control = self.control()?;
 
         match control.value_type {
             TLVValueType::False => Ok(false),
             TLVValueType::True => Ok(true),
-            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+            _ => Err(TlvErrorCode::TypeMismatch.into()),
         }
     }
 
     /// Return `true` if this TLV element is as a container (i.e., a struct, array or list).
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
-    pub fn is_container(&self) -> Result<bool, Error> {
+    pub fn is_container(&self) -> Result<bool, TlvError> {
         Ok(self.control()?.value_type.is_container())
     }
 
     /// Confirm that this TLV element contains a TLV null value.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV null value.
-    pub fn null(&self) -> Result<(), Error> {
+    pub fn null(&self) -> Result<(), TlvError> {
         if matches!(self.control()?.value_type, TLVValueType::Null) {
             Ok(())
         } else {
-            Err(ErrorCode::InvalidData.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the content of the struct container represented by this TLV element.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV struct.
-    pub fn structure(&self) -> Result<TLVSequence<'a>, Error> {
+    pub fn structure(&self) -> Result<TLVSequence<'a>, TlvError> {
         self.r#struct()
     }
 
     /// Return the content of the struct container represented by this TLV element.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV struct.
     ///
     /// (Same as method `structure` but with a special name to ease the `FromTLV` trait derivation for
     /// user types.)
-    pub fn r#struct(&self) -> Result<TLVSequence<'a>, Error> {
+    pub fn r#struct(&self) -> Result<TLVSequence<'a>, TlvError> {
         if matches!(self.control()?.value_type, TLVValueType::Struct) {
             self.0.next_enter()
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the content of the array container represented by this TLV element.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV array.
-    pub fn array(&self) -> Result<TLVSequence<'a>, Error> {
+    pub fn array(&self) -> Result<TLVSequence<'a>, TlvError> {
         if matches!(self.control()?.value_type, TLVValueType::Array) {
             self.0.next_enter()
         } else {
-            Err(ErrorCode::InvalidData.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the content of the list container represented by this TLV element.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV list.
-    pub fn list(&self) -> Result<TLVSequence<'a>, Error> {
+    pub fn list(&self) -> Result<TLVSequence<'a>, TlvError> {
         if matches!(self.control()?.value_type, TLVValueType::List) {
             self.0.next_enter()
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Return the content of the container (array, struct or list) represented by this TLV element.
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the value of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the value of the TLV element is not
     /// a TLV container.
-    pub fn container(&self) -> Result<TLVSequence<'a>, Error> {
+    pub fn container(&self) -> Result<TLVSequence<'a>, TlvError> {
         if matches!(
             self.control()?.value_type,
             TLVValueType::List | TLVValueType::Array | TLVValueType::Struct
         ) {
             self.0.next_enter()
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Confirm that this TLV element is tagged with the anonymous tag (`TLVTag::Anonymous`).
     ///
-    /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
+    /// Returns an error with code `TlvErrorCode::Malformed` if the wrapped TLV byte slice
     /// contains malformed TLV data.
     ///
-    /// Returns an error with code `ErrorCode::InvalidData` if the tag of the TLV element is not
+    /// Returns an error with code `TlvErrorCode::TypeMismatch` if the tag of the TLV element is not
     /// the anonymous tag.
-    pub fn confirm_anon(&self) -> Result<(), Error> {
+    pub fn confirm_anon(&self) -> Result<(), TlvError> {
         if matches!(self.control()?.tag_type, TLVTagType::Anonymous) {
             Ok(())
         } else {
-            Err(ErrorCode::TLVTypeMismatch.into())
+            Err(TlvErrorCode::TypeMismatch.into())
         }
     }
 
     /// Retrieve the context ID of the element.
     /// If element is not tagged with a context tag, the method will return an error.
-    pub fn ctx(&self) -> Result<u8, Error> {
-        Ok(self.try_ctx()?.ok_or(ErrorCode::TLVTypeMismatch)?)
+    pub fn ctx(&self) -> Result<u8, TlvError> {
+        Ok(self.try_ctx()?.ok_or(TlvErrorCode::TypeMismatch)?)
     }
 
     /// Retrieve the context ID of the element.
     /// If element is not tagged with a context tag, the method will return `None`.
-    pub fn try_ctx(&self) -> Result<Option<u8>, Error> {
+    pub fn try_ctx(&self) -> Result<Option<u8>, TlvError> {
         let control = self.control()?;
 
         if matches!(control.tag_type, TLVTagType::Context) {
@@ -672,7 +672,7 @@ impl<'a> TLVElement<'a> {
                     .0
                     .tag(control.tag_type)?
                     .first()
-                    .ok_or(ErrorCode::TLVTypeMismatch)?,
+                    .ok_or(TlvErrorCode::Malformed)?,
             ))
         } else {
             Ok(None)
@@ -788,7 +788,7 @@ impl<'a> TLVSequence<'a> {
         let element = self.find_ctx(ctx)?;
 
         if element.is_empty() {
-            Err(ErrorCode::NotFound.into())
+            Err(TlvErrorCode::NotFound.into())
         } else {
             Ok(element)
         }
@@ -825,7 +825,7 @@ impl<'a> TLVSequence<'a> {
     /// to point to the next element after the found element, or if an element with the
     /// provided context ID does not exist, to the first element with a bigger context ID than
     /// the one we are looking for.
-    pub fn scan_ctx(&mut self, ctx: u8) -> Result<TLVElement<'a>, Error> {
+    pub fn scan_ctx(&mut self, ctx: u8) -> Result<TLVElement<'a>, TlvError> {
         self.scan_map(move |elem| {
             if elem.is_empty() {
                 return Ok(Some(elem));
@@ -854,9 +854,9 @@ impl<'a> TLVSequence<'a> {
     /// Note that the closure _must_ ultimately return a non-empty result - if for nothing else
     /// then for the empty element that is passed to it when the sequence is exhausted,
     /// or else the method would loop forever.
-    pub fn scan_map<F, T>(&mut self, mut f: F) -> Result<T, Error>
+    pub fn scan_map<F, T>(&mut self, mut f: F) -> Result<T, TlvError>
     where
-        F: FnMut(TLVElement<'a>) -> Result<Option<T>, Error>,
+        F: FnMut(TLVElement<'a>) -> Result<Option<T>, TlvError>,
     {
         loop {
             if let Some(elem) = f(self.current()?)? {
@@ -876,7 +876,7 @@ impl<'a> TLVSequence<'a> {
     ///
     /// So in case the user is need of the actual, exact raw representation of a TLV container **value**, this method is provided.
     #[inline(always)]
-    pub fn raw_value(&self) -> Result<&'a [u8], Error> {
+    pub fn raw_value(&self) -> Result<&'a [u8], TlvError> {
         let control = self.control()?;
 
         self.container_value(control)
@@ -891,7 +891,7 @@ impl<'a> TLVSequence<'a> {
     ///
     /// Note also that this method will also return sub-sequences where the first element might be a TLV `TLVValueType::EndCnt` marker,
     /// which - formally speaking - is not a TLVElement, but a TLV control byte that marks the end of a container.
-    fn next_enter(&self) -> Result<Self, Error> {
+    fn next_enter(&self) -> Result<Self, TlvError> {
         if self.0.is_empty() {
             return Ok(Self::EMPTY);
         }
@@ -907,7 +907,7 @@ impl<'a> TLVSequence<'a> {
     /// which corresponds to the elements AFTER the container element (i.e., the method "skips over" the elements of the container element).
     ///
     /// If the sequence is empty or the sequence starts with a container-end control byte, the method will return the current sequence.
-    fn container_next(&self) -> Result<Self, Error> {
+    fn container_next(&self) -> Result<Self, TlvError> {
         if self.0.is_empty() {
             return Ok(Self::EMPTY);
         }
@@ -945,7 +945,7 @@ impl<'a> TLVSequence<'a> {
     /// Return the first TLV element in the sequence.
     /// If the sequence is empty, or if the sequence starts with a container-end TLV,
     /// an empty element will be returned.
-    fn current(&self) -> Result<TLVElement<'a>, Error> {
+    fn current(&self) -> Result<TLVElement<'a>, TlvError> {
         if self.0.is_empty() {
             return Ok(TLVElement(Self::EMPTY));
         }
@@ -964,8 +964,8 @@ impl<'a> TLVSequence<'a> {
     /// Return the TLV control byte of the first TLV in the sequence.
     /// If the sequence is empty, an error will be returned.
     #[inline(always)]
-    fn control(&self) -> Result<TLVControl, Error> {
-        TLVControl::parse(*self.0.first().ok_or(ErrorCode::TLVTypeMismatch)?)
+    fn control(&self) -> Result<TLVControl, TlvError> {
+        TLVControl::parse(*self.0.first().ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the START of the tag payload
@@ -974,8 +974,8 @@ impl<'a> TLVSequence<'a> {
     /// If there is no tag payload (i.e., the tag is of type `TLVTagType::Anonymous`), the returned sub-slice
     /// will designate the start of the TLV element value or value length.
     #[inline(always)]
-    fn tag_start(&self) -> Result<&'a [u8], Error> {
-        Ok(self.0.get(1..).ok_or(ErrorCode::TLVTypeMismatch)?)
+    fn tag_start(&self) -> Result<&'a [u8], TlvError> {
+        Ok(self.0.get(1..).ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the exact raw slice representing the tag payload
@@ -984,11 +984,11 @@ impl<'a> TLVSequence<'a> {
     /// If there is no tag payload (i.e., the tag is of type `TLVTagType::Anonymous`), the returned sub-slice
     /// will be the empty slice.
     #[inline(always)]
-    fn tag(&self, tag_type: TLVTagType) -> Result<&'a [u8], Error> {
+    fn tag(&self, tag_type: TLVTagType) -> Result<&'a [u8], TlvError> {
         Ok(self
             .tag_start()?
             .get(..tag_type.size())
-            .ok_or(ErrorCode::TLVTypeMismatch)?)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the START of the value length field
@@ -998,10 +998,10 @@ impl<'a> TLVSequence<'a> {
     /// If the TLV element control byte designates an element with a fixed size or a container element,
     /// the returned sub-slice will designate the start of the value field.
     #[inline(always)]
-    fn value_len_start(&self, tag_type: TLVTagType) -> Result<&'a [u8], Error> {
+    fn value_len_start(&self, tag_type: TLVTagType) -> Result<&'a [u8], TlvError> {
         Ok(unwrap!(self.tag_start())
             .get(tag_type.size()..)
-            .ok_or(ErrorCode::TLVTypeMismatch)?)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the START of the value field of
@@ -1009,11 +1009,11 @@ impl<'a> TLVSequence<'a> {
     ///
     /// The value field is the field that designates the actual value of the TLV element.
     #[inline(always)]
-    fn value_start(&self, control: TLVControl) -> Result<&'a [u8], Error> {
+    fn value_start(&self, control: TLVControl) -> Result<&'a [u8], TlvError> {
         Ok(self
             .value_len_start(control.tag_type)?
             .get(control.value_type.variable_size_len()..)
-            .ok_or(ErrorCode::TLVTypeMismatch)?)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the exact raw slice representing the value payload
@@ -1022,25 +1022,25 @@ impl<'a> TLVSequence<'a> {
     /// For container elements, this method will return the empty slice. Use `container_value` (a more computationally expensive method)
     /// to get the exact taw slice of the first TLV element value that also works for containers.
     #[inline(always)]
-    fn value(&self, control: TLVControl) -> Result<&'a [u8], Error> {
+    fn value(&self, control: TLVControl) -> Result<&'a [u8], TlvError> {
         let value_len = self.value_len(control)?;
 
         Ok(self
             .value_start(control)?
             .get(..value_len)
-            .ok_or(ErrorCode::TLVTypeMismatch)?)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return a sub-slice of the wrapped byte slice that designates the exact raw slice representing the value payload
     /// of the first TLV element in the sequence.
     #[inline(always)]
-    fn container_value(&self, control: TLVControl) -> Result<&'a [u8], Error> {
+    fn container_value(&self, control: TLVControl) -> Result<&'a [u8], TlvError> {
         let value_len = self.container_value_len(control)?;
 
         Ok(self
             .value_start(control)?
             .get(..value_len)
-            .ok_or(ErrorCode::TLVTypeMismatch)?)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return the length of the value field of the first TLV element in the sequence.
@@ -1050,7 +1050,7 @@ impl<'a> TLVSequence<'a> {
     /// - For containers, a length of 0 will be returned. Use `container_value_len`
     ///   (much more computationally expensive method) to get the exact length of the container.
     #[inline(always)]
-    fn value_len(&self, control: TLVControl) -> Result<usize, Error> {
+    fn value_len(&self, control: TLVControl) -> Result<usize, TlvError> {
         if let Some(fixed_size) = control.value_type.fixed_size() {
             return Ok(fixed_size);
         }
@@ -1060,7 +1060,7 @@ impl<'a> TLVSequence<'a> {
         let value_len_slice = self
             .value_len_start(control.tag_type)?
             .get(..size_len)
-            .ok_or(ErrorCode::TLVTypeMismatch)?;
+            .ok_or(TlvErrorCode::Malformed)?;
 
         let len = match size_len {
             1 => u8::from_be_bytes(unwrap!(value_len_slice.try_into())) as usize,
@@ -1076,7 +1076,7 @@ impl<'a> TLVSequence<'a> {
     /// Return the length of the value field of the first TLV element in the sequence, regardless of the
     /// element type (fixed size, variable size, or container).
     #[inline(always)]
-    fn container_value_len(&self, control: TLVControl) -> Result<usize, Error> {
+    fn container_value_len(&self, control: TLVControl) -> Result<usize, TlvError> {
         if control.value_type.is_container() {
             let mut next = self.clone();
             let mut len = 0;
@@ -1107,7 +1107,7 @@ impl<'a> TLVSequence<'a> {
     /// For containers, the return length will NOT include the elements contained inside
     /// the container, nor the one-byte `EndCnt` marker.
     #[inline(always)]
-    fn len(&self) -> Result<usize, Error> {
+    fn len(&self) -> Result<usize, TlvError> {
         let control = self.control()?;
 
         self.value_len(control).map(|value_len| {
@@ -1117,7 +1117,7 @@ impl<'a> TLVSequence<'a> {
 
     /// Return the length of the first TLV element in the sequence, regardless of the element type.
     #[inline(always)]
-    pub fn container_len(&self) -> Result<usize, Error> {
+    pub fn container_len(&self) -> Result<usize, TlvError> {
         let control = self.control()?;
 
         self.container_value_len(control).map(|value_len| {
@@ -1127,18 +1127,18 @@ impl<'a> TLVSequence<'a> {
 
     /// Returns a sub-slice representing the start of the next TLV element in the sequence.
     /// If the sequence contains just one element, the method will return an empty slice.
-    /// If the sequence contains no elements, the method will return an error with code `ErrorCode::TLVTypeMismatch`.
+    /// If the sequence contains no elements, the method will return an error with code `TlvErrorCode::Malformed`.
     ///
     /// Just like `next_enter` (wich is based on `next_start`) this method does "enter" container elements,
     /// and might return a sub-slice where the first element is the special `EndCnt` marker.
     #[inline(always)]
-    fn next_start(&self, control: TLVControl) -> Result<&'a [u8], Error> {
+    fn next_start(&self, control: TLVControl) -> Result<&'a [u8], TlvError> {
         let value_len = self.value_len(control)?;
 
         Ok(self
             .value_start(control)?
             .get(value_len..)
-            .ok_or(ErrorCode::TLVTypeMismatch)?)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     pub(crate) fn fmt(&self, indent: usize, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1251,7 +1251,7 @@ impl<'a> TLVSequenceIter<'a> {
         Self(seq)
     }
 
-    fn advance(&mut self) -> Result<(), Error> {
+    fn advance(&mut self) -> Result<(), TlvError> {
         self.0 = self.0.container_next()?;
 
         Ok(())
@@ -1266,6 +1266,7 @@ impl<'a> Iterator for TLVSequenceIter<'a> {
             .current()
             .and_then(|current| self.advance().map(|_| current))
             .map(|elem| (!elem.is_empty()).then_some(elem))
+            .map_err(Error::from)
             .transpose()
     }
 }
