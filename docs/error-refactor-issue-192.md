@@ -402,12 +402,48 @@ converting them breaks a dependent that has not had its turn yet:
 
 ## `rs-matter-tlv` and `rs-matter-macros`
 
+One error type covers both crates: `TlvError`, with the codes below.
+`rs-matter-macros` needs none of its own - it only generates code that lands in
+other crates, and that code names tlv's type.
 
-| Current `ErrorCode` | usages | New code | Note |
-|---|---|---|---|
-| TLVTypeMismatch | 30 + 2 |  |  |
-| ConstraintError | 17 + 3 |  |  |
-| InvalidData | 16 + 0 |  |  |
-| Invalid | 5 + 3 |  |  |
-| NotFound | 1 + 0 |  |  |
+### The new codes
 
+| Code | Means |
+|---|---|
+| `Malformed` | The bytes are not valid TLV. A bad control byte, a value shorter than its declared type needs, a UTF-8 string that is not valid UTF-8. |
+| `TypeMismatch` | The element is fine, but it is not the type the caller asked for - reading a `u8` from an element holding a string. |
+| `NotFound` | A required element or context tag is missing. |
+| `InvalidValue` | Right type, unacceptable value - an unknown enum discriminant, or zero where a `NonZero` was expected. |
+| `CapacityExceeded` | The decoded data did not fit in the destination - too many array items, a string longer than the buffer. |
+| `UnexpectedNull` | The value is the reserved "null" marker somewhere null is not allowed. |
+| `NoSpace` | The TLV writer ran out of room. The interaction model watches for this one to decide that a long response must be split into chunks. |
+
+The old codes did not line up one-to-one with these, which is the reason for the
+split. `TLVTypeMismatch` alone was doing three unrelated jobs: wrong type, bad
+bytes, and missing element. `ConstraintError` covered both "the buffer is full"
+and "this value is the null marker". `Invalid` covered a wrong type and an
+out-of-range value.
+
+### Progress
+
+This is being done in several steps, because changing the `ToTLV` / `FromTLV` /
+`TLVBuilder` traits forces every implementor of them (9 crates) to change
+at the same time.
+
+**Done so far:** the plain reader methods on `TLVElement` (`u8`, `utf8`, `str`,
+`tag`, and friends) and `TLVControl::parse` now report `TlvError`.
+
+| Old code | Sites converted | New code |
+|---|---|---|
+| `TLVTypeMismatch` | 55 | `Malformed` where the bytes are bad, `TypeMismatch` where the type is wrong |
+| `InvalidData` | 14 | `Malformed` - a value whose length contradicts its declared type |
+| `Invalid` | 3 | `TypeMismatch` - asking for a string from a non-string element |
+| `NotFound` | 1 | `NotFound` |
+
+The methods that iterate (`find_ctx`, `ctx`, `value`, the `Iterator` impls) were
+left alone for now. Their item types appear in the `ToTLV` trait signature, so
+they cannot move before the traits do.
+
+**Still to do:** the four traits, one at a time; the `ConstraintError`,
+`NoSpace` and remaining `Invalid` sites that live in the trait implementations;
+and the `rs-matter-macros` templates.
