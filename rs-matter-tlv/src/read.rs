@@ -83,14 +83,14 @@ impl<'a> TLVElement<'a> {
     /// separately, so the same TLV walk is emitted once per *field* instead of
     /// once per *type*.
     pub fn read<T: FromTLV<'a>>(&self, ctx: u8) -> Result<T, TlvError> {
-        Ok(T::from_tlv(&self.structure()?.ctx(ctx)?)?)
+        T::from_tlv(&self.structure()?.ctx(ctx)?)
     }
 
     /// Read an optional context-tagged field out of this (structure) element.
     ///
     /// Returns `None` when the field is absent. See [`Self::read`] for why the
     /// tag is a runtime argument.
-    pub fn read_opt<T: FromTLV<'a>>(&self, ctx: u8) -> Result<Option<T>, Error> {
+    pub fn read_opt<T: FromTLV<'a>>(&self, ctx: u8) -> Result<Option<T>, TlvError> {
         let element = self.structure()?.find_ctx(ctx)?;
 
         if element.is_empty() {

@@ -60,17 +60,17 @@ impl<'a> SubscribeReq<'a> {
 
     /// Return the attribute requests in this subscription request, if any.
     pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(3)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(3)?)?)
     }
 
     /// Return the event requests in this subscription request, if any.
     pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)?)
     }
 
     /// Return the event filters in this subscription request, if any.
     pub fn event_filters(&self) -> Result<Option<TLVArray<'a, EventFilter>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(5)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(5)?)?)
     }
 
     /// Return `Ok(true)` if this subscription request is fabric-filtered.
@@ -80,7 +80,7 @@ impl<'a> SubscribeReq<'a> {
 
     /// Return the data version filters in this subscription request, if any.
     pub fn dataver_filters(&self) -> Result<Option<TLVArray<'a, DataVersionFilter>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)?)
     }
 
     /// Split the TLV of this subscription request around its data version filters:

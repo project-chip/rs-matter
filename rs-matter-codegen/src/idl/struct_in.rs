@@ -124,7 +124,7 @@ fn structure<S: StructLike>(
         }
 
         impl<'a> #krate::tlv::FromTLV<'a> for #name<'a> {
-            fn from_tlv(element: &#krate::tlv::TLVElement<'a>) -> Result<Self, #krate::error::Error> {
+            fn from_tlv(element: &#krate::tlv::TLVElement<'a>) -> Result<Self, #krate::tlv::TlvError> {
                 Ok(Self::new(element.clone()))
             }
         }
@@ -187,14 +187,14 @@ fn struct_field(
     if f.is_optional() {
         quote!(
             #doc_comment
-            pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
+            pub fn #name(&self) -> Result<#field_type, #krate::tlv::TlvError> {
                 self.0.read_opt(#code)
             }
         )
     } else {
         quote!(
             #doc_comment
-            pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
+            pub fn #name(&self) -> Result<#field_type, #krate::tlv::TlvError> {
                 self.0.read(#code)
             }
         )

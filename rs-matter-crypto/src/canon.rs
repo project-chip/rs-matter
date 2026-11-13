@@ -20,7 +20,7 @@
 use core::fmt::Debug;
 
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvError, TlvErrorCode, ToTLV, TLV};
 use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 
 /// Length of the hash returned by the hasher (`Crypto::hash`) in bytes.
@@ -343,20 +343,20 @@ impl<const N: usize> TryFrom<&[u8]> for CryptoSensitive<N> {
 }
 
 impl<'a, const N: usize> FromTLV<'a> for CryptoSensitive<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, crate::error::Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self {
             data: element
                 .str()?
                 .try_into()
-                .map_err(|_| ErrorCode::ConstraintError)?,
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?,
         })
     }
 
-    fn init_from_tlv(element: TLVElement<'a>) -> impl Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl Init<Self, TlvError> {
         Init::chain(Self::init().into_fallible(), move |this| {
             let data = element.str()?;
             if data.len() != N {
-                Err(ErrorCode::ConstraintError)?;
+                Err(TlvErrorCode::CapacityExceeded)?;
             }
 
             this.access_mut().copy_from_slice(data);
@@ -484,6 +484,8 @@ impl<'a, const N: usize> TryFrom<&'a [u8]> for CryptoSensitiveRef<'a, N> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use core::mem::MaybeUninit;
+
+    use rs_matter_tlv::TlvErrorCode;
 
     use crate::error::ErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVValue, ToTLV};
@@ -709,7 +711,7 @@ mod tests {
         let len = wb.get_tail();
 
         let err = CryptoSensitive::<8>::from_tlv(&TLVElement::new(&buf[..len])).unwrap_err();
-        assert_eq!(err.code(), ErrorCode::ConstraintError);
+        assert_eq!(err.code(), TlvErrorCode::CapacityExceeded);
 
         let mut slot = MaybeUninit::<CryptoSensitive<8>>::uninit();
         let err = slot
@@ -717,7 +719,7 @@ mod tests {
                 &buf[..len],
             )))
             .unwrap_err();
-        assert_eq!(err.code(), ErrorCode::ConstraintError);
+        assert_eq!(err.code(), TlvErrorCode::CapacityExceeded);
 
         // A non-string element is a type error rather than a length error
         let u8_elem = [0x04, 42];

@@ -54,7 +54,9 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
-use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::tlv::{
+    FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TlvError, ToTLV, TLV,
+};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{String, Vec};
@@ -128,7 +130,7 @@ impl<const N: usize> ToTLV for EndpointLabels<N> {
 }
 
 impl<'a, const N: usize> FromTLV<'a> for EndpointLabels<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let s = element.structure()?;
         Ok(Self {
             endpoint_id: EndptId::from_tlv(&s.ctx(0)?)?,

@@ -29,7 +29,7 @@ use crate::fabric::Fabric;
 use crate::networks::{Networks, NetworksError, WirelessCreds};
 use crate::tlv::{
     EitherIter, FromTLV, OctetStr, Octets, TLVArray, TLVArrayOrSlice, TLVElement, TLVTag, TLVWrite,
-    ToTLV, Utf8Str, TLV,
+    TlvError, ToTLV, Utf8Str, TLV,
 };
 
 /// The envelope version.
@@ -196,7 +196,7 @@ impl<'a, T> FromTLV<'a> for HandoverNetworks<'a, T>
 where
     T: HandoverNetwork + 'a,
 {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self {
             source: NetworksSource::Tlv(
                 TLVArray::<T::Borrowed<'a>>::new(element.clone())?

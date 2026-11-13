@@ -15,8 +15,8 @@
  *    limitations under the License.
  */
 
-use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::error::Error;
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvError, TlvErrorCode, ToTLV, TLV};
 use crate::utils::bitflags::bitflags;
 
 bitflags! {
@@ -76,11 +76,11 @@ impl Privilege {
 }
 
 impl FromTLV<'_> for Privilege {
-    fn from_tlv(t: &TLVElement) -> Result<Self, Error>
+    fn from_tlv(t: &TLVElement) -> Result<Self, TlvError>
     where
         Self: Sized,
     {
-        Self::from_acl_value(t.u8()?).ok_or(ErrorCode::Invalid.into())
+        Self::from_acl_value(t.u8()?).ok_or(TlvErrorCode::InvalidValue.into())
     }
 }
 

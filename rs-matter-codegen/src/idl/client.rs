@@ -1104,7 +1104,7 @@ fn client_trait(
                         .map_err(|_| #krate::error::ErrorCode::InvalidData)?;
                     match cmd_resp {
                         #krate::im::CmdResp::Cmd(data) => {
-                            #krate::tlv::FromTLV::from_tlv(&data.data)
+                            #krate::tlv::FromTLV::from_tlv(&data.data).map_err(Into::into)
                         }
                         #krate::im::CmdResp::Status(s) => {
                             Err(s.status
@@ -1204,7 +1204,9 @@ fn client_trait(
                     use self::#attr_reads_trait_name as _Reads;
 
                     #krate::im::read_attr_with(self.tx, #read_build, move |data| {
-                        f(data.and_then(|data| #krate::tlv::FromTLV::from_tlv(&data)))
+                        f(data.and_then(|data| {
+                            #krate::tlv::FromTLV::from_tlv(&data).map_err(Into::into)
+                        }))
                     })
                 }
             )
