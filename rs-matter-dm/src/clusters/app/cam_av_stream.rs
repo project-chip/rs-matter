@@ -946,7 +946,10 @@ where
             return Err(ErrorCode::InvalidInState.into());
         }
         let buffer = build_stream_priorities(
-            request.stream_priorities()?.iter(),
+            request
+                .stream_priorities()?
+                .iter()
+                .map(|req| req.map_err(Error::from)),
             self.config.supported_stream_usages,
         )?;
 

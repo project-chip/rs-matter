@@ -32,7 +32,9 @@ use core::marker::PhantomData;
 use crate::error::Error;
 use crate::utils::init;
 
-use super::{EitherIter, FromTLV, TLVElement, TLVSequenceIter, TLVTag, TLVWrite, ToTLV, TLV, TlvError};
+use super::{
+    EitherIter, FromTLV, TLVElement, TLVSequenceIter, TLVTag, TLVWrite, TlvError, ToTLV, TLV,
+};
 
 /// A type-state that indicates that the container can be any type of container (array, list or struct).
 pub type AnyContainer = ();
