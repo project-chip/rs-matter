@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! A `NetStack` over the standard UDP sockets and `async-io`.
+//! A `NetStack` over standard UDP sockets and `async-io`.
 
 use core::future::{ready, Future};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -33,7 +33,7 @@ use rs_matter_utils::sync::MaybeSend;
 
 use super::{NetSocket, NetStack};
 
-/// A `NetStack` over the standard UDP sockets and `async-io`.
+/// A `NetStack` over standard UDP sockets and `async-io`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StdNetStack;
 
@@ -58,7 +58,87 @@ impl NetStack for StdNetStack {
     ) -> impl Future<Output = Result<Self::Socket<'_>, Error>> + MaybeSend {
         ready(StdNetSocket::bind(addr, ipv4_interface, ipv6_interface))
     }
+
+    #[cfg(feature = "operational-tcp")]
+    type Tcp = Self;
+
+    #[cfg(feature = "operational-tcp")]
+    fn tcp(&self) -> Option<&Self::Tcp> {
+        Some(self)
+    }
 }
+
+#[cfg(feature = "operational-tcp")]
+mod tcp {
+    use core::net::SocketAddr;
+    use core::task::{Context, Poll};
+    use std::net::{TcpListener, TcpStream};
+
+    use async_io::Async;
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    use crate::tcp::{NetTcpListener, TcpConfig, TcpServer, TcpStack};
+    use rs_matter_utils::error::Error;
+
+    use super::StdNetStack;
+
+    /// An `async-io` TCP listener, usable with the embedded single-peer server.
+    pub struct StdTcpListener(pub Async<TcpListener>);
+
+    impl StdTcpListener {
+        /// Bind an async TCP listener on the given socket address.
+        pub fn bind(addr: SocketAddr) -> Result<Self, Error> {
+            let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+            socket.set_reuse_address(true)?;
+            if addr.is_ipv6() {
+                socket.set_only_v6(false)?;
+            }
+            socket.bind(&addr.into())?;
+            socket.listen(2)?;
+            Ok(Self(Async::new(socket.into())?))
+        }
+    }
+
+    impl core::ops::Deref for StdTcpListener {
+        type Target = Async<TcpListener>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl core::ops::DerefMut for StdTcpListener {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+
+    impl NetTcpListener for StdTcpListener {
+        type Socket = Async<TcpStream>;
+
+        fn poll_accept(
+            &mut self,
+            cx: &mut Context<'_>,
+        ) -> Poll<Result<(SocketAddr, Self::Socket), Error>> {
+            self.0.poll_accept(cx)
+        }
+    }
+
+    /// An owned, full-duplex `async-io` stream.
+    pub type StdTcpSocket = Async<TcpStream>;
+
+    impl TcpStack for StdNetStack {
+        type Listener = StdTcpListener;
+
+        async fn bind(&self, addr: SocketAddr) -> Result<TcpServer<Self::Listener>, Error> {
+            let listener = StdTcpListener::bind(addr)?;
+            Ok(TcpServer::new(listener, TcpConfig::default()))
+        }
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+pub use tcp::*;
 
 /// The UDP socket of `StdNetStack`.
 #[derive(Debug)]
@@ -153,9 +233,97 @@ mod tests {
     use rs_matter_transport::network::{Address, NetworkReceive, NetworkSend};
 
     use super::*;
+    #[cfg(feature = "operational-tcp")]
+    use std::net::TcpStream;
 
     fn any(port: u16) -> SocketAddr {
         SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0))
+    }
+
+    #[test]
+    #[cfg(feature = "operational-tcp")]
+    fn std_net_stack_binds_tcp_server() {
+        use crate::tcp::TcpStack;
+
+        futures_lite::future::block_on(async {
+            let stack = StdNetStack;
+            let addr = "127.0.0.1:0".parse().unwrap();
+            let server = TcpStack::bind(&stack, addr).await;
+            assert!(server.is_ok());
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "operational-tcp")]
+    fn embedded_tcp_server_exchanges_framed_packets_over_real_sockets() {
+        use crate::tcp::{TcpConfig, TcpServer};
+        use rs_matter_utils::futures::{select3, Either3};
+        use rs_matter_utils::timers::{with_timeout, Duration};
+
+        futures_lite::future::block_on(async {
+            let listener = StdTcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let address = listener.0.get_ref().local_addr().unwrap();
+            let server = TcpServer::new(
+                listener,
+                TcpConfig {
+                    idle_timeout: Duration::from_millis(500),
+                    ..Default::default()
+                },
+            );
+            let service = async {
+                let mut receiver = &server;
+                let mut buffer = [0u8; 32];
+                loop {
+                    let (count, peer) = receiver.recv_from(&mut buffer).await.unwrap();
+                    assert!(&buffer[..count] == b"ping" || &buffer[..count] == b"again");
+                    receiver.send_to(b"pong", peer).await.unwrap();
+                }
+            };
+            let client = async {
+                let mut stream = Async::<TcpStream>::connect(address).await.unwrap();
+                futures_lite::io::AsyncWriteExt::write_all(&mut stream, b"\x04\0\0\0ping")
+                    .await
+                    .unwrap();
+                let mut reply = [0u8; 8];
+                futures_lite::io::AsyncReadExt::read_exact(&mut stream, &mut reply)
+                    .await
+                    .unwrap();
+                assert_eq!(&reply, b"\x04\0\0\0pong");
+
+                // A second connection cannot replace the active operational peer.
+                let mut second = Async::<TcpStream>::connect(address).await.unwrap();
+                let mut eof = [0u8; 1];
+                assert_eq!(
+                    futures_lite::io::AsyncReadExt::read(&mut second, &mut eof)
+                        .await
+                        .unwrap(),
+                    0
+                );
+
+                // Idle teardown releases the socket; the listener stays usable.
+                assert_eq!(
+                    futures_lite::io::AsyncReadExt::read(&mut stream, &mut eof)
+                        .await
+                        .unwrap(),
+                    0
+                );
+                let mut replacement = Async::<TcpStream>::connect(address).await.unwrap();
+                futures_lite::io::AsyncWriteExt::write_all(&mut replacement, b"\x05\0\0\0again")
+                    .await
+                    .unwrap();
+                futures_lite::io::AsyncReadExt::read_exact(&mut replacement, &mut reply)
+                    .await
+                    .unwrap();
+                assert_eq!(&reply, b"\x04\0\0\0pong");
+            };
+            let result = with_timeout(
+                Duration::from_secs(5),
+                select3(server.run(), service, client),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(result, Either3::Third(())));
+        });
     }
 
     #[test]

@@ -41,6 +41,10 @@ use rs_matter_stack::any::{AnyDriver, AnyNetDriver};
 use rs_matter_stack::ble::GattPeripheral;
 use rs_matter_stack::eth::{EthernetDriver, EthernetTask, PreexistingEthernet};
 use rs_matter_stack::net::{NetSocket, NetStack};
+#[cfg(feature = "operational-tcp")]
+use rs_matter_stack::tcp::NoTcp;
+#[cfg(feature = "operational-tcp")]
+use rs_matter_stack::tcp::{TcpConfig, TcpServer, TcpStack};
 use rs_matter_stack::wireless::{
     GattDriver, GattTask, PreexistingWireless, ThreadCoexDriver, ThreadCoexTask, ThreadDriver,
     ThreadTask, WifiCoexDriver, WifiCoexTask, WifiDriver, WifiTask,
@@ -114,6 +118,174 @@ impl<'a> NetStack for FakeNetStack<'a> {
             .push((addr.port(), ipv4_interface, ipv6_interface));
 
         ready(Ok(FakeSocket(self.0)))
+    }
+
+    #[cfg(feature = "operational-tcp")]
+    type Tcp = NoTcp;
+
+    #[cfg(feature = "operational-tcp")]
+    fn tcp(&self) -> Option<&Self::Tcp> {
+        None
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+#[derive(Clone, Copy)]
+struct FakeTcpNetStack<'a>(&'a Log);
+
+#[cfg(feature = "operational-tcp")]
+impl<'a> NetStack for FakeTcpNetStack<'a> {
+    type Socket<'s>
+        = FakeSocket<'a>
+    where
+        Self: 's;
+
+    fn bind(
+        &self,
+        addr: SocketAddr,
+        ipv4_interface: Ipv4Addr,
+        ipv6_interface: u32,
+    ) -> impl Future<Output = Result<Self::Socket<'_>, Error>> + MaybeSend {
+        self.0
+            .binds
+            .lock()
+            .unwrap()
+            .push((addr.port(), ipv4_interface, ipv6_interface));
+
+        ready(Ok(FakeSocket(self.0)))
+    }
+
+    type Tcp = Self;
+
+    fn tcp(&self) -> Option<&Self::Tcp> {
+        Some(self)
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+impl<'a> TcpStack for FakeTcpNetStack<'a> {
+    type Listener = NoTcp;
+
+    fn bind(
+        &self,
+        addr: SocketAddr,
+    ) -> impl Future<Output = Result<TcpServer<Self::Listener>, Error>> + MaybeSend {
+        assert_eq!(addr.port(), MATTER_PORT);
+        self.0.event("tcp listener bound");
+        ready(Ok(TcpServer::new(NoTcp, TcpConfig::default())))
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+#[derive(Clone)]
+struct MockTcpStream {
+    rx: std::sync::Arc<Mutex<std::collections::VecDeque<u8>>>,
+    tx: std::sync::Arc<Mutex<Vec<u8>>>,
+}
+
+#[cfg(feature = "operational-tcp")]
+impl rs_matter_stack::tcp::NetTcpSocket for MockTcpStream {
+    fn poll_read(
+        &mut self,
+        _cx: &mut core::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> core::task::Poll<Result<usize, Error>> {
+        let mut rx = self.rx.lock().unwrap();
+        if rx.is_empty() {
+            core::task::Poll::Pending
+        } else {
+            let n = buf.len().min(rx.len());
+            for b in buf[..n].iter_mut() {
+                *b = rx.pop_front().unwrap();
+            }
+            core::task::Poll::Ready(Ok(n))
+        }
+    }
+
+    fn poll_write(
+        &mut self,
+        _cx: &mut core::task::Context<'_>,
+        buf: &[u8],
+    ) -> core::task::Poll<Result<usize, Error>> {
+        self.tx.lock().unwrap().extend_from_slice(buf);
+        core::task::Poll::Ready(Ok(buf.len()))
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+#[derive(Clone)]
+struct MockTcpListener {
+    peers: std::sync::Arc<Mutex<std::collections::VecDeque<(SocketAddr, MockTcpStream)>>>,
+}
+
+#[cfg(feature = "operational-tcp")]
+impl rs_matter_stack::tcp::NetTcpListener for MockTcpListener {
+    type Socket = MockTcpStream;
+
+    fn poll_accept(
+        &mut self,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<(SocketAddr, Self::Socket), Error>> {
+        let mut peers = self.peers.lock().unwrap();
+        match peers.pop_front() {
+            Some(peer) => core::task::Poll::Ready(Ok(peer)),
+            None => core::task::Poll::Pending,
+        }
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+#[derive(Clone)]
+struct StreamTcpNetStack<'a> {
+    log: &'a Log,
+    peers: std::sync::Arc<Mutex<std::collections::VecDeque<(SocketAddr, MockTcpStream)>>>,
+}
+
+#[cfg(feature = "operational-tcp")]
+impl<'a> NetStack for StreamTcpNetStack<'a> {
+    type Socket<'s>
+        = FakeSocket<'a>
+    where
+        Self: 's;
+
+    fn bind(
+        &self,
+        addr: SocketAddr,
+        ipv4_interface: Ipv4Addr,
+        ipv6_interface: u32,
+    ) -> impl Future<Output = Result<Self::Socket<'_>, Error>> + MaybeSend {
+        self.log
+            .binds
+            .lock()
+            .unwrap()
+            .push((addr.port(), ipv4_interface, ipv6_interface));
+
+        ready(Ok(FakeSocket(self.log)))
+    }
+
+    type Tcp = Self;
+
+    fn tcp(&self) -> Option<&Self::Tcp> {
+        Some(self)
+    }
+}
+
+#[cfg(feature = "operational-tcp")]
+impl<'a> TcpStack for StreamTcpNetStack<'a> {
+    type Listener = MockTcpListener;
+
+    fn bind(
+        &self,
+        addr: SocketAddr,
+    ) -> impl Future<Output = Result<TcpServer<Self::Listener>, Error>> + MaybeSend {
+        assert_eq!(addr.port(), MATTER_PORT);
+        self.log.event("tcp listener bound");
+        ready(Ok(TcpServer::new(
+            MockTcpListener {
+                peers: self.peers.clone(),
+            },
+            TcpConfig::default(),
+        )))
     }
 }
 
@@ -467,6 +639,52 @@ impl GenDiag for NodeDiag<'_> {
 }
 
 fn run_ethernet<C, U, N, O>(
+    stack: &EthMatterStack<'_, BUMP_SIZE>,
+    crypto: C,
+    net_stack: U,
+    netif: N,
+    options: O,
+) -> Option<Result<(), Error>>
+where
+    C: rs_matter_crypto::Crypto,
+    U: NetStack,
+    N: NetifDiag + NetChangeNotif,
+    O: RunOptions,
+{
+    const NODE: Node = Node {
+        endpoints: &[EthMatterStack::<0>::eth_root_endpoint()],
+    };
+
+    let mut rand = crypto.weak_rand().unwrap();
+
+    let handler = EmptyHandler.chain(
+        |e, _| e == ROOT_ENDPOINT_ID,
+        Async(EthMatterStack::<0>::root_handler(
+            stack.matter(),
+            &(),
+            &mut rand,
+        )),
+    );
+
+    let mut store = MemKvBlobStore::new();
+    futures_lite::future::block_on(stack.startup(&crypto, &mut store)).unwrap();
+
+    let kv = stack.matter().kv(store);
+
+    futures_lite::future::block_on(run_for(
+        stack.run_eth(
+            PreexistingEthernet::new(net_stack, netif, &(), BuiltinMdns::new()),
+            &crypto,
+            (NODE, handler),
+            kv,
+            options,
+        ),
+        300,
+    ))
+}
+
+#[cfg(feature = "operational-tcp")]
+fn run_ethernet_tcp<C, U, N, O>(
     stack: &EthMatterStack<'_, BUMP_SIZE>,
     crypto: C,
     net_stack: U,
@@ -1151,6 +1369,134 @@ fn run_commissioned_thread(log: &Log, oper: bool) {
             Either::First(result) => panic!("The stack exited: {result:?}"),
             Either::Second(result) => result.unwrap(),
         }
+    });
+}
+
+#[test]
+#[cfg(feature = "operational-tcp")]
+fn operational_tcp_listener_binds_and_advertises() {
+    struct CheckAdvertisement<'a>(&'a Matter<'a>);
+    impl UserTask for CheckAdvertisement<'_> {
+        fn run<S, N>(&mut self, _: S, _: N) -> impl Future<Output = Result<(), Error>> + MaybeSend
+        where
+            S: NetStack,
+            N: NetifDiag + NetChangeNotif,
+        {
+            let matter = self.0;
+            async move {
+                let service = rs_matter_transport::network::MatterLocalService::Commissioned {
+                    compressed_fabric_id: 1,
+                    node_id: 2,
+                };
+                let mut buffer = [0u8; 512];
+                let (mut record, _) = service.service(matter, &mut buffer).unwrap();
+                assert_eq!(
+                    record.txt_kvs.find(|(key, _)| *key == "T"),
+                    Some(("T", "6"))
+                );
+                pending::<Result<(), Error>>().await
+            }
+        }
+    }
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+        let dev_det = &*leak::<rs_matter_node_core::basic_info::BasicInfoConfig>().write(
+            rs_matter_node_core::basic_info::BasicInfoConfig {
+                tcp_supported: true,
+                ..TEST_DEV_DET
+            },
+        );
+        let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
+            dev_det,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+        let result = run_ethernet_tcp(
+            stack,
+            &crypto,
+            FakeTcpNetStack(&log),
+            &FakeNetif,
+            CheckAdvertisement(stack.matter()),
+        );
+        assert!(result.is_none(), "The TCP-enabled stack exited: {result:?}");
+        assert!(log.events().contains(&"tcp listener bound"));
+    });
+}
+
+#[test]
+#[cfg(feature = "operational-tcp")]
+fn operational_tcp_runner_delivers_inbound_stream_packets_to_matter_stack() {
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+        let dev_det = &*leak::<rs_matter_node_core::basic_info::BasicInfoConfig>().write(
+            rs_matter_node_core::basic_info::BasicInfoConfig {
+                tcp_supported: true,
+                ..TEST_DEV_DET
+            },
+        );
+        let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
+            dev_det,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+
+        let client_rx = std::sync::Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let client_tx = std::sync::Arc::new(Mutex::new(Vec::new()));
+
+        // Matter message over TCP: 4-byte LE length prefix (5 bytes payload) + payload
+        client_rx
+            .lock()
+            .unwrap()
+            .extend([5, 0, 0, 0, b'h', b'e', b'l', b'l', b'o']);
+
+        let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+        let peers = std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from([(
+            peer_addr,
+            MockTcpStream {
+                rx: client_rx.clone(),
+                tx: client_tx.clone(),
+            },
+        )])));
+
+        let net_stack = StreamTcpNetStack { log: &log, peers };
+
+        struct CheckPacketDrained(std::sync::Arc<Mutex<std::collections::VecDeque<u8>>>);
+        impl UserTask for CheckPacketDrained {
+            fn run<S, N>(
+                &mut self,
+                _: S,
+                _: N,
+            ) -> impl Future<Output = Result<(), Error>> + MaybeSend
+            where
+                S: NetStack,
+                N: NetifDiag + NetChangeNotif,
+            {
+                let rx = self.0.clone();
+                async move {
+                    for _ in 0..100 {
+                        if rx.lock().unwrap().is_empty() {
+                            return Ok(());
+                        }
+                        Timer::after(Duration::from_millis(5)).await;
+                    }
+                    panic!("Timeout waiting for TCP packet to be drained");
+                }
+            }
+        }
+
+        let result = run_ethernet_tcp(
+            stack,
+            &crypto,
+            net_stack,
+            &FakeNetif,
+            CheckPacketDrained(client_rx.clone()),
+        );
+
+        assert!(matches!(result, Some(Ok(()))));
+        assert!(client_rx.lock().unwrap().is_empty());
+        assert!(log.events().contains(&"tcp listener bound"));
     });
 }
 

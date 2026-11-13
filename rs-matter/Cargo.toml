@@ -55,6 +55,10 @@ max-group-endpoints-per-fabric-3 = ["rs-matter-node-core/max-group-endpoints-per
 max-group-endpoints-per-fabric-2 = ["rs-matter-node-core/max-group-endpoints-per-fabric-2"]
 max-group-endpoints-per-fabric-1 = ["rs-matter-node-core/max-group-endpoints-per-fabric-1"]
 
+# Enable the resource-bounded operational TCP listener of `rs-matter-stack`.
+operational-tcp = ["rs-matter-stack/operational-tcp", "rs-matter-dm/operational-tcp"]
+stack-tcp = ["operational-tcp"]
+
 # Number of subscriptions of `rs-matter-stack`.
 stack-max-subscriptions-32 = ["rs-matter-stack/max-subscriptions-32"]
 stack-max-subscriptions-16 = ["rs-matter-stack/max-subscriptions-16"]

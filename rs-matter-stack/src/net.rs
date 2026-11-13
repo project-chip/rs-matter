@@ -48,6 +48,16 @@ pub trait NetStack: MaybeSendSync {
         ipv4_interface: Ipv4Addr,
         ipv6_interface: u32,
     ) -> impl Future<Output = Result<Self::Socket<'_>, Error>> + MaybeSend;
+
+    /// The operational TCP stack, if supported by this network stack.
+    #[cfg(feature = "operational-tcp")]
+    type Tcp: crate::tcp::TcpStack;
+
+    /// Returns a reference to the TCP stack, or `None` if TCP is disabled or not supported.
+    #[cfg(feature = "operational-tcp")]
+    fn tcp(&self) -> Option<&Self::Tcp> {
+        None
+    }
 }
 
 impl<T> NetStack for &T
@@ -66,6 +76,14 @@ where
         ipv6_interface: u32,
     ) -> impl Future<Output = Result<Self::Socket<'_>, Error>> + MaybeSend {
         (*self).bind(addr, ipv4_interface, ipv6_interface)
+    }
+
+    #[cfg(feature = "operational-tcp")]
+    type Tcp = T::Tcp;
+
+    #[cfg(feature = "operational-tcp")]
+    fn tcp(&self) -> Option<&Self::Tcp> {
+        (*self).tcp()
     }
 }
 

@@ -362,13 +362,17 @@ where
     /// `config.mic_capabilities` is `None`. The `MicrophoneCapabilities`
     /// attribute is mandatory whenever `AUDIO` is enabled (per Matter Spec)
     /// and must be supplied at construction.
-    pub const fn new(
+    pub fn new(
         dataver: Dataver,
         endpoint_id: EndptId,
         config: CameraAvStreamConfig<'a>,
         features: u32,
         hooks: H,
     ) -> Self {
+        #[cfg(not(feature = "operational-tcp"))]
+        warn!(
+            "CameraAvStreamHandler: `operational-tcp` is not enabled; live stream will not work without Matter-over-TCP"
+        );
         // `core::assert!` is required here (not the crate-local `assert!`
         // shim) because `::defmt::assert!` is not const-callable.
         core::assert!(
