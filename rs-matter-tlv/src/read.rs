@@ -82,8 +82,8 @@ impl<'a> TLVElement<'a> {
     /// accessors are otherwise structurally identical yet monomorphise
     /// separately, so the same TLV walk is emitted once per *field* instead of
     /// once per *type*.
-    pub fn read<T: FromTLV<'a>>(&self, ctx: u8) -> Result<T, Error> {
-        T::from_tlv(&self.structure()?.ctx(ctx)?)
+    pub fn read<T: FromTLV<'a>>(&self, ctx: u8) -> Result<T, TlvError> {
+        Ok(T::from_tlv(&self.structure()?.ctx(ctx)?)?)
     }
 
     /// Read an optional context-tagged field out of this (structure) element.
@@ -208,7 +208,7 @@ impl<'a> TLVElement<'a> {
     ///
     /// Note that if the TLV element is a container, the return `TLV` value would only deisgnate
     /// the container type (struct, array or list) and not the actual content of the container.
-    pub fn value(&self) -> Result<TLVValue<'a>, Error> {
+    pub fn value(&self) -> Result<TLVValue<'a>, TlvError> {
         let control = self.control()?;
 
         let slice = self.0.container_value(control)?;
@@ -784,7 +784,7 @@ impl<'a> TLVSequence<'a> {
     ///
     /// If there is no TLV element tagged with a context tag with the matching ID, the method
     /// will return an error.
-    pub fn ctx(&self, ctx: u8) -> Result<TLVElement<'a>, Error> {
+    pub fn ctx(&self, ctx: u8) -> Result<TLVElement<'a>, TlvError> {
         let element = self.find_ctx(ctx)?;
 
         if element.is_empty() {
@@ -800,7 +800,7 @@ impl<'a> TLVSequence<'a> {
     ///
     /// If there is no TLV element tagged with a context tag with the matching ID, the method
     /// will return an empty `TLVElement`.
-    pub fn find_ctx(&self, ctx: u8) -> Result<TLVElement<'a>, Error> {
+    pub fn find_ctx(&self, ctx: u8) -> Result<TLVElement<'a>, TlvError> {
         for elem in self.iter() {
             let elem = elem?;
 
@@ -1259,14 +1259,13 @@ impl<'a> TLVSequenceIter<'a> {
 }
 
 impl<'a> Iterator for TLVSequenceIter<'a> {
-    type Item = Result<TLVElement<'a>, Error>;
+    type Item = Result<TLVElement<'a>, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0
             .current()
             .and_then(|current| self.advance().map(|_| current))
             .map(|elem| (!elem.is_empty()).then_some(elem))
-            .map_err(Error::from)
             .transpose()
     }
 }

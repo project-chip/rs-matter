@@ -47,7 +47,7 @@ pub use rs_matter_macros::{FromTLV, ToTLV};
 /// `bitflags_tlv!` uses, so that it only needs the path to this crate.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::error::{Error, ErrorCode};
+    pub use crate::error::{Error, ErrorCode, TlvError, TlvErrorCode};
     pub use rs_matter_utils::init::{into_init, try_init, Init};
 }
 
