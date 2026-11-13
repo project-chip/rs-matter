@@ -426,24 +426,57 @@ out-of-range value.
 
 ### Progress
 
-This is being done in several steps, because changing the `ToTLV` / `FromTLV` /
-`TLVBuilder` traits forces every implementor of them (9 crates) to change
-at the same time.
+This is being done in several steps, because changing a TLV trait forces every
+implementor of it to change at the same time, across many crates. One trait per
+step keeps each change reviewable.
 
-**Done so far:** the plain reader methods on `TLVElement` (`u8`, `utf8`, `str`,
-`tag`, and friends) and `TLVControl::parse` now report `TlvError`.
+**Step 1 - the reader methods.** The plain accessors on `TLVElement` (`u8`,
+`utf8`, `str`, `tag`, and friends) and `TLVControl::parse` report `TlvError`.
 
-| Old code | Sites converted | New code |
+| Old code | Sites | New code |
 |---|---|---|
 | `TLVTypeMismatch` | 55 | `Malformed` where the bytes are bad, `TypeMismatch` where the type is wrong |
 | `InvalidData` | 14 | `Malformed` - a value whose length contradicts its declared type |
 | `Invalid` | 3 | `TypeMismatch` - asking for a string from a non-string element |
 | `NotFound` | 1 | `NotFound` |
 
-The methods that iterate (`find_ctx`, `ctx`, `value`, the `Iterator` impls) were
-left alone for now. Their item types appear in the `ToTLV` trait signature, so
-they cannot move before the traits do.
+**Step 2a - the `FromTLV` trait** (this branch). `from_tlv`, `init_from_tlv`,
+`nullable_from_tlv` and `init_nullable_from_tlv` now report `TlvError`, together
+with every implementation of them: 55 methods, the `#[derive(FromTLV)]` templates
+in `rs-matter-macros`, and the generated cluster structs from `rs-matter-codegen`.
+The iterating reader methods (`find_ctx`, `ctx`, `read`, `read_opt`) moved with
+them, since they call `FromTLV`.
 
-**Still to do:** the four traits, one at a time; the `ConstraintError`,
-`NoSpace` and remaining `Invalid` sites that live in the trait implementations;
-and the `rs-matter-macros` templates.
+New codes used by the converted implementations:
+
+| New code | Where |
+|---|---|
+| `InvalidValue` | An unknown enum discriminant or bitflag - `AuthMode`, `Privilege`, `IMStatusCode`, `DNTag`, `EventDataTag`, and the derived enums |
+| `CapacityExceeded` | A `Vec`, `String` or array that could not hold the decoded value |
+| `UnexpectedNull` | The null marker read into a type that does not allow null |
+| `NotFound` | A mandatory field absent from a struct - the `EventData` fields |
+| `TypeMismatch` | A tag that is not a context tag |
+
+`ToTLV` still reports the shared `Error`, so the two traits disagree for now.
+That is deliberate: it is what keeps this step to one trait.
+
+### Converting a dependent crate
+
+Crates that are not yet converted keep reporting the shared `Error`. Where they
+call TLV, the two meet, and the conversion goes at that boundary rather than
+spreading `TlvError` into the crate:
+
+- A tail call becomes `Ok(expr?)`, or `.map_err(Into::into)` where `?` does not fit.
+- If a helper is called many times, change its parameter instead of every call.
+  `AudioAvStreamHandler::validate` takes `Result<T, TlvError>` and returns
+  `Result<T, Error>`, which fixed six call sites at once.
+- If a crate error already wraps `Error`, give it `From<TlvError>` and `?` keeps
+  working untouched - see `NetworksError` in `rs-matter-node-core`.
+
+These conversions are temporary. They disappear when the crate gets its own
+error type, so they are marked with a TODO where they are not obvious.
+
+**Still to do:** `ToTLV`, `TLVWrite` and `TLVBuilder`, one at a time; the
+`ConstraintError` and `NoSpace` sites that live in those implementations; and
+`TLVWrite::str_cb` / `utf8_cb`, whose callbacks should stay generic over the
+caller's error (see above).
