@@ -45,7 +45,7 @@ pub type Utf8Str<'a> = &'a str;
 
 impl<'a> FromTLV<'a> for &'a str {
     fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
-        element.utf8()
+        Ok(element.utf8()?)
     }
 }
 
@@ -63,6 +63,7 @@ impl<'a, const N: usize> FromTLV<'a> for String<N> {
     fn from_tlv(element: &TLVElement<'a>) -> Result<String<N>, Error> {
         element
             .utf8()
+            .map_err(Error::from)
             .and_then(|s| s.try_into().map_err(|_| ErrorCode::ConstraintError.into()))
     }
 }
@@ -80,7 +81,7 @@ impl<const N: usize> ToTLV for String<N> {
 #[cfg(feature = "alloc")]
 impl<'a> FromTLV<'a> for alloc::string::String {
     fn from_tlv(element: &TLVElement<'a>) -> Result<alloc::string::String, Error> {
-        element.utf8().map(alloc::string::String::from)
+        Ok(element.utf8().map(alloc::string::String::from)?)
     }
 }
 

@@ -399,3 +399,15 @@ converting them breaks a dependent that has not had its turn yet:
   result to the legacy `Error` via the bridge so that its callers, all in
   `transport`'s mDNS code, keep compiling. Once `transport` is converted the macro
   returns `BufferError` and those callers convert it explicitly.
+
+## `rs-matter-tlv` and `rs-matter-macros`
+
+
+| Current `ErrorCode` | usages | New code | Note |
+|---|---|---|---|
+| TLVTypeMismatch | 30 + 2 |  |  |
+| ConstraintError | 17 + 3 |  |  |
+| InvalidData | 16 + 0 |  |  |
+| Invalid | 5 + 3 |  |  |
+| NotFound | 1 + 0 |  |  |
+

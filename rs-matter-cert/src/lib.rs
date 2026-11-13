@@ -419,7 +419,7 @@ impl<'a> DN<'a> {
     }
 
     fn uint(&self) -> Result<u64, Error> {
-        self.0.u64()
+        Ok(self.0.u64()?)
     }
 
     fn value(&self) -> Result<DNValue<'a>, Error> {
@@ -430,7 +430,7 @@ impl<'a> DN<'a> {
                 Ok(DNValue::Utf8(value))
             }
         } else {
-            self.0.u64().map(DNValue::Uint)
+            Ok(self.0.u64().map(DNValue::Uint)?)
         }
     }
 
@@ -606,11 +606,11 @@ impl<'a> CertRef<'a> {
     }
 
     fn serial_no(&self) -> Result<&[u8], Error> {
-        self.0.structure()?.find_ctx(1)?.str()
+        Ok(self.0.structure()?.find_ctx(1)?.str()?)
     }
 
     fn sign_algo(&self) -> Result<u8, Error> {
-        self.0.structure()?.find_ctx(2)?.u8()
+        Ok(self.0.structure()?.find_ctx(2)?.u8()?)
     }
 
     fn issuer(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
@@ -618,11 +618,11 @@ impl<'a> CertRef<'a> {
     }
 
     fn not_before(&self) -> Result<u32, Error> {
-        self.0.structure()?.find_ctx(4)?.u32()
+        Ok(self.0.structure()?.find_ctx(4)?.u32()?)
     }
 
     fn not_after(&self) -> Result<u32, Error> {
-        self.0.structure()?.find_ctx(5)?.u32()
+        Ok(self.0.structure()?.find_ctx(5)?.u32()?)
     }
 
     fn subject(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
@@ -630,15 +630,15 @@ impl<'a> CertRef<'a> {
     }
 
     fn pubkey_algo(&self) -> Result<u8, Error> {
-        self.0.structure()?.find_ctx(7)?.u8()
+        Ok(self.0.structure()?.find_ctx(7)?.u8()?)
     }
 
     fn ec_curve_id(&self) -> Result<u8, Error> {
-        self.0.structure()?.find_ctx(8)?.u8()
+        Ok(self.0.structure()?.find_ctx(8)?.u8()?)
     }
 
     pub fn pubkey(&self) -> Result<&[u8], Error> {
-        self.0.structure()?.find_ctx(9)?.str()
+        Ok(self.0.structure()?.find_ctx(9)?.str()?)
     }
 
     fn extensions(&self) -> Result<TLVList<'a, Extension<'a>>, Error> {
@@ -646,7 +646,7 @@ impl<'a> CertRef<'a> {
     }
 
     fn signature(&self) -> Result<&[u8], Error> {
-        self.0.structure()?.find_ctx(11)?.str()
+        Ok(self.0.structure()?.find_ctx(11)?.str()?)
     }
 
     pub fn get_node_id(&self) -> Result<u64, Error> {
