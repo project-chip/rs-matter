@@ -17,9 +17,9 @@
 
 //! Transport session-table and exchange-slot limits.
 //!
-//! Two properties of the transport bookkeeping are proved here, using only the
-//! public API (there is no public session-count accessor, so both are proved by
-//! the observable success/failure of session and exchange allocation):
+//! Four properties of the transport bookkeeping are proved here, using only the
+//! public API (the first two by the observable success/failure of session and
+//! exchange allocation):
 //!
 //! - The session table is bounded at `MAX_SESSIONS`. Filling it while holding
 //!   every session busy (each has a live initiator exchange) makes the next
@@ -31,21 +31,28 @@
 //!   Opening that many without completing them makes the next `initiate` fail
 //!   immediately with `NoSpaceExchanges` (it does not block); releasing one
 //!   frees a slot and the following `initiate` succeeds.
+//! - A plaintext session is removed once its last exchange is dropped, but not
+//!   before the last message sent on it has gone out.
+//! - Plaintext sessions not removed yet are evicted ahead of established CASE
+//!   sessions, even those of a fabric holding more than its share.
 
 #![cfg(all(feature = "std", feature = "async-io"))]
 
+use core::cell::Cell;
 use core::num::NonZeroU8;
 
 use rs_matter::crypto::test_only_crypto;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::sc::ExchangeInitiator as _;
+use rs_matter::sc::OpCode;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend, NoNetwork};
 use rs_matter::transport::session::{
-    NocCatIds, ReservedSession, SessionMode, MAX_EXCHANGES, MAX_SESSIONS,
+    NocCatIds, ReservedSession, SessionMode, CASE_SESSIONS_PER_FABRIC, MAX_EXCHANGES, MAX_SESSIONS,
 };
 use rs_matter::utils::futures::{block_on, select, Either};
+use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::Matter;
 
 use crate::common::init_env_logger;
@@ -66,10 +73,9 @@ fn test_session_table_capped_and_recycled() {
     let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
     let crypto = test_only_crypto();
 
-    // Evicting a session hands a closing status report to the transport, and
-    // the next eviction waits for that packet to leave the TX buffer, so the
-    // transport loop has to run alongside the test flow. It sends into the
-    // void: nothing in this test needs a peer.
+    // Eviction waits for the TX buffer to be empty, so the transport loop has
+    // to run alongside the test flow. It sends into the void: nothing in this
+    // test needs a peer.
     let transport = matter.run(&crypto, NullSend, NullRecv, NoNetwork);
 
     let flow = async {
@@ -95,12 +101,12 @@ fn test_session_table_capped_and_recycled() {
         );
         drop(over_cap);
 
-        // Release the busy exchanges. The sessions remain in the table but are
-        // now idle and therefore evictable.
+        // Release the busy exchanges. The sessions are now idle: the transport
+        // removes them, and until it does, they are evictable.
         drop(held);
 
-        // Further allocations succeed by evicting the LRU idle session each
-        // time - proof the table recycles at the cap rather than growing past it.
+        // Further allocations succeed, in a slot freed by the transport or by
+        // eviction - proof the table recycles at the cap rather than growing past it.
         for _ in 0..MAX_SESSIONS + 3 {
             let exchange =
                 Exchange::initiate_plaintext(matter.transport(), &crypto, Address::new())
@@ -134,7 +140,7 @@ fn test_exchange_slots_exhausted_and_released() {
 
     // Install a keyless CASE-shaped session towards the peer so that
     // `Exchange::initiate` reuses it (no networking / mDNS resolve involved).
-    install_case_session(&matter, fab_idx);
+    install_case_session(&matter, fab_idx, REMOTE_NODE_ID);
 
     // Open `MAX_EXCHANGES` exchanges on that session without completing them.
     let mut held = std::vec::Vec::new();
@@ -176,17 +182,123 @@ fn test_exchange_slots_exhausted_and_released() {
     .expect("a released exchange slot should be reusable");
 }
 
-/// Pre-install a keyless CASE-shaped session towards [`REMOTE_NODE_ID`], mirroring
+/// A plaintext session is removed once its last exchange is dropped, but not
+/// before the last message sent on it has gone out.
+#[test]
+fn test_plaintext_session_goes_with_its_last_exchange() {
+    init_env_logger();
+
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+    let crypto = test_only_crypto();
+
+    let sent = Cell::new(0);
+    let transport = matter.run(&crypto, CountingSend(&sent), NullRecv, NoNetwork);
+
+    let count_plaintext_sessions = || {
+        matter.with_state(|state| {
+            state
+                .sessions
+                .iter()
+                .filter(|sess| matches!(sess.get_session_mode(), SessionMode::PlainText))
+                .count()
+        })
+    };
+
+    let flow = async {
+        let mut exchange =
+            Exchange::initiate_plaintext(matter.transport(), &crypto, Address::new()).await?;
+
+        // A Check-In is not reliable, so this only queues it for the transport
+        exchange.send(OpCode::CheckIn, &[]).await?;
+        drop(exchange);
+
+        for _ in 0..100 {
+            if count_plaintext_sessions() == 0 {
+                break;
+            }
+
+            Timer::after(Duration::from_millis(10)).await;
+        }
+
+        Ok::<_, Error>(())
+    };
+
+    match block_on(select(transport, flow)) {
+        Either::First(result) => panic!("transport exited prematurely: {result:?}"),
+        Either::Second(result) => result.unwrap(),
+    }
+
+    assert_eq!(count_plaintext_sessions(), 0);
+    assert_eq!(sent.get(), 1);
+}
+
+/// Plaintext sessions left behind by handshakes, successful or not, do not push
+/// established CASE sessions out of a full table, even those of a fabric holding
+/// more than its share.
+#[test]
+fn test_idle_plaintext_sessions_do_not_evict_case_sessions() {
+    init_env_logger();
+
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
+    let crypto = test_only_crypto();
+
+    matter.with_state(|state| {
+        state.fabrics.add_with_post_init(|_| Ok(())).unwrap();
+    });
+    let fab_idx = NonZeroU8::new(1).unwrap();
+
+    // One more than the fabric's share, so that the share does not protect them.
+    let case_sessions = CASE_SESSIONS_PER_FABRIC + 1;
+    for node in 0..case_sessions {
+        install_case_session(&matter, fab_idx, REMOTE_NODE_ID + node as u64);
+    }
+
+    let count_case_sessions = || {
+        matter.with_state(|state| {
+            state
+                .sessions
+                .iter()
+                .filter(|sess| matches!(sess.get_session_mode(), SessionMode::Case { .. }))
+                .count()
+        })
+    };
+
+    assert_eq!(count_case_sessions(), case_sessions);
+
+    let transport = matter.run(&crypto, NullSend, NullRecv, NoNetwork);
+
+    let flow = async {
+        // Enough handshakes to fill the rest of the table and then some. Each
+        // leaves its plaintext session behind once its exchange is dropped.
+        for _ in 0..MAX_SESSIONS * 2 {
+            let exchange =
+                Exchange::initiate_plaintext(matter.transport(), &crypto, Address::new()).await?;
+            drop(exchange);
+        }
+
+        Ok::<_, Error>(())
+    };
+
+    match block_on(select(transport, flow)) {
+        Either::First(result) => panic!("transport exited prematurely: {result:?}"),
+        Either::Second(result) => result.unwrap(),
+    }
+
+    assert_eq!(count_case_sessions(), case_sessions);
+}
+
+/// Pre-install a keyless CASE-shaped session towards `peer_node_id`, mirroring
 /// the helper in `tests/mrp.rs`, so `Exchange::initiate` finds and reuses it.
-fn install_case_session(matter: &Matter<'_>, fab_idx: NonZeroU8) {
+fn install_case_session(matter: &Matter<'_>, fab_idx: NonZeroU8, peer_node_id: u64) {
     let mut session = ReservedSession::reserve_now(matter.transport(), test_only_crypto()).unwrap();
+    let local_sess_id = matter.with_state(|state| state.sessions.get_next_sess_id());
 
     session
         .update(
             LOCAL_NODE_ID,
-            REMOTE_NODE_ID,
+            peer_node_id,
             1,
-            1,
+            local_sess_id,
             Address::new(),
             SessionMode::Case {
                 fab_idx,
@@ -200,6 +312,17 @@ fn install_case_session(matter: &Matter<'_>, fab_idx: NonZeroU8) {
         .unwrap();
 
     session.complete();
+}
+
+/// A network that swallows everything the transport sends, counting it.
+struct CountingSend<'a>(&'a Cell<u32>);
+
+impl NetworkSend for CountingSend<'_> {
+    async fn send_to(&mut self, _data: &[u8], _addr: Address) -> Result<(), Error> {
+        self.0.set(self.0.get() + 1);
+
+        Ok(())
+    }
 }
 
 /// A network that swallows everything the transport sends.

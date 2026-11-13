@@ -893,9 +893,9 @@ impl Session {
                 // session valid and keeps sending on it. Such a message revives
                 // the session (see `post_recv`).
                 //
-                // Only CASE sessions: PASE and plaintext are short-lived and
-                // pinned to an address the caller supplied itself, so there is
-                // nothing to re-resolve.
+                // Only CASE sessions: PASE and plaintext sessions are pinned to
+                // an address the caller supplied itself, so there is nothing to
+                // re-resolve.
                 warn!(
                     "Session {}: Peer did not acknowledge; marking the session as defunct",
                     self.id
@@ -2007,8 +2007,12 @@ impl Sessions {
         Ok(next_exch_id)
     }
 
-    /// The session to evict to make room in a full table: an expired or defunct
-    /// session, else the least-recently-used one.
+    /// The session to evict to make room in a full table: an idle plaintext
+    /// session, else an expired or defunct one, else the least-recently-used one.
+    ///
+    /// Plaintext sessions go first: without exchanges they hold nothing worth
+    /// keeping, and the transport removes them anyway once no packet waiting to
+    /// be sent refers to them.
     ///
     /// A CASE session of a fabric holding no more than its
     /// [`CASE_SESSIONS_PER_FABRIC`] share is passed over while any other session
@@ -2018,7 +2022,8 @@ impl Sessions {
     /// Reserved sessions and sessions with exchanges are never evicted.
     pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
         let index = self
-            .expired_or_defunct()
+            .lru_plaintext()
+            .or_else(|| self.expired_or_defunct())
             .or_else(|| self.lru(|sess| !self.is_within_fabric_share(sess)))
             .or_else(|| self.lru(|_| true))?;
 
@@ -2030,10 +2035,16 @@ impl Sessions {
     #[cfg(feature = "groups")]
     fn get_non_case_session_for_eviction(&mut self) -> Option<&mut Session> {
         let index = self
-            .expired_or_defunct()
+            .lru_plaintext()
+            .or_else(|| self.expired_or_defunct())
             .or_else(|| self.lru(|sess| !matches!(sess.mode, SessionMode::Case { .. })))?;
 
         Some(&mut self.sessions[index])
+    }
+
+    /// The least-recently-used evictable plaintext session.
+    fn lru_plaintext(&self) -> Option<usize> {
+        self.lru(|sess| sess.mode == SessionMode::PlainText)
     }
 
     /// An expired or defunct evictable session: those are the prime candidates for eviction.
@@ -2150,6 +2161,17 @@ impl Sessions {
         }
 
         removed
+    }
+
+    /// Remove every plaintext session without exchanges, returning how many
+    /// were removed.
+    ///
+    /// Such a session is of no further use, but a packet waiting to be sent
+    /// may still refer to it, so the caller must make sure that none does.
+    pub(crate) fn remove_idle_plaintext(&mut self) -> usize {
+        self.remove_where(|sess| {
+            sess.mode == SessionMode::PlainText && sess.exchanges.iter().all(Option::is_none)
+        })
     }
 
     /// Expire every session matching `predicate`, returning how many were
@@ -2762,6 +2784,29 @@ mod tests {
         assert!(left.contains(&reserved), "reserved session was removed");
     }
 
+    /// Only plaintext sessions without exchanges are removed: not one with an
+    /// exchange, not a reserved one (which is plaintext until its handshake
+    /// completes), and not a secure one.
+    #[test]
+    fn remove_idle_plaintext_leaves_sessions_in_use() {
+        let mut sm = Sessions::new();
+
+        let idle = add_with_mode(&mut sm, SessionMode::PlainText);
+        let busy = add_with_mode(&mut sm, SessionMode::PlainText);
+        unwrap!(unwrap!(sm.get(busy)).add_exch(1, Role::Initiator(Default::default())));
+        let reserved = unwrap!(sm.add(0, true, Address::default(), None)).id;
+        let pase = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 1 });
+        let case = add_for_node(&mut sm, fab(1), 0x1111);
+
+        assert_eq!(sm.remove_idle_plaintext(), 1);
+
+        let left = ids(&sm);
+        assert!(!left.contains(&idle));
+        for id in [busy, reserved, pase, case] {
+            assert!(left.contains(&id));
+        }
+    }
+
     /// Expiring a reserved session, in bulk or directly, leaves it reserved:
     /// only its handshake completes or removes it.
     #[test]
@@ -2848,8 +2893,8 @@ mod tests {
     fn eviction_prefers_expired_session() {
         let mut sm = Sessions::new();
 
-        let old = add_with_mode(&mut sm, SessionMode::PlainText);
-        let expired = add_with_mode(&mut sm, SessionMode::PlainText);
+        let old = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 1 });
+        let expired = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 1 });
 
         unwrap!(sm.get(old)).set_last_use(Instant::from_ticks(1));
         unwrap!(sm.get(expired)).set_last_use(Instant::MAX);
@@ -2910,6 +2955,40 @@ mod tests {
         // session at all.
         #[cfg(feature = "groups")]
         assert!(sm.get_non_case_session_for_eviction().is_none());
+    }
+
+    /// An idle plaintext session is evicted ahead of older sessions that are
+    /// still valid, including CASE sessions of a fabric over its share, but not
+    /// while it carries an exchange.
+    #[test]
+    fn eviction_prefers_idle_plaintext_session() {
+        let mut sm = Sessions::new();
+
+        let mut over = Vec::<u32, MAX_SESSIONS>::new();
+        for i in 0..=CASE_SESSIONS_PER_FABRIC {
+            let id = add_for_node(&mut sm, fab(1), i as u64);
+            unwrap!(sm.get(id)).set_last_use(Instant::from_ticks(i as u64 + 1));
+            unwrap!(over.push(id));
+        }
+
+        let pase = add_with_mode(&mut sm, SessionMode::Pase { fab_idx: 1 });
+        unwrap!(sm.get(pase)).set_last_use(Instant::from_ticks(50));
+
+        let plain = add_with_mode(&mut sm, SessionMode::PlainText);
+        unwrap!(sm.get(plain)).set_last_use(Instant::from_ticks(100));
+        advance_clock_past(100);
+
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, plain);
+        #[cfg(feature = "groups")]
+        assert_eq!(unwrap!(sm.get_non_case_session_for_eviction()).id, plain);
+
+        // A handshake still in progress on it keeps it.
+        unwrap!(unwrap!(sm.get(plain)).add_exch(1, Role::Initiator(Default::default())));
+        unwrap!(sm.get(plain)).set_last_use(Instant::from_ticks(100));
+
+        assert_eq!(unwrap!(sm.get_session_for_eviction()).id, over[0]);
+        #[cfg(feature = "groups")]
+        assert_eq!(unwrap!(sm.get_non_case_session_for_eviction()).id, pase);
     }
 
     /// Removing a fabric's sessions drops every session on that fabric

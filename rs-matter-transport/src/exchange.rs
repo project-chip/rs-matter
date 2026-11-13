@@ -1554,34 +1554,39 @@ impl<'a> Exchange<'a> {
 
 impl Drop for Exchange<'_> {
     fn drop(&mut self) {
-        let closed = self.id.with_sessions(self.transport, |sessions| {
+        let done = self.id.with_sessions(self.transport, |sessions| {
             let sess = self.id().session(sessions);
             let exch_index = self.id.exchange_index();
 
             let closed = sess.remove_exch(exch_index);
-            if closed {
-                // RX group sessions (unicast peer = the sender's address) are
-                // ephemeral, one per received message — remove them with their
-                // last exchange. TX group sessions (multicast peer) stay: the
-                // just-queued outgoing packet still needs the session for
-                // encoding, and subsequent sends to the same group reuse it
-                // (`get_or_create_for_group_tx`); LRU eviction reclaims them.
-                if matches!(sess.get_session_mode(), SessionMode::Group { .. })
-                    && sess.exchanges.iter().all(Option::is_none)
-                    && !sess.is_peer_multicast()
-                {
-                    // Group session with no remaining exchanges — remove it
-                    sessions.remove(self.id.session_id());
-                    self.transport.notify_session_removed();
-                }
+            let idle = closed && sess.exchanges.iter().all(Option::is_none);
 
-                Ok(true)
-            } else {
-                Ok(false)
+            // RX group sessions (unicast peer = the sender's address) are
+            // ephemeral, one per received message — remove them with their
+            // last exchange. TX group sessions (multicast peer) stay: the
+            // just-queued outgoing packet still needs the session for
+            // encoding, and subsequent sends to the same group reuse it
+            // (`get_or_create_for_group_tx`); LRU eviction reclaims them.
+            if idle
+                && matches!(sess.get_session_mode(), SessionMode::Group { .. })
+                && !sess.is_peer_multicast()
+            {
+                // Group session with no remaining exchanges — remove it
+                sessions.remove(self.id.session_id());
+                self.transport.notify_session_removed();
+            } else if idle && *sess.get_session_mode() == SessionMode::PlainText {
+                // A plaintext session is of no use without exchanges either, but
+                // its last packet may still wait in the TX buffer, so the transport
+                // removes it once that packet is gone
+                return Ok(false);
             }
+
+            Ok(closed)
         });
 
-        if !matches!(closed, Ok(true)) {
+        // Wake the transport to close a dropped exchange, or to remove a
+        // plaintext session left without exchanges
+        if !matches!(done, Ok(true)) {
             self.transport.exchange_dropped.notify();
         }
     }
