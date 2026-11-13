@@ -1441,25 +1441,10 @@ impl Transport {
         id: u32,
         encode: bool,
     ) -> Result<(), Error> {
-        // It is a responsibility of the caller to ensure that this method is called with a valid session ID
-        let secure = matches!(
-            unwrap!(sessions.get(id)).get_session_mode(),
-            SessionMode::Pase { .. } | SessionMode::Case { .. }
-        );
-
-        if !secure {
-            // A `CloseSession` may only be sent within a PASE or CASE session
-            debug!("Evicting session {} without a CloseSession", id);
-
-            sessions.remove(id);
-            self.notify_session_removed();
-
-            return Ok(());
-        }
-
         packet.header.proto.exch_id = sessions.get_next_exch_id(crypto)?;
         packet.header.proto.set_initiator();
 
+        // It is a responsibility of the caller to ensure that this method is called with a valid session ID
         let mut session = unwrap!(sessions.remove(id));
         self.notify_session_removed();
 
@@ -1469,6 +1454,14 @@ impl Transport {
             session.get_local_sess_id(),
             session.get_peer_sess_id()
         );
+
+        if !matches!(
+            session.get_session_mode(),
+            SessionMode::Pase { .. } | SessionMode::Case { .. }
+        ) {
+            // A `CloseSession` may only be sent within a PASE or CASE session
+            return Ok(());
+        }
 
         self.write_packet(crypto, packet, Some(&mut session), None, encode, |wb| {
             sc_write(wb, SCStatusCodes::CloseSession, &[])

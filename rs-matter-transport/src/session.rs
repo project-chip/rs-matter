@@ -2021,11 +2021,7 @@ impl Sessions {
     ///
     /// Reserved sessions and sessions with exchanges are never evicted.
     pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
-        let index = self
-            .lru_plaintext()
-            .or_else(|| self.expired_or_defunct())
-            .or_else(|| self.lru(|sess| !self.is_within_fabric_share(sess)))
-            .or_else(|| self.lru(|_| true))?;
+        let index = self.eviction_candidate(true)?;
 
         Some(&mut self.sessions[index])
     }
@@ -2034,40 +2030,44 @@ impl Sessions {
     /// session, for callers that evict without a `CloseSession` to the peer.
     #[cfg(feature = "groups")]
     fn get_non_case_session_for_eviction(&mut self) -> Option<&mut Session> {
-        let index = self
-            .lru_plaintext()
-            .or_else(|| self.expired_or_defunct())
-            .or_else(|| self.lru(|sess| !matches!(sess.mode, SessionMode::Case { .. })))?;
+        let index = self.eviction_candidate(false)?;
 
         Some(&mut self.sessions[index])
     }
 
-    /// The least-recently-used evictable plaintext session.
-    fn lru_plaintext(&self) -> Option<usize> {
-        self.lru(|sess| sess.mode == SessionMode::PlainText)
-    }
-
-    /// An expired or defunct evictable session: those are the prime candidates for eviction.
-    fn expired_or_defunct(&self) -> Option<usize> {
-        self.sessions.iter().position(|sess| {
-            matches!(sess.state, SessionState::Expired | SessionState::Defunct)
-                && Self::is_evictable(sess)
-        })
-    }
-
-    /// The least-recently-used evictable session matching `f`.
-    fn lru<F>(&self, f: F) -> Option<usize>
-    where
-        F: Fn(&Session) -> bool,
-    {
+    /// The evictable session of the lowest rank, and of those the least recently
+    /// used: an idle plaintext session, then an expired or defunct one, then one
+    /// that is not a CASE session within its fabric's share, then (with
+    /// `live_case`) any other.
+    ///
+    /// Apart from expired and defunct ones, sessions used in the current tick
+    /// are passed over.
+    fn eviction_candidate(&self, live_case: bool) -> Option<usize> {
         let now = Instant::now();
 
         self.sessions
             .iter()
             .enumerate()
-            .filter(|(_, sess)| Self::is_evictable(sess) && sess.last_use < now && f(sess))
-            .min_by_key(|(_, sess)| sess.last_use)
-            .map(|(index, _)| index)
+            .filter(|(_, sess)| Self::is_evictable(sess))
+            .filter_map(|(index, sess)| {
+                let stale = sess.last_use < now;
+
+                let rank = if sess.mode == SessionMode::PlainText && stale {
+                    0
+                } else if matches!(sess.state, SessionState::Expired | SessionState::Defunct) {
+                    1
+                } else if !stale || matches!(sess.mode, SessionMode::Case { .. }) && !live_case {
+                    return None;
+                } else if self.is_within_fabric_share(sess) {
+                    3
+                } else {
+                    2
+                };
+
+                Some(((rank, sess.last_use), index))
+            })
+            .min_by_key(|(key, _)| *key)
+            .map(|(_, index)| index)
     }
 
     /// Whether `sess` is a CASE session of a fabric holding no more than its
@@ -2169,9 +2169,18 @@ impl Sessions {
     /// Such a session is of no further use, but a packet waiting to be sent
     /// may still refer to it, so the caller must make sure that none does.
     pub(crate) fn remove_idle_plaintext(&mut self) -> usize {
-        self.remove_where(|sess| {
-            sess.mode == SessionMode::PlainText && sess.exchanges.iter().all(Option::is_none)
-        })
+        let mut removed = 0;
+
+        while let Some(index) = self
+            .sessions
+            .iter()
+            .position(|sess| sess.mode == SessionMode::PlainText && Self::is_evictable(sess))
+        {
+            self.sessions.swap_remove(index);
+            removed += 1;
+        }
+
+        removed
     }
 
     /// Expire every session matching `predicate`, returning how many were
