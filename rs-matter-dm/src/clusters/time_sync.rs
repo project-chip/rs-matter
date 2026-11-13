@@ -63,7 +63,8 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, TIME_ZONE_KEY};
 use crate::tlv::{
-    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TlvError, ToTLV, Utf8StrBuilder, TLV,
+    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TlvError,
+    ToTLV, Utf8StrBuilder, TLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::futures::select;
