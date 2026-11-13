@@ -31,7 +31,8 @@
 //!   `StateTransition` and `DownloadError` events. The `VersionApplied` event
 //!   comes at startup, when the node runs another version than at its last.
 //! - [`parse_bdx_url`] turns a `bdx://` image URI into a `(node, file-designator)`
-//!   pair for a BDX download via [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download).
+//!   pair for a BDX download via [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download),
+//!   in blocks of at most [`OTA_MAX_BLOCK_SIZE`], or [`OTA_MAX_BLOCK_SIZE_TCP`] over TCP.
 //! - [`OtaImageHeader::load`](crate::ota::OtaImageHeader::load) reads the
 //!   downloaded image's header.
 
@@ -67,6 +68,16 @@ use crate::dm::clusters::decl::ota_software_update_provider::{
     QueryImageResponse,
 };
 use crate::dm::clusters::ota_prov::OtaApplyOutcome;
+
+/// The largest BDX block an OTA Requestor may ask for over a transport other
+/// than TCP, and so what it passes to
+/// [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download) there.
+pub const OTA_MAX_BLOCK_SIZE: u16 = 1024;
+
+/// The largest BDX block an OTA Requestor may ask for over TCP, of which a
+/// provider takes at least 4096 bytes. `download` asks for less if the
+/// exchange RX buffer cannot hold it, as without the `large-buffers` feature.
+pub const OTA_MAX_BLOCK_SIZE_TCP: u16 = 8192;
 
 /// The number of transient providers (learned via `AnnounceOTAProvider`) cached
 /// at once. These are one-shot hints, deduplicated by `(fabric, node)`; the

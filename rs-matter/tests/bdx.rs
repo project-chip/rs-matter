@@ -94,6 +94,9 @@ async fn write_all(writer: &mut BdxWriter<'_, '_>, mut data: &[u8]) -> Result<()
 /// block-buffering and final-`BlockEof` logic is most likely to break.
 const STREAM_SIZES: &[usize] = &[0, 1, 1023, 1024, 1025, 2048, 5000];
 
+/// The block size the downloads ask for: the streaming block size.
+const BLOCK_SIZE: u16 = 1024;
+
 fn image_of(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
@@ -136,7 +139,7 @@ fn test_bdx_download_streaming() {
         select(runner.run_responder(responder), async {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
-                let mut reader = exchange.download(FILE_DESIGNATOR, None).await?;
+                let mut reader = exchange.download(FILE_DESIGNATOR, None, BLOCK_SIZE).await?;
                 let received = with_timeout(read_all(&mut reader)).await?;
                 assert_eq!(&received, image, "download size {}", image.len());
             }
@@ -146,6 +149,57 @@ fn test_bdx_download_streaming() {
         .await
         .unwrap();
     });
+}
+
+/// Responder that serves `image`, noting the block size the transfer settled on.
+struct BlockSizeResponder<'a> {
+    image: &'a [u8],
+    block_size: &'a AtomicUsize,
+}
+
+impl ExchangeHandler for BlockSizeResponder<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        // Room for blocks larger than the one asked for.
+        let mut wbuf = [0u8; 4096];
+        let mut writer = responder
+            .reply(&mut wbuf, Some(self.image.len() as u64))
+            .await?;
+        self.block_size
+            .store(writer.max_block_size(), Ordering::Relaxed);
+        write_all(&mut writer, self.image).await?;
+        writer.finish().await
+    }
+}
+
+/// `download` asks the sender for the block size it is given, as an OTA
+/// Requestor must: at most 1024 bytes over a transport other than TCP.
+#[test]
+fn test_bdx_download_asks_for_the_given_block_size() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let image = image_of(2048);
+    let block_size = AtomicUsize::new(0);
+    let responder = BlockSizeResponder {
+        image: &image,
+        block_size: &block_size,
+    };
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(responder), async {
+            let exchange = runner.initiate_exchange().await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR, None, 512).await?;
+            let received = with_timeout(read_all(&mut reader)).await?;
+            assert_eq!(received, image);
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+
+    assert_eq!(block_size.load(Ordering::Relaxed), 512);
 }
 
 /// Responder that honors a requested start offset: serves `image[start_offset..]`,
@@ -179,7 +233,9 @@ fn test_bdx_download_with_offset() {
     futures_lite::future::block_on(async {
         select(runner.run_responder(responder), async {
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.download(FILE_DESIGNATOR, Some(offset)).await?;
+            let mut reader = exchange
+                .download(FILE_DESIGNATOR, Some(offset), BLOCK_SIZE)
+                .await?;
             // The advertised length is the remaining bytes from the offset.
             assert_eq!(reader.len(), Some(image.len() as u64 - offset));
             let received = with_timeout(read_all(&mut reader)).await?;
@@ -379,7 +435,7 @@ fn test_bdx_server_routing() {
         select(runner.run_responder(bdx), async {
             // A download routes to the image server.
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.download(SERVE_FD, None).await?;
+            let mut reader = exchange.download(SERVE_FD, None, BLOCK_SIZE).await?;
             let received = with_timeout(read_all(&mut reader)).await?;
             assert_eq!(received, download);
 
@@ -395,9 +451,13 @@ fn test_bdx_server_routing() {
 
             // An unknown designator is rejected by the chain terminator.
             let exchange = runner.initiate_exchange().await?;
-            let result =
-                with_timeout(async { exchange.download(b"unknown.bin", None).await.map(|_| ()) })
-                    .await;
+            let result = with_timeout(async {
+                exchange
+                    .download(b"unknown.bin", None, BLOCK_SIZE)
+                    .await
+                    .map(|_| ())
+            })
+            .await;
             assert!(result.is_err(), "unknown file designator must be rejected");
 
             Ok::<_, Error>(())
@@ -444,9 +504,13 @@ fn test_bdx_download_rejected_at_negotiation() {
     futures_lite::future::block_on(async {
         select(runner.run_responder(RejectInitHandler), async {
             let exchange = runner.initiate_exchange().await?;
-            let result =
-                with_timeout(async { exchange.download(FILE_DESIGNATOR, None).await.map(|_| ()) })
-                    .await;
+            let result = with_timeout(async {
+                exchange
+                    .download(FILE_DESIGNATOR, None, BLOCK_SIZE)
+                    .await
+                    .map(|_| ())
+            })
+            .await;
             assert!(
                 result.is_err(),
                 "download must fail when the peer rejects it"
@@ -518,7 +582,7 @@ fn test_bdx_read_aborted_mid_stream() {
     futures_lite::future::block_on(async {
         select(runner.run_responder(AbortMidStreamHandler), async {
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.download(FILE_DESIGNATOR, None).await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR, None, BLOCK_SIZE).await?;
 
             with_timeout(async {
                 let mut buf = [0u8; 64];

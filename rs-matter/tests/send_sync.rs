@@ -196,7 +196,7 @@ fn initiator_futures_are_send<C: Crypto>(matter: &'static Matter<'static>, crypt
 fn download_future_is_send<C: Crypto + 'static>(matter: &'static Matter<'static>, crypto: C) {
     assert_spawnable(&async move {
         let exchange = Exchange::initiate(matter, crypto, NonZeroU8::MIN, 1).await?;
-        let mut reader = exchange.download(b"image", None).await?;
+        let mut reader = exchange.download(b"image", None, 1024).await?;
 
         reader.read(&mut [0; 16]).await
     });

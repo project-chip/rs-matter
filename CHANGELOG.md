@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Breaking: `BdxDownloadInitiator::download` takes the largest block to ask the sender for, rather than asking for all the RX buffer holds; one the buffer cannot hold becomes the largest power of two it does. An OTA Requestor asks for at most `ota_req::OTA_MAX_BLOCK_SIZE` (1024 bytes) over a transport other than TCP and `ota_req::OTA_MAX_BLOCK_SIZE_TCP` (8192 bytes) over TCP, as the Core spec requires (#665)
 * Fix: a plaintext session is removed once its last exchange is gone, rather than staying until evicted and possibly pushing out an established CASE session (#661)
   * Fix: plaintext sessions not removed yet are evicted before any other session
   * Fix: evicting a plaintext or group session sends no `CloseSession`, which the spec allows only within PASE and CASE sessions
