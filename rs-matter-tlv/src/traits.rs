@@ -200,7 +200,7 @@ impl<'a> Iterator for TLVElementTLVIter<'a> {
                         *self = TLVElementTLVIter::Finished;
                     }
 
-                    Some(value.map_err(Error::from))
+                    Some(value.map_err(Into::into))
                 }
             }
             TLVElementTLVIter::Seq(mut iter) => {

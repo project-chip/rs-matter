@@ -825,7 +825,7 @@ impl<'a> InvokeRespChunk<'a> {
         }
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        Ok(InvokeResp::from_tlv(&element).map(Some)?)
+        Ok(Some(InvokeResp::from_tlv(&element)?))
     }
 
     /// ACK the current chunk and, if the server signalled
