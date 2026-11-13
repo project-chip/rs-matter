@@ -52,7 +52,7 @@ default = ["log"]
 log = []
 mbedtls = ["rs-matter/mbedtls"]
 openssl = ["rs-matter/openssl"]
-send-sync = ["rs-matter/send-sync"]
+send-sync = ["rs-matter/send-sync", "dep:async-executor"]
 zbus = ["rs-matter/zbus"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]
@@ -62,6 +62,7 @@ test-tcp = ["rs-matter/large-buffers"]
 # Temporary fix for unexpected cfgs lint
 defmt = []
 webrtc = [
+    "dep:async-executor",
     "dep:str0m",
     "dep:async-channel",
     "dep:tracing",
@@ -80,14 +81,13 @@ embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
 static_cell = { workspace = true }
 if-addrs = { workspace = true }
 async-io = { workspace = true }
-async-compat = { workspace = true }
 blocking = { workspace = true }
 futures-lite = { workspace = true }
 rs-matter = { workspace = true, features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
 rand = { workspace = true, features = ["std", "std_rng", "sys_rng", "thread_rng"] }
 async-signal = { workspace = true }
 socket2 = { workspace = true }
-async-executor = { workspace = true }
+async-executor = { workspace = true, optional = true }
 async-channel = { workspace = true, optional = true }
 str0m = { workspace = true, optional = true }
 

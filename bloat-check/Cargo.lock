@@ -3523,6 +3523,7 @@ dependencies = [
 name = "rs-matter-dm"
 version = "0.4.1"
 dependencies = [
+ "async-channel",
  "bitflags 2.13.2",
  "defmt 1.1.1",
  "either",
@@ -3765,7 +3766,6 @@ dependencies = [
  "domain",
  "either",
  "log",
- "nix 0.31.3",
  "num",
  "num-derive",
  "num-traits",
