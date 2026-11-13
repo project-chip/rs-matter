@@ -557,13 +557,13 @@ fn gen_fromtlv_for_struct_unnamed(
 
     quote! {
         impl #generics #krate::FromTLV<#lifetime> for #struct_name #generics {
-            fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
+            fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::TlvError> {
                 Ok(Self(#ty::from_tlv(element)?))
             }
         }
 
         impl #generics TryFrom<&#krate::TLVElement<#lifetime>> for #struct_name #generics {
-            type Error = #krate::__private::Error;
+            type Error = #krate::__private::TlvError;
 
             fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
                 use #krate::FromTLV;
@@ -637,7 +637,7 @@ fn gen_fromtlv_for_struct_named(
 
     quote! {
         impl #impl_generics #krate::FromTLV<#lifetime> for #struct_name #generics {
-            fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
+            fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::TlvError> {
                 #[allow(unused_mut)]
                 let mut seq = element.#datatype()?;
 
@@ -647,7 +647,7 @@ fn gen_fromtlv_for_struct_named(
                 })
             }
 
-            fn init_from_tlv(element: #krate::TLVElement<#lifetime>) -> impl #krate::__private::Init<Self, #krate::__private::Error> {
+            fn init_from_tlv(element: #krate::TLVElement<#lifetime>) -> impl #krate::__private::Init<Self, #krate::__private::TlvError> {
                 #krate::__private::into_init(move || {
                     #[allow(unused_mut)]
                     let mut seq = element.#datatype()?;
@@ -655,7 +655,7 @@ fn gen_fromtlv_for_struct_named(
                     let init = #krate::__private::try_init!(Self {
                         #(#idents <- #types::init_from_tlv(seq.#seq_method(#tags)?),
                         )*
-                    }? #krate::__private::Error);
+                    }? #krate::__private::TlvError);
 
                     Ok(init)
                 })
@@ -663,7 +663,7 @@ fn gen_fromtlv_for_struct_named(
         }
 
         impl #impl_generics TryFrom<&#krate::TLVElement<#lifetime>> for #struct_name #generics {
-            type Error = #krate::__private::Error;
+            type Error = #krate::__private::TlvError;
 
             fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
                 use #krate::FromTLV;
@@ -743,31 +743,31 @@ fn gen_fromtlv_for_enum(
 
         quote! {
             impl #generics #krate::FromTLV<#lifetime> for #enum_name #generics {
-                fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
+                fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::TlvError> {
                     Ok(match element.#elem_read_method()? {
                         #(#tags => Self::#variant_names,
                         )*
-                        _ => Err(#krate::__private::ErrorCode::Invalid)?,
+                        _ => Err(#krate::__private::TlvErrorCode::InvalidValue)?,
                     })
                 }
 
-                fn nullable_from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
+                fn nullable_from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::TlvError> {
                     let value = element.#elem_read_method()?;
 
                     if value != #datatype::MAX {
                         Ok(match value {
                             #(#tags => Self::#variant_names,
                             )*
-                            _ => Err(#krate::__private::ErrorCode::Invalid)?,
+                            _ => Err(#krate::__private::TlvErrorCode::InvalidValue)?,
                         })
                     } else {
-                        Err(#krate::__private::ErrorCode::ConstraintError.into())
+                        Err(#krate::__private::TlvErrorCode::UnexpectedNull.into())
                     }
                 }
             }
 
             impl #generics TryFrom<&#krate::TLVElement<#lifetime>> for #enum_name #generics {
-                type Error = #krate::__private::Error;
+                type Error = #krate::__private::TlvError;
 
                 fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
                     use #krate::FromTLV;
@@ -806,7 +806,7 @@ fn gen_fromtlv_for_enum(
                     .r#struct()?
                     .iter()
                     .next()
-                    .ok_or(#krate::__private::ErrorCode::TLVTypeMismatch)??;
+                    .ok_or(#krate::__private::TlvErrorCode::NotFound)??;
             }
         } else {
             TokenStream::new()
@@ -814,23 +814,23 @@ fn gen_fromtlv_for_enum(
 
         quote! {
             impl #generics #krate::FromTLV<#lifetime> for #enum_name #generics {
-                fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::Error> {
+                fn from_tlv(element: &#krate::TLVElement<#lifetime>) -> Result<Self, #krate::__private::TlvError> {
                     #enter
 
                     let tag = element
                         .try_ctx()?
-                        .ok_or(#krate::__private::ErrorCode::TLVTypeMismatch)?;
+                        .ok_or(#krate::__private::TlvErrorCode::TypeMismatch)?;
 
                     Ok(match tag {
                         #(#tags => Self::#variant_names(#types::from_tlv(&element)?),
                         )*
-                        _ => Err(#krate::__private::ErrorCode::Invalid)?,
+                        _ => Err(#krate::__private::TlvErrorCode::InvalidValue)?,
                     })
                 }
             }
 
             impl #generics TryFrom<&#krate::TLVElement<#lifetime>> for #enum_name #generics {
-                type Error = #krate::__private::Error;
+                type Error = #krate::__private::TlvError;
 
                 fn try_from(element: &#krate::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
                     use #krate::FromTLV;
@@ -1041,7 +1041,7 @@ mod tests {
                 impl<'__from_tlv> rs_matter_maybe_renamed::tlv::FromTLV<'__from_tlv> for TestS {
                     fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error>
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::TlvError>
                     {
                         #[allow(unused_mut)]
                         let mut seq = element.r#struct()?;
@@ -1060,7 +1060,7 @@ mod tests {
                         element: rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> impl rs_matter_maybe_renamed::tlv::__private::Init<
                         Self,
-                        rs_matter_maybe_renamed::tlv::__private::Error,
+                        rs_matter_maybe_renamed::tlv::__private::TlvError,
                     > {
                         rs_matter_maybe_renamed::tlv::__private::into_init(move || {
                             #[allow(unused_mut)]
@@ -1071,7 +1071,7 @@ mod tests {
                                 field2 <- u32::init_from_tlv(seq.find_ctx(1u8)?),
                                 field_opt <- Option::init_from_tlv(seq.find_ctx(2u8)?),
                                 field_null <- rs_matter_maybe_renamed::tlv::Nullable::init_from_tlv(seq.find_ctx(3u8)?),
-                            }? rs_matter_maybe_renamed::tlv::__private::Error);
+                            }? rs_matter_maybe_renamed::tlv::__private::TlvError);
 
                             Ok(init)
                         })
@@ -1079,7 +1079,7 @@ mod tests {
                 }
 
                 impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestS {
-                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::TlvError;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
@@ -1326,27 +1326,27 @@ mod tests {
                 impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
                     fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let element = element
                             .r#struct()?
                             .iter()
                             .next()
-                            .ok_or(rs_matter_maybe_renamed::tlv::__private::ErrorCode::TLVTypeMismatch)??;
+                            .ok_or(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::NotFound)??;
 
                         let tag = element
                             .try_ctx()?
-                            .ok_or(rs_matter_maybe_renamed::tlv::__private::ErrorCode::TLVTypeMismatch)?;
+                            .ok_or(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::TypeMismatch)?;
 
                         Ok(match tag {
                             0u8 => Self::ValueA(u32::from_tlv(&element)?),
                             1u8 => Self::ValueB(u32::from_tlv(&element)?),
-                            _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
+                            _ => Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::InvalidValue)?,
                         })
                     }
                 }
 
                 impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
-                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::TlvError;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
@@ -1376,32 +1376,32 @@ mod tests {
                 impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
                    fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         Ok(match element.u8()? {
                             0u8 => Self::ValueA,
                             1u8 => Self::ValueB,
-                            _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
+                            _ => Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::InvalidValue)?,
                         })
                     }
 
                     fn nullable_from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let value = element.u8()?;
                         if value != u8::MAX {
                             Ok(match value {
                                 0u8 => Self::ValueA,
                                 1u8 => Self::ValueB,
-                                _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
+                                _ => Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::InvalidValue)?,
                             })
                         } else {
-                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::UnexpectedNull.into())
                         }
                     }
                 }
 
                 impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
-                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::TlvError;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
@@ -1435,19 +1435,19 @@ mod tests {
                 impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
                     fn from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         Ok(match element.u16()? {
                             0u16 => Self::A,
                             1u16 => Self::B,
                             100u16 => Self::C,
                             4660u16 => Self::D,
-                            _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
+                            _ => Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::InvalidValue)?,
                        })
                     }
 
                     fn nullable_from_tlv(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
-                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<Self, rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let value = element.u16()?;
                         if value != u16::MAX {
                             Ok(match value {
@@ -1455,16 +1455,16 @@ mod tests {
                                 1u16 => Self::B,
                                 100u16 => Self::C,
                                 4660u16 => Self::D,
-                                _ => Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::Invalid)?,
+                                _ => Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::InvalidValue)?,
                             })
                         } else {
-                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::UnexpectedNull.into())
                         }
                     }
                 }
 
                 impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
-                    type Error = rs_matter_maybe_renamed::tlv::__private::Error;
+                    type Error = rs_matter_maybe_renamed::tlv::__private::TlvError;
 
                     fn try_from(
                         element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,

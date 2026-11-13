@@ -23,6 +23,7 @@
 //! Note that (for now) `String<N>` has no efficient in-place initialization, so it should not be used for
 //! holding large strings, or else a stack overflow might occur.
 
+use crate::error::{TlvError, TlvErrorCode};
 use crate::error::{Error, ErrorCode};
 use crate::utils::storage::String;
 
@@ -44,7 +45,7 @@ pub type UtfStr<'a> = Utf8Str<'a>;
 pub type Utf8Str<'a> = &'a str;
 
 impl<'a> FromTLV<'a> for &'a str {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(element.utf8()?)
     }
 }
@@ -60,11 +61,10 @@ impl ToTLV for &str {
 }
 
 impl<'a, const N: usize> FromTLV<'a> for String<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<String<N>, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<String<N>, TlvError> {
         element
             .utf8()
-            .map_err(Error::from)
-            .and_then(|s| s.try_into().map_err(|_| ErrorCode::ConstraintError.into()))
+            .and_then(|s| s.try_into().map_err(|_| TlvErrorCode::CapacityExceeded.into()))
     }
 }
 
@@ -80,7 +80,7 @@ impl<const N: usize> ToTLV for String<N> {
 
 #[cfg(feature = "alloc")]
 impl<'a> FromTLV<'a> for alloc::string::String {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<alloc::string::String, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<alloc::string::String, TlvError> {
         Ok(element.utf8().map(alloc::string::String::from)?)
     }
 }
