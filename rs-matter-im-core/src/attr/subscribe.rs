@@ -37,17 +37,17 @@ impl<'a> SubscribeReq<'a> {
 
     /// Return `Ok(true)` if this subscription request should keep existing subscriptions.
     pub fn keep_subs(&self) -> Result<bool, Error> {
-        self.0.r#struct()?.find_ctx(0)?.bool()
+        Ok(self.0.r#struct()?.find_ctx(0)?.bool()?)
     }
 
     /// Return the minimum interval floor for this subscription request.
     pub fn min_int_floor(&self) -> Result<u16, Error> {
-        self.0.r#struct()?.find_ctx(1)?.u16()
+        Ok(self.0.r#struct()?.find_ctx(1)?.u16()?)
     }
 
     /// Return the maximum interval ceiling for this subscription request.
     pub fn max_int_ceil(&self) -> Result<u16, Error> {
-        self.0.r#struct()?.find_ctx(2)?.u16()
+        Ok(self.0.r#struct()?.find_ctx(2)?.u16()?)
     }
 
     /// Return the attribute requests in this subscription request, if any.
@@ -67,7 +67,7 @@ impl<'a> SubscribeReq<'a> {
 
     /// Return `Ok(true)` if this subscription request is fabric-filtered.
     pub fn fabric_filtered(&self) -> Result<bool, Error> {
-        self.0.r#struct()?.find_ctx(7)?.bool()
+        Ok(self.0.r#struct()?.find_ctx(7)?.bool()?)
     }
 
     /// Return the data version filters in this subscription request, if any.
