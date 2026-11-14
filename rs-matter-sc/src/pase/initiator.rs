@@ -395,10 +395,12 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
             .map_err(|_| ErrorCode::InvalidData)?;
 
-        // Get peer address
-        let peer_addr = exchange.with_state(self.matter, |state| {
+        // Get the peer address, and the address the peer was dialled at: the
+        // peer may have answered from another one, and the caller looks the
+        // PASE session up by the address it dialled.
+        let (peer_addr, dialled_addr) = exchange.with_state(self.matter, |state| {
             let sess = exchange.id().session(state.sessions);
-            Ok(sess.get_peer_addr())
+            Ok((sess.get_peer_addr(), sess.get_dialled_addr()))
         })?;
 
         // Split session keys into dec_key, enc_key, att_challenge
@@ -422,6 +424,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             Some(att_challenge),
             None,
         )?;
+        session.set_dialled_addr(dialled_addr)?;
 
         // Complete the reserved session
         session.complete();
