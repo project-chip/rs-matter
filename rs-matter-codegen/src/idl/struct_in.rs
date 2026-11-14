@@ -124,7 +124,7 @@ fn structure<S: StructLike>(
         }
 
         impl<'a> #krate::tlv::FromTLV<'a> for #name<'a> {
-            fn from_tlv(element: &#krate::tlv::TLVElement<'a>) -> Result<Self, #krate::error::Error> {
+            fn from_tlv(element: &#krate::tlv::TLVElement<'a>) -> Result<Self, #krate::tlv::TlvError> {
                 Ok(Self::new(element.clone()))
             }
         }
@@ -187,14 +187,14 @@ fn struct_field(
     if f.is_optional() {
         quote!(
             #doc_comment
-            pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
+            pub fn #name(&self) -> Result<#field_type, #krate::tlv::TlvError> {
                 self.0.read_opt(#code)
             }
         )
     } else {
         quote!(
             #doc_comment
-            pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
+            pub fn #name(&self) -> Result<#field_type, #krate::tlv::TlvError> {
                 self.0.read(#code)
             }
         )
@@ -334,27 +334,27 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn connected(&self) -> Result<bool, rs_matter_crate::error::Error> {
+                    pub fn connected(&self) -> Result<bool, rs_matter_crate::tlv::TlvError> {
                         self.0.read(1)
                     }
-                    pub fn test_optional(&self) -> Result<Option<u8>, rs_matter_crate::error::Error> {
+                    pub fn test_optional(&self) -> Result<Option<u8>, rs_matter_crate::tlv::TlvError> {
                         self.0.read_opt(2)
                     }
                     pub fn test_nullable(
                         &self,
-                    ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+                    ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::tlv::TlvError> {
                         self.0.read(3)
                     }
                     pub fn test_both(
                         &self,
-                    ) -> Result<Option<rs_matter_crate::tlv::Nullable<u32>>, rs_matter_crate::error::Error> {
+                    ) -> Result<Option<rs_matter_crate::tlv::Nullable<u32>>, rs_matter_crate::tlv::TlvError> {
                         self.0.read_opt(4)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for NetworkInfoStruct<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -459,14 +459,14 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn identify_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
+                    pub fn identify_time(&self) -> Result<u16, rs_matter_crate::tlv::TlvError> {
                         self.0.read(0)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for IdentifyRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -525,14 +525,14 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn group(&self) -> Result<u16, rs_matter_crate::error::Error> {
+                    pub fn group(&self) -> Result<u16, rs_matter_crate::tlv::TlvError> {
                         self.0.read(0)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for SomeRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -586,14 +586,14 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn capacity(&self) -> Result<u8, rs_matter_crate::error::Error> {
+                    pub fn capacity(&self) -> Result<u8, rs_matter_crate::tlv::TlvError> {
                         self.0.read(0)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestResponse<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -649,17 +649,17 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn status(&self) -> Result<u8, rs_matter_crate::error::Error> {
+                    pub fn status(&self) -> Result<u8, rs_matter_crate::tlv::TlvError> {
                         self.0.read(0)
                     }
-                    pub fn group_id(&self) -> Result<u16, rs_matter_crate::error::Error> {
+                    pub fn group_id(&self) -> Result<u16, rs_matter_crate::tlv::TlvError> {
                         self.0.read(12)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for AnotherResponse<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -804,17 +804,17 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn effect_identifier(&self) -> Result<EffectIdentifierEnum, rs_matter_crate::error::Error> {
+                    pub fn effect_identifier(&self) -> Result<EffectIdentifierEnum, rs_matter_crate::tlv::TlvError> {
                         self.0.read(0)
                     }
-                    pub fn effect_variant(&self) -> Result<u8, rs_matter_crate::error::Error> {
+                    pub fn effect_variant(&self) -> Result<u8, rs_matter_crate::tlv::TlvError> {
                         self.0.read(1)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for OffWithEffectRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -888,20 +888,20 @@ mod tests {
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-                    pub fn on_off_control(&self) -> Result<OnOffControlBitmap, rs_matter_crate::error::Error> {
+                    pub fn on_off_control(&self) -> Result<OnOffControlBitmap, rs_matter_crate::tlv::TlvError> {
                         self.0.read(0)
                     }
-                    pub fn on_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
+                    pub fn on_time(&self) -> Result<u16, rs_matter_crate::tlv::TlvError> {
                         self.0.read(1)
                     }
-                    pub fn off_wait_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
+                    pub fn off_wait_time(&self) -> Result<u16, rs_matter_crate::tlv::TlvError> {
                         self.0.read(2)
                     }
                 }
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for OnWithTimedOffRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -1042,24 +1042,24 @@ mod tests {
                     }
                     pub fn short_string(
                         &self,
-                    ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
+                    ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::tlv::TlvError> {
                         self.0.read(1)
                     }
                     pub fn long_string(
                         &self,
-                    ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
+                    ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::tlv::TlvError> {
                         self.0.read(2)
                     }
                     pub fn opt_str(
                         &self,
-                    ) -> Result<Option<rs_matter_crate::tlv::Utf8Str<'_>>, rs_matter_crate::error::Error> {
+                    ) -> Result<Option<rs_matter_crate::tlv::Utf8Str<'_>>, rs_matter_crate::tlv::TlvError> {
                         self.0.read_opt(3)
                     }
                     pub fn opt_nul_str(
                         &self,
                     ) -> Result<
                         Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>>,
-                        rs_matter_crate::error::Error,
+                        rs_matter_crate::tlv::TlvError,
                     > {
                         self.0.read_opt(4)
                     }
@@ -1067,7 +1067,7 @@ mod tests {
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for WithStringMember<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }
@@ -1222,24 +1222,24 @@ mod tests {
                     }
                     pub fn short_string(
                         &self,
-                    ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::error::Error> {
+                    ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::tlv::TlvError> {
                         self.0.read(1)
                     }
                     pub fn long_string(
                         &self,
-                    ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::error::Error> {
+                    ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::tlv::TlvError> {
                         self.0.read(2)
                     }
                     pub fn opt_str(
                         &self,
-                    ) -> Result<Option<rs_matter_crate::tlv::OctetStr<'_>>, rs_matter_crate::error::Error> {
+                    ) -> Result<Option<rs_matter_crate::tlv::OctetStr<'_>>, rs_matter_crate::tlv::TlvError> {
                         self.0.read_opt(3)
                     }
                     pub fn opt_nul_str(
                         &self,
                     ) -> Result<
                         Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>>,
-                        rs_matter_crate::error::Error,
+                        rs_matter_crate::tlv::TlvError,
                     > {
                         self.0.read_opt(4)
                     }
@@ -1247,7 +1247,7 @@ mod tests {
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for WithStringMember<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Ok(Self::new(element.clone()))
                     }
                 }

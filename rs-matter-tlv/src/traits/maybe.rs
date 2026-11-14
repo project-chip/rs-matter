@@ -44,6 +44,7 @@ use core::fmt::Debug;
 use core::iter::empty;
 
 use crate::error::Error;
+use crate::error::TlvError;
 use crate::utils::init;
 use crate::utils::maybe::Maybe;
 
@@ -78,14 +79,14 @@ pub type Optional<T> = Maybe<T, AsOptional>;
 pub type Nullable<T> = Maybe<T, AsNullable>;
 
 impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         match element.control()?.value_type {
             TLVValueType::Null => Ok(Maybe::none()),
             _ => T::nullable_from_tlv(element).map(Maybe::some),
         }
     }
 
-    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         unsafe {
             init::init_from_closure(move |slot| {
                 let init = match element.control()?.value_type {
@@ -116,7 +117,7 @@ impl<T: ToTLV> ToTLV for Maybe<T, AsNullable> {
 }
 
 impl<'a, T: FromTLV<'a> + 'a> FromTLV<'a> for Maybe<T, AsOptional> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         if element.is_empty() {
             Ok(Self::none())
         } else {
@@ -124,7 +125,7 @@ impl<'a, T: FromTLV<'a> + 'a> FromTLV<'a> for Maybe<T, AsOptional> {
         }
     }
 
-    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         if element.is_empty() {
             Self::init(None)
         } else {
@@ -152,7 +153,7 @@ impl<T: ToTLV> ToTLV for Maybe<T, AsOptional> {
 }
 
 impl<'a, T: FromTLV<'a>> FromTLV<'a> for Option<T> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         if element.is_empty() {
             return Ok(None);
         }

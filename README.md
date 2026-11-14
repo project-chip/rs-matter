@@ -114,7 +114,7 @@ nix run .#fhs -- -c 'cargo xtask itest'   # one-shot
 
 #### Updating
 
-`flake.lock` pins `nixpkgs`; update it with `nix flake update nixpkgs`. The Rust version is set
+`flake.lock` pins `nixpkgs`; update it with `nix flake update`. The Rust version is set
 explicitly at the top of `flake.nix` - edit `rustVersion` there. Commit the result either way.
 
 ## How does it look like?

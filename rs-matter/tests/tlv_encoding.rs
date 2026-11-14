@@ -20,7 +20,7 @@ mod tlv_encoding_tests {
     use rs_matter::bitflags_tlv;
     use rs_matter::error::Error;
     use rs_matter::im::CmdPath;
-    use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+    use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, TlvError, ToTLV};
     use rs_matter::utils::storage::WriteBuf;
 
     #[derive(PartialEq, Debug, ToTLV, FromTLV)]
@@ -55,7 +55,7 @@ mod tlv_encoding_tests {
         Ok(Vec::from(writer.as_slice()))
     }
 
-    fn decode_from_tlv<'a, T: FromTLV<'a>>(data: &'a [u8]) -> Result<T, Error> {
+    fn decode_from_tlv<'a, T: FromTLV<'a>>(data: &'a [u8]) -> Result<T, TlvError> {
         T::from_tlv(&TLVElement::new(data))
     }
 

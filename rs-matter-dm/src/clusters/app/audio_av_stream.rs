@@ -31,7 +31,7 @@ use crate::dm::{
     InvokeContext, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
+use crate::tlv::{TLVBuilderParent, TlvError, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
@@ -394,7 +394,7 @@ impl<'a, H: AudioAvStreamHooks, const NA: usize> AudioAvStreamHandler<'a, H, NA>
     }
 
     #[inline]
-    fn validate<T>(&self, field: Result<T, Error>) -> Result<T, Error> {
+    fn validate<T>(&self, field: Result<T, TlvError>) -> Result<T, Error> {
         field.map_err(|_| ErrorCode::ConstraintError.into())
     }
 }

@@ -37,38 +37,41 @@ impl<'a> WriteReq<'a> {
 
     /// Return `Ok(true)` if this write request should suppress the response.
     pub fn supress_response(&self) -> Result<bool, Error> {
-        self.0
+        Ok(self
+            .0
             .r#struct()?
             .find_ctx(0)?
             .non_empty()
             .map(|t| t.bool())
-            .unwrap_or(Ok(false))
+            .unwrap_or(Ok(false))?)
     }
 
     /// Return `Ok(true)` if this write request is a timed request.
     pub fn timed_request(&self) -> Result<bool, Error> {
-        self.0
+        Ok(self
+            .0
             .r#struct()?
             .find_ctx(1)?
             .non_empty()
             .map(|t| t.bool())
-            .unwrap_or(Ok(false))
+            .unwrap_or(Ok(false))?)
     }
 
     /// Return the attribute data to write in this write request.
     pub fn write_requests(&self) -> Result<TLVArray<'a, AttrData<'_>>, Error> {
-        TLVArray::new(self.0.r#struct()?.find_ctx(2)?)
+        Ok(TLVArray::new(self.0.r#struct()?.find_ctx(2)?)?)
     }
 
     /// Return `Ok(true)` if this write request has more chunks
     /// (i.e. more write requests coming after this one, which are for the same exchange/transaction).
     pub fn more_chunks(&self) -> Result<bool, Error> {
-        self.0
+        Ok(self
+            .0
             .r#struct()?
             .find_ctx(3)?
             .non_empty()
             .map(|t| t.bool())
-            .unwrap_or(Ok(false))
+            .unwrap_or(Ok(false))?)
     }
 }
 

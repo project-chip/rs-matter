@@ -63,8 +63,8 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, TIME_ZONE_KEY};
 use crate::tlv::{
-    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV,
-    Utf8StrBuilder, TLV,
+    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TlvError,
+    ToTLV, Utf8StrBuilder, TLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::futures::select;
@@ -356,7 +356,7 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
 impl<'a, const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> FromTLV<'a>
     for TimeZoneStoreData<TIME_ZONE_MAX, DST_OFFSET_MAX>
 {
-    fn from_tlv(tlv: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(tlv: &TLVElement<'a>) -> Result<Self, TlvError> {
         let tlv = tlv.structure()?;
 
         Ok(Self {
@@ -365,14 +365,14 @@ impl<'a, const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> FromTLV<'a>
         })
     }
 
-    fn init_from_tlv(tlv: TLVElement<'a>) -> impl Init<Self, Error> {
+    fn init_from_tlv(tlv: TLVElement<'a>) -> impl Init<Self, TlvError> {
         into_init(move || {
             let seq = tlv.structure()?;
 
             let init = try_init!(Self {
                 time_zone <- Vec::<TimeZoneOwned, TIME_ZONE_MAX>::init_from_tlv(seq.ctx(0)?),
                 dst_offset <- Vec::<DSTOffsetEntry, DST_OFFSET_MAX>::init_from_tlv(seq.ctx(1)?),
-            }? Error);
+            }? TlvError);
 
             Ok(init)
         })

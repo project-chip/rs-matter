@@ -31,23 +31,21 @@ macro_rules! bitflags_tlv {
         impl<'a> $crate::FromTLV<'a> for $enum_name {
             fn from_tlv(
                 element: &$crate::TLVElement<'a>,
-            ) -> Result<Self, $crate::__private::Error> {
-                Self::from_bits($crate::TLVElement::$type(element)?).ok_or_else(|| {
-                    $crate::__private::Error::from($crate::__private::ErrorCode::InvalidData)
-                })
+            ) -> Result<Self, $crate::__private::TlvError> {
+                Self::from_bits($crate::TLVElement::$type(element)?)
+                    .ok_or_else(|| $crate::__private::TlvErrorCode::InvalidValue.into())
             }
 
             fn nullable_from_tlv(
                 element: &$crate::TLVElement<'a>,
-            ) -> Result<Self, $crate::__private::Error> {
+            ) -> Result<Self, $crate::__private::TlvError> {
                 let value = $crate::TLVElement::$type(element)?;
 
                 if value != $type::MAX {
-                    Self::from_bits(value).ok_or_else(|| {
-                        $crate::__private::Error::from($crate::__private::ErrorCode::InvalidData)
-                    })
+                    Self::from_bits(value)
+                        .ok_or_else(|| $crate::__private::TlvErrorCode::InvalidValue.into())
                 } else {
-                    Err($crate::__private::ErrorCode::ConstraintError.into())
+                    Err($crate::__private::TlvErrorCode::UnexpectedNull.into())
                 }
             }
         }

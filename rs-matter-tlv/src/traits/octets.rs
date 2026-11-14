@@ -34,7 +34,8 @@ use core::fmt::Debug;
 use core::hash::Hash;
 use core::ops::{Deref, DerefMut};
 
-use crate::error::{Error, ErrorCode};
+use crate::error::Error;
+use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::init::{self, init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
@@ -69,7 +70,7 @@ impl Deref for Octets<'_> {
 }
 
 impl<'a> FromTLV<'a> for Octets<'a> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Octets(element.str()?))
     }
 }
@@ -142,21 +143,21 @@ impl<const N: usize> DerefMut for OctetsOwned<N> {
 }
 
 impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self {
             vec: element
                 .str()?
                 .try_into()
-                .map_err(|_| ErrorCode::ConstraintError)?,
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?,
         })
     }
 
-    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         init::Init::chain(OctetsOwned::init().into_fallible(), move |bytes| {
             bytes
                 .vec
                 .extend_from_slice(element.str()?)
-                .map_err(|_| ErrorCode::ConstraintError)?;
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?;
 
             Ok(())
         })
@@ -234,7 +235,7 @@ impl DerefMut for OctetsVec {
 
 #[cfg(feature = "alloc")]
 impl<'a> FromTLV<'a> for OctetsVec {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self {
             vec: element.str()?.into(),
         })

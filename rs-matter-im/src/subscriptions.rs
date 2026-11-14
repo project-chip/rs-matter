@@ -732,7 +732,7 @@ impl<const N: usize> Subscriptions<N> {
             let key = PERSISTENT_SUBSCRIPTIONS_START + slot as u16;
 
             let record = match load_logged(&mut kv, key, buf, |data| {
-                PersistedSubscription::from_tlv(&TLVElement::new(data))
+                Ok(PersistedSubscription::from_tlv(&TLVElement::new(data))?)
             }) {
                 Ok(Some(record)) => record,
                 // The range is contiguous: the first empty slot ends the set.

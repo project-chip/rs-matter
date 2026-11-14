@@ -20,7 +20,7 @@ use crate::utils::init;
 
 use super::{
     EitherIter, TLVElement, TLVSequenceIter, TLVSequenceTLVIter, TLVTag, TLVValue, TLVValueType,
-    TLVWrite, TLV,
+    TLVWrite, TlvError, TLV,
 };
 
 pub use builder::*;
@@ -47,11 +47,11 @@ mod vec;
 /// a TLV-encoded byte slice.
 pub trait FromTLV<'a>: Sized + 'a {
     /// Deserialize the type from a TLV-encoded element.
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error>;
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError>;
 
     /// Generate an in-place initializer for the type that initializes
     /// the type from a TLV-encoded element.
-    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         unsafe {
             init::init_from_closure(move |slot| {
                 core::ptr::write(slot, Self::from_tlv(&element)?);
@@ -66,7 +66,7 @@ pub trait FromTLV<'a>: Sized + 'a {
     /// Called when the deserialized value will be placed in `Nullable`
     /// so as to check whether the value falls in the nullable range of the type, which
     /// might be shorter than the non-nullable range of the type.
-    fn nullable_from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn nullable_from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Self::from_tlv(element)
     }
 
@@ -76,7 +76,7 @@ pub trait FromTLV<'a>: Sized + 'a {
     /// Called when the deserialized value will be placed in `Nullable`
     /// so as to check whether the value falls in the nullable range of the type, which
     /// might be shorter than the non-nullable range of the type.
-    fn init_nullable_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_nullable_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         unsafe {
             init::init_from_closure(move |slot| {
                 core::ptr::write(slot, Self::nullable_from_tlv(&element)?);
@@ -139,7 +139,7 @@ where
 }
 
 impl<'a> FromTLV<'a> for TLVElement<'a> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(element.clone())
     }
 }
@@ -200,7 +200,7 @@ impl<'a> Iterator for TLVElementTLVIter<'a> {
                         *self = TLVElementTLVIter::Finished;
                     }
 
-                    Some(value)
+                    Some(value.map_err(Into::into))
                 }
             }
             TLVElementTLVIter::Seq(mut iter) => {
@@ -217,7 +217,7 @@ impl<'a> Iterator for TLVElementTLVIter<'a> {
 }
 
 impl<'a> FromTLV<'a> for TLVValue<'a> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         element.value()
     }
 }

@@ -921,7 +921,7 @@ where
                 Some(_) => Ok(()),
             }
         });
-        status.map_err(Error::from)?;
+        status?;
 
         self.hooks.deallocate_video(id).await?;
 
@@ -946,7 +946,10 @@ where
             return Err(ErrorCode::InvalidInState.into());
         }
         let buffer = build_stream_priorities(
-            request.stream_priorities()?.iter(),
+            request
+                .stream_priorities()?
+                .iter()
+                .map(|req| req.map_err(Into::into)),
             self.config.supported_stream_usages,
         )?;
 

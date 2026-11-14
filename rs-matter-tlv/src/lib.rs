@@ -32,11 +32,8 @@ use core::marker::PhantomData;
 use num::FromPrimitive;
 use num_traits::ToBytes;
 
-use crate::error::{Error, ErrorCode};
-
 // The dependencies, under the names the code uses for them
 use rs_matter_utils as utils;
-use rs_matter_utils::error;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -50,10 +47,13 @@ pub use rs_matter_macros::{FromTLV, ToTLV};
 /// `bitflags_tlv!` uses, so that it only needs the path to this crate.
 #[doc(hidden)]
 pub mod __private {
-    pub use rs_matter_utils::error::{Error, ErrorCode};
+    pub use crate::error::{Error, ErrorCode, TlvError, TlvErrorCode};
     pub use rs_matter_utils::init::{into_init, try_init, Init};
 }
 
+pub mod error;
+
+pub use error::*;
 pub use read::*;
 pub use toiter::*;
 pub use traits::*;
@@ -217,13 +217,13 @@ impl TLVValueType {
         )
     }
 
-    pub fn container_value<'a>(&self) -> Result<TLVValue<'a>, Error> {
+    pub fn container_value<'a>(&self) -> Result<TLVValue<'a>, TlvError> {
         Ok(match self {
             Self::Struct => TLVValue::Struct,
             Self::Array => TLVValue::Array,
             Self::List => TLVValue::List,
             Self::EndCnt => TLVValue::EndCnt,
-            _ => Err(ErrorCode::TLVTypeMismatch)?,
+            _ => Err(TlvErrorCode::TypeMismatch)?,
         })
     }
 }
@@ -287,11 +287,11 @@ impl TLVControl {
     ///
     /// The function will return an error if the provided control byte is invalid.
     #[inline(always)]
-    pub fn parse(control: u8) -> Result<Self, Error> {
+    pub fn parse(control: u8) -> Result<Self, TlvError> {
         let tag_type = FromPrimitive::from_u8((control & Self::TAG_MASK) >> Self::TAG_SHIFT_BITS)
-            .ok_or(ErrorCode::TLVTypeMismatch)?;
+            .ok_or(TlvErrorCode::Malformed)?;
         let value_type =
-            FromPrimitive::from_u8(control & Self::TYPE_MASK).ok_or(ErrorCode::TLVTypeMismatch)?;
+            FromPrimitive::from_u8(control & Self::TYPE_MASK).ok_or(TlvErrorCode::Malformed)?;
 
         Ok(Self::new(tag_type, value_type))
     }
@@ -316,9 +316,9 @@ impl TLVControl {
 
     /// Return an error if the control byte does not represent a container start.
     #[inline(always)]
-    pub fn confirm_container_end(&self) -> Result<(), Error> {
+    pub fn confirm_container_end(&self) -> Result<(), TlvError> {
         if !self.is_container_end() {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(TlvErrorCode::Malformed.into());
         }
 
         Ok(())
@@ -1158,7 +1158,7 @@ pub(crate) fn pad(ident: usize, f: &mut core::fmt::Formatter<'_>) -> core::fmt::
 }
 
 /// For backwards compatibility
-pub fn get_root_node_struct(data: &[u8]) -> Result<TLVElement<'_>, Error> {
+pub fn get_root_node_struct(data: &[u8]) -> Result<TLVElement<'_>, TlvError> {
     // TODO: Check for trailing data
     let element = TLVElement::new(data);
 

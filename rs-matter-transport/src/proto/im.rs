@@ -353,7 +353,7 @@ impl<'a> ReadRespChunk<'a> {
     pub fn response(&self) -> Result<ReportDataResp<'_>, Error> {
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        ReportDataResp::from_tlv(&element)
+        Ok(ReportDataResp::from_tlv(&element)?)
     }
 
     /// ACK the current chunk; if `more_chunks=true`, fetch + parse
@@ -552,7 +552,7 @@ impl<'a> WriteRespHandle<'a> {
     /// this handle is dropped.
     pub fn response(&self) -> Result<WriteResp<'_>, Error> {
         let rx = self.exchange.rx()?;
-        WriteResp::from_tlv(&TLVElement::new(rx.payload()))
+        Ok(WriteResp::from_tlv(&TLVElement::new(rx.payload()))?)
     }
 }
 
@@ -825,7 +825,7 @@ impl<'a> InvokeRespChunk<'a> {
         }
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        InvokeResp::from_tlv(&element).map(Some)
+        Ok(Some(InvokeResp::from_tlv(&element)?))
     }
 
     /// ACK the current chunk and, if the server signalled
@@ -1073,7 +1073,7 @@ impl<'a> SubscribePrimingChunk<'a> {
     pub fn response(&self) -> Result<ReportDataResp<'_>, Error> {
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        ReportDataResp::from_tlv(&element)
+        Ok(ReportDataResp::from_tlv(&element)?)
     }
 
     /// ACK the current priming chunk and advance to the next stage:

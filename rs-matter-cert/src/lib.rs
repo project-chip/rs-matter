@@ -34,7 +34,7 @@ use num_derive::FromPrimitive;
 
 use crate::crypto::{Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
+use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, TlvError, TlvErrorCode, ToTLV};
 use crate::utils::epoch::UtcTime;
 use crate::utils::epoch::MATTER_CERT_DOESNT_EXPIRE;
 use crate::utils::iter::TryFindIterator;
@@ -174,7 +174,7 @@ enum Extension<'a> {
 
 impl<'a> Extension<'a> {
     fn encode_all(
-        iter: impl Iterator<Item = Result<Self, Error>> + 'a,
+        iter: impl Iterator<Item = Result<Self, TlvError>> + 'a,
         w: &mut dyn CertConsumer,
     ) -> Result<(), Error> {
         w.start_ctx("X509v3 extensions:", 3)?;
@@ -277,7 +277,7 @@ impl<'a> Extension<'a> {
     }
 
     fn encode_extended_key_usage(
-        list: impl Iterator<Item = Result<u8, Error>>,
+        list: impl Iterator<Item = Result<u8, TlvError>>,
         w: &mut dyn CertConsumer,
     ) -> Result<(), Error> {
         const OID_SERVER_AUTH: [u8; 8] = [0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
@@ -406,10 +406,10 @@ enum DNValue<'a> {
 struct DN<'a>(TLVElement<'a>);
 
 impl<'a> DN<'a> {
-    pub fn tag(&self) -> Result<DNTag, Error> {
-        let ctx = self.0.try_ctx()?.ok_or(ErrorCode::Invalid)? & 0x7f;
+    pub fn tag(&self) -> Result<DNTag, TlvError> {
+        let ctx = self.0.try_ctx()?.ok_or(TlvErrorCode::TypeMismatch)? & 0x7f;
 
-        Ok(DNTag::from_u8(ctx).ok_or(ErrorCode::Invalid)?)
+        Ok(DNTag::from_u8(ctx).ok_or(TlvErrorCode::InvalidValue)?)
     }
 
     pub fn is_printable(&self) -> Result<bool, Error> {
@@ -419,7 +419,7 @@ impl<'a> DN<'a> {
     }
 
     fn uint(&self) -> Result<u64, Error> {
-        self.0.u64()
+        Ok(self.0.u64()?)
     }
 
     fn value(&self) -> Result<DNValue<'a>, Error> {
@@ -430,12 +430,12 @@ impl<'a> DN<'a> {
                 Ok(DNValue::Utf8(value))
             }
         } else {
-            self.0.u64().map(DNValue::Uint)
+            Ok(self.0.u64().map(DNValue::Uint)?)
         }
     }
 
     fn encode_all(
-        values: impl Iterator<Item = Result<Self, Error>> + 'a,
+        values: impl Iterator<Item = Result<Self, TlvError>> + 'a,
         tag: &str,
         w: &mut dyn CertConsumer,
     ) -> Result<(), Error> {
@@ -606,11 +606,11 @@ impl<'a> CertRef<'a> {
     }
 
     fn serial_no(&self) -> Result<&[u8], Error> {
-        self.0.structure()?.find_ctx(1)?.str()
+        Ok(self.0.structure()?.find_ctx(1)?.str()?)
     }
 
     fn sign_algo(&self) -> Result<u8, Error> {
-        self.0.structure()?.find_ctx(2)?.u8()
+        Ok(self.0.structure()?.find_ctx(2)?.u8()?)
     }
 
     fn issuer(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
@@ -618,11 +618,11 @@ impl<'a> CertRef<'a> {
     }
 
     fn not_before(&self) -> Result<u32, Error> {
-        self.0.structure()?.find_ctx(4)?.u32()
+        Ok(self.0.structure()?.find_ctx(4)?.u32()?)
     }
 
     fn not_after(&self) -> Result<u32, Error> {
-        self.0.structure()?.find_ctx(5)?.u32()
+        Ok(self.0.structure()?.find_ctx(5)?.u32()?)
     }
 
     fn subject(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
@@ -630,15 +630,15 @@ impl<'a> CertRef<'a> {
     }
 
     fn pubkey_algo(&self) -> Result<u8, Error> {
-        self.0.structure()?.find_ctx(7)?.u8()
+        Ok(self.0.structure()?.find_ctx(7)?.u8()?)
     }
 
     fn ec_curve_id(&self) -> Result<u8, Error> {
-        self.0.structure()?.find_ctx(8)?.u8()
+        Ok(self.0.structure()?.find_ctx(8)?.u8()?)
     }
 
     pub fn pubkey(&self) -> Result<&[u8], Error> {
-        self.0.structure()?.find_ctx(9)?.str()
+        Ok(self.0.structure()?.find_ctx(9)?.str()?)
     }
 
     fn extensions(&self) -> Result<TLVList<'a, Extension<'a>>, Error> {
@@ -646,7 +646,7 @@ impl<'a> CertRef<'a> {
     }
 
     fn signature(&self) -> Result<&[u8], Error> {
-        self.0.structure()?.find_ctx(11)?.str()
+        Ok(self.0.structure()?.find_ctx(11)?.str()?)
     }
 
     pub fn get_node_id(&self) -> Result<u64, Error> {

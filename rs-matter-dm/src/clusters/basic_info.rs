@@ -448,7 +448,7 @@ fn area_type_from_value(value: u8) -> Result<AreaTypeTag, Error> {
     let mut wb = WriteBuf::new(&mut buf);
     wb.u8(&TLVTag::Anonymous, value)?;
 
-    AreaTypeTag::from_tlv(&TLVElement::new(wb.as_slice()))
+    Ok(AreaTypeTag::from_tlv(&TLVElement::new(wb.as_slice()))?)
 }
 
 /// Convert a product finish of the node to the cluster's one

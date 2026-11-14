@@ -369,7 +369,7 @@ where
                 return None;
             }
             let endpoint = data.path.endpoint?;
-            Some((endpoint, T::from_tlv(&data.data)))
+            Some((endpoint, T::from_tlv(&data.data).map_err(Into::into)))
         }
         AttrResp::Status(s) => {
             if s.path.cluster != Some(cluster) || s.path.attr != Some(attr) {

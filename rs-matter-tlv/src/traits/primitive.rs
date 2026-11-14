@@ -18,12 +18,13 @@
 //! TLV support for Rust primitive types.
 
 use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 
 macro_rules! fromtlv_for {
     ($($t:ident)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
-                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     element.$t()
                 }
             }
@@ -35,11 +36,11 @@ macro_rules! fromtlv_for_num {
     ($($t:ident)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
-                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     element.$t()
                 }
 
-                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     let value = element.$t()?;
 
                     let in_range = if $t::MIN == 0 {
@@ -51,7 +52,7 @@ macro_rules! fromtlv_for_num {
                     if in_range {
                         Ok(value)
                     } else {
-                        Err(ErrorCode::ConstraintError.into())
+                        Err(TlvErrorCode::UnexpectedNull.into())
                     }
                 }
             }
@@ -63,11 +64,11 @@ macro_rules! fromtlv_for_nonzero {
     ($($t:ident:$n:ty)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $n {
-                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
-                    <$n>::new(element.$t()?).ok_or_else(|| ErrorCode::Invalid.into())
+                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
+                    <$n>::new(element.$t()?).ok_or_else(|| TlvErrorCode::InvalidValue.into())
                 }
 
-                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     let value = element.$t()?;
 
                     let in_range = if $t::MIN == 0 {
@@ -77,9 +78,9 @@ macro_rules! fromtlv_for_nonzero {
                     };
 
                     if in_range {
-                        <$n>::new(value).ok_or_else(|| ErrorCode::Invalid.into())
+                        <$n>::new(value).ok_or_else(|| TlvErrorCode::InvalidValue.into())
                     } else {
-                        Err(ErrorCode::ConstraintError.into())
+                        Err(TlvErrorCode::UnexpectedNull.into())
                     }
                 }
             }

@@ -32,7 +32,9 @@ use core::marker::PhantomData;
 use crate::error::Error;
 use crate::utils::init;
 
-use super::{EitherIter, FromTLV, TLVElement, TLVSequenceIter, TLVTag, TLVWrite, ToTLV, TLV};
+use super::{
+    EitherIter, FromTLV, TLVElement, TLVSequenceIter, TLVTag, TLVWrite, TlvError, ToTLV, TLV,
+};
 
 /// A type-state that indicates that the container can be any type of container (array, list or struct).
 pub type AnyContainer = ();
@@ -114,7 +116,7 @@ where
     T: FromTLV<'a>,
 {
     /// Creates a new `TLVContainer` from a TLV element that is expected to be of type array.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, Error> {
+    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
         if !element.is_empty() {
             element.array()?;
         }
@@ -155,7 +157,7 @@ impl<'a, T, C> IntoIterator for TLVContainer<'a, T, C>
 where
     T: FromTLV<'a>,
 {
-    type Item = Result<T, Error>;
+    type Item = Result<T, TlvError>;
     type IntoIter = TLVContainerIter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -167,7 +169,7 @@ impl<'a, T, C> IntoIterator for &TLVContainer<'a, T, C>
 where
     T: FromTLV<'a>,
 {
-    type Item = Result<T, Error>;
+    type Item = Result<T, TlvError>;
     type IntoIter = TLVContainerIter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -225,7 +227,7 @@ where
     T: FromTLV<'a>,
     C: 'a,
 {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self::new_unchecked(element.clone()))
     }
 }
@@ -259,13 +261,13 @@ where
         }
     }
 
-    pub fn try_next(&mut self) -> Option<Result<T, Error>> {
+    pub fn try_next(&mut self) -> Option<Result<T, TlvError>> {
         let tlv = self.iter.next()?;
 
         Some(tlv.and_then(|tlv| T::from_tlv(&tlv)))
     }
 
-    pub fn try_next_init(&mut self) -> Option<Result<impl init::Init<T, Error> + 'a, Error>> {
+    pub fn try_next_init(&mut self) -> Option<Result<impl init::Init<T, TlvError> + 'a, TlvError>> {
         let tlv = self.iter.next()?;
 
         Some(tlv.map(|tlv| T::init_from_tlv(tlv)))
@@ -276,7 +278,7 @@ impl<'a, T> Iterator for TLVContainerIter<'a, T>
 where
     T: FromTLV<'a>,
 {
-    type Item = Result<T, Error>;
+    type Item = Result<T, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.try_next()
@@ -324,7 +326,7 @@ impl<'a, T> FromTLV<'a> for TLVArrayOrSlice<'a, T>
 where
     T: FromTLV<'a>,
 {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self::new_array(TLVArray::new(element.clone())?))
     }
 }
@@ -359,7 +361,7 @@ impl<'a, T> Iterator for TLVArrayOrSliceIter<'a, T>
 where
     T: FromTLV<'a> + Clone,
 {
-    type Item = Result<T, Error>;
+    type Item = Result<T, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {

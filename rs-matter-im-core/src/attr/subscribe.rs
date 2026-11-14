@@ -37,42 +37,42 @@ impl<'a> SubscribeReq<'a> {
 
     /// Return `Ok(true)` if this subscription request should keep existing subscriptions.
     pub fn keep_subs(&self) -> Result<bool, Error> {
-        self.0.r#struct()?.find_ctx(0)?.bool()
+        Ok(self.0.r#struct()?.find_ctx(0)?.bool()?)
     }
 
     /// Return the minimum interval floor for this subscription request.
     pub fn min_int_floor(&self) -> Result<u16, Error> {
-        self.0.r#struct()?.find_ctx(1)?.u16()
+        Ok(self.0.r#struct()?.find_ctx(1)?.u16()?)
     }
 
     /// Return the maximum interval ceiling for this subscription request.
     pub fn max_int_ceil(&self) -> Result<u16, Error> {
-        self.0.r#struct()?.find_ctx(2)?.u16()
+        Ok(self.0.r#struct()?.find_ctx(2)?.u16()?)
     }
 
     /// Return the attribute requests in this subscription request, if any.
     pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(3)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(3)?)?)
     }
 
     /// Return the event requests in this subscription request, if any.
     pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)?)
     }
 
     /// Return the event filters in this subscription request, if any.
     pub fn event_filters(&self) -> Result<Option<TLVArray<'a, EventFilter>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(5)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(5)?)?)
     }
 
     /// Return `Ok(true)` if this subscription request is fabric-filtered.
     pub fn fabric_filtered(&self) -> Result<bool, Error> {
-        self.0.r#struct()?.find_ctx(7)?.bool()
+        Ok(self.0.r#struct()?.find_ctx(7)?.bool()?)
     }
 
     /// Return the data version filters in this subscription request, if any.
     pub fn dataver_filters(&self) -> Result<Option<TLVArray<'a, DataVersionFilter>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)
+        Ok(Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)?)
     }
 }
 
