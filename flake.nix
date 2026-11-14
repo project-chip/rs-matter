@@ -26,7 +26,7 @@
         #   e.g. rustVersion = "2026-08-01".
         # Available versions: https://rust-lang.github.io/rustup-components-history/
         rustChannel = "stable";
-        rustVersion = "1.99.1";
+        rustVersion = "1.100.0";
 
         pkgs = import nixpkgs {
           inherit system;
