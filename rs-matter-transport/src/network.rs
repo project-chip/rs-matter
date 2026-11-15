@@ -28,6 +28,7 @@ use crate::utils::sync::MaybeSend;
 
 pub mod btp;
 pub mod mdns;
+#[path = "network/tcp/std.rs"]
 pub mod tcp;
 pub mod udp;
 
