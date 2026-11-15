@@ -310,6 +310,8 @@ pub enum ErrorCode {
     NocLabelConflict,
     NocInvalidFabricIndex,
     NocInvalidAdminSubject,
+    /// The operation was cancelled by its caller.
+    Cancelled,
     Failure,
     // Certification Declaration errors
     CdInvalidFormat,

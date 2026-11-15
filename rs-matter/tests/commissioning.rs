@@ -684,7 +684,7 @@ async fn run_commissioner<C: Crypto>(
     // Phase 1 — establishes PASE (unless the caller did) then ArmFailSafe → ... → AddNOC.
     let result = if let Some(pase_session_id) = pase_session_id {
         let result = commissioner
-            .commission_over_pase(pase_session_id, &opts, DEVICE_NODE_ID, VALID_FOREVER)
+            .commission_over_pase(pase_session_id, &opts, DEVICE_NODE_ID, VALID_FOREVER, &())
             .await?;
         assert_eq!(result.pase_session_id, pase_session_id);
         result
@@ -696,6 +696,7 @@ async fn run_commissioner<C: Crypto>(
                 &opts,
                 DEVICE_NODE_ID,
                 VALID_FOREVER,
+                &(),
             )
             .await?
     };
@@ -737,7 +738,12 @@ async fn run_commissioner<C: Crypto>(
     // against.
     let mdns = stub_mdns_resolver_txt(matter, &mdns_table, if use_tcp { "6" } else { "" });
 
-    match select(pin!(commissioner.complete_via_case(&result)), pin!(mdns)).await {
+    match select(
+        pin!(commissioner.complete_via_case(&result, &())),
+        pin!(mdns),
+    )
+    .await
+    {
         Either::First(r) => r?,
         Either::Second(_) => unreachable!("the stub resolver never returns"),
     }

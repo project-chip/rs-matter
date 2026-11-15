@@ -66,6 +66,7 @@
 // the test modules are then excluded from the coverage report
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
+use core::future::{pending, Future};
 use core::num::NonZeroU8;
 
 use crate::cert::gen::Validity;
@@ -94,6 +95,8 @@ use rs_matter_node::Matter;
 use rs_matter_sc::ExchangeInitiator as _;
 use rs_matter_tlv as tlv;
 use rs_matter_utils::error;
+use rs_matter_utils::futures::{select, Either};
+use rs_matter_utils::sync::MaybeSend;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -174,6 +177,51 @@ pub struct CommissionResult {
     /// opened with [`Exchange::initiate_for_session`].
     pub pase_session_id: u32,
 }
+
+/// A step of a commissioning, as [`CommissionHooks::step`] reports it.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CommissionStep {
+    /// Establishing the PASE session ([`Commissioner::commission`] only).
+    Pase,
+    /// Arming the device's fail-safe.
+    ArmFailSafe,
+    /// Verifying the device's attestation.
+    DeviceAttestation,
+    /// Asking the device for a CSR, and signing its operational certificate.
+    CsrRequest,
+    /// Installing our root certificate on the device.
+    AddTrustedRootCertificate,
+    /// Installing the device's operational certificate.
+    AddNoc,
+    /// Finding the device on its operational network and establishing a CASE
+    /// session with it. Reported again for each attempt.
+    FindOperational,
+    /// Telling the device that commissioning is complete. From here on, a
+    /// cancel has no effect.
+    CommissioningComplete,
+    /// Rolling the device back after a cancel or a failure, by disarming its
+    /// fail-safe.
+    Cleanup,
+}
+
+/// What a caller of the [`Commissioner`] learns of a commissioning as it goes,
+/// and how it cancels it. `()` reports nothing and never cancels.
+pub trait CommissionHooks {
+    /// Called as the commissioning starts `step`.
+    fn step(&self, _step: CommissionStep) {}
+
+    /// Resolves once the caller wants the commissioning cancelled, at once if
+    /// it already does. It may be awaited several times in one commissioning.
+    ///
+    /// A cancel rolls the device back ([`CommissionStep::Cleanup`]), and the
+    /// commissioning returns [`ErrorCode::Cancelled`].
+    fn cancelled(&self) -> impl Future<Output = ()> + MaybeSend {
+        pending()
+    }
+}
+
+impl CommissionHooks for () {}
 
 /// Stateful commissioner.
 ///
@@ -275,18 +323,24 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// `passcode`, then drive `ArmFailSafe` through `AddNOC` over it.
     ///
     /// See [`Self::commission_over_pase`].
-    pub async fn commission(
+    pub async fn commission<H: CommissionHooks>(
         &mut self,
         peer_addr: Address,
         passcode: u32,
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
+        hooks: &H,
     ) -> Result<CommissionResult, Error> {
-        let pase_session_id =
-            Exchange::establish_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
+        hooks.step(CommissionStep::Pase);
 
-        self.commission_over_pase(pase_session_id, opts, device_node_id, validity)
+        let pase_session_id = cancellable(
+            Exchange::establish_pase(self.matter, &self.crypto, peer_addr, passcode),
+            hooks,
+        )
+        .await?;
+
+        self.commission_over_pase(pase_session_id, opts, device_node_id, validity, hooks)
             .await
     }
 
@@ -299,6 +353,9 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// before phase 2 (e.g. network commissioning), and phase 2 expires it when
     /// done; a caller not going on to phase 2 ends it with [`Self::end_pase`].
     /// On failure it is expired on return.
+    ///
+    /// `hooks` follows the steps, and can cancel the commissioning: the device is
+    /// then rolled back too.
     ///
     /// `device_node_id` is the NodeID the caller wishes to assign to
     /// the device on the controller's fabric. `validity` is the NOC's
@@ -313,12 +370,13 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// ([`Self::complete_via_case`]) finalises commissioning over
     /// CASE; if the caller doesn't run it before the fail-safe expires
     /// the device rolls back.
-    pub async fn commission_over_pase(
+    pub async fn commission_over_pase<H: CommissionHooks>(
         &mut self,
         pase_session_id: u32,
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
+        hooks: &H,
     ) -> Result<CommissionResult, Error> {
         // A CASE session to the NodeID we are about to assign can only be left
         // over from a previous holder of it (NodeIDs get reused, e.g. after a
@@ -333,14 +391,17 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         // Notify that a session was removed
         self.matter.transport().notify_session_removed();
 
-        let result = self
-            .add_to_fabric(pase_session_id, opts, device_node_id, validity)
-            .await;
+        let result = cancellable(
+            self.add_to_fabric(pase_session_id, opts, device_node_id, validity, hooks),
+            hooks,
+        )
+        .await;
 
         if result.is_err() {
             // Roll the device back at once, as CHIP does, so it can be
             // commissioned again right away: some steps can only be taken once
             // per armed fail-safe. Best-effort, as the device may be gone.
+            hooks.step(CommissionStep::Cleanup);
             let _ = self.disarm_fail_safe(pase_session_id).await;
             self.end_pase(pase_session_id);
         }
@@ -379,8 +440,24 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// The sequence is attempted up to [`Self::with_case_attempts`] times: it
     /// runs immediately after the device was told to join its network, so losing
     /// the first race against the device coming online is routine.
-    pub async fn complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
-        let result = self.try_complete_via_case(phase1).await;
+    ///
+    /// `hooks` follows the steps, and can cancel the commissioning until
+    /// [`CommissionStep::CommissioningComplete`]: the device is then rolled back.
+    /// After a failure, as in CHIP, its fail-safe is left to expire instead.
+    pub async fn complete_via_case<H: CommissionHooks>(
+        &mut self,
+        phase1: &CommissionResult,
+        hooks: &H,
+    ) -> Result<(), Error> {
+        let result = self.try_complete_via_case(phase1, hooks).await;
+
+        if result
+            .as_ref()
+            .is_err_and(|err| err.code() == ErrorCode::Cancelled)
+        {
+            hooks.step(CommissionStep::Cleanup);
+            let _ = self.disarm_fail_safe(phase1.pase_session_id).await;
+        }
 
         // As CHIP does, the PASE session lasts until commissioning is over.
         self.end_pase(phase1.pase_session_id);
@@ -389,14 +466,18 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     }
 
     /// [`Self::complete_via_case`], short of ending the PASE session.
-    async fn try_complete_via_case(&mut self, phase1: &CommissionResult) -> Result<(), Error> {
+    async fn try_complete_via_case<H: CommissionHooks>(
+        &mut self,
+        phase1: &CommissionResult,
+        hooks: &H,
+    ) -> Result<(), Error> {
         let fab_idx = self.fab_idx;
 
         let mut last_err = None;
 
         for attempt in 0..self.case_attempts.max(1) {
             match self
-                .commissioning_complete(fab_idx, phase1.device_node_id)
+                .commissioning_complete(fab_idx, phase1.device_node_id, hooks)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -416,17 +497,20 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     }
 
     /// Phase 1 of [`Self::commission_over_pase`].
-    async fn add_to_fabric(
+    async fn add_to_fabric<H: CommissionHooks>(
         &mut self,
         pase_session_id: u32,
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
+        hooks: &H,
     ) -> Result<CommissionResult, Error> {
+        hooks.step(CommissionStep::ArmFailSafe);
         self.arm_fail_safe(pase_session_id, opts.fail_safe_secs)
             .await?;
 
         // Device Attestation — structural hook. See [`CommissionOptions::allow_test_attestation`].
+        hooks.step(CommissionStep::DeviceAttestation);
         self.verify_device_attestation(opts).await?;
 
         // CSRRequest: random 32B nonce, then validate the device's echo
@@ -448,6 +532,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         // Sign the device NOC. The returned slice lives in
         // `noc_generator.buf` — independent of `buf`, so we can use
         // both side-by-side below.
+        hooks.step(CommissionStep::CsrRequest);
         let noc = Self::csr_request(matter, crypto, pase_session_id, &csr_nonce, |csr_der| {
             noc_generator.generate(crypto, csr_der, device_node_id, &[], validity)
         })
@@ -468,6 +553,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
             buf[..rcac.len()].copy_from_slice(rcac);
             Ok::<_, Error>(rcac.len())
         })?;
+        hooks.step(CommissionStep::AddTrustedRootCertificate);
         Self::add_trusted_root_certificate(matter, crypto, pase_session_id, &buf[..rcac_len])
             .await?;
 
@@ -490,6 +576,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         // AddNOC. `&buf[..icac_len]` is empty for RCAC-direct fabrics
         // (the codegen builder skips the field entirely); non-empty ⇒
         // the full `[RCAC, ICAC, NOC]` chain is shipped.
+        hooks.step(CommissionStep::AddNoc);
         let fabric_index = Self::add_noc(
             matter,
             crypto,
@@ -687,19 +774,29 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
             )
     }
 
-    pub(crate) async fn commissioning_complete(
+    pub(crate) async fn commissioning_complete<H: CommissionHooks>(
         &self,
         fab_idx: NonZeroU8,
         peer_node_id: NodeId,
+        hooks: &H,
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate_with_transport(
-            self.matter,
-            &self.crypto,
-            fab_idx,
-            peer_node_id,
-            self.transport,
+        hooks.step(CommissionStep::FindOperational);
+
+        let exchange = cancellable(
+            Exchange::initiate_with_transport(
+                self.matter,
+                &self.crypto,
+                fab_idx,
+                peer_node_id,
+                self.transport,
+            ),
+            hooks,
         )
         .await?;
+
+        // Not cancellable any more: the device may commit the commissioning as
+        // soon as it gets the request.
+        hooks.step(CommissionStep::CommissioningComplete);
 
         let handle = exchange
             .general_commissioning()
@@ -728,5 +825,17 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         }
 
         Err(ErrorCode::Failure.into())
+    }
+}
+
+/// `fut`, unless `hooks` cancels it first.
+async fn cancellable<T, F, H>(fut: F, hooks: &H) -> Result<T, Error>
+where
+    F: Future<Output = Result<T, Error>>,
+    H: CommissionHooks,
+{
+    match select(fut, hooks.cancelled()).await {
+        Either::First(result) => result,
+        Either::Second(()) => Err(ErrorCode::Cancelled.into()),
     }
 }

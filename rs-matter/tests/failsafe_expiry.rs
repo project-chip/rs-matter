@@ -28,11 +28,14 @@
 //!   on it fails);
 //! - re-arming the fail-safe over a CASE session before it expires restarts
 //!   the timer: the fabric survives the original deadline and is only rolled
-//!   back once the new deadline passes.
+//!   back once the new deadline passes;
+//! - cancelling the commissioning rolls the device back at once, and ends the
+//!   PASE session;
+//! - the commissioner reports its steps as it goes.
 
 #![cfg(all(feature = "std", feature = "async-io", target_os = "linux"))]
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::pin::pin;
 use std::net::UdpSocket;
@@ -57,12 +60,12 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::ROOT_ENDPOINT_ID;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, Node};
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
-use rs_matter::onboard::{CommissionOptions, Commissioner};
+use rs_matter::onboard::{CommissionHooks, CommissionOptions, CommissionStep, Commissioner};
 use rs_matter::persist::FABRIC_KEYS_START;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
@@ -70,6 +73,8 @@ use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::{Exchange, MatterBuffers};
 use rs_matter::transport::network::{Address, NetworkSend, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::utils::futures::{select, select3, Coalesce, Either};
+use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::utils::sync::Signal;
 use rs_matter::utils::timers::{Duration, Instant, Timer};
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
@@ -94,6 +99,9 @@ const ADMIN_VENDOR_ID: u16 = 0xFFF1;
 const FAILSAFE_SECS: u16 = 3;
 /// `ExpiryLengthSeconds` of the re-arm over CASE.
 const REARM_SECS: u16 = 6;
+/// `ExpiryLengthSeconds` when the commissioning is cancelled: too long to expire
+/// during the test, so that only the cancel can roll the device back.
+const CANCEL_FAILSAFE_SECS: u16 = 120;
 /// How long the device may take to notice an expired fail-safe: its
 /// Interaction Model polls the timer once a second.
 const CHECK_LAG_SECS: u64 = 1;
@@ -142,6 +150,8 @@ enum Scenario {
     Expire,
     /// Re-arm the fail-safe over CASE before it expires, then let it expire.
     RearmViaCase,
+    /// Cancel the commissioning as phase 2 starts.
+    Cancel,
 }
 
 /// A UDP sender which counts the packets the device puts on the wire.
@@ -167,6 +177,45 @@ struct Device<'a> {
     sent: &'a Cell<u32>,
 }
 
+/// Records the steps of a commissioning, and cancels it as it reaches
+/// `cancel_at`.
+struct Hooks {
+    cancel_at: Option<CommissionStep>,
+    steps: Mutex<RefCell<Vec<CommissionStep>>>,
+    cancel: Signal<bool>,
+}
+
+impl Hooks {
+    fn new(cancel_at: Option<CommissionStep>) -> Self {
+        Self {
+            cancel_at,
+            steps: Mutex::new(RefCell::new(Vec::new())),
+            cancel: Signal::new(false),
+        }
+    }
+
+    fn steps(&self) -> Vec<CommissionStep> {
+        self.steps.lock(|steps| steps.borrow().clone())
+    }
+}
+
+impl CommissionHooks for Hooks {
+    fn step(&self, step: CommissionStep) {
+        self.steps.lock(|steps| steps.borrow_mut().push(step));
+
+        if self.cancel_at == Some(step) {
+            self.cancel.modify(|cancel| {
+                *cancel = true;
+                (true, ())
+            });
+        }
+    }
+
+    async fn cancelled(&self) {
+        self.cancel.wait(|cancel| cancel.then_some(())).await
+    }
+}
+
 /// A fail-safe armed for `FAILSAFE_SECS` and never completed is rolled
 /// back once it expires.
 #[test]
@@ -178,6 +227,12 @@ fn test_failsafe_expiry_rolls_back_pending_fabric() {
 #[test]
 fn test_failsafe_rearm_via_case_restarts_timer() {
     run(Scenario::RearmViaCase);
+}
+
+/// Cancelling the commissioning rolls the device back at once.
+#[test]
+fn test_cancel_rolls_back_at_once() {
+    run(Scenario::Cancel);
 }
 
 fn run(scenario: Scenario) {
@@ -338,14 +393,22 @@ async fn controller_flow<C: Crypto>(
         &mut commissioner_buf,
     );
 
+    let fail_safe_secs = match scenario {
+        Scenario::Cancel => CANCEL_FAILSAFE_SECS,
+        _ => FAILSAFE_SECS,
+    };
+
     let opts = CommissionOptions {
-        fail_safe_secs: FAILSAFE_SECS,
+        fail_safe_secs,
         allow_test_attestation: true,
     };
 
-    // ---- Phase 1: PASE, ArmFailSafe(FAILSAFE_SECS), ..., AddNOC ----
+    let hooks =
+        Hooks::new((scenario == Scenario::Cancel).then_some(CommissionStep::FindOperational));
 
-    info!("=== Phase 1: commission() with a {FAILSAFE_SECS}s fail-safe ===");
+    // ---- Phase 1: PASE, ArmFailSafe(fail_safe_secs), ..., AddNOC ----
+
+    info!("=== Phase 1: commission() with a {fail_safe_secs}s fail-safe ===");
 
     // The fail-safe is armed at some point after this instant, so its
     // deadline is no earlier than `armed_after + FAILSAFE_SECS`.
@@ -358,11 +421,22 @@ async fn controller_flow<C: Crypto>(
             &opts,
             DEVICE_NODE_ID,
             VALID_FOREVER,
+            &hooks,
         ),
         COMMISSION_TIMEOUT_SECS,
         "commission()",
     )
     .await?;
+
+    const PHASE1_STEPS: [CommissionStep; 6] = [
+        CommissionStep::Pase,
+        CommissionStep::ArmFailSafe,
+        CommissionStep::DeviceAttestation,
+        CommissionStep::CsrRequest,
+        CommissionStep::AddTrustedRootCertificate,
+        CommissionStep::AddNoc,
+    ];
+    assert_eq!(hooks.steps(), PHASE1_STEPS);
 
     let fabric_key = FABRIC_KEYS_START + result.fabric_index.get() as u16;
 
@@ -384,7 +458,41 @@ async fn controller_flow<C: Crypto>(
     .await?;
     assert!(!on);
 
+    if scenario == Scenario::Cancel {
+        // ---- Cancel as phase 2 starts ----
+
+        info!("=== Cancelling the commissioning as phase 2 starts ===");
+
+        let outcome = with_timeout(
+            commissioner.complete_via_case(&result, &hooks),
+            IM_TIMEOUT_SECS,
+            "cancelled complete_via_case()",
+        )
+        .await;
+        assert_eq!(outcome.map_err(|e| e.code()), Err(ErrorCode::Cancelled));
+
+        assert_eq!(
+            hooks.steps()[PHASE1_STEPS.len()..],
+            [CommissionStep::FindOperational, CommissionStep::Cleanup]
+        );
+        assert!(
+            !device.matter.has_fabrics(),
+            "the cancel should have rolled the device back at once"
+        );
+
+        let pase_open = matter.with_state(|state| {
+            state
+                .sessions
+                .iter()
+                .any(|sess| sess.id() == result.pase_session_id && !sess.is_expired())
+        });
+        assert!(!pase_open, "the cancel should have ended the PASE session");
+
+        return Ok(());
+    }
+
     let rolled_back_after = match scenario {
+        Scenario::Cancel => unreachable!("handled above"),
         Scenario::Expire => armed_after,
         Scenario::RearmViaCase => {
             // ---- Re-arm over CASE ----
@@ -451,6 +559,7 @@ async fn controller_flow<C: Crypto>(
     // ---- Expiry ----
 
     let expiry_secs = match scenario {
+        Scenario::Cancel => unreachable!("handled above"),
         Scenario::Expire => FAILSAFE_SECS,
         Scenario::RearmViaCase => REARM_SECS,
     } as u64;

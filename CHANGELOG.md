@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: the `Commissioner` reports its steps and can be cancelled through `CommissionHooks`; a cancel rolls the device back by disarming its fail-safe, and returns the new `ErrorCode::Cancelled` (#667)
+  * Breaking: `Commissioner::commission`, `commission_over_pase` and `complete_via_case` take a `&impl CommissionHooks` (`&()` for none)
 * Fix: a commissioner keeps its PASE session when the device answers from another address than the one it was dialled at, as the session is found by its ID rather than by the peer address (#667)
   * Breaking: `Exchange::initiate_pase` is replaced by `Exchange::establish_pase`, which always establishes a new PASE session and returns its ID; exchanges over it are opened with `Exchange::initiate_for_session`. `PaseInitiator::perform` returns the session ID as well. `Sessions::get_pase_for_addr` and `Session::is_pase_for_addr` are gone
   * Breaking: `Commissioner::commission` always establishes a new PASE session; the new `Commissioner::commission_over_pase` runs over one the caller established. `CommissionResult::peer_addr` is replaced by `pase_session_id`, which `Commissioner::disarm_fail_safe` and `end_pase` take
