@@ -700,9 +700,9 @@ async fn commission_both<C: Crypto>(
             (addr_b, NODE_ID_B, "light-B"),
         ] {
             let result = commissioner
-                .commission(addr, TEST_PASSCODE, &opts, node_id, VALID_FOREVER)
+                .commission(addr, TEST_PASSCODE, &opts, node_id, VALID_FOREVER, &())
                 .await?;
-            commissioner.complete_via_case(&result).await?;
+            commissioner.complete_via_case(&result, &()).await?;
             info!(
                 "Commissioned {tag} as node 0x{:016x}",
                 result.device_node_id

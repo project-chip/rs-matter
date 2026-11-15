@@ -15,8 +15,9 @@
  *    limitations under the License.
  */
 
-//! Opening exchanges over sessions which may have to be established first, i.e.
-//! the part of initiating an exchange that needs the CASE and PASE initiators.
+//! Opening exchanges over sessions which may have to be established first, and
+//! establishing PASE sessions, i.e. the part of initiating that needs the CASE
+//! and PASE initiators.
 
 use core::future::Future;
 use core::num::NonZeroU8;
@@ -89,17 +90,13 @@ pub trait ExchangeInitiator<'a>: Sized {
         transport: TransportPreference,
     ) -> impl Future<Output = Result<Self, Error>> + MaybeSend;
 
-    /// Open an exchange over a **PASE** session to a not-yet-commissioned node
-    /// at the given peer address (use-case 2).
+    /// Establish a new **PASE** session to a not-yet-commissioned node at the
+    /// given peer address, and return the ID of the session.
     ///
-    /// If a PASE session **to that peer** already exists, an exchange is opened on
-    /// it directly via [`Exchange::initiate_for_session`]. Otherwise a new PASE
-    /// session is established: a plaintext session is opened and the PASE protocol
-    /// ([`PaseInitiator`]) is run with `passcode`, then an
-    /// exchange is opened on the resulting PASE session.
-    ///
-    /// Reuse is keyed by peer address (not a single global PASE session), so a
-    /// commissioner can drive several concurrent commissionings.
+    /// A plaintext session is opened and the PASE protocol ([`PaseInitiator`])
+    /// is run over it with `passcode`. Exchanges over the new session are opened
+    /// with [`Exchange::initiate_for_session`]. The session is found by its ID
+    /// only, as the peer may answer from another address than `peer_addr`.
     ///
     /// The peer's MRP/session parameters are negotiated by PASE itself
     /// (PBKDFParamRequest/Response).
@@ -108,12 +105,12 @@ pub trait ExchangeInitiator<'a>: Sized {
     /// [`crate::transport::Transport::browse`] - or from a BLE/BTP
     /// advertisement, etc.); this method is transport-agnostic and takes the
     /// already-known address.
-    fn initiate_pase<M: ScHost, C: Crypto>(
+    fn establish_pase<M: ScHost, C: Crypto>(
         matter: &'a M,
         crypto: C,
         peer_addr: Address,
         passcode: u32,
-    ) -> impl Future<Output = Result<Self, Error>> + MaybeSend;
+    ) -> impl Future<Output = Result<u32, Error>> + MaybeSend;
 }
 
 impl<'a> ExchangeInitiator<'a> for Exchange<'a> {
@@ -158,34 +155,15 @@ impl<'a> ExchangeInitiator<'a> for Exchange<'a> {
         initiate_new_case(matter, crypto, fabric_idx, peer_node_id, transport).await
     }
 
-    async fn initiate_pase<M: ScHost, C: Crypto>(
+    async fn establish_pase<M: ScHost, C: Crypto>(
         matter: &'a M,
         crypto: C,
         peer_addr: Address,
         passcode: u32,
-    ) -> Result<Self, Error> {
-        // Reuse an existing PASE session to this peer, if present.
-        let existing = matter.with_sc_state(|state| {
-            Ok::<_, Error>(state.sessions.get_pase_for_addr(&peer_addr).map(|s| s.id))
-        })?;
-
-        if let Some(session_id) = existing {
-            return Self::initiate_for_session(matter.transport(), crypto, session_id);
-        }
-
-        // Establish a new PASE session to this peer.
+    ) -> Result<u32, Error> {
         let exchange = Self::initiate_plaintext(matter.transport(), &crypto, peer_addr).await?;
-        PaseInitiator::perform(matter, exchange, &crypto, passcode, None).await?;
 
-        let session_id = matter.with_sc_state(|state| {
-            state
-                .sessions
-                .get_pase_for_addr(&peer_addr)
-                .map(|s| s.id)
-                .ok_or_else(|| Error::from(ErrorCode::NoSession))
-        })?;
-
-        Self::initiate_for_session(matter.transport(), crypto, session_id)
+        PaseInitiator::perform(matter, exchange, &crypto, passcode, None).await
     }
 }
 

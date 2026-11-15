@@ -97,7 +97,8 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
     ///   PBKDFParamResponse.
     ///
     /// # Returns
-    /// - `Ok(())` on successful session establishment
+    /// - `Ok(session_id)` with the ID of the new PASE session, for opening
+    ///   exchanges on it with [`Exchange::initiate_for_session`]
     /// - `Err(Error)` on failure
     pub async fn perform(
         matter: &'a M,
@@ -105,7 +106,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         crypto: &'a C,
         password: u32,
         peer_mrp: Option<&PeerMrpParams>,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         let mut session = ReservedSession::reserve(exchange.transport(), crypto).await?;
         if let Some(peer_mrp) = peer_mrp {
             session.apply_peer_session_params(exchange.id(), &peer_mrp.into())?;
@@ -380,12 +381,12 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         Ok(())
     }
 
-    /// Complete session establishment
+    /// Complete session establishment, returning the ID of the new session
     async fn complete_session(
         &mut self,
         exchange: &mut Exchange<'_>,
         mut session: ReservedSession<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         // Derive session keys from Ke
         let ke = self.spake2p.ke();
 
@@ -424,6 +425,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         )?;
 
         // Complete the reserved session
+        let session_id = session.id();
         session.complete();
 
         // Acknowledge the final message
@@ -434,7 +436,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             self.local_sessid, self.peer_sessid
         );
 
-        Ok(())
+        Ok(session_id)
     }
 }
 

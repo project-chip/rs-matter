@@ -179,7 +179,7 @@ fn initiator_futures_are_send<C: Crypto>(matter: &'static Matter<'static>, crypt
     }));
 
     assert_spawnable(&Exchange::initiate(matter, crypto, FABRIC, 1));
-    assert_spawnable(&Exchange::initiate_pase(
+    assert_spawnable(&Exchange::establish_pase(
         matter,
         crypto,
         Address::Udp(([127, 0, 0, 1], MATTER_PORT).into()),

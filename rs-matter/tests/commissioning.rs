@@ -306,7 +306,7 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
 
     info!("=== Phase 2: Commissioner — commission() (incl. PASE) + complete_via_case() ===");
     let (controller_fab_idx, device_node_id) =
-        test_commission(matter, crypto, peer_addr, use_tcp).await?;
+        test_commission(matter, crypto, peer_addr, None, use_tcp).await?;
 
     // Cherry on top: after `CommissioningComplete` the device has
     // committed our fabric, torn down PASE, and the only authenticated
@@ -318,14 +318,8 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     test_onoff_cluster(matter, controller_fab_idx, device_node_id).await?;
 
     // Phase 5 - the device reboots and is commissioned again by the *same*
-    // controller. A reboot wipes the device's session table, but the controller
-    // still holds its half of the PASE session from the first run, and
-    // `initiate_pase` reuses a PASE session by peer address alone. The device
-    // ignores anything sent on a session it no longer has, so
-    // `Commissioner::commission` expires its PASE session on return, and the
-    // second run starts on a fresh one rather than lose phase 1 to the stale
-    // one - which is what used to limit a controller to one commissioning per
-    // process.
+    // controller, over a new PASE session. The device has lost the first one,
+    // which the controller expired once phase 2 was done.
     //
     // `test_commission` mints a fresh controller fabric, so the device simply
     // gains a second fabric (no `AddNOC` conflict with the first).
@@ -333,7 +327,7 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     device_matter.with_state(|state| state.sessions.remove_where(|_| true));
     device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
 
-    test_commission(matter, crypto, peer_addr, use_tcp).await?;
+    test_commission(matter, crypto, peer_addr, None, use_tcp).await?;
 
     info!("=== Phase 6: a stale CASE session to the node ID being assigned is dropped ===");
     test_stale_case_is_dropped(
@@ -346,7 +340,7 @@ async fn run_controller_flow<C: Crypto, D: Crypto>(
     )
     .await?;
 
-    info!("=== Phase 7: commission() runs over the PASE session the caller opened ===");
+    info!("=== Phase 7: commission_over_pase() runs over the PASE session the caller opened ===");
     test_open_pase_is_reused(
         matter,
         crypto,
@@ -380,8 +374,9 @@ const CONTROLLER_NODE_ID: u64 = 112233;
 const DEVICE_NODE_ID: u64 = 112234;
 const ADMIN_VENDOR_ID: u16 = 0xFFF1;
 
-/// Drive both phases of the commissioner flow against the peer that
-/// PASE was just negotiated with. Returns the
+/// Drive both phases of the commissioner flow against the peer, over
+/// `pase_session_id` if given, else over a PASE session phase 1 establishes.
+/// Returns the
 /// `(controller_local_fab_idx, device_node_id)` needed to open
 /// post-commissioning CASE exchanges.
 ///
@@ -396,6 +391,7 @@ async fn test_commission<C: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
     peer_addr: Address,
+    pase_session_id: Option<u32>,
     use_tcp: bool,
 ) -> Result<(core::num::NonZeroU8, u64), Error> {
     // ---- Offline CA chain: RCAC then ICAC; RCAC priv discarded ----
@@ -433,7 +429,14 @@ async fn test_commission<C: Crypto>(
     )
     .with_transport(transport(use_tcp));
 
-    let result = run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+    let result = run_commissioner(
+        matter,
+        &mut commissioner,
+        peer_addr,
+        pase_session_id,
+        use_tcp,
+    )
+    .await?;
 
     Ok((controller_fab_idx, result.device_node_id))
 }
@@ -495,7 +498,7 @@ async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
         &mut commissioner_buf,
     )
     .with_transport(transport(use_tcp));
-    let first = run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+    let first = run_commissioner(matter, &mut commissioner, peer_addr, None, use_tcp).await?;
 
     // Factory-reset the device without a word to the controller, whose CASE
     // session to it is now stale.
@@ -514,14 +517,15 @@ async fn test_stale_case_is_dropped<C: Crypto, D: Crypto>(
     )
     .with_transport(transport(use_tcp))
     .with_case_attempts(1);
-    run_commissioner(matter, &mut commissioner, peer_addr, use_tcp).await?;
+    run_commissioner(matter, &mut commissioner, peer_addr, None, use_tcp).await?;
 
     Ok(())
 }
 
-/// `Commissioner::commission` must run over a PASE session the caller opened
-/// to the device (e.g. to read it first), not replace it: while a device holds
-/// a PASE session it accepts no other.
+/// `Commissioner::commission_over_pase` must run over a PASE session the caller
+/// established (e.g. to read the device first), not replace it: while a device
+/// holds a PASE session it accepts no other. `run_commissioner` checks that the
+/// session is used, and expired once phase 2 is done.
 async fn test_open_pase_is_reused<C: Crypto, D: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
@@ -530,38 +534,13 @@ async fn test_open_pase_is_reused<C: Crypto, D: Crypto>(
     peer_addr: Address,
     use_tcp: bool,
 ) -> Result<(), Error> {
-    let device = peer_addr.canonical();
-    let pase_to_device = move |sess: &Session| {
-        matches!(sess.get_session_mode(), SessionMode::Pase { .. })
-            && sess.get_peer_addr().canonical() == device
-    };
-
     device_matter.with_state(|state| state.sessions.remove_where(|_| true));
     device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, device_crypto, &())?;
 
-    drop(Exchange::initiate_pase(matter, crypto, peer_addr, TEST_PASSCODE).await?);
+    let pase_session_id =
+        Exchange::establish_pase(matter, crypto, peer_addr, TEST_PASSCODE).await?;
 
-    let open = matter.with_state(|state| {
-        state
-            .sessions
-            .iter()
-            .find(|sess| pase_to_device(sess) && !sess.is_expired())
-            .map(Session::get_local_sess_id)
-    });
-    let open = open.expect("no PASE session to the device");
-
-    test_commission(matter, crypto, peer_addr, use_tcp).await?;
-
-    // Still there, so it was used rather than replaced; expired, as phase 2 is
-    // done.
-    let expired = matter.with_state(|state| {
-        state
-            .sessions
-            .iter()
-            .find(|sess| pase_to_device(sess) && sess.get_local_sess_id() == open)
-            .map(Session::is_expired)
-    });
-    assert_eq!(expired, Some(true));
+    test_commission(matter, crypto, peer_addr, Some(pase_session_id), use_tcp).await?;
 
     Ok(())
 }
@@ -687,11 +666,13 @@ fn transport(use_tcp: bool) -> TransportPreference {
     }
 }
 
-/// Drive both phases of an already-built `Commissioner` against the device.
+/// Drive both phases of an already-built `Commissioner` against the device, over
+/// `pase_session_id` if given.
 async fn run_commissioner<C: Crypto>(
     matter: &Matter<'_>,
     commissioner: &mut Commissioner<'_, '_, C>,
     peer_addr: Address,
+    pase_session_id: Option<u32>,
     use_tcp: bool,
 ) -> Result<CommissionResult, Error> {
     let opts = CommissionOptions {
@@ -700,16 +681,25 @@ async fn run_commissioner<C: Crypto>(
         ..CommissionOptions::default()
     };
 
-    // Phase 1 — establishes PASE (lazily on first step) then ArmFailSafe → ... → AddNOC.
-    let result = commissioner
-        .commission(
-            peer_addr,
-            TEST_PASSCODE,
-            &opts,
-            DEVICE_NODE_ID,
-            VALID_FOREVER,
-        )
-        .await?;
+    // Phase 1 — establishes PASE (unless the caller did) then ArmFailSafe → ... → AddNOC.
+    let result = if let Some(pase_session_id) = pase_session_id {
+        let result = commissioner
+            .commission_over_pase(pase_session_id, &opts, DEVICE_NODE_ID, VALID_FOREVER, &())
+            .await?;
+        assert_eq!(result.pase_session_id, pase_session_id);
+        result
+    } else {
+        commissioner
+            .commission(
+                peer_addr,
+                TEST_PASSCODE,
+                &opts,
+                DEVICE_NODE_ID,
+                VALID_FOREVER,
+                &(),
+            )
+            .await?
+    };
     info!(
         "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
         result.fabric_index, result.device_node_id,
@@ -717,15 +707,16 @@ async fn run_commissioner<C: Crypto>(
 
     // The PASE session stays open for the steps that run over it before phase 2,
     // like network commissioning.
-    let device = peer_addr.canonical();
-    let pase_open = matter.with_state(|state| {
-        state.sessions.iter().any(|sess| {
-            matches!(sess.get_session_mode(), SessionMode::Pase { .. })
-                && sess.get_peer_addr().canonical() == device
-                && !sess.is_expired()
+    let pase_open = || {
+        matter.with_state(|state| {
+            state.sessions.iter().any(|sess| {
+                sess.id() == result.pase_session_id
+                    && matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+                    && !sess.is_expired()
+            })
         })
-    });
-    assert!(pase_open, "phase 1 closed the PASE session");
+    };
+    assert!(pase_open(), "phase 1 closed the PASE session");
 
     // Phase 2 — operational discovery, then CASE against the device's
     // operational identity, then CommissioningComplete on the new session.
@@ -747,10 +738,17 @@ async fn run_commissioner<C: Crypto>(
     // against.
     let mdns = stub_mdns_resolver_txt(matter, &mdns_table, if use_tcp { "6" } else { "" });
 
-    match select(pin!(commissioner.complete_via_case(&result)), pin!(mdns)).await {
+    match select(
+        pin!(commissioner.complete_via_case(&result, &())),
+        pin!(mdns),
+    )
+    .await
+    {
         Either::First(r) => r?,
         Either::Second(_) => unreachable!("the stub resolver never returns"),
     }
+
+    assert!(!pase_open(), "phase 2 left the PASE session open");
 
     info!(
         "complete_via_case() ok: controller_fab_idx={}, discovery+CASE+CommissioningComplete done",

@@ -355,6 +355,7 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
             &opts,
             DEVICE_NODE_ID,
             VALID_FOREVER,
+            &(),
         )
         .await?;
 
@@ -469,7 +470,12 @@ async fn run_controller_flow<C: Crypto, K: KvBlobStoreAccess>(
     let mdns_table = [(result.device_node_id, sock_of(DEVICE_B_PORT))];
     let mdns = stub_mdns_resolver_txt(matter, &mdns_table, "");
 
-    match select(pin!(commissioner.complete_via_case(&result)), pin!(mdns)).await {
+    match select(
+        pin!(commissioner.complete_via_case(&result, &())),
+        pin!(mdns),
+    )
+    .await
+    {
         Either::First(r) => r?,
         Either::Second(_) => unreachable!("the stub resolver never returns"),
     }

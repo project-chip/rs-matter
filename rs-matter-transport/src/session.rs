@@ -485,18 +485,6 @@ impl Session {
         self.peer_addr.canonical() == peer.canonical()
     }
 
-    /// Whether this is a PASE session to the given peer address.
-    ///
-    /// PASE sessions are all keyed at fabric 0 / node 0 (no operational
-    /// identity yet), so the peer *address* is what distinguishes one PASE
-    /// session from another - which matters on a commissioner that may have
-    /// several PASE sessions (to different devices) in flight at once.
-    pub fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
-        matches!(self.mode, SessionMode::Pase { .. })
-            && self.is_peer(peer_addr)
-            && !self.is_reserved()
-    }
-
     pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
         let nodeid_matches = self.peer_nodeid.is_none()
             || rx_plain.get_src_nodeid().is_none()
@@ -1087,6 +1075,11 @@ impl<'a> ReservedSession<'a> {
 
             Self::reserve_now(transport, &crypto)
         }
+    }
+
+    /// The ID of the reserved session, which it keeps once completed.
+    pub const fn id(&self) -> u32 {
+        self.id
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2263,7 +2256,7 @@ impl Sessions {
     /// Operational sessions are by definition encrypted and on a real fabric,
     /// so the lookup always matches an encrypted session - there is no
     /// "unsecured by node" lookup (unsecured/PASE sessions carry no operational
-    /// identity; see [`Sessions::get_pase_for_addr`]).
+    /// identity).
     pub fn get_for_node(
         &mut self,
         fabric_idx: NonZeroU8,
@@ -2293,24 +2286,6 @@ impl Sessions {
         session.update_last_used();
 
         Some(session)
-    }
-
-    /// Find an in-flight PASE session to the given peer address.
-    ///
-    /// Used by [`Exchange::initiate_pase`](crate::exchange::Exchange::initiate_pase)
-    /// to reuse a PASE session per peer (rather than assuming a single global
-    /// one), so a commissioner can drive several concurrent commissionings.
-    pub fn get_pase_for_addr(&mut self, peer_addr: &Address) -> Option<&mut Session> {
-        let mut session = self
-            .sessions
-            .iter_mut()
-            .find(|s| s.state == SessionState::Active && s.is_pase_for_addr(peer_addr));
-
-        if let Some(session) = session.as_mut() {
-            session.update_last_used();
-        }
-
-        session
     }
 
     pub(crate) fn get_for_rx(
@@ -3553,7 +3528,6 @@ mod tests {
             assert_eq!(sess.get_local_sess_id(), 0x5678);
             assert_eq!(sess.get_peer_addr(), udp(5540));
             assert_eq!(unwrap!(sess.get_enc_key()).access(), KEY.access());
-            assert!(sess.is_pase_for_addr(&udp(5540)));
         });
 
         let abandoned = unwrap!(ReservedSession::reserve_now(&transport, &crypto));

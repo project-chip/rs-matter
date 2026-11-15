@@ -279,6 +279,7 @@ async fn run_commission<C: Crypto>(
             &opts,
             DEVICE_NODE_ID,
             VALID_FOREVER,
+            &(),
         ));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut commission_fut, &mut timeout).await {
@@ -306,7 +307,7 @@ async fn run_commission<C: Crypto>(
 
         let mdns_table = [(DEVICE_NODE_ID, peer_sock)];
         let mdns = pin!(stub_mdns_resolver(matter, &mdns_table));
-        let case = pin!(commissioner.complete_via_case(&phase1));
+        let case = pin!(commissioner.complete_via_case(&phase1, &()));
         let mut case_fut = pin!(select(case, mdns));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut case_fut, &mut timeout).await {

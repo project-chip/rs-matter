@@ -182,7 +182,7 @@ impl Address {
     /// reports "PAKE session not found").
     ///
     /// This is used only when *comparing* a session's peer address against a
-    /// received one (see `Session::is_for_rx` / `is_pase_for_addr`); the address
+    /// received one (see `Session::is_for_rx`); the address
     /// stored on the session is left untouched so it still routes replies to the
     /// exact address the peer was reached at.
     pub fn canonical(self) -> Self {
