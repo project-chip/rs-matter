@@ -28,7 +28,6 @@ use crate::utils::sync::MaybeSend;
 
 pub mod btp;
 pub mod mdns;
-#[path = "network/tcp/std.rs"]
 pub mod tcp;
 pub mod udp;
 
@@ -38,10 +37,10 @@ pub const MAX_RX_PACKET_SIZE: usize = 1583;
 // Maximum UDP TX packet size per Matter spec
 pub const MAX_TX_PACKET_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
 
-// Maximum TCP RX packet size per Matter spec
-pub const MAX_RX_LARGE_PACKET_SIZE: usize = 1024 * 1024;
+// Maximum TCP RX packet size derived from the configured buffer size (`IM_BUFFER_SIZE`).
+pub const MAX_RX_LARGE_PACKET_SIZE: usize = crate::dm::IM_BUFFER_SIZE;
 
-// Maximum TCP TX packet size per Matter spec
+// Maximum TCP TX packet size derived from the configured buffer size (`IM_BUFFER_SIZE`).
 pub const MAX_TX_LARGE_PACKET_SIZE: usize = MAX_RX_LARGE_PACKET_SIZE;
 
 /// A Matter service that **this** node advertises (publishes) over a discovery
@@ -305,7 +304,10 @@ where
 pub trait NetworkReceive: MaybeSend {
     /// Wait until a data packet is available to be received.
     ///
-    /// Allows the Matter transport layer to re-use a single RX buffer accross all network protocol implementatiins.
+    /// Allows the Matter transport layer to re-use a single RX buffer across all network protocol implementations.
+    ///
+    /// Must be cancel-safe: dropping the future before it completes loses no packet.
+    /// [`ChainedNetwork`] drops it as often as [`recv_from`](Self::recv_from).
     ///
     /// Might return an error if there is a general error on the network interface.
     fn wait_available(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend;
@@ -320,6 +322,24 @@ pub trait NetworkReceive: MaybeSend {
         &mut self,
         buffer: &mut [u8],
     ) -> impl Future<Output = Result<(usize, Address), Error>> + MaybeSend;
+
+    /// Wait until either an incoming packet is available (`Ok(None)`) or a
+    /// connection-oriented peer has closed (`Ok(Some(addr))`).
+    ///
+    /// Transports without connection-close notifications (such as UDP or BTP)
+    /// may keep the default implementation, which delegates to [`Self::wait_available`]
+    /// and returns `Ok(None)`.
+    ///
+    /// Must be cancel-safe: dropping the returned future before it completes
+    /// must not lose a packet or a closed-peer notification.
+    fn wait_available_or_closed(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<Address>, Error>> + MaybeSend {
+        async {
+            self.wait_available().await?;
+            Ok(None)
+        }
+    }
 }
 
 impl<T> NetworkReceive for &mut T
@@ -335,6 +355,10 @@ where
         buffer: &mut [u8],
     ) -> impl Future<Output = Result<(usize, Address), Error>> {
         (*self).recv_from(buffer)
+    }
+
+    fn wait_available_or_closed(&mut self) -> impl Future<Output = Result<Option<Address>, Error>> {
+        (*self).wait_available_or_closed()
     }
 }
 
@@ -448,6 +472,15 @@ where
     async fn wait_available(&mut self) -> Result<(), Error> {
         let mut first = pin!(self.handler.wait_available());
         let mut second = pin!(self.next.wait_available());
+
+        match select(&mut first, &mut second).await {
+            Either::First(result) | Either::Second(result) => result,
+        }
+    }
+
+    async fn wait_available_or_closed(&mut self) -> Result<Option<Address>, Error> {
+        let mut first = pin!(self.handler.wait_available_or_closed());
+        let mut second = pin!(self.next.wait_available_or_closed());
 
         match select(&mut first, &mut second).await {
             Either::First(result) | Either::Second(result) => result,

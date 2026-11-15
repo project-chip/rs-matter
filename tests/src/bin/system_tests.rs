@@ -478,7 +478,7 @@ fn main() -> Result<(), Error> {
 
         info!("TCP transport enabled, listening on {}", bind_addr);
 
-        TcpNetwork::<8>::new(tcp_socket)
+        TcpNetwork::new(tcp_socket)
     };
 
     // Optionally create a chained UDP+TCP network
@@ -494,6 +494,13 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
+    #[cfg(feature = "test-tcp")]
+    let mut transport = pin!(select(
+        matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast),
+        tcp.run(),
+    )
+    .coalesce());
+    #[cfg(not(feature = "test-tcp"))]
     let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
 
     // We need to always print the QR text, because the test runner expects it to be printed

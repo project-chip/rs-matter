@@ -581,7 +581,7 @@ fn main() -> Result<(), Error> {
 
     let udp_socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
     let tcp_socket = async_io::Async::<TcpListener>::bind(args::bind_addr())?;
-    let tcp = rs_matter::transport::network::tcp::TcpNetwork::<8>::new(tcp_socket);
+    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(tcp_socket);
     let (mut net_send, mut net_recv, mut net_multicast) = {
         use rs_matter::transport::network::{Address, ChainedNetwork};
         let net_send = ChainedNetwork::new(|addr: &Address| addr.is_tcp(), &tcp, &udp_socket);
@@ -590,7 +590,11 @@ fn main() -> Result<(), Error> {
     };
 
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
+    let mut transport = pin!(rs_matter::utils::futures::select(
+        matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast),
+        tcp.run(),
+    )
+    .coalesce());
 
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
 

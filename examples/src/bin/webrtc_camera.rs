@@ -1307,7 +1307,7 @@ fn main() -> Result<(), Error> {
     // `tcp_supported: true` flag in `BASIC_INFO` advertises this via
     // mDNS (`T=1`).
     let tcp_socket = Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let tcp = rs_matter::transport::network::tcp::TcpNetwork::<8>::new(tcp_socket);
+    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(tcp_socket);
     info!(
         "TCP transport enabled, listening on {}",
         MATTER_SOCKET_BIND_ADDR
@@ -1322,7 +1322,11 @@ fn main() -> Result<(), Error> {
     };
 
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
+    let mut transport = pin!(rs_matter::utils::futures::select(
+        matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast),
+        tcp.run(),
+    )
+    .coalesce());
     let mut driver = pin!(shared.drive());
 
     if !matter.has_fabrics() {

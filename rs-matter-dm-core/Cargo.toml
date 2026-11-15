@@ -15,8 +15,17 @@ rust-version.workspace = true
 default = ["std", "log"]
 std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-im-core/std"]
 alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-im-core/alloc"]
-# Extends the IM buffers to 1MB (from 1500 B), for Matter over TCP.
-large-buffers = []
+# Extends the IM buffers to 64 KiB (from 1583 B), matching the Matter spec default MAX_TCP_MESSAGE_SIZE.
+large-buffers = ["large-buffers-65536"]
+large-buffers-1048576 = []
+large-buffers-524288 = []
+large-buffers-262144 = []
+large-buffers-131072 = []
+large-buffers-65536 = []
+large-buffers-32768 = []
+large-buffers-16384 = []
+large-buffers-8192 = []
+large-buffers-4096 = []
 # Size (in bytes) of the key-value persistence scratch buffer owned by `Matter`.
 kv-blob-store-65536 = []
 kv-blob-store-32768 = []

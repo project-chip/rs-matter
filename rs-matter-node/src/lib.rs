@@ -1429,6 +1429,44 @@ pub mod test {
     }
 
     #[test]
+    fn operational_tcp_advertisement_tracks_bound_capability() {
+        use crate::transport::network::mdns::TcpMdnsCapability;
+        use crate::transport::network::MatterLocalService;
+
+        let service = MatterLocalService::Commissioned {
+            compressed_fabric_id: 1,
+            node_id: 2,
+        };
+        let dev_det = rs_matter_node_core::basic_info::BasicInfoConfig {
+            tcp_supported: true,
+            ..rs_matter_node_core::test_device::TEST_DEV_DET
+        };
+        let matter = Matter::new(
+            &dev_det,
+            rs_matter_node_core::test_device::TEST_DEV_COMM,
+            &rs_matter_node_core::test_device::TEST_DEV_ATT,
+            0,
+        );
+
+        for (capability, expected) in [
+            (TcpMdnsCapability::None, None),
+            (TcpMdnsCapability::ServerOnly, Some("4")),
+            (TcpMdnsCapability::ClientAndServer, Some("6")),
+        ] {
+            matter.transport().set_tcp_mdns_capability(capability);
+            let mut buf = [0u8; 512];
+            let (mut record, _) = service.service(&matter, &mut buf).unwrap();
+            assert_eq!(
+                record
+                    .txt_kvs
+                    .find(|(key, _)| *key == "T")
+                    .map(|(_, value)| value),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn with_fabrics_hands_out_the_sessions_and_the_fabrics() {
         use crate::transport::TransportHost;
 

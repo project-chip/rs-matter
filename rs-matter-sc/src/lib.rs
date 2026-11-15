@@ -117,6 +117,12 @@ pub(crate) fn local_session_parameters(matter: &impl ScHost) -> SessionParameter
         im_revision: Some(IM_REVISION as u16),
         spec_version: Some(dev_det.specification_version),
         max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
+        supported_transports: dev_det
+            .tcp_supported
+            .then_some(SUPPORTED_TRANSPORTS_TCP_CLIENT | SUPPORTED_TRANSPORTS_TCP_SERVER),
+        max_tcp_message_size: dev_det
+            .tcp_supported
+            .then_some(transport::MAX_RX_BUF_SIZE as u32),
     }
 }
 
@@ -438,5 +444,54 @@ mod tests {
         let params =
             crate::local_session_parameters(&TestHost::new(&TEST_DEV_DET, Some(adv(None, 15_000))));
         assert_eq!(params.sii, Some(15_000));
+    }
+
+    #[test]
+    fn local_session_parameters_for_tcp_device() {
+        let udp_params = crate::local_session_parameters(&TestHost::new(&TEST_DEV_DET, None));
+        assert_eq!(udp_params.supported_transports, None);
+        assert_eq!(udp_params.max_tcp_message_size, None);
+
+        const TCP_DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
+            tcp_supported: true,
+            ..TEST_DEV_DET
+        };
+
+        let tcp_params = crate::local_session_parameters(&TestHost::new(&TCP_DEV_DET, None));
+        assert_eq!(
+            tcp_params.supported_transports,
+            Some(crate::SUPPORTED_TRANSPORTS_TCP_CLIENT | crate::SUPPORTED_TRANSPORTS_TCP_SERVER)
+        );
+        assert_eq!(
+            tcp_params.max_tcp_message_size,
+            Some(crate::transport::MAX_RX_BUF_SIZE as u32)
+        );
+    }
+
+    #[test]
+    fn session_parameters_tcp_tlv_roundtrip() {
+        use crate::tlv::{FromTLV, TLVElement, ToTLV};
+
+        const TCP_DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
+            tcp_supported: true,
+            ..TEST_DEV_DET
+        };
+
+        let params = crate::local_session_parameters(&TestHost::new(&TCP_DEV_DET, None));
+        let mut buf = [0u8; 128];
+        let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
+        params
+            .to_tlv(&crate::tlv::TLVTag::Anonymous, &mut wb)
+            .unwrap();
+
+        let decoded = crate::SessionParameters::from_tlv(&TLVElement::new(wb.as_slice())).unwrap();
+        assert_eq!(
+            decoded.supported_transports,
+            Some(crate::SUPPORTED_TRANSPORTS_TCP_CLIENT | crate::SUPPORTED_TRANSPORTS_TCP_SERVER)
+        );
+        assert_eq!(
+            decoded.max_tcp_message_size,
+            Some(crate::transport::MAX_RX_BUF_SIZE as u32)
+        );
     }
 }

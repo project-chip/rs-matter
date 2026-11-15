@@ -15,16 +15,53 @@
  *    limitations under the License.
  */
 
+use cfg_if::cfg_if;
+
 use crate::utils::storage::Vec;
 
-/// The size of an [`IMBuffer`]: that of the largest message an exchange can
-/// receive (a Matter-over-TCP one with the `large-buffers` feature).
-#[cfg(feature = "large-buffers")]
-pub const IM_BUFFER_SIZE: usize = 1024 * 1024;
-/// The size of an [`IMBuffer`]: that of the largest message an exchange can
-/// receive (a Matter-over-TCP one with the `large-buffers` feature).
-#[cfg(not(feature = "large-buffers"))]
-pub const IM_BUFFER_SIZE: usize = 1583;
+cfg_if! {
+    if #[cfg(feature = "large-buffers-1048576")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 1024 * 1024;
+    } else if #[cfg(feature = "large-buffers-524288")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 512 * 1024;
+    } else if #[cfg(feature = "large-buffers-262144")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 256 * 1024;
+    } else if #[cfg(feature = "large-buffers-131072")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 128 * 1024;
+    } else if #[cfg(feature = "large-buffers-65536")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 64 * 1024;
+    } else if #[cfg(feature = "large-buffers-32768")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 32 * 1024;
+    } else if #[cfg(feature = "large-buffers-16384")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 16 * 1024;
+    } else if #[cfg(feature = "large-buffers-8192")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 8 * 1024;
+    } else if #[cfg(feature = "large-buffers-4096")] {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (a Matter-over-TCP one with a `large-buffers-*` feature).
+        pub const IM_BUFFER_SIZE: usize = 4 * 1024;
+    } else {
+        /// The size of an [`IMBuffer`]: that of the largest message an exchange can
+        /// receive (UDP-sized when no `large-buffers-*` feature is enabled).
+        pub const IM_BUFFER_SIZE: usize = 1583;
+    }
+}
 
 /// The buffer type used by the Interaction Model and the handlers for the
 /// payloads of messages.

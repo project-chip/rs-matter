@@ -58,6 +58,30 @@ pub const MDNS_PORT: u16 = 5353;
 pub const MDNS_SOCKET_DEFAULT_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, 0));
 
+/// Operational TCP capability advertised in mDNS `T` TXT records.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TcpMdnsCapability {
+    /// Operational TCP is not bound / UDP-only (omits the `T` TXT key).
+    #[default]
+    None,
+    /// Operational TCP server-only (`T=4`).
+    ServerOnly,
+    /// Operational TCP client and server (`T=6`).
+    ClientAndServer,
+}
+
+impl TcpMdnsCapability {
+    /// Returns the mDNS `T` TXT record value, or `""` when TCP is not bound.
+    pub const fn as_txt_value(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::ServerOnly => "4",
+            Self::ClientAndServer => "6",
+        }
+    }
+}
+
 impl MatterLocalService {
     /// Build a full mDNS service description for this Matter service, including
     /// the service name, type, protocol, port, subtypes, and TXT records.
@@ -86,6 +110,7 @@ impl MatterLocalService {
             node.dev_det(),
             node.port(),
             node.icd_advertisement(),
+            node.transport().tcp_mdns_capability(),
             buf,
         )
     }
@@ -99,6 +124,7 @@ fn local_service_internal<'a>(
     dev_det: &BasicInfoConfig<'_>,
     matter_port: u16,
     icd: Option<IcdAdvertisement>,
+    tcp_capability: TcpMdnsCapability,
     buf: &'a mut [u8],
 ) -> Result<
     (
@@ -149,7 +175,7 @@ fn local_service_internal<'a>(
                 ("SAI", txt_sai),
                 ("SII", txt_sii),
                 ("SAT", txt_sat),
-                ("T", if dev_det.tcp_supported { "6" } else { "" }),
+                ("T", tcp_capability.as_txt_value()),
                 ("ICD", txt_icd),
                 // Some mDNS responders do not accept empty TXT records
                 ("DUMMY", "DUMMY"),
@@ -208,6 +234,9 @@ fn local_service_internal<'a>(
             let (txt_pi, wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
             let (txt_ph, wb) = write_txt_num(wb, Some(dev_det.pairing_hint.bits()))?;
             let (txt_dt, mut wb) = write_txt_num(wb, dev_det.device_type.map(u32::from))?;
+            // Commissionable `_matterc._udp` advertises commissioning-time TCP support
+            // from `BasicInfoConfig` before `run_oper_loop` binds operational TCP;
+            // operational `_matter._tcp` above reads the bound `tcp_capability` instead.
             let (txt_tcp, wb) = if dev_det.tcp_supported {
                 write_split!(wb, "6")?
             } else {
@@ -1316,8 +1345,15 @@ mod tests {
                 compressed_fabric_id: 1,
                 node_id: 2,
             };
-            let (service, _) =
-                local_service_internal(&service, dev_det, 5540, icd, &mut buf).unwrap();
+            let (service, _) = local_service_internal(
+                &service,
+                dev_det,
+                5540,
+                icd,
+                TcpMdnsCapability::None,
+                &mut buf,
+            )
+            .unwrap();
 
             service
                 .txt_kvs
@@ -1414,8 +1450,15 @@ mod tests {
                 idle_mode_duration_s: 300,
             });
 
-            let (service, _) =
-                local_service_internal(&service, &TEST_DEV_DET, 5540, icd, &mut buf).unwrap();
+            let (service, _) = local_service_internal(
+                &service,
+                &TEST_DEV_DET,
+                5540,
+                icd,
+                TcpMdnsCapability::None,
+                &mut buf,
+            )
+            .unwrap();
 
             service
                 .txt_kvs

@@ -131,15 +131,13 @@ const MAX_GROUP_ADDRS: usize = 0;
 
 const ACCEPT_TIMEOUT_MS: u64 = 1000;
 
-#[cfg(feature = "large-buffers")]
-pub const MAX_RX_BUF_SIZE: usize = network::MAX_RX_LARGE_PACKET_SIZE;
-#[cfg(feature = "large-buffers")]
-pub const MAX_TX_BUF_SIZE: usize = network::MAX_TX_LARGE_PACKET_SIZE;
+pub const MAX_RX_BUF_SIZE: usize = crate::dm::IM_BUFFER_SIZE;
 
-#[cfg(not(feature = "large-buffers"))]
-pub const MAX_RX_BUF_SIZE: usize = network::MAX_RX_PACKET_SIZE;
-#[cfg(not(feature = "large-buffers"))]
-pub const MAX_TX_BUF_SIZE: usize = network::MAX_TX_PACKET_SIZE;
+pub const MAX_TX_BUF_SIZE: usize = if crate::dm::IM_BUFFER_SIZE > network::MAX_RX_PACKET_SIZE {
+    network::MAX_TX_LARGE_PACKET_SIZE
+} else {
+    network::MAX_TX_PACKET_SIZE
+};
 
 /// The maximum application payload of an incoming (RX) packet, i.e. the RX buffer
 /// minus the two packet headers (plain + protocol) and the trailing AEAD tag.
@@ -211,6 +209,8 @@ pub struct Transport {
     timeouts_changed: Notification,
     /// The Session Active Interval this node advertises, if configured.
     sai: Option<u32>,
+    /// Operational TCP capability currently bound for mDNS advertisement.
+    tcp_mdns_capability: Mutex<RefCell<crate::network::mdns::TcpMdnsCapability>>,
     /// All sessions.
     ///
     /// `Matter` keeps the state of the node under this lock too, so that the sessions
@@ -237,6 +237,9 @@ impl Transport {
             comm_window_changed: MultiNotification::new(),
             timeouts_changed: Notification::new(),
             sai,
+            tcp_mdns_capability: Mutex::new(RefCell::new(
+                crate::network::mdns::TcpMdnsCapability::None,
+            )),
             sessions: Mutex::new(RefCell::new(Sessions::new())),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
@@ -261,6 +264,9 @@ impl Transport {
             comm_window_changed <- MultiNotification::init(),
             timeouts_changed <- Notification::init(),
             sai,
+            tcp_mdns_capability: Mutex::new(RefCell::new(
+                crate::network::mdns::TcpMdnsCapability::None,
+            )),
             sessions <- Mutex::init(RefCell::init(Sessions::init())),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
@@ -271,6 +277,17 @@ impl Transport {
     /// The Session Active Interval this node advertises.
     pub(crate) fn sai(&self) -> u32 {
         self.sai.unwrap_or(mrp::MRP_BASE_RETRY_INTERVAL_MS)
+    }
+
+    /// Returns the operational TCP capability currently advertised over mDNS.
+    pub fn tcp_mdns_capability(&self) -> crate::network::mdns::TcpMdnsCapability {
+        self.tcp_mdns_capability.lock(|cell| *cell.borrow())
+    }
+
+    /// Updates the operational TCP capability advertised over mDNS.
+    pub fn set_tcp_mdns_capability(&self, capability: crate::network::mdns::TcpMdnsCapability) {
+        self.tcp_mdns_capability
+            .lock(|cell| *cell.borrow_mut() = capability);
     }
 
     /// Set the fast polling interval of this node, if it is an ICD.
@@ -1753,7 +1770,10 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         loop {
             trace!("Waiting for incoming packet");
 
-            recv.wait_available().await?;
+            if let Some(closed_addr) = recv.wait_available_or_closed().await? {
+                self.handle_closed_peer(closed_addr);
+                continue;
+            }
 
             let mut rx = self
                 .transport
@@ -2428,6 +2448,17 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         }
     }
 
+    fn handle_closed_peer(&self, addr: Address) {
+        let canonical = addr.canonical();
+        let removed = self.transport().with_sessions(|sessions| {
+            sessions.remove_where(|sess| sess.get_peer_addr().canonical() == canonical)
+        });
+        if removed > 0 {
+            info!("Peer {} closed; removed {} session(s)", addr, removed);
+            self.transport().notify_session_removed();
+        }
+    }
+
     #[inline(always)]
     const fn transport(&self) -> &Transport {
         self.transport
@@ -2991,6 +3022,137 @@ mod tests {
         fn groupcast_testing(&self) -> &groupcast::TestingBridge {
             unimplemented!()
         }
+    }
+
+    #[test]
+    fn closed_tcp_peer_evicts_session_and_closes_active_exchange() {
+        use core::net::{Ipv4Addr, SocketAddr};
+        use core::pin::pin;
+
+        use crate::basic_info::BasicInfoConfig;
+        use crate::fabric::Fabrics;
+        use crate::network::{Address, MatterLocalService, NetworkReceive, NoNetwork};
+        use crate::utils::futures::{block_on, select, Either};
+        use crate::utils::sync::Notification;
+        use crate::utils::timers::{with_timeout, Duration, Timer};
+
+        struct DummyHost {
+            transport: Transport,
+            dev_det: BasicInfoConfig<'static>,
+            #[cfg(feature = "groups")]
+            groupcast_testing: crate::groupcast::TestingBridge,
+        }
+
+        impl crate::host::TransportHost for DummyHost {
+            fn transport(&self) -> &Transport {
+                &self.transport
+            }
+
+            fn with_fabrics(&self, f: &mut dyn FnMut(&mut session::Sessions, &Fabrics)) {
+                let fabrics = Fabrics::new();
+                self.transport.with_sessions(|s| f(s, &fabrics));
+            }
+
+            fn mdns_services(
+                &self,
+                _f: &mut dyn FnMut(MatterLocalService) -> Result<(), Error>,
+            ) -> Result<(), Error> {
+                Ok(())
+            }
+
+            fn dev_det(&self) -> &BasicInfoConfig<'static> {
+                &self.dev_det
+            }
+
+            fn port(&self) -> u16 {
+                5540
+            }
+
+            fn icd_advertisement(&self) -> Option<crate::icd::IcdAdvertisement> {
+                None
+            }
+
+            #[cfg(feature = "groups")]
+            fn groupcast_testing(&self) -> &crate::groupcast::TestingBridge {
+                &self.groupcast_testing
+            }
+        }
+
+        struct ClosingRecv<'a> {
+            closed: &'a Notification,
+            addr: Address,
+            emitted: bool,
+        }
+
+        impl NetworkReceive for ClosingRecv<'_> {
+            async fn wait_available(&mut self) -> Result<(), Error> {
+                core::future::pending().await
+            }
+
+            async fn recv_from(&mut self, _buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+                core::future::pending().await
+            }
+
+            async fn wait_available_or_closed(&mut self) -> Result<Option<Address>, Error> {
+                if self.emitted {
+                    core::future::pending().await
+                } else {
+                    self.closed.wait().await;
+                    self.emitted = true;
+                    Ok(Some(self.addr))
+                }
+            }
+        }
+
+        let host = DummyHost {
+            transport: Transport::new(None),
+            dev_det: BasicInfoConfig::new(),
+            #[cfg(feature = "groups")]
+            groupcast_testing: crate::groupcast::TestingBridge::new(),
+        };
+        let crypto = test_only_crypto();
+        let peer = Address::Tcp(SocketAddr::from((Ipv4Addr::LOCALHOST, 4242)));
+        let mut exchange = host
+            .transport
+            .try_initiate_plaintext(&crypto, peer)
+            .unwrap();
+        let sess_id = exchange.id().session_id();
+
+        let closed = Notification::new();
+        let mut runner = TransportRunner::new(&host, crypto);
+        let recv = ClosingRecv {
+            closed: &closed,
+            addr: peer,
+            emitted: false,
+        };
+
+        block_on(async {
+            let run_fut = pin!(runner.run(NoNetwork, recv, NoNetwork));
+            let test_fut = pin!(async {
+                let trigger = async {
+                    Timer::after(Duration::from_millis(10)).await;
+                    closed.notify();
+                };
+                let recv_fut = exchange.recv();
+
+                let (_, res) = crate::utils::futures::join(
+                    trigger,
+                    with_timeout(Duration::from_secs(2), recv_fut),
+                )
+                .await;
+
+                let Err(err) = res.expect("exchange must close immediately, not wait 30s") else {
+                    panic!("expected exchange recv to fail with NoSession");
+                };
+                assert_eq!(err.code(), ErrorCode::NoSession);
+                assert!(host.transport.with_sessions(|s| s.get(sess_id).is_none()));
+            });
+
+            match select(run_fut, test_fut).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
+        });
     }
 }
 
