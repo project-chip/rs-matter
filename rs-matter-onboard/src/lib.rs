@@ -78,6 +78,7 @@ use crate::noc::NocGenerator;
 use crate::tlv::{FromTLV, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
+use crate::transport::session::SessionMode;
 use crate::transport::TransportPreference;
 use rs_matter_dm_clusters::general_commissioning::{
     CommissioningErrorEnum, GeneralCommissioningClient,
@@ -221,6 +222,19 @@ pub trait CommissionHooks {
     }
 }
 
+impl<T> CommissionHooks for &T
+where
+    T: CommissionHooks,
+{
+    fn step(&self, step: CommissionStep) {
+        T::step(self, step)
+    }
+
+    fn cancelled(&self) -> impl Future<Output = ()> + MaybeSend {
+        T::cancelled(self)
+    }
+}
+
 impl CommissionHooks for () {}
 
 /// Stateful commissioner.
@@ -330,13 +344,13 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
-        hooks: &H,
+        hooks: H,
     ) -> Result<CommissionResult, Error> {
         hooks.step(CommissionStep::Pase);
 
         let pase_session_id = cancellable(
             Exchange::establish_pase(self.matter, &self.crypto, peer_addr, passcode),
-            hooks,
+            &hooks,
         )
         .await?;
 
@@ -376,7 +390,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
-        hooks: &H,
+        hooks: H,
     ) -> Result<CommissionResult, Error> {
         // A CASE session to the NodeID we are about to assign can only be left
         // over from a previous holder of it (NodeIDs get reused, e.g. after a
@@ -392,8 +406,8 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         self.matter.transport().notify_session_removed();
 
         let result = cancellable(
-            self.add_to_fabric(pase_session_id, opts, device_node_id, validity, hooks),
-            hooks,
+            self.add_to_fabric(pase_session_id, opts, device_node_id, validity, &hooks),
+            &hooks,
         )
         .await;
 
@@ -422,12 +436,14 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// phase 2 after [`Self::commission`]. Expired rather than removed, so the
     /// last step's trailing ack still goes out. The device drops the session
     /// once commissioned, and after a failure it may have lost it already (e.g.
-    /// it rebooted).
+    /// it rebooted). Does nothing if `pase_session_id` is not a PASE session.
     pub fn end_pase(&self, pase_session_id: u32) {
         self.matter.with_state(|state| {
-            state
-                .sessions
-                .expire_where(|sess| sess.id() == pase_session_id && !sess.is_expired());
+            state.sessions.expire_where(|sess| {
+                sess.id() == pase_session_id
+                    && matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+                    && !sess.is_expired()
+            });
         });
     }
 
@@ -447,9 +463,9 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     pub async fn complete_via_case<H: CommissionHooks>(
         &mut self,
         phase1: &CommissionResult,
-        hooks: &H,
+        hooks: H,
     ) -> Result<(), Error> {
-        let result = self.try_complete_via_case(phase1, hooks).await;
+        let result = self.try_complete_via_case(phase1, &hooks).await;
 
         if result
             .as_ref()
@@ -469,7 +485,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     async fn try_complete_via_case<H: CommissionHooks>(
         &mut self,
         phase1: &CommissionResult,
-        hooks: &H,
+        hooks: H,
     ) -> Result<(), Error> {
         let fab_idx = self.fab_idx;
 
@@ -477,7 +493,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
 
         for attempt in 0..self.case_attempts.max(1) {
             match self
-                .commissioning_complete(fab_idx, phase1.device_node_id, hooks)
+                .commissioning_complete(fab_idx, phase1.device_node_id, &hooks)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -503,7 +519,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
-        hooks: &H,
+        hooks: H,
     ) -> Result<CommissionResult, Error> {
         hooks.step(CommissionStep::ArmFailSafe);
         self.arm_fail_safe(pase_session_id, opts.fail_safe_secs)
@@ -778,7 +794,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         &self,
         fab_idx: NonZeroU8,
         peer_node_id: NodeId,
-        hooks: &H,
+        hooks: H,
     ) -> Result<(), Error> {
         hooks.step(CommissionStep::FindOperational);
 
@@ -790,7 +806,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
                 peer_node_id,
                 self.transport,
             ),
-            hooks,
+            &hooks,
         )
         .await?;
 
@@ -829,7 +845,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
 }
 
 /// `fut`, unless `hooks` cancels it first.
-async fn cancellable<T, F, H>(fut: F, hooks: &H) -> Result<T, Error>
+async fn cancellable<T, F, H>(fut: F, hooks: H) -> Result<T, Error>
 where
     F: Future<Output = Result<T, Error>>,
     H: CommissionHooks,
