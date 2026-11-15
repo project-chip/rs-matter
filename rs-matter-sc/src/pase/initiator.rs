@@ -97,7 +97,8 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
     ///   PBKDFParamResponse.
     ///
     /// # Returns
-    /// - `Ok(())` on successful session establishment
+    /// - `Ok(session_id)` with the ID of the new PASE session, for opening
+    ///   exchanges on it with [`Exchange::initiate_for_session`]
     /// - `Err(Error)` on failure
     pub async fn perform(
         matter: &'a M,
@@ -105,7 +106,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         crypto: &'a C,
         password: u32,
         peer_mrp: Option<&PeerMrpParams>,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         let mut session = ReservedSession::reserve(exchange.transport(), crypto).await?;
         if let Some(peer_mrp) = peer_mrp {
             session.apply_peer_session_params(exchange.id(), &peer_mrp.into())?;
@@ -380,12 +381,12 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         Ok(())
     }
 
-    /// Complete session establishment
+    /// Complete session establishment, returning the ID of the new session
     async fn complete_session(
         &mut self,
         exchange: &mut Exchange<'_>,
         mut session: ReservedSession<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         // Derive session keys from Ke
         let ke = self.spake2p.ke();
 
@@ -395,12 +396,10 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
             .map_err(|_| ErrorCode::InvalidData)?;
 
-        // Get the peer address, and the address the peer was dialled at: the
-        // peer may have answered from another one, and the caller looks the
-        // PASE session up by the address it dialled.
-        let (peer_addr, dialled_addr) = exchange.with_state(self.matter, |state| {
+        // Get peer address
+        let peer_addr = exchange.with_state(self.matter, |state| {
             let sess = exchange.id().session(state.sessions);
-            Ok((sess.get_peer_addr(), sess.get_dialled_addr()))
+            Ok(sess.get_peer_addr())
         })?;
 
         // Split session keys into dec_key, enc_key, att_challenge
@@ -424,9 +423,9 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             Some(att_challenge),
             None,
         )?;
-        session.set_dialled_addr(dialled_addr)?;
 
         // Complete the reserved session
+        let session_id = session.id();
         session.complete();
 
         // Acknowledge the final message
@@ -437,7 +436,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             self.local_sessid, self.peer_sessid
         );
 
-        Ok(())
+        Ok(session_id)
     }
 }
 

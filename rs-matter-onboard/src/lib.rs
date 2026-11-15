@@ -169,9 +169,10 @@ pub struct CommissionResult {
     /// be threaded into [`Commissioner::complete_via_case`] without the
     /// caller having to plumb it separately.
     pub device_node_id: NodeId,
-    /// Where phase 1 reached the device: its PASE session stays open until
-    /// [`Commissioner::complete_via_case`] is done.
-    pub peer_addr: Address,
+    /// The ID of the PASE session phase 1 ran over. The session stays open
+    /// until [`Commissioner::complete_via_case`] is done; exchanges over it are
+    /// opened with [`Exchange::initiate_for_session`].
+    pub pase_session_id: u32,
 }
 
 /// Stateful commissioner.
@@ -270,16 +271,34 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         self.fab_idx
     }
 
-    /// Phase 1 — drive `ArmFailSafe` through `AddNOC` over PASE.
+    /// Phase 1 — establish a new PASE session to the device at `peer_addr` with
+    /// `passcode`, then drive `ArmFailSafe` through `AddNOC` over it.
     ///
-    /// Runs over the PASE session to `peer_addr` if there is one, e.g. one the
-    /// caller opened to read the device first: while the device holds it, it
-    /// accepts no other. Otherwise it establishes one with `passcode`. On
-    /// success the session stays open for the steps the caller runs over it
+    /// See [`Self::commission_over_pase`].
+    pub async fn commission(
+        &mut self,
+        peer_addr: Address,
+        passcode: u32,
+        opts: &CommissionOptions,
+        device_node_id: NodeId,
+        validity: Validity,
+    ) -> Result<CommissionResult, Error> {
+        let pase_session_id =
+            Exchange::establish_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
+
+        self.commission_over_pase(pase_session_id, opts, device_node_id, validity)
+            .await
+    }
+
+    /// Phase 1 — drive `ArmFailSafe` through `AddNOC` over the PASE session
+    /// `pase_session_id`, e.g. one the caller established with
+    /// `Exchange::establish_pase` to read the device first: while the device
+    /// holds it, it accepts no other.
+    ///
+    /// On success the session stays open for the steps the caller runs over it
     /// before phase 2 (e.g. network commissioning), and phase 2 expires it when
     /// done; a caller not going on to phase 2 ends it with [`Self::end_pase`].
-    /// On failure it is expired on return. Either way a later commissioning of
-    /// the same peer starts a new one.
+    /// On failure it is expired on return.
     ///
     /// `device_node_id` is the NodeID the caller wishes to assign to
     /// the device on the controller's fabric. `validity` is the NOC's
@@ -294,10 +313,9 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     /// ([`Self::complete_via_case`]) finalises commissioning over
     /// CASE; if the caller doesn't run it before the fail-safe expires
     /// the device rolls back.
-    pub async fn commission(
+    pub async fn commission_over_pase(
         &mut self,
-        peer_addr: Address,
-        passcode: u32,
+        pase_session_id: u32,
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
@@ -316,53 +334,39 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         self.matter.transport().notify_session_removed();
 
         let result = self
-            .add_to_fabric(peer_addr, passcode, opts, device_node_id, validity)
+            .add_to_fabric(pase_session_id, opts, device_node_id, validity)
             .await;
 
         if result.is_err() {
             // Roll the device back at once, as CHIP does, so it can be
             // commissioned again right away: some steps can only be taken once
             // per armed fail-safe. Best-effort, as the device may be gone.
-            let _ = self.disarm_fail_safe(peer_addr).await;
-            self.end_pase(peer_addr);
+            let _ = self.disarm_fail_safe(pase_session_id).await;
+            self.end_pase(pase_session_id);
         }
 
         result
     }
 
     /// Disarm the device's fail-safe (`ArmFailSafe` with a zero expiry) over the
-    /// PASE session to `peer_addr` that [`Self::commission`] left open, so the
-    /// device rolls the commissioning back at once: for a caller cancelling, or
-    /// giving up before phase 2. Never opens a new PASE session, and does not
-    /// end this one (see [`Self::end_pase`]).
-    pub async fn disarm_fail_safe(&self, peer_addr: Address) -> Result<(), Error> {
-        let sess_id = self
-            .matter
-            .with_state(|state| {
-                state
-                    .sessions
-                    .iter()
-                    .find(|sess| !sess.is_expired() && sess.is_pase_for_addr(&peer_addr))
-                    .map(|sess| sess.id())
-            })
-            .ok_or(ErrorCode::NoSession)?;
-
-        let exchange =
-            Exchange::initiate_for_session(self.matter.transport(), &self.crypto, sess_id)?;
-
-        Self::send_arm_fail_safe(exchange, 0).await
+    /// PASE session `pase_session_id` that [`Self::commission`] left open, so
+    /// the device rolls the commissioning back at once: for a caller cancelling,
+    /// or giving up before phase 2. Does not end the session (see
+    /// [`Self::end_pase`]).
+    pub async fn disarm_fail_safe(&self, pase_session_id: u32) -> Result<(), Error> {
+        self.arm_fail_safe(pase_session_id, 0).await
     }
 
-    /// Expire the PASE session to `peer_addr`, for a caller not going on to
+    /// Expire the PASE session `pase_session_id`, for a caller not going on to
     /// phase 2 after [`Self::commission`]. Expired rather than removed, so the
     /// last step's trailing ack still goes out. The device drops the session
     /// once commissioned, and after a failure it may have lost it already (e.g.
     /// it rebooted).
-    pub fn end_pase(&self, peer_addr: Address) {
+    pub fn end_pase(&self, pase_session_id: u32) {
         self.matter.with_state(|state| {
             state
                 .sessions
-                .expire_where(|sess| !sess.is_expired() && sess.is_pase_for_addr(&peer_addr));
+                .expire_where(|sess| sess.id() == pase_session_id && !sess.is_expired());
         });
     }
 
@@ -379,7 +383,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         let result = self.try_complete_via_case(phase1).await;
 
         // As CHIP does, the PASE session lasts until commissioning is over.
-        self.end_pase(phase1.peer_addr);
+        self.end_pase(phase1.pase_session_id);
 
         result
     }
@@ -411,18 +415,15 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         Err(last_err.unwrap_or_else(|| ErrorCode::Failure.into()))
     }
 
-    /// Phase 1 of [`Self::commission`], over PASE.
+    /// Phase 1 of [`Self::commission_over_pase`].
     async fn add_to_fabric(
         &mut self,
-        peer_addr: Address,
-        passcode: u32,
+        pase_session_id: u32,
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
     ) -> Result<CommissionResult, Error> {
-        // The first PASE step (ArmFailSafe) establishes the PASE session via
-        // `initiate_pase` unless there is one already; the rest reuse it.
-        self.arm_fail_safe(peer_addr, passcode, opts.fail_safe_secs)
+        self.arm_fail_safe(pase_session_id, opts.fail_safe_secs)
             .await?;
 
         // Device Attestation — structural hook. See [`CommissionOptions::allow_test_attestation`].
@@ -447,7 +448,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         // Sign the device NOC. The returned slice lives in
         // `noc_generator.buf` — independent of `buf`, so we can use
         // both side-by-side below.
-        let noc = Self::csr_request(matter, crypto, peer_addr, passcode, &csr_nonce, |csr_der| {
+        let noc = Self::csr_request(matter, crypto, pase_session_id, &csr_nonce, |csr_der| {
             noc_generator.generate(crypto, csr_der, device_node_id, &[], validity)
         })
         .await?;
@@ -467,7 +468,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
             buf[..rcac.len()].copy_from_slice(rcac);
             Ok::<_, Error>(rcac.len())
         })?;
-        Self::add_trusted_root_certificate(matter, crypto, peer_addr, passcode, &buf[..rcac_len])
+        Self::add_trusted_root_certificate(matter, crypto, pase_session_id, &buf[..rcac_len])
             .await?;
 
         // IPK as sent on the wire is the **epoch key** (the raw
@@ -492,8 +493,7 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         let fabric_index = Self::add_noc(
             matter,
             crypto,
-            peer_addr,
-            passcode,
+            pase_session_id,
             noc,
             &buf[..icac_len],
             &ipk_bytes,
@@ -505,19 +505,18 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
         Ok(CommissionResult {
             fabric_index,
             device_node_id,
-            peer_addr,
+            pase_session_id,
         })
     }
 
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.
     pub(crate) async fn arm_fail_safe(
         &self,
-        peer_addr: Address,
-        passcode: u32,
+        pase_session_id: u32,
         expiry_seconds: u16,
     ) -> Result<(), Error> {
         let exchange =
-            Exchange::initiate_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
+            Exchange::initiate_for_session(self.matter.transport(), &self.crypto, pase_session_id)?;
 
         Self::send_arm_fail_safe(exchange, expiry_seconds).await
     }
@@ -560,15 +559,14 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     pub(crate) async fn csr_request<'m, F, R>(
         matter: &'m Matter<'m>,
         crypto: &C,
-        peer_addr: Address,
-        passcode: u32,
+        pase_session_id: u32,
         csr_nonce: &[u8; 32],
         use_csr: F,
     ) -> Result<R, Error>
     where
         F: FnOnce(&[u8]) -> Result<R, Error>,
     {
-        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_for_session(matter.transport(), crypto, pase_session_id)?;
 
         let handle = exchange
             .operational_credentials()
@@ -610,11 +608,10 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     pub(crate) async fn add_trusted_root_certificate<'m>(
         matter: &'m Matter<'m>,
         crypto: &C,
-        peer_addr: Address,
-        passcode: u32,
+        pase_session_id: u32,
         rcac_tlv: &[u8],
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_for_session(matter.transport(), crypto, pase_session_id)?;
 
         exchange
             .operational_credentials()
@@ -635,15 +632,14 @@ impl<'a, 'b, C: Crypto> Commissioner<'a, 'b, C> {
     pub(crate) async fn add_noc<'m>(
         matter: &'m Matter<'m>,
         crypto: &C,
-        peer_addr: Address,
-        passcode: u32,
+        pase_session_id: u32,
         noc: &[u8],
         icac: &[u8],
         ipk: &[u8],
         admin_case_subject: u64,
         admin_vendor_id: u16,
     ) -> Result<NonZeroU8, Error> {
-        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_for_session(matter.transport(), crypto, pase_session_id)?;
 
         let handle = exchange
             .operational_credentials()

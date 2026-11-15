@@ -1191,11 +1191,11 @@ impl<'a> Exchange<'a> {
     /// the given peer address.
     ///
     /// Low-level primitive below the three high-level entry points
-    /// (`Exchange::initiate`, `Exchange::initiate_pase`,
+    /// (`Exchange::initiate`, `Exchange::establish_pase`,
     /// [`Exchange::initiate_for_session`]): the returned exchange carries the
     /// first handshake message of PASE (`PaseInitiator`) or
     /// CASE (`CaseInitiator`). Use this only when driving a handshake protocol
-    /// directly; otherwise prefer `initiate_pase` (which runs PASE for you) or
+    /// directly; otherwise prefer `establish_pase` (which runs PASE for you) or
     /// `initiate` (CASE). If there is no space for a new session, an existing
     /// session is evicted and the operation retried.
     #[inline(always)]

@@ -377,7 +377,7 @@ async fn controller_flow<C: Crypto>(
 
     // The PASE session is alive: a read over it succeeds.
     let on = with_timeout(
-        read_onoff_over_pase(matter, crypto, peer_addr),
+        read_onoff_over_pase(matter, crypto, result.pase_session_id),
         IM_TIMEOUT_SECS,
         "read over PASE",
     )
@@ -482,7 +482,7 @@ async fn controller_flow<C: Crypto>(
     // still believes it is alive, but a read over it now fails.
     let sent_before = device.sent.get();
 
-    let mut read = pin!(read_onoff_over_pase(matter, crypto, peer_addr));
+    let mut read = pin!(read_onoff_over_pase(matter, crypto, result.pase_session_id));
     let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
 
     match select(&mut read, &mut timeout).await {
@@ -516,13 +516,13 @@ async fn wait_for_rollback(device: &Matter<'_>) -> Instant {
     Instant::now()
 }
 
-/// Read `OnOff` on endpoint 1 over the PASE session to `peer_addr`.
+/// Read `OnOff` on endpoint 1 over the PASE session `pase_session_id`.
 async fn read_onoff_over_pase<C: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
-    peer_addr: Address,
+    pase_session_id: u32,
 ) -> Result<bool, Error> {
-    let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, TEST_PASSCODE).await?;
+    let exchange = Exchange::initiate_for_session(matter.transport(), crypto, pase_session_id)?;
 
     exchange.on_off().on_off_read(1).await
 }

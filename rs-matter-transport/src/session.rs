@@ -149,12 +149,6 @@ pub struct Session {
     // Internal ID which is guaranteeed to be unique accross all sessions and not change when sessions are added/removed
     pub id: u32,
     peer_addr: Address,
-    /// The address the session was first set up against: the one we dialled
-    /// when we initiated it. Unlike `peer_addr`, it does not follow the peer
-    /// when it sends from another address (see `post_recv`), so a caller that
-    /// keys a session by the address it dialled keeps finding it
-    /// (see `is_pase_for_addr`).
-    dialled_addr: Address,
     local_nodeid: u64,
     peer_nodeid: Option<u64>,
     // I find the session initiator/responder role getting confused with exchange initiator/responder
@@ -221,7 +215,6 @@ impl Session {
             id,
             state: SessionState::new(reserved),
             peer_addr,
-            dialled_addr: peer_addr,
             local_nodeid: 0,
             peer_nodeid,
             dec_key: CanonAeadKey::new(),
@@ -257,7 +250,6 @@ impl Session {
             id,
             state: SessionState::new(reserved),
             peer_addr,
-            dialled_addr: peer_addr,
             local_nodeid: 0,
             peer_nodeid,
             dec_key <- CanonAeadKey::init(),
@@ -310,12 +302,6 @@ impl Session {
 
     pub fn get_peer_addr(&self) -> Address {
         self.peer_addr
-    }
-
-    /// The address the session was first set up against (the one dialled, for
-    /// a session we initiated). It stays put when the peer's address changes.
-    pub fn get_dialled_addr(&self) -> Address {
-        self.dialled_addr
     }
 
     pub fn is_encrypted(&self) -> bool {
@@ -497,24 +483,6 @@ impl Session {
     #[inline(never)]
     pub(crate) fn is_peer(&self, peer: &Address) -> bool {
         self.peer_addr.canonical() == peer.canonical()
-    }
-
-    /// Whether this is a PASE session to the given peer address.
-    ///
-    /// PASE sessions are all keyed at fabric 0 / node 0 (no operational
-    /// identity yet), so the peer *address* is what distinguishes one PASE
-    /// session from another - which matters on a commissioner that may have
-    /// several PASE sessions (to different devices) in flight at once.
-    ///
-    /// The address the session was dialled at matches too. A peer with several
-    /// addresses may answer from another one than the one dialled (e.g. dialled
-    /// at its link-local address, it answers from a routable one), and the
-    /// session then follows it (see `post_recv`); the commissioner keeps asking
-    /// for the session by the address it dialled.
-    pub fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
-        matches!(self.mode, SessionMode::Pase { .. })
-            && (self.is_peer(peer_addr) || self.dialled_addr.canonical() == peer_addr.canonical())
-            && !self.is_reserved()
     }
 
     pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
@@ -1109,16 +1077,9 @@ impl<'a> ReservedSession<'a> {
         }
     }
 
-    /// Record the address the handshake was dialled at, when it is not the
-    /// address the peer ended up answering from (which [`Self::update`] takes).
-    /// To be called after [`Self::update`].
-    pub fn set_dialled_addr(&mut self, dialled_addr: Address) -> Result<(), Error> {
-        self.transport.with_sessions(|sessions| {
-            let session = sessions.get(self.id).ok_or(ErrorCode::NoSession)?;
-            session.dialled_addr = dialled_addr;
-
-            Ok(())
-        })
+    /// The ID of the reserved session, which it keeps once completed.
+    pub const fn id(&self) -> u32 {
+        self.id
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1174,7 +1135,6 @@ impl<'a> ReservedSession<'a> {
         session.peer_sess_id = peer_sessid;
         session.local_sess_id = local_sessid;
         session.peer_addr = peer_addr;
-        session.dialled_addr = peer_addr;
         session.mode = mode;
         // The handshake that establishes the session has just heard from the peer
         session.mark_peer_active(Instant::now());
@@ -2296,7 +2256,7 @@ impl Sessions {
     /// Operational sessions are by definition encrypted and on a real fabric,
     /// so the lookup always matches an encrypted session - there is no
     /// "unsecured by node" lookup (unsecured/PASE sessions carry no operational
-    /// identity; see [`Sessions::get_pase_for_addr`]).
+    /// identity).
     pub fn get_for_node(
         &mut self,
         fabric_idx: NonZeroU8,
@@ -2326,24 +2286,6 @@ impl Sessions {
         session.update_last_used();
 
         Some(session)
-    }
-
-    /// Find an in-flight PASE session to the given peer address.
-    ///
-    /// Used by [`Exchange::initiate_pase`](crate::exchange::Exchange::initiate_pase)
-    /// to reuse a PASE session per peer (rather than assuming a single global
-    /// one), so a commissioner can drive several concurrent commissionings.
-    pub fn get_pase_for_addr(&mut self, peer_addr: &Address) -> Option<&mut Session> {
-        let mut session = self
-            .sessions
-            .iter_mut()
-            .find(|s| s.state == SessionState::Active && s.is_pase_for_addr(peer_addr));
-
-        if let Some(session) = session.as_mut() {
-            session.update_last_used();
-        }
-
-        session
     }
 
     pub(crate) fn get_for_rx(
@@ -3526,8 +3468,6 @@ mod tests {
 
         assert!(unwrap!(sess.post_recv(&udp(5541), &rx)));
         assert_eq!(sess.get_peer_addr(), udp(5541));
-        // Where it was dialled is kept.
-        assert_eq!(sess.get_dialled_addr(), udp(5540));
 
         assert_eq!(
             unwrap!(sess.post_recv(&udp(5542), &rx).err()).code(),
@@ -3549,8 +3489,6 @@ mod tests {
 
         let mut reserved = unwrap!(ReservedSession::reserve_now(&transport, &crypto));
         let id = reserved.id;
-        let mut reserved_moved = unwrap!(ReservedSession::reserve_now(&transport, &crypto));
-        let moved_id = reserved_moved.id;
 
         let mut rx_plain = PlainHdr::new();
         rx_plain.sess_id = 0;
@@ -3590,37 +3528,6 @@ mod tests {
             assert_eq!(sess.get_local_sess_id(), 0x5678);
             assert_eq!(sess.get_peer_addr(), udp(5540));
             assert_eq!(unwrap!(sess.get_enc_key()).access(), KEY.access());
-            assert!(sess.is_pase_for_addr(&udp(5540)));
-            assert!(!sess.is_pase_for_addr(&udp(5541)));
-        });
-
-        // A peer dialled at one address that answered the handshake from
-        // another: the session is found by both.
-        unwrap!(reserved_moved.update(
-            0x11,
-            0x22,
-            0x1235,
-            0x5679,
-            udp(5551),
-            SessionMode::Pase { fab_idx: 0 },
-            Some(KEY),
-            Some(KEY),
-            None,
-            None,
-        ));
-        unwrap!(reserved_moved.set_dialled_addr(udp(5550)));
-        reserved_moved.complete();
-
-        transport.with_sessions(|sessions| {
-            let sess = unwrap!(sessions.get(moved_id));
-            assert_eq!(sess.get_peer_addr(), udp(5551));
-            assert!(sess.is_pase_for_addr(&udp(5550)));
-            assert!(sess.is_pase_for_addr(&udp(5551)));
-            assert!(!sess.is_pase_for_addr(&udp(5540)));
-        });
-        transport.with_sessions(|sessions| {
-            assert!(unwrap!(sessions.get_pase_for_addr(&udp(5550))).id == moved_id);
-            assert!(unwrap!(sessions.get_pase_for_addr(&udp(5540))).id == id);
         });
 
         let abandoned = unwrap!(ReservedSession::reserve_now(&transport, &crypto));
