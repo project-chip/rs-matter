@@ -43,7 +43,6 @@
 use core::fmt::Debug;
 use core::iter::empty;
 
-use crate::error::Error;
 use crate::error::TlvError;
 use crate::utils::init;
 use crate::utils::maybe::Maybe;
@@ -101,14 +100,14 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
 }
 
 impl<T: ToTLV> ToTLV for Maybe<T, AsNullable> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         match self.as_opt_ref() {
             None => Ok(tw.null(tag)?),
             Some(s) => s.nullable_to_tlv(tag, tw),
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         match self.as_opt_ref() {
             None => EitherIter::First(TLV::null(tag).into_tlv_iter()),
             Some(s) => EitherIter::Second(s.nullable_tlv_iter(tag)),
@@ -135,14 +134,14 @@ impl<'a, T: FromTLV<'a> + 'a> FromTLV<'a> for Maybe<T, AsOptional> {
 }
 
 impl<T: ToTLV> ToTLV for Maybe<T, AsOptional> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         match self.as_opt_ref() {
             None => Ok(()),
             Some(s) => s.to_tlv(tag, tw),
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         use crate::EitherIter;
 
         match self.as_opt_ref() {
@@ -163,14 +162,14 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Option<T> {
 }
 
 impl<T: ToTLV> ToTLV for Option<T> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         match self.as_ref() {
             None => Ok(()),
             Some(s) => s.to_tlv(tag, tw),
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         match self.as_ref() {
             None => EitherIter::First(empty()),
             Some(s) => EitherIter::Second(s.tlv_iter(tag)),

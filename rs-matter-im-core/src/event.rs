@@ -19,7 +19,6 @@ use core::num::NonZeroU8;
 
 use num_enum::TryFromPrimitive;
 
-use crate::error::Error;
 use crate::tlv::{
     FromTLV, TLVElement, TLVTag, TLVWrite, TagType, TlvError, TlvErrorCode, ToTLV, TLV,
 };
@@ -193,7 +192,7 @@ impl<'a> EventData<'a> {
         }
     }
 
-    pub fn write_preamble<T: TLVWrite>(&self, tag: &TLVTag, mut tw: T) -> Result<(), Error> {
+    pub fn write_preamble<T: TLVWrite>(&self, tag: &TLVTag, mut tw: T) -> Result<(), TlvError> {
         tw.start_struct(tag)?;
 
         self.path
@@ -232,16 +231,16 @@ impl<'a> EventData<'a> {
 
 // Manually implemented because of the tagged union used for the timestamp
 impl<'a> ToTLV for EventData<'a> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         self.write_preamble(tag, &mut tw)?;
 
         self.data
             .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
 
-        Ok(tw.end_container()?)
+        tw.end_container()
     }
 
-    fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         let (timestamp_tag, timestamp_val) = match self.timestamp {
             EventDataTimestamp::EpochTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
             EventDataTimestamp::SystemTimestamp(ts) => (EventDataTag::SystemTimestamp, ts),

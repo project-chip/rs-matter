@@ -22,7 +22,7 @@ use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 use verhoeff::Verhoeff;
 
 use crate::error::ErrorCode;
-use crate::tlv::{EitherIter, TLVElement, TLVTag, TLV};
+use crate::tlv::{EitherIter, TLVElement, TLVTag, TlvError, TLV};
 use crate::utils::codec::base38;
 use crate::utils::storage::{String, WriteBuf};
 
@@ -76,10 +76,10 @@ pub enum CommFlowType {
 }
 
 /// Type alias for no optional data function for the QR payload
-pub type NoOptionalData = fn() -> Empty<Result<u8, Error>>;
+pub type NoOptionalData = fn() -> Empty<Result<u8, TlvError>>;
 
 /// Function that provides no optional data for the QR payload
-pub fn no_optional_data() -> Empty<Result<u8, Error>> {
+pub fn no_optional_data() -> Empty<Result<u8, TlvError>> {
     core::iter::empty()
 }
 
@@ -109,7 +109,7 @@ pub struct QrPayload<'a, T> {
 impl<'a, T, I> QrPayload<'a, T>
 where
     T: Fn() -> I,
-    I: Iterator<Item = Result<u8, Error>> + 'a,
+    I: Iterator<Item = Result<u8, TlvError>> + 'a,
 {
     /// Create a new QR payload
     ///
@@ -391,10 +391,9 @@ where
                 SETUP_PINCODE_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(0, PADDING_FIELD_LENGTH_IN_BITS))
-            .chain(
-                self.emit_optional_tlv_data()
-                    .flat_map(|bits| Self::emit_maybe_bits(bits.map(|bits| (bits as _, 8)))),
-            )
+            .chain(self.emit_optional_tlv_data().flat_map(|bits| {
+                Self::emit_maybe_bits(bits.map_err(Into::into).map(|bits| (bits as _, 8)))
+            }))
     }
 
     fn emit_bits(input: u32, len: usize) -> impl Iterator<Item = Result<bool, Error>> {
@@ -410,7 +409,7 @@ where
         }
     }
 
-    fn emit_optional_tlv_data(&self) -> impl Iterator<Item = Result<u8, Error>> + '_ {
+    fn emit_optional_tlv_data(&self) -> impl Iterator<Item = Result<u8, TlvError>> + '_ {
         if self.serial_no.is_empty() && (self.optional_data)().next().is_none() {
             return EitherIter::First(core::iter::empty());
         }

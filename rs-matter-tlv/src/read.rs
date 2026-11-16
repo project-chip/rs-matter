@@ -17,7 +17,7 @@
 
 use core::{cmp::Ordering, fmt};
 
-use crate::error::{Error, TlvError, TlvErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 
 use super::{pad, FromTLV, TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, TLV};
 
@@ -153,7 +153,7 @@ impl<'a> TLVElement<'a> {
 
     /// Return a `TLV` struct representing the tag and value of this `TLVElement`.
     /// This method is a convenience method that combines the `tag` and `value` methods.
-    pub fn tlv(&self) -> Result<TLV<'a>, Error> {
+    pub fn tlv(&self) -> Result<TLV<'a>, TlvError> {
         Ok(TLV {
             tag: self.tag()?,
             value: self.value()?,
@@ -1196,7 +1196,7 @@ impl<'a> TLVSequenceTLVIter<'a> {
         Self { seq, nesting: 0 }
     }
 
-    fn try_next(&mut self) -> Result<Option<TLV<'a>>, Error> {
+    fn try_next(&mut self) -> Result<Option<TLV<'a>>, TlvError> {
         if self.seq.0.is_empty() {
             return Ok(None);
         }
@@ -1233,7 +1233,7 @@ impl<'a> TLVSequenceTLVIter<'a> {
 }
 
 impl<'a> Iterator for TLVSequenceTLVIter<'a> {
-    type Item = Result<TLV<'a>, Error>;
+    type Item = Result<TLV<'a>, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.try_next().transpose()

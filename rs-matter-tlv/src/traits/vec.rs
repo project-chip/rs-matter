@@ -29,7 +29,6 @@
 //! traversing the array is tolerable (i.e. `T` is small enough), prefer `TLVArray`, which operates
 //! directly on the borrowed, encoded TLV representation of the whole array.
 
-use crate::error::Error;
 use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::init::{self, IntoFallibleInit};
 use crate::utils::storage::Vec;
@@ -68,11 +67,11 @@ impl<T, const N: usize> ToTLV for Vec<T, N>
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.as_slice().to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         tlv_array_iter(tag, self.iter())
     }
 }
@@ -100,11 +99,11 @@ impl<T> ToTLV for alloc::vec::Vec<T>
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.as_slice().to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         tlv_array_iter(tag, self.iter())
     }
 }

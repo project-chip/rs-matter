@@ -233,11 +233,11 @@ where
 }
 
 impl<T, C> ToTLV for TLVContainer<'_, T, C> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.element.to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         self.element.tlv_iter(tag)
     }
 }
@@ -336,14 +336,14 @@ where
     T: FromTLV<'a>,
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         match self {
             Self::Array(array) => array.to_tlv(tag, tw),
             Self::Slice(slice) => slice.to_tlv(tag, tw),
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         match self {
             Self::Array(array) => EitherIter::First(array.tlv_iter(tag)),
             Self::Slice(slice) => EitherIter::Second(slice.tlv_iter(tag)),
@@ -432,7 +432,7 @@ where
 // }
 
 // impl<'a, T> ToTLV for TLVArray<'a, T> {
-//     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
+//     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), TlvError> {
 //         tw.start_array(tag_type)?;
 //         for a in self.iter() {
 //             a.to_tlv(tw, TagType::Anonymous)?;

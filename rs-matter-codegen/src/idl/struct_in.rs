@@ -130,11 +130,11 @@ fn structure<S: StructLike>(
         }
 
         impl #krate::tlv::ToTLV for #name<'_> {
-            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, tw: W) -> Result<(), #krate::error::Error> {
+            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, tw: W) -> Result<(), #krate::tlv::TlvError> {
                 self.0.to_tlv(tag, tw)
             }
 
-            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
+            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::tlv::TlvError>> {
                 self.0.tlv_iter(tag)
             }
         }
@@ -363,13 +363,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -475,13 +475,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -541,13 +541,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -602,13 +602,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -668,13 +668,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -823,13 +823,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -910,13 +910,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -1076,13 +1076,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }
@@ -1256,13 +1256,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_crate::tlv::TLVTag,
                         tw: W,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
+                    ) -> Result<(), rs_matter_crate::tlv::TlvError> {
                         self.0.to_tlv(tag, tw)
                     }
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+                    ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>>
                     {
                         self.0.tlv_iter(tag)
                     }

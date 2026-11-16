@@ -502,7 +502,7 @@ impl<'a> TLV<'a> {
 
     /// Converts the provided result into an iterator over the bytes of the TLV.
     pub fn result_into_bytes_iter(
-        result: Result<Self, Error>,
+        result: Result<Self, TlvError>,
     ) -> TLVResultBytesIter<'a, TLVTag, TLVValue<'a>> {
         TLVResultBytesIter::new(result)
     }
@@ -533,11 +533,11 @@ where
     V: Borrow<TLVValue<'a>>,
 {
     Ok(TLVBytesIter<'a, T, V>),
-    Err(core::iter::Once<Result<u8, Error>>),
+    Err(core::iter::Once<Result<u8, TlvError>>),
 }
 
 impl<'a> TLVResultBytesIter<'a, TLVTag, TLVValue<'a>> {
-    pub fn new(result: Result<TLV<'a>, Error>) -> Self {
+    pub fn new(result: Result<TLV<'a>, TlvError>) -> Self {
         match result {
             Ok(tlv) => Self::Ok(tlv.into_bytes_iter()),
             Err(err) => Self::Err(core::iter::once(Err(err))),
@@ -550,7 +550,7 @@ where
     T: Borrow<TLVTag>,
     V: Borrow<TLVValue<'a>>,
 {
-    type Item = Result<u8, Error>;
+    type Item = Result<u8, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -587,7 +587,7 @@ where
 }
 
 /// The iterator type for a TLV that returns the TLV itself.
-pub type OnceTLVIter<'s> = core::iter::Once<Result<TLV<'s>, Error>>;
+pub type OnceTLVIter<'s> = core::iter::Once<Result<TLV<'s>, TlvError>>;
 
 /// For backwards compatibility
 pub type TagType = TLVTag;

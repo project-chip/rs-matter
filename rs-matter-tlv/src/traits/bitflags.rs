@@ -55,14 +55,14 @@ macro_rules! bitflags_tlv {
                 &self,
                 tag: &$crate::TLVTag,
                 mut tw: W,
-            ) -> Result<(), $crate::__private::Error> {
-                Ok(tw.$type(tag, self.bits())?)
+            ) -> Result<(), $crate::__private::TlvError> {
+                tw.$type(tag, self.bits())
             }
 
             fn tlv_iter(
                 &self,
                 tag: $crate::TLVTag,
-            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::Error>> {
+            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::TlvError>> {
                 $crate::TLV::$type(tag, self.bits()).into_tlv_iter()
             }
 
@@ -70,9 +70,9 @@ macro_rules! bitflags_tlv {
                 &self,
                 tag: &$crate::TLVTag,
                 mut tw: W,
-            ) -> Result<(), $crate::__private::Error> {
+            ) -> Result<(), $crate::__private::TlvError> {
                 if self.bits() != $type::MAX {
-                    Ok(tw.$type(tag, self.bits())?)
+                    tw.$type(tag, self.bits())
                 } else {
                     Err($crate::__private::TlvErrorCode::UnexpectedNull.into())
                 }
@@ -81,7 +81,7 @@ macro_rules! bitflags_tlv {
             fn nullable_tlv_iter(
                 &self,
                 tag: $crate::TLVTag,
-            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::Error>> {
+            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::TlvError>> {
                 if self.bits() != $type::MAX {
                     $crate::EitherIter::First($crate::TLV::$type(tag, self.bits()).into_tlv_iter())
                 } else {

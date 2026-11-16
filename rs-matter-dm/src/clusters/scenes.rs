@@ -523,7 +523,7 @@ impl<const N: usize, const M: usize> SceneInvalidator for ScenesState<N, M> {
 // successive runs of the same firmware.
 
 impl<const M: usize> ToTLV for SceneEntry<M> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.start_struct(tag)?;
         self.fab_idx.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.endpoint_id.to_tlv(&TLVTag::Context(1), &mut tw)?;
@@ -534,10 +534,10 @@ impl<const M: usize> ToTLV for SceneEntry<M> {
         // array-of-u8 (which is what the blanket `Vec<u8, M>: ToTLV`
         // would emit).
         tw.str(&TLVTag::Context(5), &self.extension_fields)?;
-        Ok(tw.end_container()?)
+        tw.end_container()
     }
 
-    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         // Persistence goes through `to_tlv`; this is just here to
         // satisfy the trait bound.
         core::iter::empty()
@@ -563,15 +563,15 @@ impl<'a, const M: usize> FromTLV<'a> for SceneEntry<M> {
 }
 
 impl<const N: usize, const M: usize> ToTLV for ScenesStateInner<N, M> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.start_struct(tag)?;
         self.table.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.current_per_fabric
             .to_tlv(&TLVTag::Context(1), &mut tw)?;
-        Ok(tw.end_container()?)
+        tw.end_container()
     }
 
-    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         core::iter::empty()
     }
 }

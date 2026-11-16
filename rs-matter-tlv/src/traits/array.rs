@@ -31,7 +31,6 @@
 //! Therefore, use `Vec` instead of built-in arrays if you need to efficiently in-place initialize
 //! (potentially large) arrays.
 
-use crate::error::Error;
 use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::storage::Vec;
 
@@ -64,11 +63,11 @@ impl<T, const N: usize> ToTLV for [T; N]
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.as_slice().to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         tlv_array_iter(tag, self.iter())
     }
 }

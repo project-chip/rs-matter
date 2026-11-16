@@ -367,11 +367,11 @@ impl<'a, const N: usize> FromTLV<'a> for CryptoSensitive<N> {
 }
 
 impl<const N: usize> ToTLV for CryptoSensitive<N> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        Ok(tw.str(tag, &self.data)?)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
+        tw.str(tag, &self.data)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.data.as_slice()).into_tlv_iter()
     }
 }

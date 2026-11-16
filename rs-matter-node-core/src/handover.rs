@@ -29,7 +29,7 @@ use crate::fabric::Fabric;
 use crate::networks::{Networks, NetworksError, WirelessCreds};
 use crate::tlv::{
     EitherIter, FromTLV, OctetStr, Octets, TLVArray, TLVArrayOrSlice, TLVElement, TLVTag, TLVWrite,
-    TlvError, ToTLV, Utf8Str, TLV,
+    TlvError, TlvErrorCode, ToTLV, Utf8Str, TLV,
 };
 
 /// The envelope version.
@@ -212,20 +212,38 @@ impl<'a, T> ToTLV for HandoverNetworks<'a, T>
 where
     T: HandoverNetwork + ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.start_array(tag)?;
+
+        // `for_each` reports the shared `Error`, so the `TlvError` of the inner
+        // `to_tlv` is carried out of the closure rather than flattened - it can be
+        // `NoSpace`, which the caller needs in order to chunk.
+        let mut tlv_err = None;
 
         self.for_each(&mut |creds| {
             // `for_each` only yields networks of kind `T`
             let network = unwrap!(T::from_creds(creds));
 
-            network.to_tlv(&TLVTag::Anonymous, &mut tw)
+            if let Err(err) = network.to_tlv(&TLVTag::Anonymous, &mut tw) {
+                tlv_err = Some(err.code());
+                Err(err)?;
+            }
+
+            Ok(())
+        })
+        .map_err(|err| {
+            TlvError::new(tlv_err.unwrap_or_else(|| {
+                // Reading the networks out of the store failed. There is no TLV
+                // code for that, so log the cause before flattening it away.
+                error!("Cannot read the networks to serialize: {}", err);
+                TlvErrorCode::NotFound
+            }))
         })?;
 
-        Ok(tw.end_container()?)
+        tw.end_container()
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         match &self.source {
             NetworksSource::Tlv(element) => {
                 EitherIter::First(EitherIter::First(element.tlv_iter(tag)))
@@ -235,7 +253,9 @@ where
             }
             // Callbacks cannot drive an iterator; use `to_tlv`
             NetworksSource::Store(_) => {
-                EitherIter::Second(core::iter::once(Err(ErrorCode::InvalidState.into())))
+                error!("A store-backed `HandoverNetworks` cannot be iterated; use `to_tlv`");
+
+                EitherIter::Second(core::iter::once(Err(TlvErrorCode::NotFound.into())))
             }
         }
     }

@@ -408,7 +408,7 @@ mod tests {
     use core::num::NonZeroU8;
 
     use crate::error::ErrorCode;
-    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvErrorCode, ToTLV};
     use crate::utils::storage::WriteBuf;
     use crate::{IMStatusCode, IM_REVISION};
 
@@ -647,7 +647,7 @@ mod tests {
             match resp.to_tlv(&TLVTag::Anonymous, &mut wb) {
                 Ok(()) => written += 1,
                 Err(e) => {
-                    assert_eq!(e.code(), ErrorCode::NoSpace);
+                    assert_eq!(e.code(), TlvErrorCode::NoSpace);
                     assert_eq!(wb.get_tail(), tail);
                     break;
                 }

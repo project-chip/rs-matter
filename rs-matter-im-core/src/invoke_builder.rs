@@ -735,6 +735,7 @@ mod tests {
                     transition_time: 300,
                 }
                 .to_tlv(&TLVTag::Context(1), w)
+                .map_err(Into::into)
             })
             .unwrap()
             .command_ref(7)
