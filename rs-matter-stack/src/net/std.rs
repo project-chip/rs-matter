@@ -35,11 +35,11 @@ use super::{NetSocket, NetStack, NetTcpStack};
 
 /// A `NetStack` over standard UDP sockets and `async-io`, with optional operational TCP.
 #[derive(Clone, Copy)]
-pub struct StdNetStack<'a> {
-    tcp: Option<&'a crate::tcp::TcpNetworkBuffers>,
+pub struct StdNetStack<T = crate::tcp::NoTcp> {
+    tcp: Option<T>,
 }
 
-impl core::fmt::Debug for StdNetStack<'_> {
+impl<T> core::fmt::Debug for StdNetStack<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("StdNetStack")
             .field("tcp", &self.tcp.is_some())
@@ -47,27 +47,29 @@ impl core::fmt::Debug for StdNetStack<'_> {
     }
 }
 
-impl Default for StdNetStack<'static> {
+impl Default for StdNetStack<crate::tcp::NoTcp> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StdNetStack<'static> {
+impl StdNetStack<crate::tcp::NoTcp> {
     /// Create a new UDP-only instance of the `StdNetStack` type.
     pub const fn new() -> Self {
         Self { tcp: None }
     }
 }
 
-impl<'a> StdNetStack<'a> {
+impl<'a> StdNetStack<StdTcpStack<'a>> {
     /// Create a new `StdNetStack` with operational TCP enabled over caller-owned buffers.
     pub const fn with_tcp(tcp: &'a crate::tcp::TcpNetworkBuffers) -> Self {
-        Self { tcp: Some(tcp) }
+        Self {
+            tcp: Some(StdTcpStack(tcp)),
+        }
     }
 }
 
-impl<'a> NetStack for StdNetStack<'a> {
+impl<T: NetTcpStack> NetStack for StdNetStack<T> {
     type Socket<'s>
         = StdNetSocket
     where
@@ -83,7 +85,7 @@ impl<'a> NetStack for StdNetStack<'a> {
     }
 
     fn tcp(&self) -> Option<impl NetTcpStack + '_> {
-        self.tcp.map(StdTcpStack)
+        self.tcp.as_ref()
     }
 }
 
@@ -147,6 +149,7 @@ mod tcp {
 
     /// Operational TCP stack for [`StdNetStack`](super::StdNetStack) backed by
     /// caller-owned [`TcpNetworkBuffers`].
+    #[derive(Clone, Copy)]
     pub struct StdTcpStack<'a>(pub(super) &'a TcpNetworkBuffers);
 
     impl<'a> NetTcpStack for StdTcpStack<'a> {
