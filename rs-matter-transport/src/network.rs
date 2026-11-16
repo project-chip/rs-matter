@@ -420,6 +420,31 @@ impl NetworkMulticast for NoNetwork {
     }
 }
 
+impl<T: NetworkSend> NetworkSend for Option<T> {
+    async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
+        match self {
+            Some(net) => net.send_to(data, addr).await,
+            None => NoNetwork.send_to(data, addr).await,
+        }
+    }
+}
+
+impl<T: NetworkReceive> NetworkReceive for Option<T> {
+    async fn wait_available(&mut self) -> Result<(), Error> {
+        match self {
+            Some(net) => net.wait_available().await,
+            None => NoNetwork.wait_available().await,
+        }
+    }
+
+    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+        match self {
+            Some(net) => net.recv_from(buffer).await,
+            None => NoNetwork.recv_from(buffer).await,
+        }
+    }
+}
+
 /// A network implementation that chains two network implementations together in a composite network interface.
 ///
 /// This allows for e.g. a network implementation that can send/receive data to/from both a UDP and a TCP network interface - or -

@@ -611,7 +611,9 @@ where
 
         let (send, recv, multicast) = socket.split();
 
-        if let Some(tcp_stack) = net_stack.tcp() {
+        let tcp_stack = net_stack.tcp();
+        let mut tcp = None;
+        if let Some(tcp_stack) = tcp_stack.as_ref() {
             match tcp_stack
                 .bind(SocketAddr::V6(SocketAddrV6::new(
                     Ipv6Addr::UNSPECIFIED,
@@ -621,8 +623,8 @@ where
                 )))
                 .await
             {
-                Ok(tcp) => {
-                    let max_message_size = tcp.max_message_size() as u32;
+                Ok(bound) => {
+                    let max_message_size = bound.max_message_size() as u32;
                     let capability = if tcp_stack.supports_client() {
                         TcpCapability::ClientAndServer(max_message_size)
                     } else {
@@ -630,16 +632,7 @@ where
                     };
                     self.matter().transport().set_tcp_capability(capability);
                     self.matter().transport().notify_mdns_changed();
-                    let _guard = scopeguard::guard((), |_| {
-                        self.matter()
-                            .transport()
-                            .set_tcp_capability(TcpCapability::None);
-                        self.matter().transport().notify_mdns_changed();
-                    });
-
-                    return self
-                        .run_transport_tcp_with_udp(crypto, send, recv, multicast, comm, tcp)
-                        .await;
+                    tcp = Some(bound);
                 }
                 Err(_err) => {
                     warn!(
@@ -650,41 +643,36 @@ where
             }
         }
 
-        self.run_transport_oper(crypto, send, recv, multicast, comm, Address::is_udp)
-            .await
-    }
+        let _guard = scopeguard::guard(tcp.is_some(), |had_tcp| {
+            if had_tcp {
+                self.matter()
+                    .transport()
+                    .set_tcp_capability(TcpCapability::None);
+                self.matter().transport().notify_mdns_changed();
+            }
+        });
 
-    async fn run_transport_tcp_with_udp<C, S, R, M, CR, CS, T>(
-        &self,
-        crypto: &C,
-        send: S,
-        recv: R,
-        multicast: M,
-        comm: Option<(CR, CS)>,
-        tcp: T,
-    ) -> Result<(), Error>
-    where
-        C: Crypto,
-        S: NetworkSend,
-        R: NetworkReceive,
-        M: NetworkMulticast,
-        CR: NetworkReceive,
-        CS: NetworkSend,
-        T: NetTcp,
-    {
-        let is_oper = |a: &Address| a.is_udp() || a.is_tcp();
+        let has_tcp = tcp.is_some();
+        let is_oper = move |a: &Address| a.is_udp() || (has_tcp && a.is_tcp());
+        let tcp_send = tcp.as_ref().map(NetTcp::send);
+        let tcp_recv = tcp.as_ref().map(NetTcp::recv);
 
         let mut transport = pin!(self.run_transport_oper(
             crypto,
-            ChainedNetwork::new(Address::is_udp, send, tcp.send()),
-            ChainedNetwork::new(Address::is_udp, recv, tcp.recv()),
+            ChainedNetwork::new(Address::is_udp, send, tcp_send),
+            ChainedNetwork::new(Address::is_udp, recv, tcp_recv),
             multicast,
             comm,
             is_oper,
         ));
-        let mut writer = pin!(tcp.run());
+        let mut tcp_runner = pin!(async {
+            match tcp.as_ref() {
+                Some(t) => t.run().await,
+                None => core::future::pending().await,
+            }
+        });
 
-        select(&mut transport, &mut writer).coalesce().await
+        select(&mut transport, &mut tcp_runner).coalesce().await
     }
 
     async fn run_transport_oper<C, S, R, M, CR, CS, F>(
