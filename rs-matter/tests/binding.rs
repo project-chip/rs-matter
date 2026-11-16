@@ -903,7 +903,7 @@ async fn press_switch<C: Crypto>(
                         ))?
                         .data(|w| {
                             w.start_struct(&TLVTag::Context(CmdDataTag::Data as u8))?;
-                            w.end_container()
+                            Ok(w.end_container()?)
                         })?
                         .end()
                 })

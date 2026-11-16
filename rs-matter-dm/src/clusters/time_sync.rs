@@ -388,7 +388,7 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> ToTLV
         self.time_zone.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.dst_offset.to_tlv(&TLVTag::Context(1), &mut tw)?;
 
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

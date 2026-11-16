@@ -175,7 +175,7 @@ impl FromTLV<'_> for AuthMode {
 
 impl ToTLV for AuthMode {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.u8(tag, *self as _)
+        Ok(tw.u8(tag, *self as _)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
@@ -208,7 +208,7 @@ impl FromTLV<'_> for AuxiliaryType {
 
 impl ToTLV for AuxiliaryType {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.u8(tag, *self as _)
+        Ok(tw.u8(tag, *self as _)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

@@ -52,7 +52,7 @@ impl<'a> FromTLV<'a> for &'a str {
 
 impl ToTLV for &str {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.utf8(tag, self)
+        Ok(tw.utf8(tag, self)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
@@ -71,7 +71,7 @@ impl<'a, const N: usize> FromTLV<'a> for String<N> {
 
 impl<const N: usize> ToTLV for String<N> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.utf8(tag, self)
+        Ok(tw.utf8(tag, self)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
@@ -89,7 +89,7 @@ impl<'a> FromTLV<'a> for alloc::string::String {
 #[cfg(feature = "alloc")]
 impl ToTLV for alloc::string::String {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.utf8(tag, self)
+        Ok(tw.utf8(tag, self)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

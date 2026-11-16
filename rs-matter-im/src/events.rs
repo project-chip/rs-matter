@@ -306,7 +306,7 @@ impl<const N: usize> EventsInner<N> {
 
         let pos = event_writer.get_tail();
 
-        let result = (|| {
+        let result = (|| -> Result<(), Error> {
             EventData {
                 path: EventPath {
                     endpoint: Some(endpoint_id),
@@ -323,13 +323,13 @@ impl<const N: usize> EventsInner<N> {
 
             f(event_writer.tw())?;
 
-            event_writer.tw().end_container()
+            Ok(event_writer.tw().end_container()?)
         })();
 
-        if let Err(e) = &result {
+        if result.is_err() {
             event_writer.rewind_to(pos);
 
-            if e.code() == ErrorCode::ResourceExhausted {
+            if event_writer.event_too_large {
                 // The event did not fit in an *empty* ring, so no amount of
                 // eviction would have helped. This is a build-time sizing
                 // mistake rather than a runtime condition, and the bare
@@ -341,6 +341,8 @@ impl<const N: usize> EventsInner<N> {
                      pick a larger `events-ringbuf-size-*` feature",
                     endpoint_id, cluster_id, event_id, N
                 );
+
+                return Err(ErrorCode::ResourceExhausted.into());
             }
         }
 
@@ -449,6 +451,12 @@ impl<'a, const N: usize> Iterator for EventsIter<'a, N> {
 struct EventWriter<'a, const N: usize> {
     events: &'a mut EventsInner<N>,
     bytes_written: usize,
+    /// Set when a single event outgrew the whole ring.
+    ///
+    /// `TLVWrite::write` can only report that it ran out of space, and the
+    /// writer is rewound on the way out, so neither the error nor the position
+    /// survives to tell `push` that no amount of eviction would have helped.
+    event_too_large: bool,
 }
 
 impl<'a, const N: usize> EventWriter<'a, N> {
@@ -462,6 +470,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
         Self {
             events,
             bytes_written: 0,
+            event_too_large: false,
         }
     }
 
@@ -481,6 +490,8 @@ impl<'a, const N: usize> EventWriter<'a, N> {
 
         if self.bytes_written == N {
             // This event is larger than the buffer, the client needs to change the buffer size for this to work
+            self.event_too_large = true;
+
             return Err(Error::new(ErrorCode::ResourceExhausted));
         }
 

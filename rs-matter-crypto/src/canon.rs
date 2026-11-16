@@ -368,7 +368,7 @@ impl<'a, const N: usize> FromTLV<'a> for CryptoSensitive<N> {
 
 impl<const N: usize> ToTLV for CryptoSensitive<N> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.str(tag, &self.data)
+        Ok(tw.str(tag, &self.data)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

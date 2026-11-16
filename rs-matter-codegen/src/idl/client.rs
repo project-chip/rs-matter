@@ -464,7 +464,7 @@ fn cmd_requests_trait(cluster: &Cluster, context: &IdlGenerateContext) -> TokenS
                                 w.start_struct(&#krate::tlv::TLVTag::Context(
                                     #krate::im::CmdDataTag::Data as u8,
                                 ))?;
-                                w.end_container()
+                                Ok(w.end_container()?)
                             })?
                             .end()?;
                         Ok(Self { array })

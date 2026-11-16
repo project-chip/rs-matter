@@ -54,7 +54,7 @@ fn test_client_invoke_sender_non_chunked() {
                                 // EchoReq body: anonymous TLV u8 retagged at
                                 // CmdDataTag::Data — same on-wire form as the
                                 // existing invoke test (`[0x04, 5u8]`).
-                                w.u8(&TLVTag::Context(CmdDataTag::Data as u8), 5)
+                                Ok(w.u8(&TLVTag::Context(CmdDataTag::Data as u8), 5)?)
                             })?
                             .end()? // close CmdData entry
                             .end()? // close InvokeRequests array

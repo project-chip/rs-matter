@@ -720,7 +720,7 @@ mod tests {
             .unwrap()
             .path(1, 6, 0x4001)
             .unwrap()
-            .data(|w| w.u16(&TLVTag::Context(2), 60))
+            .data(|w| Ok(w.u16(&TLVTag::Context(2), 60)?))
             .unwrap()
             .end()
             .unwrap()
@@ -915,7 +915,7 @@ mod tests {
     ) -> Result<AttrDataArrayBuilder<P>, Error> {
         arr.push()?
             .path(1, 6, attr)?
-            .data(|w| w.u32(&TLVTag::Context(2), 0xDEAD_BEEF))?
+            .data(|w| Ok(w.u32(&TLVTag::Context(2), 0xDEAD_BEEF)?))?
             .end()
     }
 

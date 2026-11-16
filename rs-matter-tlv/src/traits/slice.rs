@@ -77,7 +77,7 @@ where
         i.to_tlv(&TLVTag::Anonymous, &mut tw)?;
     }
 
-    tw.end_container()
+    Ok(tw.end_container()?)
 }
 
 pub(crate) fn tlv_array_iter<'s, I, T>(

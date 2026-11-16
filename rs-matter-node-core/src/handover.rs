@@ -222,7 +222,7 @@ where
             network.to_tlv(&TLVTag::Anonymous, &mut tw)
         })?;
 
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

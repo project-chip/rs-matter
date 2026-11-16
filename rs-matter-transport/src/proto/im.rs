@@ -39,7 +39,9 @@ use crate::exchange::MessageMeta;
 use crate::exchange::{Exchange, OwnedSender, OwnedSenderTx};
 #[cfg(feature = "groups")]
 use crate::tlv::TLVWriteParent;
-use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{
+    FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, TlvError, TlvErrorCode, ToTLV,
+};
 #[cfg(feature = "groups")]
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::MaybeSend;
@@ -297,10 +299,10 @@ impl<'a> ReadSenderSlot<'a> {
 impl<'a> TLVWrite for ReadSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -489,10 +491,10 @@ impl<'a> WriteSenderSlot<'a> {
 impl<'a> TLVWrite for WriteSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -709,10 +711,10 @@ impl<'a> InvokeSenderSlot<'a> {
 impl<'a> TLVWrite for InvokeSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -1001,10 +1003,10 @@ impl<'a> SubscribeSenderSlot<'a> {
 impl<'a> TLVWrite for SubscribeSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;

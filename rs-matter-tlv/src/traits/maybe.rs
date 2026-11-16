@@ -103,7 +103,7 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
 impl<T: ToTLV> ToTLV for Maybe<T, AsNullable> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         match self.as_opt_ref() {
-            None => tw.null(tag),
+            None => Ok(tw.null(tag)?),
             Some(s) => s.nullable_to_tlv(tag, tw),
         }
     }

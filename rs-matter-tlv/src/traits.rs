@@ -163,9 +163,9 @@ impl ToTLV for TLVElement<'_> {
             if size_len > 0 {
                 let len_bytes = (payload.len() as u64).to_le_bytes();
                 tw.raw_value(tag, value_type, &len_bytes[..size_len])?;
-                tw.write_raw_data(payload.iter().copied())
+                Ok(tw.write_raw_data(payload.iter().copied())?)
             } else {
-                tw.raw_value(tag, value_type, payload)
+                Ok(tw.raw_value(tag, value_type, payload)?)
             }
         }
     }
@@ -224,7 +224,7 @@ impl<'a> FromTLV<'a> for TLVValue<'a> {
 
 impl ToTLV for TLVValue<'_> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.tlv(tag, self)
+        Ok(tw.tlv(tag, self)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

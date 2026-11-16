@@ -208,7 +208,7 @@ impl FromTLV<'_> for IMStatusCode {
 
 impl ToTLV for IMStatusCode {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.u16(tag, *self as _)
+        Ok(tw.u16(tag, *self as _)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

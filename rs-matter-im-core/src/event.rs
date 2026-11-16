@@ -238,7 +238,7 @@ impl<'a> ToTLV for EventData<'a> {
         self.data
             .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
 
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 
     fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

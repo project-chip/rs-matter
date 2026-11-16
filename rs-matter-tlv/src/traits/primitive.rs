@@ -93,7 +93,7 @@ macro_rules! totlv_for {
         $(
             impl $crate::ToTLV for $t {
                 fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
-                    tw.$t(tag, *self)
+                    Ok(tw.$t(tag, *self)?)
                 }
 
                 fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
@@ -109,7 +109,7 @@ macro_rules! totlv_for_num {
         $(
             impl $crate::ToTLV for $t {
                 fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
-                    tw.$t(tag, *self)
+                    Ok(tw.$t(tag, *self)?)
                 }
 
                 fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
@@ -124,7 +124,7 @@ macro_rules! totlv_for_num {
                     };
 
                     if in_range {
-                        tw.$t(tag, *self)
+                        Ok(tw.$t(tag, *self)?)
                     } else {
                         Err(ErrorCode::ConstraintError.into())
                     }
@@ -153,7 +153,7 @@ macro_rules! totlv_for_nonzero {
         $(
             impl $crate::ToTLV for $n {
                 fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
-                    tw.$t(tag, self.get())
+                    Ok(tw.$t(tag, self.get())?)
                 }
 
                 fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
@@ -168,7 +168,7 @@ macro_rules! totlv_for_nonzero {
                     };
 
                     if in_range {
-                        tw.$t(tag, self.get())
+                        Ok(tw.$t(tag, self.get())?)
                     } else {
                         Err(ErrorCode::ConstraintError.into())
                     }

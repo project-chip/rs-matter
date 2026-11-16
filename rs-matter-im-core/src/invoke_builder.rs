@@ -72,7 +72,7 @@
 //!                 .data(|w| {
 //!                     // Toggle's request body is empty:
 //!                     w.start_struct(&TLVTag::Context(CmdDataTag::Data as u8))?;
-//!                     w.end_container()
+//!                     Ok(w.end_container()?)
 //!                 })?
 //!             .end()?
 //!         .end()?
@@ -648,7 +648,7 @@ mod tests {
             .unwrap()
             .data(|w| {
                 w.start_struct(&TLVTag::Context(1))?;
-                w.end_container()
+                Ok(w.end_container()?)
             })
             .unwrap()
             .end()
@@ -832,7 +832,7 @@ mod tests {
             .path(1, 6, 2)?
             .data(|w| {
                 w.start_struct(&TLVTag::Context(1))?;
-                w.end_container()
+                Ok(w.end_container()?)
             })?
             .command_ref(command_ref)?
             .end()

@@ -170,6 +170,6 @@ impl TestToTLV for TestEventResp<'_> {
             }
         }?;
 
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 }

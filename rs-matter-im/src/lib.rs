@@ -487,7 +487,7 @@ where
             EventPriority::Critical,
             |mut tw| {
                 tw.start_struct(&EVENT_DATA_TAG)?;
-                tw.end_container()
+                Ok(tw.end_container()?)
             },
         )?;
 
@@ -1804,7 +1804,7 @@ where
         let result = self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
             tw.start_struct(&EVENT_DATA_TAG)?;
             tw.u32(&TLVTag::Context(0), value)?;
-            tw.end_container()
+            Ok(tw.end_container()?)
         });
 
         if let Err(e) = &result {
