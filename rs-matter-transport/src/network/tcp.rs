@@ -1646,7 +1646,11 @@ mod tests {
                 listener,
                 &buffers,
                 &TcpConfig {
-                    send_timeout: Duration::from_millis(40),
+                    send_timeout: if cfg!(miri) {
+                        Duration::from_millis(500)
+                    } else {
+                        Duration::from_millis(40)
+                    },
                     ..Default::default()
                 },
             );
