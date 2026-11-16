@@ -122,7 +122,7 @@ impl<T: NetTcpStack> NetTcpStack for &T {
 }
 
 /// A bound operational Matter-over-TCP transport handle.
-pub trait NetTcp: MaybeSend {
+pub trait NetTcp: MaybeSendSync {
     /// The sending half of the bound TCP transport.
     type Send<'a>: NetworkSend
     where
