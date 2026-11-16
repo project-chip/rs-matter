@@ -465,8 +465,9 @@ mod tests {
         assert_eq!(udp_params.supported_transports, None);
         assert_eq!(udp_params.max_tcp_message_size, None);
 
-        host.transport()
-            .set_tcp_mdns_capability(crate::transport::network::mdns::TcpMdnsCapability::ServerOnly);
+        host.transport().set_tcp_mdns_capability(
+            crate::transport::network::mdns::TcpMdnsCapability::ServerOnly,
+        );
         host.transport().set_tcp_max_message_size(Some(4096));
         let server_params = crate::local_session_parameters(&host);
         assert_eq!(
