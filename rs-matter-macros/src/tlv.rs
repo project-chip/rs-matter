@@ -253,7 +253,7 @@ fn gen_totlv_for_struct_named(
                     #(
                         #krate::ToTLV::to_tlv(&self.#idents, &#krate::TLVTag::Context(#tags), &mut tw)?;
                     )*
-                    tw.end_container()
+                    Ok(tw.end_container()?)
                 })() {
                     tw.rewind_to(anchor);
                     Err(err)
@@ -346,7 +346,7 @@ fn gen_totlv_for_enum(
 
                     if let Err(err) = (|| {
                         match self {
-                            #( Self::#variant_names => tw.#write_func(tag, #tags), )*
+                            #( Self::#variant_names => Ok(tw.#write_func(tag, #tags)?), )*
                         }
                     })() {
                         tw.rewind_to(anchor);
@@ -455,7 +455,7 @@ fn gen_totlv_for_enum(
                                     Self::#variant_names(c) => #krate::ToTLV::to_tlv(c, &#krate::TLVTag::Context(#tags), &mut tw),
                                 )*
                             }?;
-                            tw.end_container()
+                            Ok(tw.end_container()?)
                         })() {
                             tw.rewind_to(anchor);
                             Err(err)
@@ -991,7 +991,7 @@ mod tests {
                             tw.start_struct(tag)?;
                             rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(&self.field1, &rs_matter_maybe_renamed::tlv::TLVTag::Context(0u8), &mut tw)?;
                             rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(&self.field2, &rs_matter_maybe_renamed::tlv::TLVTag::Context(1u8), &mut tw)?;
-                            tw.end_container()
+                            Ok(tw.end_container()?)
                         })() {
                             tw.rewind_to(anchor);
                             Err(err)
@@ -1118,7 +1118,7 @@ mod tests {
                                 Self::ValueA(c) => rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(c, &rs_matter_maybe_renamed::tlv::TLVTag::Context(0u8), &mut tw),
                                 Self::ValueB(c) => rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(c, &rs_matter_maybe_renamed::tlv::TLVTag::Context(1u8), &mut tw),
                             }?;
-                            tw.end_container()
+                            Ok(tw.end_container()?)
                         })() {
                             tw.rewind_to(anchor);
                             Err(err)
@@ -1175,8 +1175,8 @@ mod tests {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             match self {
-                                Self::ValueA => tw.u8(tag, 0u8),
-                                Self::ValueB => tw.u8(tag, 1u8),
+                                Self::ValueA => Ok(tw.u8(tag, 0u8)?),
+                                Self::ValueB => Ok(tw.u8(tag, 1u8)?),
                             }
                         })() {
                             tw.rewind_to(anchor);
@@ -1254,10 +1254,10 @@ mod tests {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             match self {
-                                Self::ValueA => tw.u16(tag, 0u16),
-                                Self::ValueB => tw.u16(tag, 1u16),
-                                Self::ValueC => tw.u16(tag, 100u16),
-                                Self::ValueD => tw.u16(tag, 4660u16),
+                                Self::ValueA => Ok(tw.u16(tag, 0u16)?),
+                                Self::ValueB => Ok(tw.u16(tag, 1u16)?),
+                                Self::ValueC => Ok(tw.u16(tag, 100u16)?),
+                                Self::ValueD => Ok(tw.u16(tag, 4660u16)?),
                             }
                         })() {
                             tw.rewind_to(anchor);

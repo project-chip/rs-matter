@@ -118,7 +118,7 @@ impl<const N: usize> ToTLV for EndpointLabels<N> {
         tw.start_struct(tag)?;
         self.endpoint_id.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.entries.to_tlv(&TLVTag::Context(1), &mut tw)?;
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 
     fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

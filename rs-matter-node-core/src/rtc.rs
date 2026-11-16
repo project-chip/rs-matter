@@ -235,7 +235,7 @@ impl Rtc {
                     EventPriority::Info,
                     |mut tw| {
                         tw.start_struct(&EVENT_DATA_TAG)?;
-                        tw.end_container()
+                        Ok(tw.end_container()?)
                     },
                 )?;
             }

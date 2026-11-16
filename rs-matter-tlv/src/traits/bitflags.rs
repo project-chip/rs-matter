@@ -56,7 +56,7 @@ macro_rules! bitflags_tlv {
                 tag: &$crate::TLVTag,
                 mut tw: W,
             ) -> Result<(), $crate::__private::Error> {
-                tw.$type(tag, self.bits())
+                Ok(tw.$type(tag, self.bits())?)
             }
 
             fn tlv_iter(
@@ -72,9 +72,9 @@ macro_rules! bitflags_tlv {
                 mut tw: W,
             ) -> Result<(), $crate::__private::Error> {
                 if self.bits() != $type::MAX {
-                    tw.$type(tag, self.bits())
+                    Ok(tw.$type(tag, self.bits())?)
                 } else {
-                    Err($crate::__private::ErrorCode::ConstraintError.into())
+                    Err($crate::__private::TlvErrorCode::UnexpectedNull.into())
                 }
             }
 
@@ -86,7 +86,7 @@ macro_rules! bitflags_tlv {
                     $crate::EitherIter::First($crate::TLV::$type(tag, self.bits()).into_tlv_iter())
                 } else {
                     $crate::EitherIter::Second(core::iter::once(Err(
-                        $crate::__private::ErrorCode::ConstraintError.into(),
+                        $crate::__private::TlvErrorCode::UnexpectedNull.into(),
                     )))
                 }
             }

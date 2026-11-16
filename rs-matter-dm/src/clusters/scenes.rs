@@ -534,7 +534,7 @@ impl<const M: usize> ToTLV for SceneEntry<M> {
         // array-of-u8 (which is what the blanket `Vec<u8, M>: ToTLV`
         // would emit).
         tw.str(&TLVTag::Context(5), &self.extension_fields)?;
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 
     fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
@@ -568,7 +568,7 @@ impl<const N: usize, const M: usize> ToTLV for ScenesStateInner<N, M> {
         self.table.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.current_per_fabric
             .to_tlv(&TLVTag::Context(1), &mut tw)?;
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 
     fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

@@ -86,7 +86,7 @@ impl FromTLV<'_> for Privilege {
 
 impl ToTLV for Privilege {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.u8(tag, self.to_acl_value())
+        Ok(tw.u8(tag, self.to_acl_value())?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

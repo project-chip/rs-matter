@@ -19,7 +19,7 @@ use core::fmt;
 
 use crate::error::Error;
 use crate::im::EventDataTag;
-use crate::tlv::{TLVBuilderParent, TLVTag, TLVWrite};
+use crate::tlv::{TLVBuilderParent, TLVTag, TLVWrite, TlvError, TlvErrorCode};
 use crate::utils::sync::MaybeSendSync;
 
 use super::{Access, EventId};
@@ -116,8 +116,9 @@ impl defmt::Format for EventTLVWrite<'_> {
 impl TLVWrite for EventTLVWrite<'_> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
-        self.0.write(byte)
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
+        // A `DynEventWriter` fails only when the event outgrows its buffer
+        Ok(self.0.write(byte).map_err(|_| TlvErrorCode::NoSpace)?)
     }
 
     fn get_tail(&self) -> Self::Position {

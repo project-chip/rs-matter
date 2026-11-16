@@ -77,7 +77,7 @@ impl<'a> FromTLV<'a> for Octets<'a> {
 
 impl ToTLV for Octets<'_> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.str(tag, self.0)
+        Ok(tw.str(tag, self.0)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
@@ -166,7 +166,7 @@ impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
 
 impl<const N: usize> ToTLV for OctetsOwned<N> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.str(tag, &self.vec)
+        Ok(tw.str(tag, &self.vec)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
@@ -245,7 +245,7 @@ impl<'a> FromTLV<'a> for OctetsVec {
 #[cfg(feature = "alloc")]
 impl ToTLV for OctetsVec {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.str(tag, &self.vec)
+        Ok(tw.str(tag, &self.vec)?)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {

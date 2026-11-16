@@ -355,7 +355,7 @@ impl ClusterHandler for NocHandler<'_> {
                     signature,
                 )?;
 
-                Ok(len)
+                Ok::<_, Error>(len)
             })?;
 
             writer.str(&TLVTag::Context(1), signature.access())?;
@@ -474,7 +474,7 @@ impl ClusterHandler for NocHandler<'_> {
                     signature,
                 )?;
 
-                Ok(len)
+                Ok::<_, Error>(len)
             })?;
 
             writer.str(&TLVTag::Context(1), signature.access())?;
