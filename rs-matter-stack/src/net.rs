@@ -141,6 +141,11 @@ pub trait NetTcp: MaybeSend {
 
     /// Drive TCP accept/connect and peer I/O loops until error or cancellation.
     fn run(&self) -> impl Future<Output = Result<(), Error>> + MaybeSend;
+
+    /// Maximum Matter-over-TCP message size supported by this bound TCP transport.
+    fn max_message_size(&self) -> usize {
+        rs_matter_transport::MAX_RX_BUF_SIZE
+    }
 }
 
 impl<L, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetTcp
@@ -169,6 +174,10 @@ where
 
     fn run(&self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
         TcpBound::run(self)
+    }
+
+    fn max_message_size(&self) -> usize {
+        N
     }
 }
 

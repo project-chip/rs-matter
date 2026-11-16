@@ -108,6 +108,22 @@ pub async fn complete_with_status(
 pub(crate) fn local_session_parameters(matter: &impl ScHost) -> SessionParameters {
     let dev_det = matter.dev_det();
     let icd = matter.icd_advertisement();
+    let tcp_cap = matter.transport().tcp_mdns_capability();
+    let supported_transports = match tcp_cap {
+        transport::network::mdns::TcpMdnsCapability::None => None,
+        transport::network::mdns::TcpMdnsCapability::ServerOnly => {
+            Some(SUPPORTED_TRANSPORTS_TCP_SERVER)
+        }
+        transport::network::mdns::TcpMdnsCapability::ClientAndServer => {
+            Some(SUPPORTED_TRANSPORTS_TCP_CLIENT | SUPPORTED_TRANSPORTS_TCP_SERVER)
+        }
+    };
+    let max_tcp_message_size = supported_transports.map(|_| {
+        matter
+            .transport()
+            .tcp_max_message_size()
+            .unwrap_or(transport::MAX_RX_BUF_SIZE as u32)
+    });
 
     SessionParameters {
         sii: mrp::advertised_sii(dev_det, icd),
@@ -117,12 +133,8 @@ pub(crate) fn local_session_parameters(matter: &impl ScHost) -> SessionParameter
         im_revision: Some(IM_REVISION as u16),
         spec_version: Some(dev_det.specification_version),
         max_paths_per_invoke: Some(dev_det.max_paths_per_invoke),
-        supported_transports: dev_det
-            .tcp_supported
-            .then_some(SUPPORTED_TRANSPORTS_TCP_CLIENT | SUPPORTED_TRANSPORTS_TCP_SERVER),
-        max_tcp_message_size: dev_det
-            .tcp_supported
-            .then_some(transport::MAX_RX_BUF_SIZE as u32),
+        supported_transports,
+        max_tcp_message_size,
     }
 }
 
@@ -448,16 +460,26 @@ mod tests {
 
     #[test]
     fn local_session_parameters_for_tcp_device() {
-        let udp_params = crate::local_session_parameters(&TestHost::new(&TEST_DEV_DET, None));
+        let host = TestHost::new(&TEST_DEV_DET, None);
+        let udp_params = crate::local_session_parameters(&host);
         assert_eq!(udp_params.supported_transports, None);
         assert_eq!(udp_params.max_tcp_message_size, None);
 
-        const TCP_DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
-            tcp_supported: true,
-            ..TEST_DEV_DET
-        };
+        host.transport()
+            .set_tcp_mdns_capability(crate::transport::network::mdns::TcpMdnsCapability::ServerOnly);
+        host.transport().set_tcp_max_message_size(Some(4096));
+        let server_params = crate::local_session_parameters(&host);
+        assert_eq!(
+            server_params.supported_transports,
+            Some(crate::SUPPORTED_TRANSPORTS_TCP_SERVER)
+        );
+        assert_eq!(server_params.max_tcp_message_size, Some(4096));
 
-        let tcp_params = crate::local_session_parameters(&TestHost::new(&TCP_DEV_DET, None));
+        host.transport().set_tcp_mdns_capability(
+            crate::transport::network::mdns::TcpMdnsCapability::ClientAndServer,
+        );
+        host.transport().set_tcp_max_message_size(None);
+        let tcp_params = crate::local_session_parameters(&host);
         assert_eq!(
             tcp_params.supported_transports,
             Some(crate::SUPPORTED_TRANSPORTS_TCP_CLIENT | crate::SUPPORTED_TRANSPORTS_TCP_SERVER)
@@ -472,12 +494,12 @@ mod tests {
     fn session_parameters_tcp_tlv_roundtrip() {
         use crate::tlv::{FromTLV, TLVElement, ToTLV};
 
-        const TCP_DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
-            tcp_supported: true,
-            ..TEST_DEV_DET
-        };
+        let host = TestHost::new(&TEST_DEV_DET, None);
+        host.transport().set_tcp_mdns_capability(
+            crate::transport::network::mdns::TcpMdnsCapability::ClientAndServer,
+        );
 
-        let params = crate::local_session_parameters(&TestHost::new(&TCP_DEV_DET, None));
+        let params = crate::local_session_parameters(&host);
         let mut buf = [0u8; 128];
         let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
         params

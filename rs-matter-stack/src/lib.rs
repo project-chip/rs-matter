@@ -629,11 +629,15 @@ where
             self.matter()
                 .transport()
                 .set_tcp_mdns_capability(capability);
+            self.matter()
+                .transport()
+                .set_tcp_max_message_size(Some(tcp.max_message_size() as u32));
             self.matter().transport().notify_mdns_changed();
             let _guard = scopeguard::guard((), |_| {
                 self.matter()
                     .transport()
                     .set_tcp_mdns_capability(TcpMdnsCapability::None);
+                self.matter().transport().set_tcp_max_message_size(None);
                 self.matter().transport().notify_mdns_changed();
             });
 

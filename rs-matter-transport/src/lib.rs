@@ -211,6 +211,8 @@ pub struct Transport {
     sai: Option<u32>,
     /// Operational TCP capability currently bound for mDNS advertisement.
     tcp_mdns_capability: Mutex<RefCell<crate::network::mdns::TcpMdnsCapability>>,
+    /// Maximum Matter-over-TCP message size supported by the currently bound TCP transport.
+    tcp_max_message_size: Mutex<RefCell<Option<u32>>>,
     /// All sessions.
     ///
     /// `Matter` keeps the state of the node under this lock too, so that the sessions
@@ -240,6 +242,7 @@ impl Transport {
             tcp_mdns_capability: Mutex::new(RefCell::new(
                 crate::network::mdns::TcpMdnsCapability::None,
             )),
+            tcp_max_message_size: Mutex::new(RefCell::new(None)),
             sessions: Mutex::new(RefCell::new(Sessions::new())),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
@@ -267,6 +270,7 @@ impl Transport {
             tcp_mdns_capability: Mutex::new(RefCell::new(
                 crate::network::mdns::TcpMdnsCapability::None,
             )),
+            tcp_max_message_size: Mutex::new(RefCell::new(None)),
             sessions <- Mutex::init(RefCell::init(Sessions::init())),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
@@ -288,6 +292,17 @@ impl Transport {
     pub fn set_tcp_mdns_capability(&self, capability: crate::network::mdns::TcpMdnsCapability) {
         self.tcp_mdns_capability
             .lock(|cell| *cell.borrow_mut() = capability);
+    }
+
+    /// Returns the maximum Matter-over-TCP message size advertised in session parameters.
+    pub fn tcp_max_message_size(&self) -> Option<u32> {
+        self.tcp_max_message_size.lock(|cell| *cell.borrow())
+    }
+
+    /// Updates the maximum Matter-over-TCP message size advertised in session parameters.
+    pub fn set_tcp_max_message_size(&self, max_message_size: Option<u32>) {
+        self.tcp_max_message_size
+            .lock(|cell| *cell.borrow_mut() = max_message_size);
     }
 
     /// Set the fast polling interval of this node, if it is an ICD.
