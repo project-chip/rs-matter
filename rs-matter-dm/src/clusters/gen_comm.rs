@@ -21,10 +21,8 @@ use core::fmt::Debug;
 
 use either::Either;
 
-use rand_core::Rng;
-
 use crate::basic_info::RegulatoryLocationType;
-use crate::crypto::Crypto;
+use crate::clusters::basic_info::random_setting;
 use crate::dm::{
     Cluster, Dataver, HandlerContext, InvokeContext, LifecycleOp, OperationContext, ReadContext,
     WriteContext,
@@ -259,40 +257,6 @@ impl<'a> GenCommHandler<'a> {
             f(state, &mut notify_mdns)
         })
     }
-
-    /// Return the node's `RecoveryIdentifier`, minting and persisting a stable
-    /// random 64-bit value on first access.
-    fn recovery_identifier_value(&self, ctx: &impl ReadContext) -> Result<u64, Error> {
-        // Fast path: the value has already been minted (this read, a prior
-        // read, or a reload from persistence).
-        if let Some(id) = ctx.transaction_id().with_state(self.matter, |state| {
-            Ok(state.basic_info_settings.recovery_identifier)
-        })? {
-            return Ok(id);
-        }
-
-        // Mint a fresh 64-bit value from the CSPRNG.
-        let fresh = ctx.crypto().rand()?.next_u64();
-
-        let mut persist = Persist::new(ctx.kv());
-
-        let id = ctx.transaction_id().with_state(self.matter, |state| {
-            // Re-check under the state borrow: a concurrent read may have
-            // minted the value first, in which case we keep the stored one.
-            let id = *state
-                .basic_info_settings
-                .recovery_identifier
-                .get_or_insert(fresh);
-
-            state.basic_info_settings.store_persist(&mut persist)?;
-
-            Ok(id)
-        })?;
-
-        persist.run()?;
-
-        Ok(id)
-    }
 }
 
 /// Opt-in General Commissioning metadata that additionally advertises the
@@ -404,7 +368,9 @@ impl ClusterHandler for GenCommHandler<'_> {
         // The 8-byte, big-endian encoding of the stable random identifier.
         // The same byte sequence is what a Recovery Node would carry in its
         // BLE Network-Recovery advertisement (see `RecoveryAdvData`).
-        let id = self.recovery_identifier_value(&ctx)?;
+        let id = random_setting(self.matter, &ctx, |settings| {
+            &mut settings.recovery_identifier
+        })?;
 
         builder.set(Octets::new(&id.to_be_bytes()))
     }

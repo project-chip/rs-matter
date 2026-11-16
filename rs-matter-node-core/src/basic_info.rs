@@ -183,7 +183,10 @@ pub struct BasicInfoConfig<'a> {
     pub product_label: &'a str,
     /// Serial number (up to 32 characters)
     pub serial_no: &'a str,
-    /// Unique ID (up to 64 characters)
+    /// Unique ID (up to 32 characters). When empty (the default), the node
+    /// makes a random one, keeps it, and makes a new one after a factory
+    /// reset, as the spec asks. A fixed value here stays the same across
+    /// factory resets.
     pub unique_id: &'a str,
     /// Factory default for the runtime-mutable, persisted
     /// `BasicInformation::Location` attribute
@@ -486,11 +489,15 @@ pub struct BasicInfoSettings {
     /// `GeneralCommissioning::RecoveryIdentifier` (provisional in Matter 1.6):
     /// a random 64-bit value that identifies this node during the
     /// Network Recovery flow without revealing its Node ID.
+    pub recovery_identifier: Option<u64>,
+    /// `BasicInformation::UniqueID`: a random 64-bit value, minted on first
+    /// read and cleared by a factory reset, so that the device gets a new
+    /// one, as the spec asks.
     ///
-    /// NOTE: keep this field *last* - the persisted-blob TLV tags are
+    /// NOTE: keep new fields *last* - the persisted-blob TLV tags are
     /// positional, and appending preserves compatibility with blobs written
     /// before the field existed.
-    pub recovery_identifier: Option<u64>,
+    pub unique_id: Option<u64>,
 }
 
 impl BasicInfoSettings {
@@ -506,6 +513,7 @@ impl BasicInfoSettings {
             configuration_version: 1,
             device_location: None,
             recovery_identifier: None,
+            unique_id: None,
         }
     }
 
@@ -519,6 +527,7 @@ impl BasicInfoSettings {
             configuration_version: 1,
             device_location: None,
             recovery_identifier: None,
+            unique_id: None,
         })
     }
 
@@ -534,6 +543,7 @@ impl BasicInfoSettings {
         self.configuration_version = 1;
         self.device_location = None;
         self.recovery_identifier = None;
+        self.unique_id = None;
     }
 
     /// Bump `ConfigurationVersion` by one and return the new value.
@@ -586,6 +596,7 @@ impl BasicInfoSettings {
         self.configuration_version = info.configuration_version;
         self.device_location = info.device_location;
         self.recovery_identifier = info.recovery_identifier;
+        self.unique_id = info.unique_id;
 
         Ok(())
     }
@@ -746,6 +757,26 @@ mod tests {
         // Factory reset clears it so the next read mints a fresh one.
         settings.reset();
         assert!(settings.recovery_identifier.is_none());
+    }
+
+    /// The `BasicInformation::UniqueID` value must survive the persisted-blob
+    /// round-trip, load as "never minted" from a blob that predates the
+    /// field, and be cleared by `reset()`, as a factory reset must give the
+    /// device a new one.
+    #[test]
+    fn unique_id_survives_persistence_and_resets() {
+        let mut settings = BasicInfoSettings::new();
+        assert!(settings.unique_id.is_none());
+        assert!(round_trip(&settings).unique_id.is_none());
+
+        settings.recovery_identifier = Some(1);
+        settings.unique_id = Some(0x0123_4567_89AB_CDEF);
+        let loaded = round_trip(&settings);
+        assert_eq!(loaded.unique_id, Some(0x0123_4567_89AB_CDEF));
+        assert_eq!(loaded.recovery_identifier, Some(1));
+
+        settings.reset();
+        assert!(settings.unique_id.is_none());
     }
 
     // Silence unused-import lint on no-test builds
