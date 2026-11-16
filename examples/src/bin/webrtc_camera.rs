@@ -1303,9 +1303,8 @@ fn main() -> Result<(), Error> {
 
     // WebRTC ICE / STUN / DTLS messages routed over Matter can easily
     // exceed Matter's UDP MRU (~1200 B post-PASE); attach a TCP transport
-    // so the controller can fall back to TCP for large payloads. The
-    // `tcp_supported: true` flag in `BASIC_INFO` advertises this via
-    // mDNS (`T=1`).
+    // and publish live TCP capability on `Transport` so the controller can
+    // fall back to TCP for large payloads.
     let tcp_socket = Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
     let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
         rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
@@ -1314,6 +1313,12 @@ fn main() -> Result<(), Error> {
         &tcp_buffers,
         &rs_matter::transport::network::tcp::TcpConfig::new(),
     );
+    matter.transport().set_tcp_mdns_capability(
+        rs_matter::transport::network::mdns::TcpMdnsCapability::ClientAndServer,
+    );
+    matter
+        .transport()
+        .set_tcp_max_message_size(Some(rs_matter::transport::MAX_RX_BUF_SIZE as u32));
     info!(
         "TCP transport enabled, listening on {}",
         MATTER_SOCKET_BIND_ADDR
@@ -1350,14 +1355,7 @@ fn main() -> Result<(), Error> {
 // Node + handler wiring
 // ---------------------------------------------------------------------------
 
-/// Basic-info override: same as `TEST_DEV_DET` but advertises TCP support
-/// (`T=1` in the mDNS TXT record). Required because some WebRTC payloads
-/// (large ICE / STUN / DTLS messages) exceed Matter's UDP MRU and need to
-/// fall back to TCP.
-const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
-    tcp_supported: true,
-    ..TEST_DEV_DET
-};
+const BASIC_INFO: BasicInfoConfig<'static> = TEST_DEV_DET;
 
 const NODE: Node<'static> = Node {
     endpoints: &[

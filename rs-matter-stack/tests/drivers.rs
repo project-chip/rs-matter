@@ -1383,19 +1383,13 @@ fn operational_tcp_listener_binds_and_advertises() {
         }
     }
     on_big_stack(|| {
-        let dev_det = &*leak::<rs_matter_node_core::basic_info::BasicInfoConfig>().write(
-            rs_matter_node_core::basic_info::BasicInfoConfig {
-                tcp_supported: true,
-                ..TEST_DEV_DET
-            },
-        );
         let buffers = leak::<TcpNetworkBuffers>().init_with(TcpNetworkBuffers::init());
 
-        // UDP-only stack must NOT advertise T even when dev_det.tcp_supported is true.
+        // UDP-only stack must NOT advertise T.
         let log = Log::default();
         let crypto = test_only_crypto();
         let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
-            dev_det,
+            &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
@@ -1411,7 +1405,7 @@ fn operational_tcp_listener_binds_and_advertises() {
         // Server-only TCP stack advertises T=4 after bind succeeds.
         let log = Log::default();
         let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
-            dev_det,
+            &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
@@ -1432,7 +1426,7 @@ fn operational_tcp_listener_binds_and_advertises() {
         // Client+server TCP stack advertises T=6 after bind succeeds.
         let log = Log::default();
         let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
-            dev_det,
+            &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
@@ -1457,15 +1451,9 @@ fn operational_tcp_runner_delivers_inbound_stream_packets_to_matter_stack() {
     on_big_stack(|| {
         let log = Log::default();
         let crypto = test_only_crypto();
-        let dev_det = &*leak::<rs_matter_node_core::basic_info::BasicInfoConfig>().write(
-            rs_matter_node_core::basic_info::BasicInfoConfig {
-                tcp_supported: true,
-                ..TEST_DEV_DET
-            },
-        );
         let buffers = leak::<TcpNetworkBuffers>().init_with(TcpNetworkBuffers::init());
         let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
-            dev_det,
+            &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));

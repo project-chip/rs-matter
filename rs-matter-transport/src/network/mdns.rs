@@ -233,15 +233,7 @@ fn local_service_internal<'a>(
             let (txt_dn, mut wb) = write_split!(wb, "{}", dev_det.device_name)?;
             let (txt_pi, wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
             let (txt_ph, wb) = write_txt_num(wb, Some(dev_det.pairing_hint.bits()))?;
-            let (txt_dt, mut wb) = write_txt_num(wb, dev_det.device_type.map(u32::from))?;
-            // Commissionable `_matterc._udp` advertises commissioning-time TCP support
-            // from `BasicInfoConfig` before `run_oper_loop` binds operational TCP;
-            // operational `_matter._tcp` above reads the bound `tcp_capability` instead.
-            let (txt_tcp, wb) = if dev_det.tcp_supported {
-                write_split!(wb, "6")?
-            } else {
-                ("", wb)
-            };
+            let (txt_dt, wb) = write_txt_num(wb, dev_det.device_type.map(u32::from))?;
 
             let txt_kvs = [
                 ("D", txt_discr),
@@ -254,7 +246,7 @@ fn local_service_internal<'a>(
                 ("PI", txt_pi),
                 ("PH", txt_ph),
                 ("DT", txt_dt),
-                ("T", txt_tcp),
+                ("T", tcp_capability.as_txt_value()),
                 ("ICD", txt_icd),
             ]
             .into_iter()
