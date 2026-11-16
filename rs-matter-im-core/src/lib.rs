@@ -207,11 +207,11 @@ impl FromTLV<'_> for IMStatusCode {
 }
 
 impl ToTLV for IMStatusCode {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        Ok(tw.u16(tag, *self as _)?)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
+        tw.u16(tag, *self as _)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::u16(tag, *self as _).into_tlv_iter()
     }
 }

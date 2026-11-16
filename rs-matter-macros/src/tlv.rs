@@ -200,11 +200,11 @@ fn gen_totlv_for_struct_unnamed(
 
     quote! {
         impl #generics #krate::ToTLV for #struct_name #generics {
-            fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+            fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::TlvError> {
                 #krate::ToTLV::to_tlv(&self.0, tag, &mut tw)
             }
 
-            fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+            fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::TlvError>> {
                 #krate::ToTLV::tlv_iter(&self.0, tag)
             }
         }
@@ -245,7 +245,7 @@ fn gen_totlv_for_struct_named(
 
     quote! {
         impl #generics #krate::ToTLV for #struct_name #generics {
-            fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+            fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::TlvError> {
                 let anchor = tw.get_tail();
 
                 if let Err(err) = (|| {
@@ -253,7 +253,7 @@ fn gen_totlv_for_struct_named(
                     #(
                         #krate::ToTLV::to_tlv(&self.#idents, &#krate::TLVTag::Context(#tags), &mut tw)?;
                     )*
-                    Ok(tw.end_container()?)
+                    tw.end_container()
                 })() {
                     tw.rewind_to(anchor);
                     Err(err)
@@ -262,7 +262,7 @@ fn gen_totlv_for_struct_named(
                 }
             }
 
-            fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+            fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::TlvError>> {
                 let iter = #krate::TLV::#container(tag).into_tlv_iter();
 
                 #(let iter = Iterator::chain(iter, #krate::ToTLV::tlv_iter(&self.#idents, #krate::TLVTag::Context(#tags)));)*
@@ -341,12 +341,12 @@ fn gen_totlv_for_enum(
 
         quote! {
             impl #generics #krate::ToTLV for #enum_name #generics {
-                fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+                fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::TlvError> {
                     let anchor = tw.get_tail();
 
                     if let Err(err) = (|| {
                         match self {
-                            #( Self::#variant_names => Ok(tw.#write_func(tag, #tags)?), )*
+                            #( Self::#variant_names => tw.#write_func(tag, #tags), )*
                         }
                     })() {
                         tw.rewind_to(anchor);
@@ -356,25 +356,25 @@ fn gen_totlv_for_enum(
                     }
                 }
 
-                fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::TlvError>> {
                     match self {
                         #( Self::#variant_names => #krate::TLV::#write_func(tag, #tags).into_tlv_iter(), )*
                     }
                 }
 
-                fn nullable_to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+                fn nullable_to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::TlvError> {
                     if *self as #datatype != #datatype::MAX {
                         Self::to_tlv(self, tag, tw)
                     } else {
-                        Err(#krate::__private::ErrorCode::ConstraintError.into())
+                        Err(#krate::__private::TlvErrorCode::UnexpectedNull.into())
                     }
                 }
 
-                fn nullable_tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                fn nullable_tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::TlvError>> {
                     if *self as #datatype != #datatype::MAX {
                         #krate::EitherIter::First(Self::tlv_iter(self, tag))
                     } else {
-                        #krate::EitherIter::Second(core::iter::once(Err(#krate::__private::ErrorCode::ConstraintError.into())))
+                        #krate::EitherIter::Second(core::iter::once(Err(#krate::__private::TlvErrorCode::UnexpectedNull.into())))
                     }
                 }
             }
@@ -416,7 +416,7 @@ fn gen_totlv_for_enum(
         if tlvargs.datatype == "naked" {
             quote! {
                 impl #generics #krate::ToTLV for #enum_name #generics {
-                    fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+                    fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::TlvError> {
                         let anchor = tw.get_tail();
 
                         if let Err(err) = (|| {
@@ -433,7 +433,7 @@ fn gen_totlv_for_enum(
                         }
                     }
 
-                    fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                    fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::TlvError>> {
                         match self {
                             #(
                                 Self::#variant_names(c) => #krate::#either_ident::#either_variants(#krate::ToTLV::tlv_iter(c, #krate::TLVTag::Context(#tags))),
@@ -445,7 +445,7 @@ fn gen_totlv_for_enum(
         } else {
             quote! {
                 impl #generics #krate::ToTLV for #enum_name #generics {
-                    fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::Error> {
+                    fn to_tlv<W: #krate::TLVWrite>(&self, tag: &#krate::TLVTag, mut tw: W) -> Result<(), #krate::__private::TlvError> {
                         let anchor = tw.get_tail();
 
                         if let Err(err) = (|| {
@@ -455,7 +455,7 @@ fn gen_totlv_for_enum(
                                     Self::#variant_names(c) => #krate::ToTLV::to_tlv(c, &#krate::TLVTag::Context(#tags), &mut tw),
                                 )*
                             }?;
-                            Ok(tw.end_container()?)
+                            tw.end_container()
                         })() {
                             tw.rewind_to(anchor);
                             Err(err)
@@ -464,7 +464,7 @@ fn gen_totlv_for_enum(
                         }
                     }
 
-                    fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::Error>> {
+                    fn tlv_iter(&self, tag: #krate::TLVTag) -> impl Iterator<Item = Result<#krate::TLV, #krate::__private::TlvError>> {
                         let iter = #krate::TLV::structure(tag).into_tlv_iter();
 
                         let iter = Iterator::chain(iter, match self {
@@ -985,13 +985,13 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             tw.start_struct(tag)?;
                             rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(&self.field1, &rs_matter_maybe_renamed::tlv::TLVTag::Context(0u8), &mut tw)?;
                             rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(&self.field2, &rs_matter_maybe_renamed::tlv::TLVTag::Context(1u8), &mut tw)?;
-                            Ok(tw.end_container()?)
+                            tw.end_container()
                         })() {
                             tw.rewind_to(anchor);
                             Err(err)
@@ -1003,7 +1003,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::TlvError>> {
                         let iter = rs_matter_maybe_renamed::tlv::TLV::structure(tag).into_tlv_iter();
 
                         let iter = Iterator::chain(
@@ -1110,7 +1110,7 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             tw.start_struct(tag)?;
@@ -1118,7 +1118,7 @@ mod tests {
                                 Self::ValueA(c) => rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(c, &rs_matter_maybe_renamed::tlv::TLVTag::Context(0u8), &mut tw),
                                 Self::ValueB(c) => rs_matter_maybe_renamed::tlv::ToTLV::to_tlv(c, &rs_matter_maybe_renamed::tlv::TLVTag::Context(1u8), &mut tw),
                             }?;
-                            Ok(tw.end_container()?)
+                            tw.end_container()
                         })() {
                             tw.rewind_to(anchor);
                             Err(err)
@@ -1130,7 +1130,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::TlvError>> {
                         let iter = rs_matter_maybe_renamed::tlv::TLV::structure(tag).into_tlv_iter();
 
                         let iter = Iterator::chain(
@@ -1171,12 +1171,12 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             match self {
-                                Self::ValueA => Ok(tw.u8(tag, 0u8)?),
-                                Self::ValueB => Ok(tw.u8(tag, 1u8)?),
+                                Self::ValueA => tw.u8(tag, 0u8),
+                                Self::ValueB => tw.u8(tag, 1u8),
                             }
                         })() {
                             tw.rewind_to(anchor);
@@ -1189,7 +1189,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::TlvError>> {
                         match self {
                             Self::ValueA => rs_matter_maybe_renamed::tlv::TLV::u8(tag, 0u8).into_tlv_iter(),
                             Self::ValueB => rs_matter_maybe_renamed::tlv::TLV::u8(tag, 1u8).into_tlv_iter(),
@@ -1200,11 +1200,11 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         if *self as u8 != u8::MAX {
                             Self::to_tlv(self, tag, tw)
                         } else {
-                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::UnexpectedNull.into())
                         }
                     }
 
@@ -1212,13 +1212,13 @@ mod tests {
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
                     ) -> impl Iterator<
-                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>,
+                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::TlvError>,
                     > {
                         if *self as u8 != u8::MAX {
                             rs_matter_maybe_renamed::tlv::EitherIter::First(Self::tlv_iter(self, tag))
                         } else {
                             rs_matter_maybe_renamed::tlv::EitherIter::Second(core::iter::once(Err(
-                                rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into(),
+                                rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::UnexpectedNull.into(),
                             )))
                         }
                     }
@@ -1250,14 +1250,14 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             match self {
-                                Self::ValueA => Ok(tw.u16(tag, 0u16)?),
-                                Self::ValueB => Ok(tw.u16(tag, 1u16)?),
-                                Self::ValueC => Ok(tw.u16(tag, 100u16)?),
-                                Self::ValueD => Ok(tw.u16(tag, 4660u16)?),
+                                Self::ValueA => tw.u16(tag, 0u16),
+                                Self::ValueB => tw.u16(tag, 1u16),
+                                Self::ValueC => tw.u16(tag, 100u16),
+                                Self::ValueD => tw.u16(tag, 4660u16),
                             }
                         })() {
                             tw.rewind_to(anchor);
@@ -1270,7 +1270,7 @@ mod tests {
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
-                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>> {
+                    ) -> impl Iterator<Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::TlvError>> {
                         match self {
                             Self::ValueA => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 0u16).into_tlv_iter(),
                             Self::ValueB => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 1u16).into_tlv_iter(),
@@ -1283,11 +1283,11 @@ mod tests {
                         &self,
                         tag: &rs_matter_maybe_renamed::tlv::TLVTag,
                         mut tw: W,
-                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::tlv::__private::TlvError> {
                         if *self as u16 != u16::MAX {
                             Self::to_tlv(self, tag, tw)
                         } else {
-                            Err(rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into())
+                            Err(rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::UnexpectedNull.into())
                         }
                     }
 
@@ -1295,13 +1295,13 @@ mod tests {
                         &self,
                         tag: rs_matter_maybe_renamed::tlv::TLVTag,
                     ) -> impl Iterator<
-                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::Error>,
+                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::tlv::__private::TlvError>,
                     > {
                         if *self as u16 != u16::MAX {
                             rs_matter_maybe_renamed::tlv::EitherIter::First(Self::tlv_iter(self, tag))
                         } else {
                             rs_matter_maybe_renamed::tlv::EitherIter::Second(core::iter::once(Err(
-                                rs_matter_maybe_renamed::tlv::__private::ErrorCode::ConstraintError.into(),
+                                rs_matter_maybe_renamed::tlv::__private::TlvErrorCode::UnexpectedNull.into(),
                             )))
                         }
                     }

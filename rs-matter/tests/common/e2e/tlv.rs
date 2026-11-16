@@ -41,7 +41,7 @@ where
     T: ToTLV + Debug + Sync,
 {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
-        ToTLV::to_tlv(self, tag, tw)
+        ToTLV::to_tlv(self, tag, tw).map_err(Into::into)
     }
 }
 

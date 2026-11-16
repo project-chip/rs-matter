@@ -98,7 +98,9 @@ where
         };
 
         match result {
-            Ok(Some(status)) => AttrResp::Status(status).to_tlv(&TagType::Anonymous, tw),
+            Ok(Some(status)) => AttrResp::Status(status)
+                .to_tlv(&TagType::Anonymous, tw)
+                .map_err(Into::into),
             Ok(None) => Ok(()),
             Err(err) => Err(err),
         }
@@ -173,7 +175,7 @@ where
         };
 
         match result {
-            Ok(Some(status)) => status.to_tlv(&TagType::Anonymous, tw),
+            Ok(Some(status)) => status.to_tlv(&TagType::Anonymous, tw).map_err(Into::into),
             Ok(None) => Ok(()),
             Err(err) => Err(err),
         }

@@ -27,7 +27,7 @@
 //! content 1:1 from inside the byte slice of the `TLVElement`, which is not possible for a generic
 //! `T` and only possible when `T` is a `u8`.)
 
-use crate::error::Error;
+use crate::error::TlvError;
 
 use super::{TLVTag, TLVValue, TLVWrite, ToTLV, TLV};
 
@@ -41,11 +41,11 @@ impl<T: ToTLV> ToTLV for &[T]
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         to_tlv_array(tag, self.iter(), tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         tlv_array_iter(tag, self.iter())
     }
 }
@@ -65,7 +65,7 @@ where
 //     }
 // }
 
-pub(crate) fn to_tlv_array<I, W>(tag: &TLVTag, iter: I, mut tw: W) -> Result<(), Error>
+pub(crate) fn to_tlv_array<I, W>(tag: &TLVTag, iter: I, mut tw: W) -> Result<(), TlvError>
 where
     I: Iterator,
     I::Item: ToTLV,
@@ -77,13 +77,13 @@ where
         i.to_tlv(&TLVTag::Anonymous, &mut tw)?;
     }
 
-    Ok(tw.end_container()?)
+    tw.end_container()
 }
 
 pub(crate) fn tlv_array_iter<'s, I, T>(
     tag: TLVTag,
     iter: I,
-) -> impl Iterator<Item = Result<TLV<'s>, Error>>
+) -> impl Iterator<Item = Result<TLV<'s>, TlvError>>
 where
     I: Iterator<Item = &'s T> + 's,
     T: ToTLV + 's,
@@ -94,7 +94,7 @@ where
 pub(crate) fn tlv_container_iter<'s, I, T>(
     tlv: TLV<'s>,
     iter: I,
-) -> impl Iterator<Item = Result<TLV<'s>, Error>> + 's
+) -> impl Iterator<Item = Result<TLV<'s>, TlvError>> + 's
 where
     I: Iterator<Item = &'s T> + 's,
     T: ToTLV + 's,

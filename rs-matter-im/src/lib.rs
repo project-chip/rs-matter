@@ -54,7 +54,9 @@ use crate::subscriptions::{
     icd_max_int_secs, subscription_max_int_secs, KeepAlive, ReportContext as SubscriptionReport,
     Subscriptions, SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
 };
-use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{
+    get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, TlvErrorCode, ToTLV,
+};
 use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
 use crate::utils::epoch::UtcTime;
 use crate::utils::futures::{select, select3, Coalesce};
@@ -2025,7 +2027,7 @@ where
                         let mut result = resp.to_tlv(&TLVTag::Anonymous, &mut *wb);
 
                         if let Err(e) = &result {
-                            if e.code() == ErrorCode::NoSpace {
+                            if e.code() == TlvErrorCode::NoSpace {
                                 debug!("<<< No TX space, chunking >>>");
                                 if !self
                                     .send(ReportDataChunkState::ChunkingEvents, false, &mut *wb)

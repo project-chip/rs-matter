@@ -1000,7 +1000,7 @@ mod tests {
                 self.event_number,
                 self.priority,
                 self.timestamp.clone(),
-                |tw| self.data.to_tlv(&EVENT_DATA_TAG, tw),
+                |tw| self.data.to_tlv(&EVENT_DATA_TAG, tw).map_err(Into::into),
             )
         }
     }

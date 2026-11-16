@@ -34,7 +34,6 @@ use core::fmt::Debug;
 use core::hash::Hash;
 use core::ops::{Deref, DerefMut};
 
-use crate::error::Error;
 use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::init::{self, init, IntoFallibleInit};
 use crate::utils::storage::Vec;
@@ -76,11 +75,11 @@ impl<'a> FromTLV<'a> for Octets<'a> {
 }
 
 impl ToTLV for Octets<'_> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        Ok(tw.str(tag, self.0)?)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
+        tw.str(tag, self.0)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.0).into_tlv_iter()
     }
 }
@@ -165,11 +164,11 @@ impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
 }
 
 impl<const N: usize> ToTLV for OctetsOwned<N> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        Ok(tw.str(tag, &self.vec)?)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
+        tw.str(tag, &self.vec)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.vec.as_slice()).into_tlv_iter()
     }
 }
@@ -244,11 +243,11 @@ impl<'a> FromTLV<'a> for OctetsVec {
 
 #[cfg(feature = "alloc")]
 impl ToTLV for OctetsVec {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        Ok(tw.str(tag, &self.vec)?)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
+        tw.str(tag, &self.vec)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.vec.as_slice()).into_tlv_iter()
     }
 }

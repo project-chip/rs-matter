@@ -17,7 +17,6 @@
 
 use pinned_init::init_from_closure;
 
-use crate::error::Error;
 use crate::error::TlvError;
 use crate::utils::init::{try_init, Init, InitDefault, IntoFallibleInit};
 use crate::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -133,11 +132,11 @@ impl<T> ToTLV for Skippable<T>
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.value.to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         self.value.tlv_iter(tag)
     }
 }

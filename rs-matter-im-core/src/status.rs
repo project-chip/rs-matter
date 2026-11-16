@@ -86,6 +86,7 @@ impl StatusResp {
             ..Default::default()
         }
         .to_tlv(&TagType::Anonymous, &mut *wb)
+        .map_err(Into::into)
     }
 }
 

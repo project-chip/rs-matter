@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
 use crate::utils::init;
 
 use super::{
@@ -91,18 +90,18 @@ pub trait FromTLV<'a>: Sized + 'a {
 /// a TLV-encoded stream.
 pub trait ToTLV {
     /// Serialize the type to a TLV-encoded stream.
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error>;
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError>;
 
     /// Serialize the type as an iterator of `TLV` instances by potentially borrowing
     /// data from the type.
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>>;
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>>;
 
     /// Serialize the type to a TLV-encoded stream.
     ///
     /// Called when the serialized value is placed in `Nullable`
     /// so as to check whether the value falls in the nullable range of the type, which
     /// might be shorter than the non-nullable range of the type.
-    fn nullable_to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn nullable_to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.to_tlv(tag, tw)
     }
 
@@ -112,7 +111,7 @@ pub trait ToTLV {
     /// Called when the serialized value is placed in `Nullable`
     /// so as to check whether the value falls in the nullable range of the type, which
     /// might be shorter than the non-nullable range of the type.
-    fn nullable_tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn nullable_tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         self.tlv_iter(tag)
     }
 }
@@ -121,19 +120,19 @@ impl<T> ToTLV for &T
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         (*self).to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         (*self).tlv_iter(tag)
     }
 
-    fn nullable_to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn nullable_to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         (*self).nullable_to_tlv(tag, tw)
     }
 
-    fn nullable_tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn nullable_tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         (*self).nullable_tlv_iter(tag)
     }
 }
@@ -145,7 +144,7 @@ impl<'a> FromTLV<'a> for TLVElement<'a> {
 }
 
 impl ToTLV for TLVElement<'_> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         if self.is_empty() {
             // Special-case serializing empty TLV elements to nothing
             // Useful in tests
@@ -170,7 +169,7 @@ impl ToTLV for TLVElement<'_> {
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLVElementTLVIter::Start(tag, self.clone())
     }
 }
@@ -182,7 +181,7 @@ enum TLVElementTLVIter<'a> {
 }
 
 impl<'a> Iterator for TLVElementTLVIter<'a> {
-    type Item = Result<TLV<'a>, Error>;
+    type Item = Result<TLV<'a>, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match core::mem::replace(self, Self::Finished) {
@@ -200,7 +199,7 @@ impl<'a> Iterator for TLVElementTLVIter<'a> {
                         *self = TLVElementTLVIter::Finished;
                     }
 
-                    Some(value.map_err(Into::into))
+                    Some(value)
                 }
             }
             TLVElementTLVIter::Seq(mut iter) => {
@@ -223,11 +222,11 @@ impl<'a> FromTLV<'a> for TLVValue<'a> {
 }
 
 impl ToTLV for TLVValue<'_> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        Ok(tw.tlv(tag, self)?)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
+        tw.tlv(tag, self)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::new(tag, self.clone()).into_tlv_iter()
     }
 }

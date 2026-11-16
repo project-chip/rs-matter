@@ -17,7 +17,7 @@
 
 use num_traits::ToBytes;
 
-use crate::error::{Error, TlvError, TlvErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::MaybeSend;
 
@@ -50,7 +50,7 @@ pub trait TLVWrite {
     /// than once per type.
     // The only method here that calls `ToTLV`, so it keeps reporting the shared
     // `Error` until that trait is converted too.
-    fn write_ctx<T: ToTLV>(&mut self, ctx: u8, value: &T) -> Result<(), Error>
+    fn write_ctx<T: ToTLV>(&mut self, ctx: u8, value: &T) -> Result<(), TlvError>
     where
         Self: Sized,
     {

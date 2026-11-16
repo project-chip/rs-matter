@@ -382,16 +382,16 @@ impl<'a, const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> FromTLV<'a>
 impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> ToTLV
     for TimeZoneStoreData<TIME_ZONE_MAX, DST_OFFSET_MAX>
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.start_struct(tag)?;
 
         self.time_zone.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.dst_offset.to_tlv(&TLVTag::Context(1), &mut tw)?;
 
-        Ok(tw.end_container()?)
+        tw.end_container()
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         use crate::tlv::TLVIter;
 
         core::iter::empty()

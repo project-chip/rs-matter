@@ -317,13 +317,16 @@ fn attr_writes_trait(
                     let array = self.array
                         .push()?
                         .path(endpoint, #cluster_code, #attr_code)?
-                        .data(|w| #krate::tlv::ToTLV::to_tlv(
-                            &value,
-                            &#krate::tlv::TLVTag::Context(
-                                #krate::im::AttrDataTag::Data as u8,
-                            ),
-                            w,
-                        ))?
+                        .data(|w| {
+                            #krate::tlv::ToTLV::to_tlv(
+                                &value,
+                                &#krate::tlv::TLVTag::Context(
+                                    #krate::im::AttrDataTag::Data as u8,
+                                ),
+                                w,
+                            )
+                            .map_err(Into::into)
+                        })?
                         .end()?;
                     Ok(Self { array })
                 }
