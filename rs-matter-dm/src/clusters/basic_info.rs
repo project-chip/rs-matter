@@ -456,8 +456,9 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        if let Some(id) = self.config().unique_id {
-            return builder.set(id);
+        let configured = self.config().unique_id;
+        if !configured.is_empty() {
+            return builder.set(configured);
         }
 
         let id = self.unique_id_value(&ctx)?;

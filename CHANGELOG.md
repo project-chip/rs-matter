@@ -6,8 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* Fix: when `BasicInfoConfig::unique_id` is empty, `rs-matter` serves its own random and persisted ID (#669)
-  * Breaking: `BasicInfoConfig::unique_id` is now an `Option`; `None` (the default) gets the behaviour above, and `Some` serves a fixed value
+* Fix: when `BasicInfoConfig::unique_id` is empty (the default), `rs-matter` serves its own random and persisted ID (#669)
 * New: the `Commissioner` reports its steps and can be cancelled through `CommissionHooks`; a cancel rolls the device back by disarming its fail-safe, and returns the new `ErrorCode::Cancelled` (#668)
   * Breaking: `Commissioner::commission`, `commission_over_pase` and `complete_via_case` take an `impl CommissionHooks` (`()` for none)
 * Fix: a commissioner keeps its PASE session when the device answers from another address than the one it was dialled at, as the session is found by its ID rather than by the peer address (#668)

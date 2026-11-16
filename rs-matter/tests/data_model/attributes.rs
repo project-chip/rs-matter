@@ -515,7 +515,7 @@ fn test_unique_id_from_the_config_is_served_as_is() {
     init_env_logger();
 
     const DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
-        unique_id: Some("fixed-unique-id"),
+        unique_id: "fixed-unique-id",
         ..TEST_DEV_DET
     };
 

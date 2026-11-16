@@ -183,11 +183,11 @@ pub struct BasicInfoConfig<'a> {
     pub product_label: &'a str,
     /// Serial number (up to 32 characters)
     pub serial_no: &'a str,
-    /// Unique ID (up to 32 characters). With `None` (the default), the node
+    /// Unique ID (up to 32 characters). When empty (the default), the node
     /// makes a random one, keeps it, and makes a new one after a factory
     /// reset, as the spec asks. A fixed value here stays the same across
     /// factory resets.
-    pub unique_id: Option<&'a str>,
+    pub unique_id: &'a str,
     /// Factory default for the runtime-mutable, persisted
     /// `BasicInformation::Location` attribute
     pub location: Option<&'a str>,
@@ -288,7 +288,7 @@ impl BasicInfoConfig<'_> {
             part_number: "",
             product_url: "",
             product_label: "",
-            unique_id: None,
+            unique_id: "",
             location: None,
             device_location: None,
             capability_minima: CapabilityMinima::new(),
