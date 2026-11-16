@@ -276,12 +276,11 @@ impl Default for TcpConfig {
 ///
 /// When all `SLOTS` are occupied and a new peer is accepted or needs an outbound
 /// connection:
-/// 1. Slots in `Connecting` are never evicted mid-handshake.
-/// 2. Among `Connected` slots, unauthenticated slots (no encrypted
-///    Matter session frame observed) are preferred for eviction over authenticated
-///    ones.
-/// 3. Within the same tier, slots with an empty TX queue are preferred, breaking
-///    ties by longest-idle (`last_activity`).
+/// 1. Slots in `Connecting` and authenticated `Connected` slots (where the node has
+///    sent an encrypted Matter session frame) are never evicted.
+/// 2. Among unauthenticated `Connected` slots, slots with an empty TX queue are
+///    preferred, breaking ties by longest-idle (`last_activity`).
+/// 3. If all `SLOTS` are authenticated (or `Connecting`), incoming peers are closed/rejected.
 ///
 /// `N` configures the maximum framed Matter payload size in bytes (at most
 /// [`crate::MAX_RX_BUF_SIZE`]). `SLOTS` configures the maximum concurrent peer
@@ -966,15 +965,12 @@ mod tests {
     }
 
     #[test]
-    fn full_slot_evicts_unauthenticated_before_authenticated_and_longest_idle() {
+    fn full_slot_evicts_unauthenticated_and_preserves_authenticated() {
         block_on(async {
             let listener = MockListener::default();
-            // Peer 1 sends an encrypted-looking Matter frame (sess_id = 1, len = 8)
-            let auth_frame = [8, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
-            let peer1 = listener.peer(60, &auth_frame);
-            // Peer 2 sends an unsecured frame (sess_id = 0, len = 8)
-            let unauth_frame = [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-            let peer2 = listener.peer(61, &unauth_frame);
+            let plain_frame = [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let peer1 = listener.peer(60, &plain_frame);
+            let peer2 = listener.peer(61, &plain_frame);
 
             let buffers = TcpNetworkBuffers::<64, 2>::new();
             let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
@@ -994,8 +990,18 @@ mod tests {
                 assert!(!peer1.lock().unwrap().closed);
                 assert!(!peer2.lock().unwrap().closed);
 
+                // Authenticate peer1 by sending an encrypted Matter frame (sess_id = 1) back to it.
+                let encrypted_reply = [0, 1, 0, 0, 0, 0, 0, 0];
+                NetworkSend::send_to(
+                    &mut &net,
+                    &encrypted_reply,
+                    Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 60))),
+                )
+                .await
+                .unwrap();
+
                 // Peer 3 arrives when both slots are full: unauthenticated peer 2 must be evicted.
-                let peer3 = listener.peer(62, &auth_frame);
+                let peer3 = listener.peer(62, &plain_frame);
                 let (_, addr3) = with_timeout(
                     Duration::from_secs(2),
                     NetworkReceive::recv_from(&mut &net, &mut buf),
@@ -1008,8 +1014,9 @@ mod tests {
                 assert!(!peer1.lock().unwrap().closed);
                 assert!(!peer3.lock().unwrap().closed);
 
-                // Both peer1 and peer3 are now authenticated; peer4 arrives -> longest-idle peer1 evicted.
-                let _peer4 = listener.peer(63, &auth_frame);
+                // Peer 3 is unauthenticated; peer 4 arrives -> unauthenticated peer 3 is evicted,
+                // while authenticated peer 1 remains open.
+                let _peer4 = listener.peer(63, &plain_frame);
                 let (_, addr4) = with_timeout(
                     Duration::from_secs(2),
                     NetworkReceive::recv_from(&mut &net, &mut buf),
@@ -1018,8 +1025,8 @@ mod tests {
                 .unwrap()
                 .unwrap();
                 assert_eq!(addr4, Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 63))));
-                assert!(peer1.lock().unwrap().closed);
-                assert!(!peer3.lock().unwrap().closed);
+                assert!(peer3.lock().unwrap().closed);
+                assert!(!peer1.lock().unwrap().closed);
             });
 
             match select(runner, test).await {
@@ -1485,6 +1492,113 @@ mod tests {
             roundtrip_via_mut(&mut stream).await;
             assert_eq!(peer.lock().unwrap().output, b"pong");
             assert!(peer.lock().unwrap().closed);
+        });
+    }
+
+    #[test]
+    fn spoofed_encrypted_header_from_peer_does_not_mark_slot_authenticated() {
+        block_on(async {
+            let listener = MockListener::default();
+            // Peer 1 sends a spoofed encrypted-looking Matter frame (sess_id = 1, len = 8)
+            // without the node ever calling send_to back to it.
+            let spoofed_frame = [8, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+            let peer1 = listener.peer(80, &spoofed_frame);
+
+            let buffers = TcpNetworkBuffers::<64, 1>::new();
+            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
+
+            let runner = pin!(net.run());
+            let test = pin!(async {
+                let mut buf = [0u8; 16];
+                let (_, addr1) = with_timeout(
+                    Duration::from_secs(2),
+                    NetworkReceive::recv_from(&mut &net, &mut buf),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert_eq!(addr1, Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 80))));
+
+                // The slot must NOT be marked authenticated just from inbound rx.
+                assert!(!buffers.with_state(|s| s.slots[0].authenticated));
+
+                // A new unauthenticated peer can evict peer1 since peer1 is unauthenticated.
+                let peer2 = listener.peer(81, &[2, 0, 0, 0, b'o', b'k']);
+                let (len2, addr2) = with_timeout(
+                    Duration::from_secs(2),
+                    NetworkReceive::recv_from(&mut &net, &mut buf),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert_eq!(&buf[..len2], b"ok");
+                assert_eq!(addr2, Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 81))));
+                assert!(peer1.lock().unwrap().closed);
+                assert!(!peer2.lock().unwrap().closed);
+            });
+
+            match select(runner, test).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
+        });
+    }
+
+    #[test]
+    fn all_authenticated_slots_reject_new_peer_without_eviction() {
+        block_on(async {
+            let listener = MockListener::default();
+            let plain_frame = [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let peer1 = listener.peer(90, &plain_frame);
+            let peer2 = listener.peer(91, &plain_frame);
+
+            let buffers = TcpNetworkBuffers::<64, 2>::new();
+            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
+
+            let runner = pin!(net.run());
+            let test = pin!(async {
+                let mut buf = [0u8; 16];
+                let mut addrs = Vec::new();
+                for _ in 0..2 {
+                    let (_, addr) = with_timeout(
+                        Duration::from_secs(2),
+                        NetworkReceive::recv_from(&mut &net, &mut buf),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                    addrs.push(addr);
+                }
+
+                // Authenticate both slots by sending an encrypted Matter frame (sess_id = 1) back to each.
+                let encrypted_reply = [0, 1, 0, 0, 0, 0, 0, 0];
+                for addr in addrs {
+                    NetworkSend::send_to(&mut &net, &encrypted_reply, addr)
+                        .await
+                        .unwrap();
+                }
+                assert!(buffers.with_state(|s| s.slots.iter().all(|slot| slot.authenticated)));
+
+                // A third peer arrives while all slots are authenticated:
+                // existing authenticated peers must NOT be evicted, and peer3 must be closed/rejected.
+                let peer3 = listener.peer(92, &[2, 0, 0, 0, b'n', b'o']);
+                with_timeout(Duration::from_secs(2), async {
+                    while !peer3.lock().unwrap().closed {
+                        Timer::after(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .unwrap();
+
+                assert!(!peer1.lock().unwrap().closed);
+                assert!(!peer2.lock().unwrap().closed);
+                assert!(peer3.lock().unwrap().closed);
+            });
+
+            match select(runner, test).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
         });
     }
 }

@@ -612,38 +612,47 @@ where
         let (send, recv, multicast) = socket.split();
 
         if let Some(tcp_stack) = net_stack.tcp() {
-            let tcp = tcp_stack
+            match tcp_stack
                 .bind(SocketAddr::V6(SocketAddrV6::new(
                     Ipv6Addr::UNSPECIFIED,
                     self.matter().port(),
                     0,
                     net_interface,
                 )))
-                .await?;
+                .await
+            {
+                Ok(tcp) => {
+                    let capability = if tcp_stack.supports_client() {
+                        TcpMdnsCapability::ClientAndServer
+                    } else {
+                        TcpMdnsCapability::ServerOnly
+                    };
+                    self.matter()
+                        .transport()
+                        .set_tcp_mdns_capability(capability);
+                    self.matter()
+                        .transport()
+                        .set_tcp_max_message_size(Some(tcp.max_message_size() as u32));
+                    self.matter().transport().notify_mdns_changed();
+                    let _guard = scopeguard::guard((), |_| {
+                        self.matter()
+                            .transport()
+                            .set_tcp_mdns_capability(TcpMdnsCapability::None);
+                        self.matter().transport().set_tcp_max_message_size(None);
+                        self.matter().transport().notify_mdns_changed();
+                    });
 
-            let capability = if tcp_stack.supports_client() {
-                TcpMdnsCapability::ClientAndServer
-            } else {
-                TcpMdnsCapability::ServerOnly
-            };
-            self.matter()
-                .transport()
-                .set_tcp_mdns_capability(capability);
-            self.matter()
-                .transport()
-                .set_tcp_max_message_size(Some(tcp.max_message_size() as u32));
-            self.matter().transport().notify_mdns_changed();
-            let _guard = scopeguard::guard((), |_| {
-                self.matter()
-                    .transport()
-                    .set_tcp_mdns_capability(TcpMdnsCapability::None);
-                self.matter().transport().set_tcp_max_message_size(None);
-                self.matter().transport().notify_mdns_changed();
-            });
-
-            return self
-                .run_transport_tcp_with_udp(crypto, send, recv, multicast, comm, tcp)
-                .await;
+                    return self
+                        .run_transport_tcp_with_udp(crypto, send, recv, multicast, comm, tcp)
+                        .await;
+                }
+                Err(_err) => {
+                    warn!(
+                        "Failed to bind Matter-over-TCP listener ({:?}); continuing UDP-only",
+                        _err
+                    );
+                }
+            }
         }
 
         self.run_transport_oper(crypto, send, recv, multicast, comm, Address::is_udp)

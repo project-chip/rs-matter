@@ -177,7 +177,28 @@ impl<'a> NetTcpStack for FakeTcpNetStack<'a> {
 #[derive(Clone)]
 struct MockTcpStream {
     rx: std::sync::Arc<Mutex<std::collections::VecDeque<u8>>>,
+    rx_waker: std::sync::Arc<Mutex<Option<core::task::Waker>>>,
     tx: std::sync::Arc<Mutex<Vec<u8>>>,
+}
+
+impl MockTcpStream {
+    fn new(
+        rx: std::sync::Arc<Mutex<std::collections::VecDeque<u8>>>,
+        tx: std::sync::Arc<Mutex<Vec<u8>>>,
+    ) -> Self {
+        Self {
+            rx,
+            rx_waker: std::sync::Arc::new(Mutex::new(None)),
+            tx,
+        }
+    }
+
+    fn push_rx(&self, bytes: &[u8]) {
+        self.rx.lock().unwrap().extend(bytes);
+        if let Some(waker) = self.rx_waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
 }
 
 struct MockTcpRead<'a>(&'a MockTcpStream);
@@ -186,23 +207,20 @@ struct MockTcpWrite<'a>(&'a MockTcpStream);
 
 impl TcpNetworkRead for MockTcpRead<'_> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        let n = {
+        core::future::poll_fn(|cx| {
             let mut rx = self.0.rx.lock().unwrap();
             if rx.is_empty() {
-                0
+                *self.0.rx_waker.lock().unwrap() = Some(cx.waker().clone());
+                core::task::Poll::Pending
             } else {
                 let n = buf.len().min(rx.len());
                 for b in buf[..n].iter_mut() {
                     *b = rx.pop_front().unwrap();
                 }
-                n
+                core::task::Poll::Ready(Ok(n))
             }
-        };
-        if n == 0 {
-            core::future::pending().await
-        } else {
-            Ok(n)
-        }
+        })
+        .await
     }
 }
 
@@ -1464,10 +1482,7 @@ fn operational_tcp_runner_delivers_inbound_stream_packets_to_matter_stack() {
         let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
         let peers = std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from([(
             peer_addr,
-            MockTcpStream {
-                rx: client_rx.clone(),
-                tx: client_tx.clone(),
-            },
+            MockTcpStream::new(client_rx.clone(), client_tx.clone()),
         )])));
 
         let net_stack = StreamTcpNetStack {
@@ -1890,4 +1905,108 @@ fn futures_are_send() {
     assert_send(&any_oper_run);
     assert_send(&thread_run);
     assert_send(&thread_oper_run);
+}
+
+#[derive(Clone)]
+struct FailingTcpNetStack<'a>(&'a Log);
+
+impl<'a> NetStack for FailingTcpNetStack<'a> {
+    type Socket<'s>
+        = FakeSocket<'a>
+    where
+        Self: 's;
+
+    fn bind(
+        &self,
+        addr: SocketAddr,
+        ipv4_interface: Ipv4Addr,
+        ipv6_interface: u32,
+    ) -> impl Future<Output = Result<Self::Socket<'_>, Error>> + MaybeSend {
+        self.0
+            .binds
+            .lock()
+            .unwrap()
+            .push((addr.port(), ipv4_interface, ipv6_interface));
+
+        ready(Ok(FakeSocket(self.0)))
+    }
+
+    fn tcp(&self) -> Option<impl NetTcpStack + '_> {
+        Some(self)
+    }
+}
+
+impl<'a> NetTcpStack for FailingTcpNetStack<'a> {
+    type Tcp<'s>
+        = NoTcp
+    where
+        Self: 's;
+
+    fn bind(
+        &self,
+        _addr: SocketAddr,
+    ) -> impl Future<Output = Result<Self::Tcp<'_>, Error>> + MaybeSend {
+        self.0.event("tcp bind failed");
+        ready(Err(Error::new(
+            rs_matter_utils::error::ErrorCode::ResourceExhausted,
+        )))
+    }
+}
+
+#[test]
+fn ethernet_continues_udp_only_when_tcp_bind_fails() {
+    on_big_stack(|| {
+        let log = Log::default();
+        let crypto = test_only_crypto();
+
+        let stack = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
+        ));
+
+        let result = run_ethernet(
+            stack,
+            &crypto,
+            FailingTcpNetStack(&log),
+            &FakeNetif,
+            FakeUserTask(&log),
+        );
+
+        assert!(result.is_none(), "The stack exited: {result:?}");
+        assert!(log.events().contains(&"tcp bind failed"));
+        assert!(log.events().contains(&"user task"));
+    });
+}
+
+#[test]
+fn mock_tcp_read_wakes_when_bytes_are_pushed() {
+    futures_lite::future::block_on(async {
+        let rx = std::sync::Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let tx = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let mut stream = MockTcpStream::new(rx, tx);
+        let push_stream = stream.clone();
+
+        let read_fut = async {
+            let (mut reader, _) = stream.split();
+            let mut buf = [0u8; 8];
+            let n = reader.read(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], b"wake");
+        };
+
+        let push_fut = async {
+            Timer::after(Duration::from_millis(10)).await;
+            push_stream.push_rx(b"wake");
+        };
+
+        let work = core::pin::pin!(async {
+            futures_lite::future::zip(read_fut, push_fut).await;
+        });
+        let timeout = core::pin::pin!(Timer::after(Duration::from_millis(200)));
+
+        match select(work, timeout).await {
+            Either::First(()) => {}
+            Either::Second(()) => panic!("MockTcpRead::read timed out waiting for pushed bytes"),
+        }
+    });
 }

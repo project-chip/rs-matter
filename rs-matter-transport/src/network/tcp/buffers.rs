@@ -218,14 +218,6 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         L: TcpNetworkSockets,
     {
         loop {
-            let freed = self.slot_freed.wait();
-            let can_accept =
-                self.with_state(|s| s.find_idle().is_some() || s.find_evictable().is_some());
-            if !can_accept {
-                freed.await;
-                continue;
-            }
-
             match sockets.accept().await {
                 Ok((addr, socket)) => {
                     self.assign_accepted_socket(slot_sockets, addr, socket, config)
@@ -387,12 +379,9 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    fn mark_rx_ready(&self, slot_idx: usize, authenticated: bool) {
+    fn mark_rx_ready(&self, slot_idx: usize) {
         self.with_state_mut(|s| {
             s.slots[slot_idx].rx_ready = true;
-            if authenticated {
-                s.slots[slot_idx].authenticated = true;
-            }
         });
         self.rx_available.notify();
     }
@@ -416,9 +405,8 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                         };
                     }
                     if rx.is_complete() {
-                        let authenticated = rx.message().is_some_and(is_encrypted_matter_frame);
                         drop(rx);
-                        self.mark_rx_ready(slot_idx, authenticated);
+                        self.mark_rx_ready(slot_idx);
                     }
                 }
                 PeerAction::Continue
@@ -486,9 +474,8 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             let mut rx_guard = if !rx_ready {
                 let rx = slot.rx.lock().await;
                 if rx.is_complete() {
-                    let authenticated = rx.message().is_some_and(is_encrypted_matter_frame);
                     drop(rx);
-                    self.mark_rx_ready(slot_idx, authenticated);
+                    self.mark_rx_ready(slot_idx);
                     continue;
                 }
                 Some(rx)

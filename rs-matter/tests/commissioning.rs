@@ -166,16 +166,10 @@ macro_rules! commissioning_test {
     ) => {
         #[test]
         fn $test_name() {
-            let thread = std::thread::Builder::new()
-                .stack_size(8 * 1024 * 1024)
-                .spawn(|| {
-                    init_env_logger();
-                    futures_lite::future::block_on(async {
-                        $run_name().await.unwrap();
-                    });
-                })
-                .unwrap();
-            thread.join().unwrap();
+            init_env_logger();
+            futures_lite::future::block_on(async {
+                $run_name().await.unwrap();
+            });
         }
 
         async fn $run_name() -> Result<(), Error> {

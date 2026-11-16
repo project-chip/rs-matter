@@ -176,16 +176,18 @@ impl<const SLOTS: usize> SharedState<SLOTS> {
     }
 
     /// Pick the best slot to evict when all `SLOTS` are occupied:
-    /// 1. Only `Connected` slots (not already `close_requested`) are eligible.
-    /// 2. Prefer unauthenticated slots over authenticated slots.
-    /// 3. Within the same auth tier, prefer slots with an empty TX queue.
-    /// 4. Break ties by longest-idle (`last_activity`).
+    /// 1. Only `Connected`, unauthenticated slots (not already `close_requested`) are eligible;
+    ///    authenticated slots are never evicted.
+    /// 2. Prefer slots with an empty TX queue.
+    /// 3. Break ties by longest-idle (`last_activity`).
     pub(super) fn find_evictable(&self) -> Option<usize> {
         self.slots
             .iter()
             .enumerate()
-            .filter(|(_, s)| matches!(s.peer, PeerState::Connected(_)) && !s.close_requested)
-            .min_by_key(|(_, s)| (s.authenticated, s.tx_count > 0, s.last_activity))
+            .filter(|(_, s)| {
+                matches!(s.peer, PeerState::Connected(_)) && !s.close_requested && !s.authenticated
+            })
+            .min_by_key(|(_, s)| (s.tx_count > 0, s.last_activity))
             .map(|(i, _)| i)
     }
 
