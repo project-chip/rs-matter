@@ -21,8 +21,9 @@ use core::net::SocketAddr;
 
 use super::frame::{encode_frame_header, Frame, FRAME_HDR_LEN};
 use crate::error::{Error, ErrorCode};
-use crate::utils::init::{init, init_array_from_fn, Init};
-use crate::utils::storage::Vec as StorageVec;
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, zeroed, Init};
+use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{IfMultiMutex, MultiNotification, Notification};
 use crate::utils::timers::Instant;
 
@@ -52,39 +53,46 @@ impl PeerState {
     }
 }
 
-pub(super) struct PeerSlot<const N: usize, const TX_QUEUE: usize> {
+pub(super) struct PeerSlot<const N: usize, const TX_BUF: usize> {
     pub(super) rx: IfMultiMutex<Frame<N>>,
-    pub(super) tx_producer: IfMultiMutex<()>,
-    pub(super) tx: TxQueue<N, TX_QUEUE>,
     pub(super) rx_consumed: Notification,
     pub(super) tx_changed: Notification,
     pub(super) tx_space_available: MultiNotification,
     pub(super) wakeup: Notification,
+    tx: Mutex<RefCell<TxQueue<TX_BUF>>>,
 }
 
-impl<const N: usize, const TX_QUEUE: usize> PeerSlot<N, TX_QUEUE> {
+impl<const N: usize, const TX_BUF: usize> PeerSlot<N, TX_BUF> {
     pub(super) const fn new() -> Self {
         Self {
             rx: IfMultiMutex::new(Frame::new()),
-            tx_producer: IfMultiMutex::new(()),
-            tx: TxQueue::new(),
             rx_consumed: Notification::new(),
             tx_changed: Notification::new(),
             tx_space_available: MultiNotification::new(),
             wakeup: Notification::new(),
+            tx: Mutex::new(RefCell::new(TxQueue::new())),
         }
     }
 
     pub(super) fn init() -> impl Init<Self> {
         init!(Self {
             rx <- IfMultiMutex::init(Frame::init()),
-            tx_producer: IfMultiMutex::new(()),
-            tx <- TxQueue::init(),
+            tx <- Mutex::init(RefCell::init(TxQueue::init())),
             rx_consumed <- Notification::init(),
             tx_changed <- Notification::init(),
             tx_space_available <- MultiNotification::init(),
             wakeup <- Notification::init(),
         })
+    }
+
+    #[inline]
+    pub(super) fn with_tx<R>(&self, f: impl FnOnce(&TxQueue<TX_BUF>) -> R) -> R {
+        self.tx.lock(|cell| f(&cell.borrow()))
+    }
+
+    #[inline]
+    pub(super) fn with_tx_mut<R>(&self, f: impl FnOnce(&mut TxQueue<TX_BUF>) -> R) -> R {
+        self.tx.lock(|cell| f(&mut cell.borrow_mut()))
     }
 }
 
@@ -93,8 +101,7 @@ pub(super) struct PeerSlotState {
     pub(super) peer: PeerState,
     pub(super) last_activity: Instant,
     pub(super) rx_ready: bool,
-    pub(super) tx_head: usize,
-    pub(super) tx_count: usize,
+    pub(super) tx_pending: bool,
     pub(super) close_requested: bool,
     pub(super) authenticated: bool,
 }
@@ -105,8 +112,7 @@ impl PeerSlotState {
             peer: PeerState::Idle,
             last_activity: Instant::from_ticks(0),
             rx_ready: false,
-            tx_head: 0,
-            tx_count: 0,
+            tx_pending: false,
             close_requested: false,
             authenticated: false,
         }
@@ -116,8 +122,7 @@ impl PeerSlotState {
         self.peer = PeerState::Idle;
         self.last_activity = Instant::from_ticks(0);
         self.rx_ready = false;
-        self.tx_head = 0;
-        self.tx_count = 0;
+        self.tx_pending = false;
         self.close_requested = false;
         self.authenticated = false;
     }
@@ -187,7 +192,7 @@ impl<const SLOTS: usize> SharedState<SLOTS> {
             .filter(|(_, s)| {
                 matches!(s.peer, PeerState::Connected(_)) && !s.close_requested && !s.authenticated
             })
-            .min_by_key(|(_, s)| (s.tx_count > 0, s.last_activity))
+            .min_by_key(|(_, s)| (s.tx_pending, s.last_activity))
             .map(|(i, _)| i)
     }
 
@@ -260,78 +265,211 @@ pub(super) fn is_encrypted_matter_frame(frame: &[u8]) -> bool {
     frame.len() >= 8 && u16::from_le_bytes([frame[1], frame[2]]) != 0
 }
 
-pub(super) struct TxQueue<const N: usize, const Q: usize> {
-    pub(super) frames: [IfMultiMutex<TxFrame<N>>; Q],
+pub(super) struct TxQueue<const TX_BUF: usize> {
+    buf: [u8; TX_BUF],
+    head: usize,
+    len: usize,
+    oldest_queued_at: Instant,
 }
 
-impl<const N: usize, const Q: usize> TxQueue<N, Q> {
+impl<const TX_BUF: usize> TxQueue<TX_BUF> {
     pub(super) const fn new() -> Self {
         Self {
-            frames: [const { IfMultiMutex::new(TxFrame::new()) }; Q],
+            buf: [0; TX_BUF],
+            head: 0,
+            len: 0,
+            oldest_queued_at: Instant::from_ticks(0),
         }
     }
 
     pub(super) fn init() -> impl Init<Self> {
         init!(Self {
-            frames <- init_array_from_fn(|_| IfMultiMutex::init(TxFrame::init())),
-        })
-    }
-}
-
-pub(super) struct TxFrame<const N: usize> {
-    header: [u8; FRAME_HDR_LEN],
-    payload: StorageVec<u8, N>,
-    written: usize,
-    pub(super) queued_at: Instant,
-}
-
-impl<const N: usize> TxFrame<N> {
-    pub(super) const fn new() -> Self {
-        Self {
-            header: [0; FRAME_HDR_LEN],
-            payload: StorageVec::new(),
-            written: 0,
-            queued_at: Instant::from_ticks(0),
-        }
-    }
-
-    pub(super) fn init() -> impl Init<Self> {
-        init!(Self {
-            header: [0; FRAME_HDR_LEN],
-            payload <- StorageVec::init(),
-            written: 0,
-            queued_at: Instant::from_ticks(0),
+            buf <- zeroed(),
+            head: 0,
+            len: 0,
+            oldest_queued_at: Instant::from_ticks(0),
         })
     }
 
-    pub(super) fn encode(&mut self, data: &[u8]) -> Result<(), Error> {
-        if data.is_empty() || data.len() > N {
+    pub(super) fn reset(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(super) fn free(&self) -> usize {
+        TX_BUF - self.len
+    }
+
+    pub(super) fn queued_at(&self) -> Option<Instant> {
+        (self.len > 0).then_some(self.oldest_queued_at)
+    }
+
+    pub(super) fn enqueue(&mut self, data: &[u8]) -> Result<(), Error> {
+        let total = FRAME_HDR_LEN + data.len();
+        if data.is_empty() || total > TX_BUF {
             return Err(ErrorCode::BufferTooSmall.into());
         }
-        self.header = encode_frame_header(data.len())?;
-        self.payload.clear();
-        self.payload
-            .extend_from_slice(data)
-            .map_err(|_| ErrorCode::BufferTooSmall)?;
-        self.written = 0;
-        self.queued_at = Instant::now();
+        if self.free() < total {
+            return Err(ErrorCode::ResourceExhausted.into());
+        }
+        let hdr = encode_frame_header(data.len())?;
+        let was_empty = self.len == 0;
+        self.write_ring(&hdr);
+        self.write_ring(data);
+        if was_empty {
+            self.oldest_queued_at = Instant::now();
+        }
         Ok(())
     }
 
-    pub(super) fn unwritten(&self) -> &[u8] {
-        if self.written < FRAME_HDR_LEN {
-            &self.header[self.written..]
-        } else {
-            &self.payload[self.written - FRAME_HDR_LEN..]
+    pub(super) fn copy_chunk(&self, dst: &mut [u8]) -> usize {
+        let count = self.len.min(dst.len());
+        if count == 0 {
+            return 0;
         }
+        let first = (TX_BUF - self.head).min(count);
+        dst[..first].copy_from_slice(&self.buf[self.head..self.head + first]);
+        if first < count {
+            dst[first..count].copy_from_slice(&self.buf[..count - first]);
+        }
+        count
     }
 
     pub(super) fn advance(&mut self, count: usize) {
-        debug_assert!(self.written + count <= FRAME_HDR_LEN + self.payload.len());
-        self.written += count;
+        debug_assert!(count <= self.len);
+        self.head = (self.head + count) % TX_BUF;
+        self.len -= count;
+        if self.len > 0 && count > 0 {
+            self.oldest_queued_at = Instant::now();
+        }
     }
 
-    pub(super) fn is_complete(&self) -> bool {
-        self.written == FRAME_HDR_LEN + self.payload.len()
+    fn write_ring(&mut self, src: &[u8]) {
+        let tail = (self.head + self.len) % TX_BUF;
+        let first = (TX_BUF - tail).min(src.len());
+        self.buf[tail..tail + first].copy_from_slice(&src[..first]);
+        if first < src.len() {
+            self.buf[..src.len() - first].copy_from_slice(&src[first..]);
+        }
+        self.len += src.len();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tx_queue_wraps_header_and_payload_across_ring_boundary() {
+        let mut q = TxQueue::<12>::new();
+        // Frame 1: 4-byte header + 6-byte payload = 10 bytes (head=0, tail=10).
+        q.enqueue(b"abcdef").unwrap();
+        assert_eq!(q.free(), 2);
+
+        let mut out = [0u8; 16];
+        let n = q.copy_chunk(&mut out[..10]);
+        assert_eq!(n, 10);
+        assert_eq!(&out[..n], b"\x06\0\0\0abcdef");
+        q.advance(10); // head=10, len=0 (only 2 bytes before end of 12-byte ring)
+        assert!(q.is_empty());
+        assert_eq!(q.free(), 12);
+
+        // Frame 2: 4-byte header wraps (2 bytes at [10..12], 2 bytes at [0..2]),
+        // followed by 5-byte payload at [2..7] (total 9 bytes).
+        q.enqueue(b"12345").unwrap();
+        assert_eq!(q.free(), 3);
+
+        // Read in partial chunks across the wraparound boundary.
+        let n1 = q.copy_chunk(&mut out[..5]);
+        assert_eq!(n1, 5);
+        assert_eq!(&out[..5], b"\x05\0\0\01");
+        q.advance(3); // Partial write: only 3 of the 5 copied bytes were written (head=1, len=6).
+
+        let n2 = q.copy_chunk(&mut out[..16]);
+        assert_eq!(n2, 6);
+        assert_eq!(&out[..6], b"\012345");
+        q.advance(6);
+        assert!(q.is_empty());
+
+        // Frame 3: header at [7..11], payload wraps across [11..12] and [0..4].
+        q.enqueue(b"vwxyz").unwrap();
+        let n3 = q.copy_chunk(&mut out);
+        assert_eq!(n3, 9);
+        assert_eq!(&out[..n3], b"\x05\0\0\0vwxyz");
+        q.advance(9);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn tx_queue_handles_exact_capacity_and_backpressure() {
+        let mut q = TxQueue::<10>::new();
+        q.enqueue(b"123456").unwrap(); // 4 + 6 = 10 bytes (exact fill)
+        assert_eq!(q.free(), 0);
+        assert!(!q.is_empty());
+
+        let err = q.enqueue(b"x").unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ResourceExhausted);
+
+        q.reset();
+        assert!(q.is_empty());
+        assert_eq!(q.free(), 10);
+        assert_eq!(q.queued_at(), None);
+    }
+
+    #[test]
+    fn tx_queue_rejects_empty_and_oversized_frames() {
+        let mut q = TxQueue::<10>::new();
+        assert_eq!(
+            q.enqueue(&[]).unwrap_err().code(),
+            ErrorCode::BufferTooSmall
+        );
+        assert_eq!(
+            q.enqueue(b"1234567").unwrap_err().code(),
+            ErrorCode::BufferTooSmall
+        );
+    }
+
+    #[test]
+    fn tx_queue_init_empty_copy_zero_advance_and_queued_at() {
+        use crate::utils::init::InitMaybeUninit;
+        use core::mem::MaybeUninit;
+
+        let mut slot = MaybeUninit::<TxQueue<20>>::uninit();
+        let q = slot.init_with(TxQueue::init());
+        assert!(q.is_empty());
+        assert_eq!(q.queued_at(), None);
+
+        let mut out = [0u8; 8];
+        assert_eq!(q.copy_chunk(&mut out), 0);
+
+        q.enqueue(b"ab").unwrap();
+        let first_ts = q.queued_at().unwrap();
+        assert_eq!(q.copy_chunk(&mut []), 0);
+
+        // Enqueuing a second frame while non-empty keeps `oldest_queued_at`.
+        q.enqueue(b"cd").unwrap();
+        assert_eq!(q.queued_at(), Some(first_ts));
+
+        // Advancing 0 bytes is a no-op.
+        q.advance(0);
+        assert_eq!(q.free(), 20 - 12);
+        assert_eq!(q.queued_at(), Some(first_ts));
+
+        // Partial advance while still non-empty keeps `queued_at()` Some.
+        q.advance(6);
+        assert!(!q.is_empty());
+        assert!(q.queued_at().is_some());
+
+        // Full drain clears `queued_at()`.
+        q.advance(6);
+        assert!(q.is_empty());
+        assert_eq!(q.queued_at(), None);
+
+        // SAFETY: `slot` was initialized via `init_with` above.
+        unsafe { slot.assume_init_drop() };
     }
 }

@@ -24,7 +24,7 @@ use core::pin::pin;
 
 use super::frame::{encode_frame_header, Frame, FRAME_HDR_LEN};
 use super::slots::{
-    is_encrypted_matter_frame, PeerSlot, PeerState, RxOutcome, SharedState, TxFrame, TxOutcome,
+    is_encrypted_matter_frame, PeerSlot, PeerState, RxOutcome, SharedState, TxOutcome,
 };
 use super::{TcpConfig, TcpNetworkRead, TcpNetworkSocket, TcpNetworkSockets, TcpNetworkWrite};
 use crate::error::{Error, ErrorCode};
@@ -47,11 +47,11 @@ use crate::utils::timers::{with_timeout, Duration, Instant, Timer};
 pub struct TcpNetworkBuffers<
     const N: usize = { crate::MAX_RX_BUF_SIZE },
     const SLOTS: usize = 4,
-    const TX_QUEUE: usize = 2,
+    const TX_BUF: usize = { crate::MAX_RX_BUF_SIZE + FRAME_HDR_LEN },
 > {
     bound: Mutex<Cell<bool>>,
     state: Mutex<RefCell<SharedState<SLOTS>>>,
-    slots: [PeerSlot<N, TX_QUEUE>; SLOTS],
+    slots: [PeerSlot<N, TX_BUF>; SLOTS],
     rx_available: MultiNotification,
     slot_freed: MultiNotification,
 }
@@ -61,29 +61,32 @@ enum PeerAction {
     Close { send_too_large: bool },
 }
 
-const fn validate_config<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>() {
+const fn validate_config<const N: usize, const SLOTS: usize, const TX_BUF: usize>() {
     core::assert!(N > 0, "TCP frame buffer size N must be non-zero");
     core::assert!(
         N <= crate::MAX_RX_BUF_SIZE,
         "TCP frame buffer size N must not exceed MAX_RX_BUF_SIZE"
     );
     core::assert!(SLOTS > 0, "TCP SLOTS must be non-zero");
-    core::assert!(TX_QUEUE > 0, "TX_QUEUE must be non-zero");
+    core::assert!(
+        TX_BUF >= N + FRAME_HDR_LEN,
+        "TCP TX_BUF must be at least N + FRAME_HDR_LEN"
+    );
 }
 
-impl Default for TcpNetworkBuffers<{ crate::MAX_RX_BUF_SIZE }, 4, 2> {
+impl Default
+    for TcpNetworkBuffers<{ crate::MAX_RX_BUF_SIZE }, 4, { crate::MAX_RX_BUF_SIZE + FRAME_HDR_LEN }>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-    TcpNetworkBuffers<N, SLOTS, TX_QUEUE>
-{
+impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<N, SLOTS, TX_BUF> {
     /// Create TCP network buffers.
     pub const fn new() -> Self {
         const {
-            validate_config::<N, SLOTS, TX_QUEUE>();
+            validate_config::<N, SLOTS, TX_BUF>();
         }
         Self {
             bound: Mutex::new(Cell::new(false)),
@@ -100,7 +103,7 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
     /// materializing multi-KiB buffers on the stack.
     pub fn init() -> impl Init<Self> {
         const {
-            validate_config::<N, SLOTS, TX_QUEUE>();
+            validate_config::<N, SLOTS, TX_BUF>();
         }
         init!(Self {
             bound: Mutex::new(Cell::new(false)),
@@ -133,13 +136,12 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             if let Ok(mut rx) = slot.rx.try_lock() {
                 rx.reset();
             }
+            slot.with_tx_mut(|tx| tx.reset());
         }
     }
 }
 
-impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-    TcpNetworkBuffers<N, SLOTS, TX_QUEUE>
-{
+impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<N, SLOTS, TX_BUF> {
     /// Drive TCP accept/connect and all `SLOTS` concurrent peer I/O loops.
     pub(super) async fn run_with_listener<L>(
         &self,
@@ -357,6 +359,7 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             let mut rx = self.slots[slot_idx].rx.lock().await;
             rx.reset();
         }
+        self.slots[slot_idx].with_tx_mut(|tx| tx.reset());
         self.slots[slot_idx].tx_space_available.notify();
         self.slot_freed.notify();
         if closed_addr.is_some() {
@@ -366,11 +369,11 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
 
     fn next_deadline(
         last_activity: Instant,
-        tx_frame: Option<&TxFrame<N>>,
+        tx_queued_at: Option<Instant>,
         config: &TcpConfig,
     ) -> Option<Instant> {
         let idle_deadline = config.idle_timeout.map(|t| last_activity + t);
-        let send_deadline = tx_frame.map(|frame| frame.queued_at + config.send_timeout);
+        let send_deadline = tx_queued_at.map(|queued_at| queued_at + config.send_timeout);
         match (idle_deadline, send_deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
@@ -415,29 +418,21 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    fn handle_tx_outcome(
-        &self,
-        slot_idx: usize,
-        outcome: TxOutcome,
-        mut tx_guard: Option<IfMultiMutexGuard<'_, TxFrame<N>>>,
-    ) -> PeerAction {
+    fn handle_tx_outcome(&self, slot_idx: usize, outcome: TxOutcome) -> PeerAction {
         match outcome {
             TxOutcome::Wrote(Ok(0) | Err(_)) => PeerAction::Close {
                 send_too_large: false,
             },
             TxOutcome::Wrote(Ok(count)) => {
-                self.with_state_mut(|s| s.slots[slot_idx].last_activity = Instant::now());
-                if let Some(mut tx) = tx_guard.take() {
+                let tx_pending = self.slots[slot_idx].with_tx_mut(|tx| {
                     tx.advance(count);
-                    if tx.is_complete() {
-                        drop(tx);
-                        self.with_state_mut(|s| {
-                            s.slots[slot_idx].tx_head = (s.slots[slot_idx].tx_head + 1) % TX_QUEUE;
-                            s.slots[slot_idx].tx_count -= 1;
-                        });
-                        self.slots[slot_idx].tx_space_available.notify();
-                    }
-                }
+                    !tx.is_empty()
+                });
+                self.with_state_mut(|s| {
+                    s.slots[slot_idx].last_activity = Instant::now();
+                    s.slots[slot_idx].tx_pending = tx_pending;
+                });
+                self.slots[slot_idx].tx_space_available.notify();
                 PeerAction::Continue
             }
             TxOutcome::Changed => PeerAction::Continue,
@@ -452,19 +447,15 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
     ) -> bool {
         let slot = &self.slots[slot_idx];
         let (mut rx_sock, mut tx_sock) = socket.split();
+        let mut tx_chunk = [0u8; 256];
 
         loop {
             let rx_wait = slot.rx_consumed.wait();
             let tx_wait = slot.tx_changed.wait();
 
-            let (rx_ready, tx_slot, last_activity, close_requested) = self.with_state(|s| {
+            let (rx_ready, last_activity, close_requested) = self.with_state(|s| {
                 let st = &s.slots[slot_idx];
-                (
-                    st.rx_ready,
-                    (st.tx_count > 0).then_some(st.tx_head),
-                    st.last_activity,
-                    st.close_requested,
-                )
+                (st.rx_ready, st.last_activity, st.close_requested)
             });
 
             if close_requested {
@@ -483,13 +474,10 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                 None
             };
 
-            let tx_guard = if let Some(q_slot) = tx_slot {
-                Some(slot.tx.frames[q_slot].lock().await)
-            } else {
-                None
-            };
+            let (tx_len, tx_queued_at) =
+                slot.with_tx(|tx| (tx.copy_chunk(&mut tx_chunk), tx.queued_at()));
 
-            let deadline = Self::next_deadline(last_activity, tx_guard.as_deref(), config);
+            let deadline = Self::next_deadline(last_activity, tx_queued_at, config);
 
             let outcome = select3(
                 pin!(async {
@@ -501,8 +489,8 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                     }
                 }),
                 pin!(async {
-                    if let Some(tx) = tx_guard.as_ref() {
-                        TxOutcome::Wrote(tx_sock.write(tx.unwritten()).await)
+                    if tx_len > 0 {
+                        TxOutcome::Wrote(tx_sock.write(&tx_chunk[..tx_len]).await)
                     } else {
                         tx_wait.await;
                         TxOutcome::Changed
@@ -521,9 +509,7 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                 Either3::First(rx_outcome) => {
                     self.handle_rx_outcome(slot_idx, rx_outcome, rx_guard)
                 }
-                Either3::Second(tx_outcome) => {
-                    self.handle_tx_outcome(slot_idx, tx_outcome, tx_guard)
-                }
+                Either3::Second(tx_outcome) => self.handle_tx_outcome(slot_idx, tx_outcome),
                 Either3::Third(()) => PeerAction::Close {
                     send_too_large: false,
                 },
@@ -704,29 +690,37 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn wait_tx_queue_slot(
+    async fn enqueue_tx_frame(
         &self,
         slot_idx: usize,
         addr: SocketAddr,
+        data: &[u8],
         deadline: Instant,
-    ) -> Result<usize, Error> {
+    ) -> Result<(), Error> {
+        let authenticated = is_encrypted_matter_frame(data);
         loop {
             let space_wait = self.slots[slot_idx].tx_space_available.wait();
 
-            let q_slot = self.with_state(|s| {
-                let st = &s.slots[slot_idx];
+            let enqueued = self.with_state_mut(|s| {
+                let st = &mut s.slots[slot_idx];
                 if st.peer.addr() != Some(addr) || st.close_requested {
                     return Err(Error::new(ErrorCode::ResourceExhausted));
                 }
-                if st.tx_count < TX_QUEUE {
-                    Ok(Some((st.tx_head + st.tx_count) % TX_QUEUE))
-                } else {
-                    Ok(None)
-                }
+                self.slots[slot_idx].with_tx_mut(|tx| {
+                    if tx.free() < FRAME_HDR_LEN + data.len() {
+                        return Ok(false);
+                    }
+                    tx.enqueue(data)?;
+                    st.tx_pending = true;
+                    if authenticated {
+                        st.authenticated = true;
+                    }
+                    Ok(true)
+                })
             })?;
 
-            if let Some(q_slot) = q_slot {
-                return Ok(q_slot);
+            if enqueued {
+                return Ok(());
             }
 
             Self::wait_until_deadline(space_wait, deadline).await?;
@@ -748,40 +742,8 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
 
         let deadline = Instant::now() + config.send_timeout;
         let slot_idx = self.acquire_slot_for_send(addr, deadline).await?;
-
-        let producer = match select(
-            pin!(self.slots[slot_idx].tx_producer.lock()),
-            pin!(Timer::at(deadline)),
-        )
-        .await
-        {
-            Either::First(guard) => guard,
-            Either::Second(()) => return Err(ErrorCode::ResourceExhausted.into()),
-        };
-
-        let q_slot = self.wait_tx_queue_slot(slot_idx, addr, deadline).await?;
-
-        {
-            let mut frame = self.slots[slot_idx].tx.frames[q_slot]
-                .try_lock()
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-            frame.encode(data)?;
-        }
-
-        let authenticated = is_encrypted_matter_frame(data);
-        self.with_state_mut(|s| {
-            let st = &mut s.slots[slot_idx];
-            if st.peer.addr() != Some(addr) || st.close_requested {
-                return Err(Error::new(ErrorCode::ResourceExhausted));
-            }
-            st.tx_count += 1;
-            if authenticated {
-                st.authenticated = true;
-            }
-            Ok(())
-        })?;
-
-        drop(producer);
+        self.enqueue_tx_frame(slot_idx, addr, data, deadline)
+            .await?;
         self.slots[slot_idx].tx_changed.notify();
         yield_now().await;
         Ok(())
