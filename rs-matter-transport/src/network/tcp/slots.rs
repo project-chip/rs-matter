@@ -386,12 +386,12 @@ mod tests {
         // Read in partial chunks across the wraparound boundary.
         let n1 = q.copy_chunk(&mut out[..5]);
         assert_eq!(n1, 5);
-        assert_eq!(&out[..5], b"\x05\0\0\01");
+        assert_eq!(&out[..5], b"\x05\0\0\x001");
         q.advance(3); // Partial write: only 3 of the 5 copied bytes were written (head=1, len=6).
 
         let n2 = q.copy_chunk(&mut out[..16]);
         assert_eq!(n2, 6);
-        assert_eq!(&out[..6], b"\012345");
+        assert_eq!(&out[..6], b"\x0012345");
         q.advance(6);
         assert!(q.is_empty());
 

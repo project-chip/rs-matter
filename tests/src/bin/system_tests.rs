@@ -471,14 +471,23 @@ fn main() -> Result<(), Error> {
 
     // Optionally bind a TCP listener as well
     #[cfg(feature = "test-tcp")]
+    let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
+        rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
+    #[cfg(feature = "test-tcp")]
     let tcp = {
-        use rs_matter::transport::network::tcp::TcpNetwork;
+        use rs_matter::transport::network::tcp::{TcpCapability, TcpConfig, TcpNetwork};
 
         let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(bind_addr)?;
 
+        matter
+            .transport()
+            .set_tcp_capability(TcpCapability::ServerOnly(
+                rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+            ));
+
         info!("TCP transport enabled, listening on {}", bind_addr);
 
-        TcpNetwork::new(tcp_socket)
+        TcpNetwork::new(tcp_socket, &tcp_buffers, &TcpConfig::new())
     };
 
     // Optionally create a chained UDP+TCP network
@@ -592,7 +601,6 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     },
     device_type: Some(0x0101),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
-    tcp_supported: cfg!(feature = "test-tcp"),
     max_paths_per_invoke: 1,
     // Session Idle/Active Intervals (ms). Advertised as the SII/SAI DNS-SD keys;
     // an ICD must publish them so discovery knows its polling cadence.

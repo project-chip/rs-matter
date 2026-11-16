@@ -193,7 +193,18 @@ fn main() -> Result<(), Error> {
 
     let udp_socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
     let tcp_socket = async_io::Async::<TcpListener>::bind(args::bind_addr())?;
-    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(tcp_socket);
+    let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
+        rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
+    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(
+        tcp_socket,
+        &tcp_buffers,
+        &rs_matter::transport::network::tcp::TcpConfig::new(),
+    );
+    matter.transport().set_tcp_capability(
+        rs_matter::transport::network::tcp::TcpCapability::ServerOnly(
+            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+        ),
+    );
     let (mut net_send, mut net_recv, mut net_multicast) = {
         use rs_matter::transport::network::{Address, ChainedNetwork};
         let net_send = ChainedNetwork::new(|addr: &Address| addr.is_tcp(), &tcp, &udp_socket);
@@ -244,7 +255,6 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     },
     device_type: Some(DEV_TYPE_AUDIO_DOORBELL.dtype),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
-    tcp_supported: true,
     ..TEST_DEV_DET
 };
 
