@@ -17,6 +17,9 @@
 
 //! This module contains the implementation of the Basic Information cluster and its handler.
 
+use rand_core::Rng;
+
+use crate::crypto::Crypto;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, TransactionId, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::persist::Persist;
@@ -69,6 +72,36 @@ impl<'a> BasicInfoHandler<'a> {
     {
         transaction_id.with_state(self.matter, |state| f(state.basic_info_settings))
     }
+}
+
+/// Return the random 64-bit value that `field` picks from the node's
+/// `BasicInfoSettings`, making and persisting it on first access. A factory
+/// reset clears it, so the next access makes a new one.
+pub(crate) fn random_setting(
+    matter: &Matter,
+    ctx: &impl ReadContext,
+    field: fn(&mut BasicInfoSettings) -> &mut Option<u64>,
+) -> Result<u64, Error> {
+    let mut persist = Persist::new(ctx.kv());
+
+    let id = ctx.transaction_id().with_state(matter, |state| {
+        let settings = &mut *state.basic_info_settings;
+
+        if let Some(id) = *field(settings) {
+            return Ok(id);
+        }
+
+        let id = ctx.crypto().rand()?.next_u64();
+        *field(settings) = Some(id);
+
+        settings.store_persist(&mut persist)?;
+
+        Ok(id)
+    })?;
+
+    persist.run()?;
+
+    Ok(id)
 }
 
 /// `BasicInformation` cluster metadata that additionally advertises the
@@ -419,10 +452,26 @@ impl ClusterHandler for BasicInfoHandler<'_> {
 
     fn unique_id<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().unique_id)
+        let mut text = [0; 16];
+
+        let mut unique_id = self.config().unique_id;
+        if unique_id.is_empty() {
+            let id = random_setting(self.matter, &ctx, |settings| &mut settings.unique_id)?;
+
+            // 16 upper-case hex digits, as connectedhomeip has it.
+            const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+            for (index, digit) in text.iter_mut().enumerate() {
+                *digit = HEX[((id >> (60 - index * 4)) & 0xf) as usize];
+            }
+
+            unique_id = core::str::from_utf8(&text).map_err(|_| ErrorCode::InvalidData)?;
+        }
+
+        builder.set(unique_id)
     }
 
     fn product_appearance<P: TLVBuilderParent>(
