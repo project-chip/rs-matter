@@ -55,7 +55,7 @@ use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_respond::{DefaultResponder, ExchangeHandler, Responder};
 use rs_matter_sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter_transport::exchange::MatterBuffers;
-use rs_matter_transport::network::mdns::TcpMdnsCapability;
+use rs_matter_transport::network::tcp::TcpCapability;
 use rs_matter_transport::network::{
     Address, ChainedNetwork, NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork,
 };
@@ -622,23 +622,18 @@ where
                 .await
             {
                 Ok(tcp) => {
+                    let max_message_size = tcp.max_message_size() as u32;
                     let capability = if tcp_stack.supports_client() {
-                        TcpMdnsCapability::ClientAndServer
+                        TcpCapability::ClientAndServer(max_message_size)
                     } else {
-                        TcpMdnsCapability::ServerOnly
+                        TcpCapability::ServerOnly(max_message_size)
                     };
-                    self.matter()
-                        .transport()
-                        .set_tcp_mdns_capability(capability);
-                    self.matter()
-                        .transport()
-                        .set_tcp_max_message_size(Some(tcp.max_message_size() as u32));
+                    self.matter().transport().set_tcp_capability(capability);
                     self.matter().transport().notify_mdns_changed();
                     let _guard = scopeguard::guard((), |_| {
                         self.matter()
                             .transport()
-                            .set_tcp_mdns_capability(TcpMdnsCapability::None);
-                        self.matter().transport().set_tcp_max_message_size(None);
+                            .set_tcp_capability(TcpCapability::None);
                         self.matter().transport().notify_mdns_changed();
                     });
 

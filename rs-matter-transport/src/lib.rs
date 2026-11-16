@@ -209,10 +209,8 @@ pub struct Transport {
     timeouts_changed: Notification,
     /// The Session Active Interval this node advertises, if configured.
     sai: Option<u32>,
-    /// Operational TCP capability currently bound for mDNS advertisement.
-    tcp_mdns_capability: Mutex<RefCell<crate::network::mdns::TcpMdnsCapability>>,
-    /// Maximum Matter-over-TCP message size supported by the currently bound TCP transport.
-    tcp_max_message_size: Mutex<RefCell<Option<u32>>>,
+    /// Operational TCP capability currently bound for mDNS and session parameters.
+    tcp_capability: Mutex<RefCell<crate::network::tcp::TcpCapability>>,
     /// All sessions.
     ///
     /// `Matter` keeps the state of the node under this lock too, so that the sessions
@@ -239,10 +237,7 @@ impl Transport {
             comm_window_changed: MultiNotification::new(),
             timeouts_changed: Notification::new(),
             sai,
-            tcp_mdns_capability: Mutex::new(RefCell::new(
-                crate::network::mdns::TcpMdnsCapability::None,
-            )),
-            tcp_max_message_size: Mutex::new(RefCell::new(None)),
+            tcp_capability: Mutex::new(RefCell::new(crate::network::tcp::TcpCapability::None)),
             sessions: Mutex::new(RefCell::new(Sessions::new())),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
@@ -267,10 +262,9 @@ impl Transport {
             comm_window_changed <- MultiNotification::init(),
             timeouts_changed <- Notification::init(),
             sai,
-            tcp_mdns_capability: Mutex::new(RefCell::new(
-                crate::network::mdns::TcpMdnsCapability::None,
+            tcp_capability: Mutex::new(RefCell::new(
+                crate::network::tcp::TcpCapability::None,
             )),
-            tcp_max_message_size: Mutex::new(RefCell::new(None)),
             sessions <- Mutex::init(RefCell::init(Sessions::init())),
             groups_modified <- Notification::init(),
             resumption_dirty <- Notification::init(),
@@ -283,26 +277,15 @@ impl Transport {
         self.sai.unwrap_or(mrp::MRP_BASE_RETRY_INTERVAL_MS)
     }
 
-    /// Returns the operational TCP capability currently advertised over mDNS.
-    pub fn tcp_mdns_capability(&self) -> crate::network::mdns::TcpMdnsCapability {
-        self.tcp_mdns_capability.lock(|cell| *cell.borrow())
+    /// Returns the operational TCP capability currently advertised over mDNS and session parameters.
+    pub fn tcp_capability(&self) -> crate::network::tcp::TcpCapability {
+        self.tcp_capability.lock(|cell| *cell.borrow())
     }
 
-    /// Updates the operational TCP capability advertised over mDNS.
-    pub fn set_tcp_mdns_capability(&self, capability: crate::network::mdns::TcpMdnsCapability) {
-        self.tcp_mdns_capability
+    /// Updates the operational TCP capability advertised over mDNS and session parameters.
+    pub fn set_tcp_capability(&self, capability: crate::network::tcp::TcpCapability) {
+        self.tcp_capability
             .lock(|cell| *cell.borrow_mut() = capability);
-    }
-
-    /// Returns the maximum Matter-over-TCP message size advertised in session parameters.
-    pub fn tcp_max_message_size(&self) -> Option<u32> {
-        self.tcp_max_message_size.lock(|cell| *cell.borrow())
-    }
-
-    /// Updates the maximum Matter-over-TCP message size advertised in session parameters.
-    pub fn set_tcp_max_message_size(&self, max_message_size: Option<u32>) {
-        self.tcp_max_message_size
-            .lock(|cell| *cell.borrow_mut() = max_message_size);
     }
 
     /// Set the fast polling interval of this node, if it is an ICD.

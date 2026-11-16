@@ -1313,12 +1313,11 @@ fn main() -> Result<(), Error> {
         &tcp_buffers,
         &rs_matter::transport::network::tcp::TcpConfig::new(),
     );
-    matter.transport().set_tcp_mdns_capability(
-        rs_matter::transport::network::mdns::TcpMdnsCapability::ClientAndServer,
+    matter.transport().set_tcp_capability(
+        rs_matter::transport::network::tcp::TcpCapability::ClientAndServer(
+            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+        ),
     );
-    matter
-        .transport()
-        .set_tcp_max_message_size(Some(rs_matter::transport::MAX_RX_BUF_SIZE as u32));
     info!(
         "TCP transport enabled, listening on {}",
         MATTER_SOCKET_BIND_ADDR

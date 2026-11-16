@@ -1430,7 +1430,7 @@ pub mod test {
 
     #[test]
     fn operational_tcp_advertisement_tracks_bound_capability() {
-        use crate::transport::network::mdns::TcpMdnsCapability;
+        use crate::transport::network::tcp::TcpCapability;
         use crate::transport::network::MatterLocalService;
 
         let service = MatterLocalService::Commissioned {
@@ -1444,12 +1444,13 @@ pub mod test {
             0,
         );
 
+        let max_msg_size = crate::transport::MAX_RX_BUF_SIZE as u32;
         for (capability, expected) in [
-            (TcpMdnsCapability::None, None),
-            (TcpMdnsCapability::ServerOnly, Some("4")),
-            (TcpMdnsCapability::ClientAndServer, Some("6")),
+            (TcpCapability::None, None),
+            (TcpCapability::ServerOnly(max_msg_size), Some("4")),
+            (TcpCapability::ClientAndServer(max_msg_size), Some("6")),
         ] {
-            matter.transport().set_tcp_mdns_capability(capability);
+            matter.transport().set_tcp_capability(capability);
             let mut buf = [0u8; 512];
             let (mut record, _) = service.service(&matter, &mut buf).unwrap();
             assert_eq!(
@@ -1464,7 +1465,7 @@ pub mod test {
 
     #[test]
     fn commissionable_tcp_advertisement_tracks_bound_capability() {
-        use crate::transport::network::mdns::TcpMdnsCapability;
+        use crate::transport::network::tcp::TcpCapability;
         use crate::transport::network::MatterLocalService;
 
         let service = MatterLocalService::Commissionable {
@@ -1479,12 +1480,13 @@ pub mod test {
             0,
         );
 
+        let max_msg_size = crate::transport::MAX_RX_BUF_SIZE as u32;
         for (capability, expected) in [
-            (TcpMdnsCapability::None, None),
-            (TcpMdnsCapability::ServerOnly, Some("4")),
-            (TcpMdnsCapability::ClientAndServer, Some("6")),
+            (TcpCapability::None, None),
+            (TcpCapability::ServerOnly(max_msg_size), Some("4")),
+            (TcpCapability::ClientAndServer(max_msg_size), Some("6")),
         ] {
-            matter.transport().set_tcp_mdns_capability(capability);
+            matter.transport().set_tcp_capability(capability);
             let mut buf = [0u8; 512];
             let (mut record, _) = service.service(&matter, &mut buf).unwrap();
             assert_eq!(

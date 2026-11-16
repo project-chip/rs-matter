@@ -230,6 +230,30 @@ impl TcpNetworkSocket for NoTcp {
     }
 }
 
+/// Operational TCP capability advertised in mDNS `T` TXT records and session parameters.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TcpCapability {
+    /// Operational TCP is not bound / UDP-only (omits the `T` TXT key).
+    #[default]
+    None,
+    /// Operational TCP server-only (`T=4`), carrying the max TCP message size.
+    ServerOnly(u32),
+    /// Operational TCP client and server (`T=6`), carrying the max TCP message size.
+    ClientAndServer(u32),
+}
+
+impl TcpCapability {
+    /// Returns the mDNS `T` TXT record value, or `""` when TCP is not bound.
+    pub const fn as_txt_value(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::ServerOnly(_) => "4",
+            Self::ClientAndServer(_) => "6",
+        }
+    }
+}
+
 /// Timeouts and socket options for Matter TCP transports.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
