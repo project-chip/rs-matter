@@ -537,8 +537,8 @@ pub mod globals {
     }
     impl<'a> rs_matter_crate::tlv::FromTLV<'a> for CurrencyStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::tlv::TlvError> { Ok(Self::new(element.clone())) } }
     impl rs_matter_crate::tlv::ToTLV for CurrencyStruct<'_> {
-        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
-        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::tlv::TlvError> { self.0.to_tlv(tag, tw) }
+        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>> { self.0.tlv_iter(tag) }
     }
     impl core::fmt::Debug for CurrencyStruct<'_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -581,8 +581,8 @@ pub mod globals {
     }
     impl<'a> rs_matter_crate::tlv::FromTLV<'a> for PriceStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::tlv::TlvError> { Ok(Self::new(element.clone())) } }
     impl rs_matter_crate::tlv::ToTLV for PriceStruct<'_> {
-        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
-        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::tlv::TlvError> { self.0.to_tlv(tag, tw) }
+        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>> { self.0.tlv_iter(tag) }
     }
     impl core::fmt::Debug for PriceStruct<'_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -643,8 +643,8 @@ pub mod globals {
     }
     impl<'a> rs_matter_crate::tlv::FromTLV<'a> for MeasurementAccuracyRangeStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::tlv::TlvError> { Ok(Self::new(element.clone())) } }
     impl rs_matter_crate::tlv::ToTLV for MeasurementAccuracyRangeStruct<'_> {
-        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
-        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::tlv::TlvError> { self.0.to_tlv(tag, tw) }
+        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::tlv::TlvError>> { self.0.tlv_iter(tag) }
     }
     impl core::fmt::Debug for MeasurementAccuracyRangeStruct<'_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
