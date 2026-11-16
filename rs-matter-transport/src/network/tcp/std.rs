@@ -86,13 +86,11 @@ impl NetTcpSocket for Async<TcpStream> {
         let sock = SockRef::from(self.get_ref());
         match keep_alive {
             Some(ka) => {
-                let mut params = TcpKeepalive::new()
+                let params = TcpKeepalive::new()
                     .with_time(core::time::Duration::from_millis(ka.idle.as_millis()))
                     .with_interval(core::time::Duration::from_millis(ka.interval.as_millis()));
                 #[cfg(unix)]
-                {
-                    params = params.with_retries(ka.retries);
-                }
+                let params = params.with_retries(ka.retries);
                 sock.set_tcp_keepalive(&params)?;
             }
             None => {

@@ -634,6 +634,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn idle_peer_releases_socket_and_new_peer_can_connect() {
         block_on(async {
             let listener = MockListener::default();
@@ -950,6 +951,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn bounded_tx_backpressure_waits_for_drain_and_times_out_with_resource_exhausted() {
         block_on(async {
             let listener = MockListener::default();

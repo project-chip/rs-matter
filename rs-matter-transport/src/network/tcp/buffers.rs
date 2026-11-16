@@ -75,13 +75,13 @@ enum PeerAction {
 }
 
 const fn validate_config<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>() {
-    assert!(N > 0, "TCP frame buffer size N must be non-zero");
-    assert!(
+    core::assert!(N > 0, "TCP frame buffer size N must be non-zero");
+    core::assert!(
         N <= crate::MAX_RX_BUF_SIZE,
         "TCP frame buffer size N must not exceed MAX_RX_BUF_SIZE"
     );
-    assert!(SLOTS > 0, "TCP SLOTS must be non-zero");
-    assert!(TX_QUEUE > 0, "TX_QUEUE must be non-zero");
+    core::assert!(SLOTS > 0, "TCP SLOTS must be non-zero");
+    core::assert!(TX_QUEUE > 0, "TX_QUEUE must be non-zero");
 }
 
 impl<S> TcpBuffers<S, { crate::MAX_RX_BUF_SIZE }, 4, 2> {

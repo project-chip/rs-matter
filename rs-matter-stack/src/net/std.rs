@@ -270,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn std_net_stack_binds_tcp_server() {
         use crate::net::NetTcpStack;
         use crate::tcp::TcpBuffers;
@@ -287,6 +288,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn embedded_tcp_server_exchanges_framed_packets_over_real_sockets() {
         use crate::tcp::{TcpConfig, TcpNetwork};
         use rs_matter_utils::futures::{select3, Either3};
