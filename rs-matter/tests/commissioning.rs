@@ -71,7 +71,7 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
-use rs_matter::transport::network::tcp::TcpNetwork;
+use rs_matter::transport::network::tcp::{TcpConfig, TcpNetwork, TcpNetworkBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::session::{Session, SessionMode};
 use rs_matter::transport::{TransportPreference, MATTER_SOCKET_BIND_ADDR};
@@ -301,12 +301,15 @@ impl<
         const N: usize,
         const SLOTS: usize,
         const TX: usize,
-    > TransportRun for TcpNetwork<L, N, SLOTS, TX>
+    > TransportRun for TcpNetwork<'_, L, N, SLOTS, TX>
 {
     async fn run_transport(&self) -> Result<(), Error> {
         self.run().await
     }
 }
+
+static TCP_DEVICE_NET_BUFFERS: StaticCell<TcpNetworkBuffers> = StaticCell::new();
+static TCP_CTRL_NET_BUFFERS: StaticCell<TcpNetworkBuffers> = StaticCell::new();
 
 commissioning_test! {
     test_name: test_commissioning_onoff_cluster_tcp,
@@ -318,10 +321,16 @@ commissioning_test! {
     use_tcp: true,
     device_transport: TcpNetwork::new(
         async_io::Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?,
+        TCP_DEVICE_NET_BUFFERS.uninit().init_with(TcpNetworkBuffers::init()),
+        &TcpConfig::new(),
     ),
-    ctrl_transport: TcpNetwork::new(async_io::Async::<TcpListener>::bind(
-        SocketAddr::V6(SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
-    )?),
+    ctrl_transport: TcpNetwork::new(
+        async_io::Async::<TcpListener>::bind(
+            SocketAddr::V6(SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+        )?,
+        TCP_CTRL_NET_BUFFERS.uninit().init_with(TcpNetworkBuffers::init()),
+        &TcpConfig::new(),
+    ),
 }
 
 async fn run_controller_flow<C: Crypto, D: Crypto>(

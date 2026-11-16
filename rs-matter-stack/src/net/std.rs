@@ -36,7 +36,7 @@ use super::{NetSocket, NetStack, NetTcpStack};
 /// A `NetStack` over standard UDP sockets and `async-io`, with optional operational TCP.
 #[derive(Clone, Copy)]
 pub struct StdNetStack<'a> {
-    tcp: Option<&'a crate::tcp::TcpBuffers<StdTcpSocket>>,
+    tcp: Option<&'a crate::tcp::TcpNetworkBuffers>,
 }
 
 impl core::fmt::Debug for StdNetStack<'_> {
@@ -62,7 +62,7 @@ impl StdNetStack<'static> {
 
 impl<'a> StdNetStack<'a> {
     /// Create a new `StdNetStack` with operational TCP enabled over caller-owned buffers.
-    pub const fn with_tcp(tcp: &'a crate::tcp::TcpBuffers<StdTcpSocket>) -> Self {
+    pub const fn with_tcp(tcp: &'a crate::tcp::TcpNetworkBuffers) -> Self {
         Self { tcp: Some(tcp) }
     }
 }
@@ -95,11 +95,10 @@ mod tcp {
     use socket2::{Domain, Protocol, Socket, Type};
 
     use crate::net::NetTcpStack;
-    use crate::tcp::{NetTcpListener, TcpBound, TcpBuffers};
+    use crate::tcp::{NetTcpListener, TcpConfig, TcpNetwork, TcpNetworkBuffers};
     use rs_matter_utils::error::Error;
 
-    /// An `async-io` TCP listener, usable with [`TcpNetwork`](crate::tcp::TcpNetwork)
-    /// and [`TcpBound`].
+    /// An `async-io` TCP listener, usable with [`TcpNetwork`].
     pub struct StdTcpListener(pub Async<TcpListener>);
 
     impl StdTcpListener {
@@ -147,18 +146,18 @@ mod tcp {
     pub type StdTcpSocket = Async<TcpStream>;
 
     /// Operational TCP stack for [`StdNetStack`](super::StdNetStack) backed by
-    /// caller-owned [`TcpBuffers`].
-    pub struct StdTcpStack<'a>(pub(super) &'a TcpBuffers<StdTcpSocket>);
+    /// caller-owned [`TcpNetworkBuffers`].
+    pub struct StdTcpStack<'a>(pub(super) &'a TcpNetworkBuffers);
 
     impl<'a> NetTcpStack for StdTcpStack<'a> {
         type Tcp<'s>
-            = TcpBound<'a, StdTcpListener>
+            = TcpNetwork<'a, StdTcpListener>
         where
             Self: 's;
 
         async fn bind(&self, addr: SocketAddr) -> Result<Self::Tcp<'_>, Error> {
             let listener = StdTcpListener::bind(addr)?;
-            Ok(self.0.bind(listener))
+            TcpNetwork::try_new(listener, self.0, &TcpConfig::new())
         }
 
         fn supports_client(&self) -> bool {
@@ -273,11 +272,11 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn std_net_stack_binds_tcp_server() {
         use crate::net::NetTcpStack;
-        use crate::tcp::TcpBuffers;
+        use crate::tcp::TcpNetworkBuffers;
         use rs_matter_utils::init::InitMaybeUninit;
 
         futures_lite::future::block_on(async {
-            let buffers = Box::leak(Box::new_uninit()).init_with(TcpBuffers::init());
+            let buffers = Box::leak(Box::new_uninit()).init_with(TcpNetworkBuffers::init());
             let stack = StdNetStack::with_tcp(buffers);
             let addr = "127.0.0.1:0".parse().unwrap();
             let tcp_stack = stack.tcp().unwrap();
@@ -290,16 +289,18 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn embedded_tcp_server_exchanges_framed_packets_over_real_sockets() {
-        use crate::tcp::{TcpConfig, TcpNetwork};
+        use crate::tcp::{TcpConfig, TcpNetwork, TcpNetworkBuffers};
         use rs_matter_utils::futures::{select3, Either3};
         use rs_matter_utils::timers::{with_timeout, Duration};
 
         futures_lite::future::block_on(async {
             let listener = StdTcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
             let address = listener.0.get_ref().local_addr().unwrap();
-            let server = TcpNetwork::<_, 64>::with_config(
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let server = TcpNetwork::new(
                 listener,
-                TcpConfig {
+                &buffers,
+                &TcpConfig {
                     idle_timeout: Some(Duration::from_millis(500)),
                     ..Default::default()
                 },

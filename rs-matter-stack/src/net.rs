@@ -21,7 +21,7 @@
 use core::future::{pending, ready, Future};
 use core::net::{Ipv4Addr, SocketAddr};
 
-use rs_matter_transport::network::tcp::{NetTcpListener, NoTcp, TcpBound};
+use rs_matter_transport::network::tcp::{NetTcpListener, NoTcp, TcpNetwork};
 use rs_matter_transport::network::{NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork};
 use rs_matter_utils::error::{Error, ErrorCode};
 use rs_matter_utils::sync::{MaybeSend, MaybeSendSync};
@@ -81,7 +81,7 @@ where
 
 /// An operational Matter-over-TCP network stack.
 ///
-/// Implementations should hold a reference to caller-owned static [`TcpBuffers`](crate::tcp::TcpBuffers)
+/// Implementations should hold a reference to caller-owned static [`TcpNetworkBuffers`](crate::tcp::TcpNetworkBuffers)
 /// so [`Self::bind`] returns a lightweight [`NetTcp`] handle without placing multi-KiB
 /// frame buffers inside async task futures.
 pub trait NetTcpStack: MaybeSendSync {
@@ -149,7 +149,7 @@ pub trait NetTcp: MaybeSend {
 }
 
 impl<L, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetTcp
-    for TcpBound<'_, L, N, SLOTS, TX_QUEUE>
+    for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 where
     L: NetTcpListener,
     L::Socket: MaybeSendSync,
@@ -173,7 +173,7 @@ where
     }
 
     fn run(&self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
-        TcpBound::run(self)
+        TcpNetwork::run(self)
     }
 
     fn max_message_size(&self) -> usize {

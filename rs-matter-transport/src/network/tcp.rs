@@ -22,9 +22,9 @@ use core::net::SocketAddr;
 
 use crate::error::{Error, ErrorCode};
 use crate::network::{Address, NetworkReceive, NetworkSend};
-use crate::utils::init::{init, Init};
-use crate::utils::sync::IfMutex;
-use crate::utils::sync::MaybeSend;
+use crate::utils::cell::RefCell;
+use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{IfMutex, MaybeSend};
 use crate::utils::timers::Duration;
 
 pub mod frame;
@@ -36,8 +36,7 @@ pub mod std;
 mod buffers;
 mod slots;
 
-use buffers::impl_tcp_network_traits;
-pub use buffers::{TcpBound, TcpBuffers};
+pub use buffers::TcpNetworkBuffers;
 
 /// TCP keep-alive configuration for [`NetTcpSocket::set_keep_alive`].
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -233,61 +232,120 @@ impl Default for TcpConfig {
 /// [`crate::MAX_RX_BUF_SIZE`]). `SLOTS` configures the maximum concurrent peer
 /// connections, and `TX_QUEUE` configures each peer's outbound frame queue depth.
 pub struct TcpNetwork<
+    'a,
     L: NetTcpListener,
     const N: usize = { crate::MAX_RX_BUF_SIZE },
     const SLOTS: usize = 4,
     const TX_QUEUE: usize = 2,
 > {
     listener: IfMutex<L>,
-    buffers: TcpBuffers<L::Socket, N, SLOTS, TX_QUEUE>,
+    sockets: [Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+    buffers: &'a TcpNetworkBuffers<N, SLOTS, TX_QUEUE>,
+    config: TcpConfig,
 }
 
-impl<L: NetTcpListener> TcpNetwork<L, { crate::MAX_RX_BUF_SIZE }, 4, 2> {
-    /// Create a TCP transport over `listener` with default configuration.
-    pub const fn new(listener: L) -> Self {
-        Self::with_config(listener, TcpConfig::new())
-    }
-
-    /// Create an in-place initializer for a TCP transport with default configuration.
-    pub fn init(listener: L) -> impl Init<Self> {
-        Self::init_with_config(listener, TcpConfig::new())
-    }
-}
-
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-    TcpNetwork<L, N, SLOTS, TX_QUEUE>
+impl<'a, L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
+    TcpNetwork<'a, L, N, SLOTS, TX_QUEUE>
 {
-    /// Create a TCP transport over `listener` with custom configuration.
-    pub const fn with_config(listener: L, config: TcpConfig) -> Self {
-        Self {
-            listener: IfMutex::new(listener),
-            buffers: TcpBuffers::with_config(config),
+    /// Try to bind `sockets` to caller-owned `buffers` with `config`.
+    ///
+    /// Returns [`ErrorCode::ResourceExhausted`] if `buffers` is already bound
+    /// to another active [`TcpNetwork`] instance.
+    pub fn try_new(
+        sockets: L,
+        buffers: &'a TcpNetworkBuffers<N, SLOTS, TX_QUEUE>,
+        config: &TcpConfig,
+    ) -> Result<Self, Error> {
+        if !buffers.acquire() {
+            return Err(ErrorCode::ResourceExhausted.into());
         }
+        buffers.reset_all();
+        Ok(Self {
+            listener: IfMutex::new(sockets),
+            sockets: [const { Mutex::new(RefCell::new(None)) }; SLOTS],
+            buffers,
+            config: *config,
+        })
     }
 
-    /// Create an in-place initializer for a TCP transport with custom configuration.
+    /// Bind `sockets` to caller-owned `buffers` with `config`.
     ///
-    /// Prefer this over [`Self::with_config`] for large `N` or `SLOTS` to avoid
-    /// materializing multi-KiB buffers on the stack.
-    pub fn init_with_config(listener: L, config: TcpConfig) -> impl Init<Self> {
-        init!(Self {
-            listener: IfMutex::new(listener),
-            buffers <- TcpBuffers::init_with_config(config),
-        })
+    /// # Panics
+    ///
+    /// Panics if `buffers` is already bound to another active [`TcpNetwork`] instance.
+    pub fn new(
+        sockets: L,
+        buffers: &'a TcpNetworkBuffers<N, SLOTS, TX_QUEUE>,
+        config: &TcpConfig,
+    ) -> Self {
+        Self::try_new(sockets, buffers, config).expect("TcpNetworkBuffers already bound")
     }
 
     /// Drive TCP accept/connect and all `SLOTS` concurrent peer I/O loops.
     ///
     /// Run concurrently with the Matter transport. No blocking mutex is held across `.await`.
     pub async fn run(&self) -> Result<(), Error> {
-        self.buffers.run_with_listener(&self.listener).await
+        self.buffers
+            .run_with_listener(&self.listener, &self.sockets, &self.config)
+            .await
     }
 }
 
-impl_tcp_network_traits!(
-    TcpNetwork<L, N, SLOTS, TX_QUEUE>,
-    &TcpNetwork<L, N, SLOTS, TX_QUEUE>,
-);
+impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> Drop
+    for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
+{
+    fn drop(&mut self) {
+        self.buffers.release();
+    }
+}
+
+impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkSend
+    for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
+{
+    async fn send_to(&mut self, data: &[u8], address: Address) -> Result<(), Error> {
+        self.buffers.send_to(data, address, &self.config).await
+    }
+}
+
+impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkSend
+    for &TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
+{
+    async fn send_to(&mut self, data: &[u8], address: Address) -> Result<(), Error> {
+        self.buffers.send_to(data, address, &self.config).await
+    }
+}
+
+impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkReceive
+    for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
+{
+    async fn wait_available(&mut self) -> Result<(), Error> {
+        self.buffers.wait_available().await
+    }
+
+    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+        self.buffers.recv_from(buffer).await
+    }
+
+    async fn wait_available_or_closed(&mut self) -> Result<Option<Address>, Error> {
+        self.buffers.wait_available_or_closed().await
+    }
+}
+
+impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkReceive
+    for &TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
+{
+    async fn wait_available(&mut self) -> Result<(), Error> {
+        self.buffers.wait_available().await
+    }
+
+    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+        self.buffers.recv_from(buffer).await
+    }
+
+    async fn wait_available_or_closed(&mut self) -> Result<Option<Address>, Error> {
+        self.buffers.wait_available_or_closed().await
+    }
+}
 
 #[cfg(test)]
 #[allow(clippy::arc_with_non_send_sync)]
@@ -458,15 +516,32 @@ mod tests {
     }
 
     #[test]
-    fn static_init_initializes_tcp_network_in_place() {
-        let mut slot = MaybeUninit::<TcpNetwork<MockListener, 256, 2, 2>>::uninit();
-        let net = slot.init_with(TcpNetwork::init_with_config(
-            MockListener::default(),
-            TcpConfig::default(),
-        ));
-        assert!(!net.buffers.with_state(|s| s.any_rx_ready()));
+    fn static_init_initializes_tcp_network_buffers_in_place() {
+        let mut slot = MaybeUninit::<TcpNetworkBuffers<256, 2, 2>>::uninit();
+        let buffers = slot.init_with(TcpNetworkBuffers::init());
+        assert!(!buffers.with_state(|s| s.any_rx_ready()));
         // SAFETY: `slot` was initialized by `init_with` above.
         unsafe { slot.assume_init_drop() };
+    }
+
+    #[test]
+    fn buffers_cannot_be_bound_twice_until_dropped() {
+        let buffers = TcpNetworkBuffers::<64, 1, 1>::new();
+        let config = TcpConfig::default();
+
+        let first = TcpNetwork::try_new(MockListener::default(), &buffers, &config);
+        assert!(first.is_ok());
+
+        let second = TcpNetwork::try_new(MockListener::default(), &buffers, &config);
+        assert!(matches!(
+            second,
+            Err(e) if e.code() == ErrorCode::ResourceExhausted
+        ));
+
+        drop(first);
+
+        let third = TcpNetwork::try_new(MockListener::default(), &buffers, &config);
+        assert!(third.is_ok());
     }
 
     #[test]
@@ -474,7 +549,8 @@ mod tests {
         block_on(async {
             let listener = MockListener::default();
             let peer = listener.peer(10, &[3, 0]);
-            let net = TcpNetwork::<_, 64>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -512,7 +588,8 @@ mod tests {
             let listener = MockListener::default();
             listener.errors_remaining.store(2, Ordering::SeqCst);
             let _peer = listener.peer(11, &[2, 0, 0, 0, b'o', b'k']);
-            let net = TcpNetwork::<_, 64>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -541,7 +618,8 @@ mod tests {
             // Announce payload larger than N=64
             let len = 65u32.to_le_bytes();
             let peer = listener.peer(12, &len);
-            let net = TcpNetwork::<_, 64>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -583,7 +661,8 @@ mod tests {
             let listener = MockListener::default();
             let peer1 = listener.peer(20, &[1, 0, 0, 0, b'a']);
             let peer2 = listener.peer(21, &[1, 0, 0, 0, b'b']);
-            let net = TcpNetwork::<_, 64, 2>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64, 2>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -640,9 +719,11 @@ mod tests {
             let listener = MockListener::default();
             let peer1 = listener.peer(30, &[]);
             let _peer2 = listener.peer(31, &[2, 0, 0, 0, b'h', b'i']);
-            let net = TcpNetwork::<_, 64, 1>::with_config(
+            let buffers = TcpNetworkBuffers::<64, 1>::new();
+            let net = TcpNetwork::new(
                 listener,
-                TcpConfig {
+                &buffers,
+                &TcpConfig {
                     idle_timeout: Some(Duration::from_millis(30)),
                     ..Default::default()
                 },
@@ -676,9 +757,11 @@ mod tests {
             let listener = MockListener::default();
             let peer = listener.peer(40, &[]);
             peer.lock().unwrap().write_budget = Some(0);
-            let net = TcpNetwork::<_, 64>::with_config(
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(
                 listener,
-                TcpConfig {
+                &buffers,
+                &TcpConfig {
                     send_timeout: Duration::from_millis(30),
                     idle_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
@@ -722,7 +805,8 @@ mod tests {
         block_on(async {
             let listener = MockListener::default();
             let outbound = listener.outbound.clone();
-            let net = TcpNetwork::<_, 64>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5540)));
 
             let runner = pin!(net.run());
@@ -762,9 +846,11 @@ mod tests {
             let connect_calls = listener.connect_calls.clone();
             let outbound = listener.outbound.clone();
 
-            let net = TcpNetwork::<_, 64, 1, 4>::with_config(
+            let buffers = TcpNetworkBuffers::<64, 1, 4>::new();
+            let net = TcpNetwork::new(
                 listener,
-                TcpConfig {
+                &buffers,
+                &TcpConfig {
                     send_timeout: Duration::from_millis(40),
                     ..Default::default()
                 },
@@ -826,7 +912,8 @@ mod tests {
             let unauth_frame = [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
             let peer2 = listener.peer(61, &unauth_frame);
 
-            let net = TcpNetwork::<_, 64, 2>::with_config(listener.clone(), TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64, 2>::new();
+            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -896,7 +983,8 @@ mod tests {
                 })
             );
 
-            let net = TcpNetwork::<_, 64, 2>::with_config(listener, config);
+            let buffers = TcpNetworkBuffers::<64, 2>::new();
+            let net = TcpNetwork::new(listener, &buffers, &config);
             let runner = pin!(net.run());
             let test = pin!(async {
                 // Outbound connect triggers set_keep_alive on connected socket too.
@@ -958,9 +1046,11 @@ mod tests {
             let peer = listener.peer(80, &[]);
             peer.lock().unwrap().write_budget = Some(0);
 
-            let net = TcpNetwork::<_, 64, 1, 1>::with_config(
+            let buffers = TcpNetworkBuffers::<64, 1, 1>::new();
+            let net = TcpNetwork::new(
                 listener,
-                TcpConfig {
+                &buffers,
+                &TcpConfig {
                     send_timeout: Duration::from_millis(50),
                     ..Default::default()
                 },
@@ -1016,7 +1106,8 @@ mod tests {
         block_on(async {
             let listener = MockListener::default();
             let peer = listener.peer(90, &[]);
-            let net = TcpNetwork::<_, 64, 2>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64, 2>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {

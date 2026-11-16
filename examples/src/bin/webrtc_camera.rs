@@ -1307,7 +1307,13 @@ fn main() -> Result<(), Error> {
     // `tcp_supported: true` flag in `BASIC_INFO` advertises this via
     // mDNS (`T=1`).
     let tcp_socket = Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(tcp_socket);
+    let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
+        rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
+    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(
+        tcp_socket,
+        &tcp_buffers,
+        &rs_matter::transport::network::tcp::TcpConfig::new(),
+    );
     info!(
         "TCP transport enabled, listening on {}",
         MATTER_SOCKET_BIND_ADDR

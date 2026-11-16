@@ -15,8 +15,9 @@
  *    limitations under the License.
  */
 
-//! Static TCP buffer pool, bound listener handle, and async slot/peer I/O loops.
+//! Static TCP buffer pool and async slot/peer I/O loops.
 
+use core::cell::Cell;
 use core::future::{pending, Future};
 use core::net::SocketAddr;
 use core::pin::pin;
@@ -27,7 +28,7 @@ use super::slots::{
 };
 use super::{NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, TcpConfig};
 use crate::error::{Error, ErrorCode};
-use crate::network::{Address, NetworkReceive, NetworkSend};
+use crate::network::Address;
 use crate::plain_hdr::PlainHdr;
 use crate::proto_hdr::ProtoHdr;
 use crate::sc::{GeneralCode, OpCode, StatusReport, PROTO_ID_SECURE_CHANNEL};
@@ -39,34 +40,21 @@ use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{IfMultiMutexGuard, IfMutex, MultiNotification, Notification};
 use crate::utils::timers::{with_timeout, Duration, Instant, Timer};
 
-/// Caller-owned static buffers and slot state for [`TcpBound`] / [`super::TcpNetwork`].
+/// Caller-owned static buffers and slot state for [`super::TcpNetwork`].
 ///
-/// Initialize in static storage via [`Self::init`] or [`Self::init_with_config`]
+/// Initialize in static storage via [`Self::new`] or [`Self::init`]
 /// so large frame arrays live outside async task futures.
-pub struct TcpBuffers<
-    S,
+pub struct TcpNetworkBuffers<
     const N: usize = { crate::MAX_RX_BUF_SIZE },
     const SLOTS: usize = 4,
     const TX_QUEUE: usize = 2,
 > {
+    bound: Mutex<Cell<bool>>,
     state: Mutex<RefCell<SharedState<SLOTS>>>,
-    slots: [PeerSlot<S, N, TX_QUEUE>; SLOTS],
+    slots: [PeerSlot<N, TX_QUEUE>; SLOTS],
     rx_available: MultiNotification,
     listener_wakeup: Notification,
     slot_freed: MultiNotification,
-    config: TcpConfig,
-}
-
-/// Lightweight bound operational TCP runner backed by caller-owned [`TcpBuffers`].
-pub struct TcpBound<
-    'a,
-    L: NetTcpListener,
-    const N: usize = { crate::MAX_RX_BUF_SIZE },
-    const SLOTS: usize = 4,
-    const TX_QUEUE: usize = 2,
-> {
-    listener: IfMutex<L>,
-    buffers: &'a TcpBuffers<L::Socket, N, SLOTS, TX_QUEUE>,
 }
 
 enum PeerAction {
@@ -84,77 +72,67 @@ const fn validate_config<const N: usize, const SLOTS: usize, const TX_QUEUE: usi
     core::assert!(TX_QUEUE > 0, "TX_QUEUE must be non-zero");
 }
 
-impl<S> TcpBuffers<S, { crate::MAX_RX_BUF_SIZE }, 4, 2> {
-    /// Create TCP buffers with default configuration.
-    pub const fn new() -> Self {
-        Self::with_config(TcpConfig::new())
-    }
-
-    /// Create an in-place initializer for TCP buffers with default configuration.
-    pub fn init() -> impl Init<Self> {
-        Self::init_with_config(TcpConfig::new())
-    }
-}
-
-impl<S> Default for TcpBuffers<S, { crate::MAX_RX_BUF_SIZE }, 4, 2> {
+impl Default for TcpNetworkBuffers<{ crate::MAX_RX_BUF_SIZE }, 4, 2> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-    TcpBuffers<S, N, SLOTS, TX_QUEUE>
+impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
+    TcpNetworkBuffers<N, SLOTS, TX_QUEUE>
 {
-    /// Create TCP buffers with custom configuration.
-    pub const fn with_config(config: TcpConfig) -> Self {
+    /// Create TCP network buffers.
+    pub const fn new() -> Self {
         const {
             validate_config::<N, SLOTS, TX_QUEUE>();
         }
         Self {
+            bound: Mutex::new(Cell::new(false)),
             state: Mutex::new(RefCell::new(SharedState::new())),
             slots: [const { PeerSlot::new() }; SLOTS],
             rx_available: MultiNotification::new(),
             listener_wakeup: Notification::new(),
             slot_freed: MultiNotification::new(),
-            config,
         }
     }
 
-    /// Create an in-place initializer for TCP buffers with custom configuration.
+    /// Create an in-place initializer for TCP network buffers.
     ///
-    /// Prefer this over [`Self::with_config`] for large `N` or `SLOTS` to avoid
+    /// Prefer this over [`Self::new`] for large `N` or `SLOTS` to avoid
     /// materializing multi-KiB buffers on the stack.
-    pub fn init_with_config(config: TcpConfig) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         const {
             validate_config::<N, SLOTS, TX_QUEUE>();
         }
         init!(Self {
+            bound: Mutex::new(Cell::new(false)),
             state: Mutex::new(RefCell::new(SharedState::new())),
             slots <- init_array_from_fn(|_| PeerSlot::init()),
             rx_available <- MultiNotification::init(),
             listener_wakeup <- Notification::init(),
             slot_freed <- MultiNotification::init(),
-            config,
         })
     }
 
-    /// Bind `listener` to these buffers, returning a lightweight [`TcpBound`] handle.
-    pub fn bind<L>(&self, listener: L) -> TcpBound<'_, L, N, SLOTS, TX_QUEUE>
-    where
-        L: NetTcpListener<Socket = S>,
-    {
-        self.reset_all();
-        TcpBound {
-            listener: IfMutex::new(listener),
-            buffers: self,
-        }
+    pub(super) fn acquire(&self) -> bool {
+        self.bound.lock(|bound| {
+            if bound.get() {
+                false
+            } else {
+                bound.set(true);
+                true
+            }
+        })
     }
 
-    fn reset_all(&self) {
+    pub(super) fn release(&self) {
+        self.bound.lock(|bound| bound.set(false));
+    }
+
+    pub(super) fn reset_all(&self) {
         self.state
             .lock(|cell| *cell.borrow_mut() = SharedState::new());
         for slot in &self.slots {
-            let _ = slot.take_socket();
             if let Ok(mut rx) = slot.rx.try_lock() {
                 rx.reset();
             }
@@ -162,34 +140,35 @@ impl<S, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
     }
 }
 
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-    TcpBound<'_, L, N, SLOTS, TX_QUEUE>
+impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
+    TcpNetworkBuffers<N, SLOTS, TX_QUEUE>
 {
     /// Drive TCP accept/connect and all `SLOTS` concurrent peer I/O loops.
-    ///
-    /// Run concurrently with the Matter transport. No blocking mutex is held across `.await`.
-    pub async fn run(&self) -> Result<(), Error> {
-        self.buffers.run_with_listener(&self.listener).await
-    }
-}
-
-impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-    TcpBuffers<S, N, SLOTS, TX_QUEUE>
-{
-    /// Drive TCP accept/connect and all `SLOTS` concurrent peer I/O loops.
-    pub(super) async fn run_with_listener<L>(&self, listener: &IfMutex<L>) -> Result<(), Error>
+    pub(super) async fn run_with_listener<L>(
+        &self,
+        listener: &IfMutex<L>,
+        sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+        config: &TcpConfig,
+    ) -> Result<(), Error>
     where
-        L: NetTcpListener<Socket = S>,
+        L: NetTcpListener,
     {
-        let listener_fut = self.run_listener(listener);
-        let slots_fut = join_array(core::array::from_fn::<_, SLOTS, _>(|i| self.run_slot(i)));
+        let listener_fut = self.run_listener(listener, sockets, config);
+        let slots_fut = join_array(core::array::from_fn::<_, SLOTS, _>(|i| {
+            self.run_slot(i, &sockets[i], config)
+        }));
         let (res, _) = join(listener_fut, slots_fut).await;
         res
     }
 
-    async fn connect_pending_slot<L>(&self, listener: &mut L, slot_idx: usize, addr: SocketAddr)
-    where
-        L: NetTcpListener<Socket = S>,
+    async fn connect_pending_slot<L>(
+        &self,
+        listener: &mut L,
+        sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+        slot_idx: usize,
+        addr: SocketAddr,
+    ) where
+        L: NetTcpListener,
     {
         match listener.connect(addr).await {
             Ok(mut socket) => {
@@ -202,7 +181,7 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                     }
                 });
                 if claimed {
-                    self.slots[slot_idx].set_socket(socket);
+                    sockets[slot_idx].lock(|cell| *cell.borrow_mut() = Some(socket));
                     self.slots[slot_idx].wakeup.notify();
                 } else {
                     let _ = socket.close().await;
@@ -215,14 +194,19 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn run_listener<L>(&self, listener: &IfMutex<L>) -> Result<(), Error>
+    async fn run_listener<L>(
+        &self,
+        listener: &IfMutex<L>,
+        sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+        config: &TcpConfig,
+    ) -> Result<(), Error>
     where
-        L: NetTcpListener<Socket = S>,
+        L: NetTcpListener,
     {
         let mut listener = listener.lock().await;
         loop {
             if let Some((slot_idx, addr)) = self.with_state(|s| s.next_connecting()) {
-                self.connect_pending_slot(&mut *listener, slot_idx, addr)
+                self.connect_pending_slot(&mut *listener, sockets, slot_idx, addr)
                     .await;
                 continue;
             }
@@ -238,7 +222,8 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
 
             match select(pin!(listener.accept()), pin!(wakeup)).await {
                 Either::First(Ok((addr, socket))) => {
-                    self.assign_accepted_socket(addr, socket).await;
+                    self.assign_accepted_socket(sockets, addr, socket, config)
+                        .await;
                 }
                 Either::First(Err(e)) => {
                     warn!("TCP accept error: {:?}", e);
@@ -249,7 +234,13 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn assign_accepted_socket(&self, addr: SocketAddr, mut socket: S) {
+    async fn assign_accepted_socket<S: NetTcpSocket>(
+        &self,
+        sockets: &[Mutex<RefCell<Option<S>>>; SLOTS],
+        addr: SocketAddr,
+        mut socket: S,
+        config: &TcpConfig,
+    ) {
         loop {
             let freed_wait = self.slot_freed.wait();
             enum AssignOutcome {
@@ -276,16 +267,13 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
 
             match outcome {
                 AssignOutcome::Assigned(idx) => {
-                    self.slots[idx].set_socket(socket);
+                    sockets[idx].lock(|cell| *cell.borrow_mut() = Some(socket));
                     self.slots[idx].wakeup.notify();
                     return;
                 }
                 AssignOutcome::WaitEviction(evict_idx) => {
                     self.slots[evict_idx].tx_changed.notify();
-                    if with_timeout(self.config.send_timeout, freed_wait)
-                        .await
-                        .is_err()
-                    {
+                    if with_timeout(config.send_timeout, freed_wait).await.is_err() {
                         let _ = socket.close().await;
                         return;
                     }
@@ -298,16 +286,21 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn run_slot(&self, slot_idx: usize) {
+    async fn run_slot<S: NetTcpSocket>(
+        &self,
+        slot_idx: usize,
+        socket_cell: &Mutex<RefCell<Option<S>>>,
+        config: &TcpConfig,
+    ) {
         let slot = &self.slots[slot_idx];
         loop {
             let wait = slot.wakeup.wait();
-            let Some(mut socket) = slot.take_socket() else {
+            let Some(mut socket) = socket_cell.lock(|cell| cell.borrow_mut().take()) else {
                 wait.await;
                 continue;
             };
 
-            if let Err(e) = socket.set_keep_alive(self.config.keep_alive) {
+            if let Err(e) = socket.set_keep_alive(config.keep_alive) {
                 let addr = self.with_state(|s| s.slots[slot_idx].peer.addr());
                 warn!("TCP set_keep_alive failed for {:?}: {:?}", addr, e);
             }
@@ -322,10 +315,10 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                 rx.reset();
             }
 
-            let send_too_large = self.run_peer(slot_idx, &mut socket).await;
+            let send_too_large = self.run_peer(slot_idx, &mut socket, config).await;
 
             if send_too_large {
-                self.send_message_too_large(&mut socket).await;
+                self.send_message_too_large(&mut socket, config).await;
             }
 
             let _ = socket.close().await;
@@ -361,12 +354,12 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
     }
 
     fn next_deadline(
-        &self,
         last_activity: Instant,
         tx_frame: Option<&TxFrame<N>>,
+        config: &TcpConfig,
     ) -> Option<Instant> {
-        let idle_deadline = self.config.idle_timeout.map(|t| last_activity + t);
-        let send_deadline = tx_frame.map(|frame| frame.queued_at + self.config.send_timeout);
+        let idle_deadline = config.idle_timeout.map(|t| last_activity + t);
+        let send_deadline = tx_frame.map(|frame| frame.queued_at + config.send_timeout);
         match (idle_deadline, send_deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
@@ -444,7 +437,12 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn run_peer(&self, slot_idx: usize, socket: &mut S) -> bool {
+    async fn run_peer<S: NetTcpSocket>(
+        &self,
+        slot_idx: usize,
+        socket: &mut S,
+        config: &TcpConfig,
+    ) -> bool {
         let slot = &self.slots[slot_idx];
         let (mut rx_sock, mut tx_sock) = socket.split();
 
@@ -485,7 +483,7 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                 None
             };
 
-            let deadline = self.next_deadline(last_activity, tx_guard.as_deref());
+            let deadline = Self::next_deadline(last_activity, tx_guard.as_deref(), config);
 
             let outcome = select3(
                 pin!(async {
@@ -530,10 +528,10 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn send_message_too_large(&self, socket: &mut S) {
+    async fn send_message_too_large<S: NetTcpSocket>(&self, socket: &mut S, config: &TcpConfig) {
         if let Ok((buf, len)) = encode_message_too_large_frame() {
             let (_, mut tx_sock) = socket.split();
-            let _ = with_timeout(self.config.send_timeout, async {
+            let _ = with_timeout(config.send_timeout, async {
                 let mut written = 0;
                 while written < len {
                     match tx_sock.write(&buf[written..len]).await {
@@ -726,7 +724,12 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    pub(super) async fn send_to(&self, data: &[u8], address: Address) -> Result<(), Error> {
+    pub(super) async fn send_to(
+        &self,
+        data: &[u8],
+        address: Address,
+        config: &TcpConfig,
+    ) -> Result<(), Error> {
         let Address::Tcp(addr) = address else {
             return Err(ErrorCode::NoNetworkInterface.into());
         };
@@ -734,7 +737,7 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             return Err(ErrorCode::BufferTooSmall.into());
         }
 
-        let deadline = Instant::now() + self.config.send_timeout;
+        let deadline = Instant::now() + config.send_timeout;
         let slot_idx = self.acquire_slot_for_send(addr, deadline).await?;
 
         let producer = match select(
@@ -785,46 +788,6 @@ impl<S: NetTcpSocket, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         self.state.lock(|cell| f(&mut cell.borrow_mut()))
     }
 }
-
-macro_rules! impl_tcp_network_traits {
-    ($($ty:ty),* $(,)?) => {
-        $(
-            impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-                NetworkSend for $ty
-            {
-                async fn send_to(&mut self, data: &[u8], address: Address) -> Result<(), Error> {
-                    self.buffers.send_to(data, address).await
-                }
-            }
-
-            impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
-                NetworkReceive for $ty
-            {
-                async fn wait_available(&mut self) -> Result<(), Error> {
-                    self.buffers.wait_available().await
-                }
-
-                async fn recv_from(
-                    &mut self,
-                    buffer: &mut [u8],
-                ) -> Result<(usize, Address), Error> {
-                    self.buffers.recv_from(buffer).await
-                }
-
-                async fn wait_available_or_closed(&mut self) -> Result<Option<Address>, Error> {
-                    self.buffers.wait_available_or_closed().await
-                }
-            }
-        )*
-    };
-}
-
-pub(super) use impl_tcp_network_traits;
-
-impl_tcp_network_traits!(
-    TcpBound<'_, L, N, SLOTS, TX_QUEUE>,
-    &TcpBound<'_, L, N, SLOTS, TX_QUEUE>,
-);
 
 fn encode_message_too_large_frame() -> Result<([u8; 64], usize), Error> {
     let mut buf = [0u8; 64];

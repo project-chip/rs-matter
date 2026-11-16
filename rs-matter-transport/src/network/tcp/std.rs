@@ -111,7 +111,9 @@ mod tests {
     use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::network::tcp::{encode_frame_header, TcpConfig, TcpNetwork, FRAME_HDR_LEN};
+    use crate::network::tcp::{
+        encode_frame_header, TcpConfig, TcpNetwork, TcpNetworkBuffers, FRAME_HDR_LEN,
+    };
     use crate::network::{Address, NetworkReceive, NetworkSend};
     use crate::plain_hdr::PlainHdr;
     use crate::proto_hdr::ProtoHdr;
@@ -131,7 +133,8 @@ mod tests {
         block_on(async {
             let listener = ephemeral_listener();
             let addr = listener.get_ref().local_addr().unwrap();
-            let net = TcpNetwork::<_, 256>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<256>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -176,7 +179,8 @@ mod tests {
             let remote_addr = remote.get_ref().local_addr().unwrap();
 
             let local = ephemeral_listener();
-            let net = TcpNetwork::<_, 256>::with_config(local, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<256>::new();
+            let net = TcpNetwork::new(local, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -224,7 +228,8 @@ mod tests {
         block_on(async {
             let listener = ephemeral_listener();
             let addr = listener.get_ref().local_addr().unwrap();
-            let net = TcpNetwork::<_, 64>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -296,7 +301,8 @@ mod tests {
         block_on(async {
             let listener = ephemeral_listener();
             let addr = listener.get_ref().local_addr().unwrap();
-            let net = TcpNetwork::<_, 256>::with_config(listener, TcpConfig::default());
+            let buffers = TcpNetworkBuffers::<256>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
 
             let runner = pin!(net.run());
             let test = pin!(async {

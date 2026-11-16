@@ -9,7 +9,7 @@ NOTE: This crate can be used on its own, but to avoid future breakage, prefer de
 UDP remains the default: `NetStack::tcp(&self)` defaults to `None::<NoTcp>`, so
 UDP-only network stacks compile unchanged without Cargo feature flags. A network
 stack that supports operational TCP implements `NetTcpStack` over caller-owned
-static `TcpBuffers` and returns `Some(...)` from `NetStack::tcp(&self)`.
+static `TcpNetworkBuffers` and returns `Some(...)` from `NetStack::tcp(&self)`.
 `StdNetStack::with_tcp(&buffers)` enables operational TCP for host applications
 and tests (`StdNetStack::new()` remains UDP-only).
 

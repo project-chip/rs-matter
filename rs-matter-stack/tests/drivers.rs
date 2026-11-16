@@ -42,7 +42,8 @@ use rs_matter_stack::ble::GattPeripheral;
 use rs_matter_stack::eth::{EthernetDriver, EthernetTask, PreexistingEthernet};
 use rs_matter_stack::net::{NetSocket, NetStack, NetTcpStack};
 use rs_matter_stack::tcp::{
-    NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, NoTcp, TcpBound, TcpBuffers,
+    NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, NoTcp, TcpConfig, TcpNetwork,
+    TcpNetworkBuffers,
 };
 use rs_matter_stack::wireless::{
     GattDriver, GattTask, PreexistingWireless, ThreadCoexDriver, ThreadCoexTask, ThreadDriver,
@@ -123,7 +124,7 @@ impl<'a> NetStack for FakeNetStack<'a> {
 #[derive(Clone, Copy)]
 struct FakeTcpNetStack<'a> {
     log: &'a Log,
-    buffers: &'a TcpBuffers<NoTcp>,
+    buffers: &'a TcpNetworkBuffers,
     supports_client: bool,
 }
 
@@ -155,7 +156,7 @@ impl<'a> NetStack for FakeTcpNetStack<'a> {
 
 impl<'a> NetTcpStack for FakeTcpNetStack<'a> {
     type Tcp<'s>
-        = TcpBound<'a, NoTcp>
+        = TcpNetwork<'a, NoTcp>
     where
         Self: 's;
 
@@ -165,7 +166,7 @@ impl<'a> NetTcpStack for FakeTcpNetStack<'a> {
     ) -> impl Future<Output = Result<Self::Tcp<'_>, Error>> + MaybeSend {
         assert_eq!(addr.port(), MATTER_PORT);
         self.log.event("tcp listener bound");
-        ready(Ok(self.buffers.bind(NoTcp)))
+        ready(TcpNetwork::try_new(NoTcp, self.buffers, &TcpConfig::new()))
     }
 
     fn supports_client(&self) -> bool {
@@ -245,7 +246,7 @@ impl NetTcpListener for MockTcpListener {
 #[derive(Clone)]
 struct StreamTcpNetStack<'a> {
     log: &'a Log,
-    buffers: &'a TcpBuffers<MockTcpStream>,
+    buffers: &'a TcpNetworkBuffers,
     peers: std::sync::Arc<Mutex<std::collections::VecDeque<(SocketAddr, MockTcpStream)>>>,
 }
 
@@ -277,7 +278,7 @@ impl<'a> NetStack for StreamTcpNetStack<'a> {
 
 impl<'a> NetTcpStack for StreamTcpNetStack<'a> {
     type Tcp<'s>
-        = TcpBound<'a, MockTcpListener>
+        = TcpNetwork<'a, MockTcpListener>
     where
         Self: 's;
 
@@ -287,9 +288,13 @@ impl<'a> NetTcpStack for StreamTcpNetStack<'a> {
     ) -> impl Future<Output = Result<Self::Tcp<'_>, Error>> + MaybeSend {
         assert_eq!(addr.port(), MATTER_PORT);
         self.log.event("tcp listener bound");
-        ready(Ok(self.buffers.bind(MockTcpListener {
-            peers: self.peers.clone(),
-        })))
+        ready(TcpNetwork::try_new(
+            MockTcpListener {
+                peers: self.peers.clone(),
+            },
+            self.buffers,
+            &TcpConfig::new(),
+        ))
     }
 }
 
@@ -1366,7 +1371,7 @@ fn operational_tcp_listener_binds_and_advertises() {
                 ..TEST_DEV_DET
             },
         );
-        let buffers = leak::<TcpBuffers<NoTcp>>().init_with(TcpBuffers::init());
+        let buffers = leak::<TcpNetworkBuffers>().init_with(TcpNetworkBuffers::init());
 
         // UDP-only stack must NOT advertise T even when dev_det.tcp_supported is true.
         let log = Log::default();
@@ -1440,7 +1445,7 @@ fn operational_tcp_runner_delivers_inbound_stream_packets_to_matter_stack() {
                 ..TEST_DEV_DET
             },
         );
-        let buffers = leak::<TcpBuffers<MockTcpStream>>().init_with(TcpBuffers::init());
+        let buffers = leak::<TcpNetworkBuffers>().init_with(TcpNetworkBuffers::init());
         let stack = &*leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
             dev_det,
             TEST_DEV_COMM,

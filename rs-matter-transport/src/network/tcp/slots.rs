@@ -21,10 +21,8 @@ use core::net::SocketAddr;
 
 use super::frame::{encode_frame_header, Frame, FRAME_HDR_LEN};
 use crate::error::{Error, ErrorCode};
-use crate::utils::cell::RefCell;
 use crate::utils::init::{init, init_array_from_fn, Init};
 use crate::utils::storage::Vec as StorageVec;
-use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{IfMultiMutex, MultiNotification, Notification};
 use crate::utils::timers::Instant;
 
@@ -54,8 +52,7 @@ impl PeerState {
     }
 }
 
-pub(super) struct PeerSlot<S, const N: usize, const TX_QUEUE: usize> {
-    socket: Mutex<RefCell<Option<S>>>,
+pub(super) struct PeerSlot<const N: usize, const TX_QUEUE: usize> {
     pub(super) rx: IfMultiMutex<Frame<N>>,
     pub(super) tx_producer: IfMultiMutex<()>,
     pub(super) tx: TxQueue<N, TX_QUEUE>,
@@ -65,10 +62,9 @@ pub(super) struct PeerSlot<S, const N: usize, const TX_QUEUE: usize> {
     pub(super) wakeup: Notification,
 }
 
-impl<S, const N: usize, const TX_QUEUE: usize> PeerSlot<S, N, TX_QUEUE> {
+impl<const N: usize, const TX_QUEUE: usize> PeerSlot<N, TX_QUEUE> {
     pub(super) const fn new() -> Self {
         Self {
-            socket: Mutex::new(RefCell::new(None)),
             rx: IfMultiMutex::new(Frame::new()),
             tx_producer: IfMultiMutex::new(()),
             tx: TxQueue::new(),
@@ -81,7 +77,6 @@ impl<S, const N: usize, const TX_QUEUE: usize> PeerSlot<S, N, TX_QUEUE> {
 
     pub(super) fn init() -> impl Init<Self> {
         init!(Self {
-            socket: Mutex::new(RefCell::new(None)),
             rx <- IfMultiMutex::init(Frame::init()),
             tx_producer: IfMultiMutex::new(()),
             tx <- TxQueue::init(),
@@ -90,14 +85,6 @@ impl<S, const N: usize, const TX_QUEUE: usize> PeerSlot<S, N, TX_QUEUE> {
             tx_space_available <- MultiNotification::init(),
             wakeup <- Notification::init(),
         })
-    }
-
-    pub(super) fn set_socket(&self, socket: S) {
-        self.socket.lock(|cell| *cell.borrow_mut() = Some(socket));
-    }
-
-    pub(super) fn take_socket(&self) -> Option<S> {
-        self.socket.lock(|cell| cell.borrow_mut().take())
     }
 }
 
