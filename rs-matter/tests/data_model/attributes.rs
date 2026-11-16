@@ -18,14 +18,19 @@
 use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, ClusterHandler as _, NoLevelControl,
 };
+use rs_matter::dm::clusters::basic_info::{self, BasicInfoConfig};
+use rs_matter::dm::devices::test::TEST_DEV_DET;
 use rs_matter::dm::GlobalElements;
 use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{AttrPath, AttrStatus};
 
 use crate::common::e2e::im::attributes::read_reqs;
-use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
-use crate::common::e2e::new_default_runner;
+use crate::common::e2e::im::{
+    attributes::TestAttrData, echo_cluster, ReplyProcessor, TestReadReq, TestReportDataMsg,
+};
+use crate::common::e2e::tlv::TLVTest;
+use crate::common::e2e::{new_default_runner, new_default_runner_with_dev_det};
 use crate::common::init_env_logger;
 use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
@@ -458,4 +463,84 @@ fn test_write_unsupported_fields() {
         echo_cluster::ATTR_WRITE_DEFAULT_VALUE,
         handler.echo_cluster(0).att_write.get()
     );
+}
+
+#[test]
+fn test_unique_id_is_kept_until_a_factory_reset() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+
+    let path = unique_id_path();
+    let input = &[AttrPath::from_gp(&path)];
+    let unique_id = || {
+        im.matter
+            .with_state(|state| state.basic_info_settings.unique_id)
+    };
+    // A read whose value is not known in advance: only the path is compared.
+    let read_any = || {
+        im.test_one(
+            im.handler(),
+            TLVTest::read(
+                TestReadReq::reqs(input),
+                TestReportDataMsg::reports(&[attr_data_path!(path, None)]),
+                ReplyProcessor::remove_attr_data,
+            ),
+        )
+    };
+
+    // The first read mints the value, and later reads serve the same one, as
+    // 16 upper-case hex digits.
+    assert_eq!(unique_id(), None);
+    read_any();
+    let minted = unique_id().unwrap();
+    let text = format!("{minted:016X}");
+    im.handle_read_reqs(
+        im.handler(),
+        input,
+        &[attr_data_path!(path, Some(&text.as_str()))],
+    );
+
+    // A factory reset clears it, so the next read mints a new one.
+    im.matter
+        .with_state(|state| state.basic_info_settings.reset());
+    read_any();
+    assert_ne!(unique_id(), Some(minted));
+    assert!(unique_id().is_some());
+}
+
+#[test]
+fn test_unique_id_from_the_config_is_served_as_is() {
+    init_env_logger();
+
+    const DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
+        unique_id: Some("fixed-unique-id"),
+        ..TEST_DEV_DET
+    };
+
+    let im = new_default_runner_with_dev_det(&DEV_DET);
+    im.add_default_acl();
+
+    let path = unique_id_path();
+    im.handle_read_reqs(
+        im.handler(),
+        &[AttrPath::from_gp(&path)],
+        &[attr_data_path!(path, Some(&"fixed-unique-id"))],
+    );
+
+    // Nothing is minted or persisted.
+    assert_eq!(
+        im.matter
+            .with_state(|state| state.basic_info_settings.unique_id),
+        None
+    );
+}
+
+fn unique_id_path() -> GenericPath {
+    GenericPath::new(
+        Some(0),
+        Some(basic_info::FULL_CLUSTER.id),
+        Some(basic_info::AttributeId::UniqueID as u32),
+    )
 }

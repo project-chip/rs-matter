@@ -17,6 +17,11 @@
 
 //! This module contains the implementation of the Basic Information cluster and its handler.
 
+use core::fmt::Write as _;
+
+use rand_core::Rng;
+
+use crate::crypto::Crypto;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, TransactionId, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::persist::Persist;
@@ -24,7 +29,7 @@ use crate::tlv::{
     FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite,
     Utf8StrBuilder,
 };
-use crate::utils::storage::WriteBuf;
+use crate::utils::storage::{String, WriteBuf};
 use crate::{except, with, Matter};
 use rs_matter_node::Transaction as _;
 
@@ -68,6 +73,35 @@ impl<'a> BasicInfoHandler<'a> {
         F: FnOnce(&mut BasicInfoSettings) -> Result<R, Error>,
     {
         transaction_id.with_state(self.matter, |state| f(state.basic_info_settings))
+    }
+
+    /// Return the node's `UniqueID`, minting and persisting a random 64-bit
+    /// value on first access, as connectedhomeip does. A factory reset clears
+    /// it, so the next read mints a new one.
+    fn unique_id_value(&self, ctx: &impl ReadContext) -> Result<u64, Error> {
+        if let Some(id) =
+            self.with_settings(ctx.transaction_id(), |settings| Ok(settings.unique_id))?
+        {
+            return Ok(id);
+        }
+
+        let fresh = ctx.crypto().rand()?.next_u64();
+
+        let mut persist = Persist::new(ctx.kv());
+
+        let id = self.with_settings(ctx.transaction_id(), |settings| {
+            // A concurrent read may have minted it first, in which case we
+            // keep the stored one.
+            let id = *settings.unique_id.get_or_insert(fresh);
+
+            settings.store_persist(&mut persist)?;
+
+            Ok(id)
+        })?;
+
+        persist.run()?;
+
+        Ok(id)
     }
 }
 
@@ -419,10 +453,20 @@ impl ClusterHandler for BasicInfoHandler<'_> {
 
     fn unique_id<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().unique_id)
+        if let Some(id) = self.config().unique_id {
+            return builder.set(id);
+        }
+
+        let id = self.unique_id_value(&ctx)?;
+
+        // 16 upper-case hex digits, as connectedhomeip has it.
+        let mut text = String::<16>::new();
+        unwrap!(write!(text, "{id:016X}"));
+
+        builder.set(&text)
     }
 
     fn product_appearance<P: TLVBuilderParent>(
