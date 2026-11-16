@@ -24,7 +24,7 @@ use crate::error::{Error, ErrorCode};
 use crate::network::{Address, NetworkReceive, NetworkSend};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{IfMutex, MaybeSend};
+use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::utils::timers::Duration;
 
 pub mod frame;
@@ -38,7 +38,7 @@ mod slots;
 
 pub use buffers::TcpNetworkBuffers;
 
-/// TCP keep-alive configuration for [`NetTcpSocket::set_keep_alive`].
+/// TCP keep-alive configuration for [`TcpNetworkSocket::set_keep_alive`].
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TcpKeepAlive {
@@ -67,61 +67,89 @@ impl Default for TcpKeepAlive {
     }
 }
 
-/// An owned TCP listener and optional outbound connector.
+/// A TCP listener and optional outbound connector.
 ///
 /// Returning a socket transfers ownership to the caller.
-pub trait NetTcpListener: MaybeSend {
+/// Both [`Self::accept`] and [`Self::connect`] take `&self` so inbound accept
+/// and concurrent outbound connects can proceed simultaneously without
+/// canceling an in-flight accept.
+pub trait TcpNetworkSockets: MaybeSendSync {
     /// The accepted or connected stream type.
-    type Socket: NetTcpSocket;
+    type Socket: TcpNetworkSocket;
 
     /// Accept at most one incoming peer.
-    ///
-    /// Must be cancel-safe: dropping the returned future before completion
-    /// must not lose an accepted connection.
-    fn accept(
-        &mut self,
-    ) -> impl Future<Output = Result<(SocketAddr, Self::Socket), Error>> + MaybeSend;
+    fn accept(&self)
+        -> impl Future<Output = Result<(SocketAddr, Self::Socket), Error>> + MaybeSend;
 
     /// Establish an outbound TCP connection to `addr`.
     ///
     /// Server-only listeners that do not support outbound connections may keep
     /// the default implementation, which returns [`ErrorCode::NoNetworkInterface`].
     fn connect(
-        &mut self,
+        &self,
         _addr: SocketAddr,
     ) -> impl Future<Output = Result<Self::Socket, Error>> + MaybeSend {
         core::future::ready(Err(ErrorCode::NoNetworkInterface.into()))
     }
 }
 
-/// Readable half of a split [`NetTcpSocket`].
-pub trait NetTcpRead: MaybeSend {
+impl<T: TcpNetworkSockets> TcpNetworkSockets for &T {
+    type Socket = T::Socket;
+
+    fn accept(
+        &self,
+    ) -> impl Future<Output = Result<(SocketAddr, Self::Socket), Error>> + MaybeSend {
+        (*self).accept()
+    }
+
+    fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> impl Future<Output = Result<Self::Socket, Error>> + MaybeSend {
+        (*self).connect(addr)
+    }
+}
+
+/// Readable half of a split [`TcpNetworkSocket`].
+pub trait TcpNetworkRead: MaybeSend {
     /// Read stream bytes; zero indicates EOF.
     ///
     /// Must be cancel-safe: dropping a pending future must not consume input bytes.
     fn read(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<usize, Error>> + MaybeSend;
 }
 
-/// Writable half of a split [`NetTcpSocket`].
-pub trait NetTcpWrite: MaybeSend {
+impl<T: TcpNetworkRead> TcpNetworkRead for &mut T {
+    fn read(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<usize, Error>> + MaybeSend {
+        (*self).read(buf)
+    }
+}
+
+/// Writable half of a split [`TcpNetworkSocket`].
+pub trait TcpNetworkWrite: MaybeSend {
     /// Write stream bytes; zero indicates a closed stream.
     ///
     /// Must be cancel-safe: dropping a pending future must not report bytes as written.
     fn write(&mut self, buf: &[u8]) -> impl Future<Output = Result<usize, Error>> + MaybeSend;
 }
 
+impl<T: TcpNetworkWrite> TcpNetworkWrite for &mut T {
+    fn write(&mut self, buf: &[u8]) -> impl Future<Output = Result<usize, Error>> + MaybeSend {
+        (*self).write(buf)
+    }
+}
+
 /// An owned full-duplex TCP stream.
 ///
 /// All async methods must be cancel-safe: dropping a pending future must not
 /// consume input bytes or leave partial state that corrupts subsequent calls.
-pub trait NetTcpSocket: MaybeSend {
+pub trait TcpNetworkSocket: MaybeSend {
     /// Borrowed reader half returned by [`Self::split`].
-    type Read<'a>: NetTcpRead + 'a
+    type Read<'a>: TcpNetworkRead + 'a
     where
         Self: 'a;
 
     /// Borrowed writer half returned by [`Self::split`].
-    type Write<'a>: NetTcpWrite + 'a
+    type Write<'a>: TcpNetworkWrite + 'a
     where
         Self: 'a;
 
@@ -140,32 +168,56 @@ pub trait NetTcpSocket: MaybeSend {
     }
 }
 
+impl<T: TcpNetworkSocket> TcpNetworkSocket for &mut T {
+    type Read<'a>
+        = T::Read<'a>
+    where
+        Self: 'a;
+
+    type Write<'a>
+        = T::Write<'a>
+    where
+        Self: 'a;
+
+    fn split(&mut self) -> (Self::Read<'_>, Self::Write<'_>) {
+        (*self).split()
+    }
+
+    fn close(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        (*self).close()
+    }
+
+    fn set_keep_alive(&mut self, keep_alive: Option<TcpKeepAlive>) -> Result<(), Error> {
+        (*self).set_keep_alive(keep_alive)
+    }
+}
+
 /// Placeholder used by UDP-only drivers' default TCP binding.
 pub struct NoTcp;
 
-impl NetTcpListener for NoTcp {
+impl TcpNetworkSockets for NoTcp {
     type Socket = Self;
 
     fn accept(
-        &mut self,
+        &self,
     ) -> impl Future<Output = Result<(SocketAddr, Self::Socket), Error>> + MaybeSend {
         pending()
     }
 }
 
-impl NetTcpRead for NoTcp {
+impl TcpNetworkRead for NoTcp {
     fn read(&mut self, _buf: &mut [u8]) -> impl Future<Output = Result<usize, Error>> + MaybeSend {
         core::future::ready(Err(ErrorCode::NoNetworkInterface.into()))
     }
 }
 
-impl NetTcpWrite for NoTcp {
+impl TcpNetworkWrite for NoTcp {
     fn write(&mut self, _buf: &[u8]) -> impl Future<Output = Result<usize, Error>> + MaybeSend {
         core::future::ready(Err(ErrorCode::NoNetworkInterface.into()))
     }
 }
 
-impl NetTcpSocket for NoTcp {
+impl TcpNetworkSocket for NoTcp {
     type Read<'a> = Self;
     type Write<'a> = Self;
 
@@ -188,6 +240,8 @@ pub struct TcpConfig {
     pub idle_timeout: Option<Duration>,
     /// Bound a complete outbound frame write, including time spent queued.
     pub send_timeout: Duration,
+    /// Bound an outbound `connect` handshake.
+    pub connect_timeout: Duration,
     /// Optional TCP keep-alive configuration applied to accepted and connected sockets.
     pub keep_alive: Option<TcpKeepAlive>,
 }
@@ -198,6 +252,7 @@ impl TcpConfig {
         Self {
             idle_timeout: None,
             send_timeout: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(5),
             keep_alive: Some(TcpKeepAlive::new()),
         }
     }
@@ -233,18 +288,18 @@ impl Default for TcpConfig {
 /// connections, and `TX_QUEUE` configures each peer's outbound frame queue depth.
 pub struct TcpNetwork<
     'a,
-    L: NetTcpListener,
+    L: TcpNetworkSockets,
     const N: usize = { crate::MAX_RX_BUF_SIZE },
     const SLOTS: usize = 4,
     const TX_QUEUE: usize = 2,
 > {
-    listener: IfMutex<L>,
-    sockets: [Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+    sockets: L,
+    slot_sockets: [Mutex<RefCell<Option<L::Socket>>>; SLOTS],
     buffers: &'a TcpNetworkBuffers<N, SLOTS, TX_QUEUE>,
     config: TcpConfig,
 }
 
-impl<'a, L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
+impl<'a, L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
     TcpNetwork<'a, L, N, SLOTS, TX_QUEUE>
 {
     /// Try to bind `sockets` to caller-owned `buffers` with `config`.
@@ -261,8 +316,8 @@ impl<'a, L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: 
         }
         buffers.reset_all();
         Ok(Self {
-            listener: IfMutex::new(sockets),
-            sockets: [const { Mutex::new(RefCell::new(None)) }; SLOTS],
+            sockets,
+            slot_sockets: [const { Mutex::new(RefCell::new(None)) }; SLOTS],
             buffers,
             config: *config,
         })
@@ -286,12 +341,12 @@ impl<'a, L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: 
     /// Run concurrently with the Matter transport. No blocking mutex is held across `.await`.
     pub async fn run(&self) -> Result<(), Error> {
         self.buffers
-            .run_with_listener(&self.listener, &self.sockets, &self.config)
+            .run_with_listener(&self.sockets, &self.slot_sockets, &self.config)
             .await
     }
 }
 
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> Drop
+impl<L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> Drop
     for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 {
     fn drop(&mut self) {
@@ -299,7 +354,7 @@ impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usiz
     }
 }
 
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkSend
+impl<L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkSend
     for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 {
     async fn send_to(&mut self, data: &[u8], address: Address) -> Result<(), Error> {
@@ -307,7 +362,7 @@ impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usiz
     }
 }
 
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkSend
+impl<L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkSend
     for &TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 {
     async fn send_to(&mut self, data: &[u8], address: Address) -> Result<(), Error> {
@@ -315,7 +370,7 @@ impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usiz
     }
 }
 
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkReceive
+impl<L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkReceive
     for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 {
     async fn wait_available(&mut self) -> Result<(), Error> {
@@ -331,7 +386,7 @@ impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usiz
     }
 }
 
-impl<L: NetTcpListener, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkReceive
+impl<L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetworkReceive
     for &TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 {
     async fn wait_available(&mut self) -> Result<(), Error> {
@@ -389,7 +444,7 @@ mod tests {
     struct MockRead<'a>(&'a MockStream);
     struct MockWrite<'a>(&'a MockStream);
 
-    impl NetTcpRead for MockRead<'_> {
+    impl TcpNetworkRead for MockRead<'_> {
         async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
             loop {
                 let notif = {
@@ -411,7 +466,7 @@ mod tests {
         }
     }
 
-    impl NetTcpWrite for MockWrite<'_> {
+    impl TcpNetworkWrite for MockWrite<'_> {
         async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
             loop {
                 let notif = {
@@ -431,7 +486,7 @@ mod tests {
         }
     }
 
-    impl NetTcpSocket for MockStream {
+    impl TcpNetworkSocket for MockStream {
         type Read<'a> = MockRead<'a>;
         type Write<'a> = MockWrite<'a>;
 
@@ -457,6 +512,7 @@ mod tests {
     struct MockListener {
         peers: Arc<StdMutex<VecDeque<(SocketAddr, MockStream)>>>,
         errors_remaining: Arc<AtomicUsize>,
+        connect_errors_remaining: Arc<AtomicUsize>,
         accept_calls: Arc<AtomicUsize>,
         connect_calls: Arc<AtomicUsize>,
         connect_gate: Arc<StdMutex<Option<Arc<Notification>>>>,
@@ -479,12 +535,12 @@ mod tests {
         }
     }
 
-    impl NetTcpListener for MockListener {
+    impl TcpNetworkSockets for MockListener {
         type Socket = MockStream;
 
-        async fn accept(&mut self) -> Result<(SocketAddr, Self::Socket), Error> {
+        async fn accept(&self) -> Result<(SocketAddr, Self::Socket), Error> {
+            self.accept_calls.fetch_add(1, Ordering::SeqCst);
             loop {
-                self.accept_calls.fetch_add(1, Ordering::SeqCst);
                 if self
                     .errors_remaining
                     .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
@@ -503,8 +559,15 @@ mod tests {
             }
         }
 
-        async fn connect(&mut self, _addr: SocketAddr) -> Result<Self::Socket, Error> {
+        async fn connect(&self, _addr: SocketAddr) -> Result<Self::Socket, Error> {
             self.connect_calls.fetch_add(1, Ordering::SeqCst);
+            if self
+                .connect_errors_remaining
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+                .is_ok()
+            {
+                return Err(ErrorCode::ResourceExhausted.into());
+            }
             let gate = self.connect_gate.lock().unwrap().clone();
             if let Some(gate) = gate {
                 gate.wait().await;
@@ -852,6 +915,7 @@ mod tests {
                 &buffers,
                 &TcpConfig {
                     send_timeout: Duration::from_millis(40),
+                    connect_timeout: Duration::from_secs(1),
                     ..Default::default()
                 },
             );
@@ -1141,6 +1205,286 @@ mod tests {
                 Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
                 Either::Second(()) => {}
             }
+        });
+    }
+
+    #[test]
+    fn accept_runs_concurrently_with_pending_outbound_connect_without_cancellation() {
+        block_on(async {
+            let listener = MockListener::default();
+            let gate = Arc::new(Notification::new());
+            *listener.connect_gate.lock().unwrap() = Some(gate.clone());
+            let accept_calls = listener.accept_calls.clone();
+            let connect_calls = listener.connect_calls.clone();
+            let outbound = listener.outbound.clone();
+
+            let buffers = TcpNetworkBuffers::<64, 2, 2>::new();
+            let net = TcpNetwork::new(
+                listener.clone(),
+                &buffers,
+                &TcpConfig {
+                    send_timeout: Duration::from_secs(2),
+                    ..Default::default()
+                },
+            );
+            let outbound_addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5545)));
+
+            let mut runner = pin!(net.run());
+            let mut tx = &net;
+            let mut send_fut = pin!(NetworkSend::send_to(&mut tx, b"out", outbound_addr));
+            assert!(poll_once(&mut runner).await.is_none());
+            assert_eq!(accept_calls.load(Ordering::SeqCst), 1);
+
+            // Initiate outbound connect; it blocks on `gate`.
+            assert!(poll_once(&mut send_fut).await.is_none());
+            while connect_calls.load(Ordering::SeqCst) == 0 {
+                assert!(poll_once(&mut runner).await.is_none());
+                Timer::after(Duration::from_millis(1)).await;
+            }
+
+            // While outbound connect is still blocked on `gate`, enqueue an inbound peer.
+            let _inbound_peer = listener.peer(70, &[2, 0, 0, 0, b'h', b'i']);
+            let mut buf = [0u8; 16];
+            let recv_res = with_timeout(Duration::from_millis(200), async {
+                loop {
+                    let _ = poll_once(&mut runner).await;
+                    let mut rx_ref = &net;
+                    let mut rx = pin!(NetworkReceive::recv_from(&mut rx_ref, &mut buf));
+                    if let Some(res) = poll_once(&mut rx).await {
+                        return res;
+                    }
+                    Timer::after(Duration::from_millis(2)).await;
+                }
+            })
+            .await;
+
+            let (count, peer_addr) = recv_res
+                .expect("inbound accept/recv must not stall while outbound connect is pending")
+                .unwrap();
+            assert_eq!(&buf[..count], b"hi");
+            assert_eq!(
+                peer_addr,
+                Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 70)))
+            );
+            // `accept()` was called once for the initial wait and once again after accepting peer 70
+            // (never cancelled and restarted when outbound connect began).
+            assert!(accept_calls.load(Ordering::SeqCst) <= 2);
+
+            gate.notify();
+            loop {
+                let _ = poll_once(&mut runner).await;
+                if let Some(res) = poll_once(&mut send_fut).await {
+                    res.unwrap();
+                    break;
+                }
+                Timer::after(Duration::from_millis(2)).await;
+            }
+            assert!(outbound.lock().unwrap().is_some());
+        });
+    }
+
+    #[test]
+    fn outbound_connect_error_resets_slot_and_notifies_closed_peer() {
+        block_on(async {
+            let listener = MockListener::default();
+            listener.connect_errors_remaining.store(1, Ordering::SeqCst);
+            let outbound = listener.outbound.clone();
+            let buffers = TcpNetworkBuffers::<64, 1, 1>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5546)));
+
+            let runner = pin!(net.run());
+            let test = pin!(async {
+                NetworkSend::send_to(&mut &net, b"fail", addr)
+                    .await
+                    .unwrap();
+
+                let closed = with_timeout(
+                    Duration::from_secs(2),
+                    NetworkReceive::wait_available_or_closed(&mut &net),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert_eq!(closed, Some(addr));
+                assert!(net
+                    .buffers
+                    .with_state(|s| s.slots[0].connected_addr().is_none()));
+
+                // Subsequent connect reuses the freed slot and succeeds.
+                NetworkSend::send_to(&mut &net, b"ok", addr).await.unwrap();
+                with_timeout(Duration::from_secs(2), async {
+                    loop {
+                        if let Some(stream) = outbound.lock().unwrap().as_ref() {
+                            if stream.lock().unwrap().output == b"\x02\0\0\0ok" {
+                                break;
+                            }
+                        }
+                        Timer::after(Duration::from_millis(2)).await;
+                    }
+                })
+                .await
+                .unwrap();
+            });
+
+            match select(runner, test).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
+        });
+    }
+
+    #[test]
+    fn outbound_connect_timeout_resets_slot_and_allows_reuse() {
+        block_on(async {
+            let listener = MockListener::default();
+            let gate = Arc::new(Notification::new());
+            *listener.connect_gate.lock().unwrap() = Some(gate.clone());
+            let buffers = TcpNetworkBuffers::<64, 1, 1>::new();
+            let net = TcpNetwork::new(
+                listener.clone(),
+                &buffers,
+                &TcpConfig {
+                    connect_timeout: Duration::from_millis(25),
+                    ..Default::default()
+                },
+            );
+            let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5547)));
+
+            let runner = pin!(net.run());
+            let test = pin!(async {
+                NetworkSend::send_to(&mut &net, b"slow", addr)
+                    .await
+                    .unwrap();
+
+                // Connect times out after `send_timeout * 2`, resetting slot and notifying closed peer.
+                let closed = with_timeout(
+                    Duration::from_secs(2),
+                    NetworkReceive::wait_available_or_closed(&mut &net),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert_eq!(closed, Some(addr));
+
+                // Slot is free again for an inbound peer.
+                let _peer = listener.peer(71, &[2, 0, 0, 0, b'o', b'k']);
+                let mut buf = [0u8; 8];
+                let (count, from) = with_timeout(
+                    Duration::from_secs(2),
+                    NetworkReceive::recv_from(&mut &net, &mut buf),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert_eq!(&buf[..count], b"ok");
+                assert_eq!(from, Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 71))));
+            });
+
+            match select(runner, test).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
+        });
+    }
+
+    #[test]
+    fn outbound_connect_yields_to_concurrent_inbound_accept_from_same_peer() {
+        block_on(async {
+            let listener = MockListener::default();
+            let gate = Arc::new(Notification::new());
+            *listener.connect_gate.lock().unwrap() = Some(gate.clone());
+            let connect_calls = listener.connect_calls.clone();
+            let outbound = listener.outbound.clone();
+
+            let buffers = TcpNetworkBuffers::<64, 2, 2>::new();
+            let net = TcpNetwork::new(
+                listener.clone(),
+                &buffers,
+                &TcpConfig {
+                    send_timeout: Duration::from_secs(2),
+                    ..Default::default()
+                },
+            );
+            let peer_port = 5548;
+            let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], peer_port)));
+
+            let mut runner = pin!(net.run());
+            let mut tx = &net;
+            NetworkSend::send_to(&mut tx, b"out", addr).await.unwrap();
+
+            while connect_calls.load(Ordering::SeqCst) == 0 {
+                assert!(poll_once(&mut runner).await.is_none());
+                Timer::after(Duration::from_millis(1)).await;
+            }
+
+            // While outbound connect(addr) is still blocked on `gate`, accept inbound from the same `addr`.
+            let inbound_peer = listener.peer(peer_port, &[2, 0, 0, 0, b'i', b'n']);
+            let mut buf = [0u8; 8];
+            let (count, from) = with_timeout(Duration::from_secs(2), async {
+                loop {
+                    let _ = poll_once(&mut runner).await;
+                    let mut rx_ref = &net;
+                    let mut rx = pin!(NetworkReceive::recv_from(&mut rx_ref, &mut buf));
+                    if let Some(res) = poll_once(&mut rx).await {
+                        return res;
+                    }
+                    Timer::after(Duration::from_millis(2)).await;
+                }
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(&buf[..count], b"in");
+            assert_eq!(from, addr);
+
+            // The accepted inbound stream also delivers the queued outbound frame immediately.
+            with_timeout(Duration::from_secs(2), async {
+                loop {
+                    let _ = poll_once(&mut runner).await;
+                    if inbound_peer.lock().unwrap().output == b"\x03\0\0\0out" {
+                        break;
+                    }
+                    Timer::after(Duration::from_millis(2)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(outbound.lock().unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn blanket_impls_forward_socket_and_listener_calls() {
+        async fn accept_via_ref<L: TcpNetworkSockets>(
+            sockets: L,
+        ) -> Result<(SocketAddr, L::Socket), Error> {
+            sockets.accept().await
+        }
+
+        async fn roundtrip_via_mut<S: TcpNetworkSocket>(mut socket: S) {
+            let (mut r, mut w) = socket.split();
+            let r_ref: &mut S::Read<'_> = &mut r;
+            let w_ref: &mut S::Write<'_> = &mut w;
+            let mut buf = [0u8; 4];
+            let n = TcpNetworkRead::read(r_ref, &mut buf).await.unwrap();
+            assert_eq!(&buf[..n], b"ping");
+            let written = TcpNetworkWrite::write(w_ref, b"pong").await.unwrap();
+            assert_eq!(written, 4);
+            drop(r);
+            drop(w);
+            socket.set_keep_alive(None).unwrap();
+            socket.close().await.unwrap();
+        }
+
+        block_on(async {
+            let listener = MockListener::default();
+            let peer = listener.peer(72, b"ping");
+            let (addr, mut stream) = accept_via_ref(&listener).await.unwrap();
+            assert_eq!(addr, SocketAddr::from(([127, 0, 0, 1], 72)));
+            roundtrip_via_mut(&mut stream).await;
+            assert_eq!(peer.lock().unwrap().output, b"pong");
+            assert!(peer.lock().unwrap().closed);
         });
     }
 }

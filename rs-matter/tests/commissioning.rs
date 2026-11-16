@@ -297,7 +297,7 @@ impl TransportRun for async_io::Async<UdpSocket> {
 }
 
 impl<
-        L: rs_matter::transport::network::tcp::NetTcpListener,
+        L: rs_matter::transport::network::tcp::TcpNetworkSockets,
         const N: usize,
         const SLOTS: usize,
         const TX: usize,

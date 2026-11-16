@@ -171,16 +171,6 @@ impl<const SLOTS: usize> SharedState<SLOTS> {
             .position(|s| s.peer == PeerState::Connecting(addr))
     }
 
-    pub(super) fn next_connecting(&self) -> Option<(usize, SocketAddr)> {
-        self.slots
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| match s.peer {
-                PeerState::Connecting(addr) => Some((i, addr)),
-                _ => None,
-            })
-    }
-
     pub(super) fn find_idle(&self) -> Option<usize> {
         self.slots.iter().position(|s| s.peer == PeerState::Idle)
     }

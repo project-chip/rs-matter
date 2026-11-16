@@ -21,7 +21,7 @@
 use core::future::{pending, ready, Future};
 use core::net::{Ipv4Addr, SocketAddr};
 
-use rs_matter_transport::network::tcp::{NetTcpListener, NoTcp, TcpNetwork};
+use rs_matter_transport::network::tcp::{NoTcp, TcpNetwork, TcpNetworkSockets};
 use rs_matter_transport::network::{NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork};
 use rs_matter_utils::error::{Error, ErrorCode};
 use rs_matter_utils::sync::{MaybeSend, MaybeSendSync};
@@ -148,10 +148,38 @@ pub trait NetTcp: MaybeSend {
     }
 }
 
+impl<T: NetTcp> NetTcp for &T {
+    type Send<'a>
+        = T::Send<'a>
+    where
+        Self: 'a;
+
+    type Receive<'a>
+        = T::Receive<'a>
+    where
+        Self: 'a;
+
+    fn send(&self) -> Self::Send<'_> {
+        (*self).send()
+    }
+
+    fn recv(&self) -> Self::Receive<'_> {
+        (*self).recv()
+    }
+
+    fn run(&self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        (*self).run()
+    }
+
+    fn max_message_size(&self) -> usize {
+        (*self).max_message_size()
+    }
+}
+
 impl<L, const N: usize, const SLOTS: usize, const TX_QUEUE: usize> NetTcp
     for TcpNetwork<'_, L, N, SLOTS, TX_QUEUE>
 where
-    L: NetTcpListener,
+    L: TcpNetworkSockets,
     L::Socket: MaybeSendSync,
 {
     type Send<'a>

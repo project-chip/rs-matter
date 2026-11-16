@@ -26,7 +26,7 @@ use super::frame::{encode_frame_header, Frame, FRAME_HDR_LEN};
 use super::slots::{
     is_encrypted_matter_frame, PeerSlot, PeerState, RxOutcome, SharedState, TxFrame, TxOutcome,
 };
-use super::{NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, TcpConfig};
+use super::{TcpConfig, TcpNetworkRead, TcpNetworkSocket, TcpNetworkSockets, TcpNetworkWrite};
 use crate::error::{Error, ErrorCode};
 use crate::network::Address;
 use crate::plain_hdr::PlainHdr;
@@ -37,7 +37,7 @@ use crate::utils::futures::{join, join_array, select, select3, yield_now, Either
 use crate::utils::init::{init, init_array_from_fn, Init};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{IfMultiMutexGuard, IfMutex, MultiNotification, Notification};
+use crate::utils::sync::{IfMultiMutexGuard, MultiNotification};
 use crate::utils::timers::{with_timeout, Duration, Instant, Timer};
 
 /// Caller-owned static buffers and slot state for [`super::TcpNetwork`].
@@ -53,7 +53,6 @@ pub struct TcpNetworkBuffers<
     state: Mutex<RefCell<SharedState<SLOTS>>>,
     slots: [PeerSlot<N, TX_QUEUE>; SLOTS],
     rx_available: MultiNotification,
-    listener_wakeup: Notification,
     slot_freed: MultiNotification,
 }
 
@@ -91,7 +90,6 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             state: Mutex::new(RefCell::new(SharedState::new())),
             slots: [const { PeerSlot::new() }; SLOTS],
             rx_available: MultiNotification::new(),
-            listener_wakeup: Notification::new(),
             slot_freed: MultiNotification::new(),
         }
     }
@@ -109,7 +107,6 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             state: Mutex::new(RefCell::new(SharedState::new())),
             slots <- init_array_from_fn(|_| PeerSlot::init()),
             rx_available <- MultiNotification::init(),
-            listener_wakeup <- Notification::init(),
             slot_freed <- MultiNotification::init(),
         })
     }
@@ -146,16 +143,16 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
     /// Drive TCP accept/connect and all `SLOTS` concurrent peer I/O loops.
     pub(super) async fn run_with_listener<L>(
         &self,
-        listener: &IfMutex<L>,
-        sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+        sockets: &L,
+        slot_sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
         config: &TcpConfig,
     ) -> Result<(), Error>
     where
-        L: NetTcpListener,
+        L: TcpNetworkSockets,
     {
-        let listener_fut = self.run_listener(listener, sockets, config);
+        let listener_fut = self.run_listener(sockets, slot_sockets, config);
         let slots_fut = join_array(core::array::from_fn::<_, SLOTS, _>(|i| {
-            self.run_slot(i, &sockets[i], config)
+            self.run_slot(i, sockets, &slot_sockets[i], config)
         }));
         let (res, _) = join(listener_fut, slots_fut).await;
         res
@@ -163,15 +160,19 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
 
     async fn connect_pending_slot<L>(
         &self,
-        listener: &mut L,
-        sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+        sockets: &L,
+        socket_cell: &Mutex<RefCell<Option<L::Socket>>>,
         slot_idx: usize,
         addr: SocketAddr,
-    ) where
-        L: NetTcpListener,
+        config: &TcpConfig,
+    ) -> Option<L::Socket>
+    where
+        L: TcpNetworkSockets,
     {
-        match listener.connect(addr).await {
-            Ok(mut socket) => {
+        let connect_fut = with_timeout(config.connect_timeout, sockets.connect(addr));
+        let wakeup_fut = self.slots[slot_idx].wakeup.wait();
+        match select(pin!(connect_fut), pin!(wakeup_fut)).await {
+            Either::First(Ok(Ok(mut socket))) => {
                 let claimed = self.with_state_mut(|s| {
                     if s.slots[slot_idx].peer == PeerState::Connecting(addr) {
                         s.mark_connected(slot_idx, addr, false);
@@ -181,60 +182,64 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
                     }
                 });
                 if claimed {
-                    sockets[slot_idx].lock(|cell| *cell.borrow_mut() = Some(socket));
-                    self.slots[slot_idx].wakeup.notify();
+                    Some(socket)
                 } else {
                     let _ = socket.close().await;
+                    socket_cell.lock(|cell| cell.borrow_mut().take())
                 }
             }
-            Err(e) => {
+            Either::First(Ok(Err(e))) => {
                 warn!("TCP connect to {} failed: {:?}", addr, e);
-                self.reset_slot(slot_idx, true).await;
+                self.reset_if_connecting(slot_idx, addr).await;
+                None
             }
+            Either::First(Err(_)) => {
+                warn!("TCP connect to {} timed out", addr);
+                self.reset_if_connecting(slot_idx, addr).await;
+                None
+            }
+            Either::Second(()) => socket_cell.lock(|cell| cell.borrow_mut().take()),
+        }
+    }
+
+    async fn reset_if_connecting(&self, slot_idx: usize, addr: SocketAddr) {
+        if self.with_state(|s| s.slots[slot_idx].peer == PeerState::Connecting(addr)) {
+            self.reset_slot(slot_idx, true).await;
         }
     }
 
     async fn run_listener<L>(
         &self,
-        listener: &IfMutex<L>,
-        sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
+        sockets: &L,
+        slot_sockets: &[Mutex<RefCell<Option<L::Socket>>>; SLOTS],
         config: &TcpConfig,
     ) -> Result<(), Error>
     where
-        L: NetTcpListener,
+        L: TcpNetworkSockets,
     {
-        let mut listener = listener.lock().await;
         loop {
-            if let Some((slot_idx, addr)) = self.with_state(|s| s.next_connecting()) {
-                self.connect_pending_slot(&mut *listener, sockets, slot_idx, addr)
-                    .await;
-                continue;
-            }
-
-            let wakeup = self.listener_wakeup.wait();
             let freed = self.slot_freed.wait();
             let can_accept =
                 self.with_state(|s| s.find_idle().is_some() || s.find_evictable().is_some());
             if !can_accept {
-                select(pin!(wakeup), pin!(freed)).await;
+                freed.await;
                 continue;
             }
 
-            match select(pin!(listener.accept()), pin!(wakeup)).await {
-                Either::First(Ok((addr, socket))) => {
-                    self.assign_accepted_socket(sockets, addr, socket, config)
+            match sockets.accept().await {
+                Ok((addr, socket)) => {
+                    self.assign_accepted_socket(slot_sockets, addr, socket, config)
                         .await;
                 }
-                Either::First(Err(e)) => {
+                Err(e) => {
                     warn!("TCP accept error: {:?}", e);
                     Timer::after(Duration::from_millis(10)).await;
                 }
-                Either::Second(()) => {}
             }
         }
     }
 
-    async fn assign_accepted_socket<S: NetTcpSocket>(
+    async fn assign_accepted_socket<S: TcpNetworkSocket>(
         &self,
         sockets: &[Mutex<RefCell<Option<S>>>; SLOTS],
         addr: SocketAddr,
@@ -286,16 +291,31 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn run_slot<S: NetTcpSocket>(
+    async fn run_slot<L: TcpNetworkSockets>(
         &self,
         slot_idx: usize,
-        socket_cell: &Mutex<RefCell<Option<S>>>,
+        sockets: &L,
+        socket_cell: &Mutex<RefCell<Option<L::Socket>>>,
         config: &TcpConfig,
     ) {
         let slot = &self.slots[slot_idx];
         loop {
             let wait = slot.wakeup.wait();
-            let Some(mut socket) = socket_cell.lock(|cell| cell.borrow_mut().take()) else {
+            let mut socket = if let Some(socket) = socket_cell.lock(|cell| cell.borrow_mut().take())
+            {
+                socket
+            } else if let Some(addr) = self.with_state(|s| match s.slots[slot_idx].peer {
+                PeerState::Connecting(addr) => Some(addr),
+                _ => None,
+            }) {
+                match self
+                    .connect_pending_slot(sockets, socket_cell, slot_idx, addr, config)
+                    .await
+                {
+                    Some(socket) => socket,
+                    None => continue,
+                }
+            } else {
                 wait.await;
                 continue;
             };
@@ -347,7 +367,6 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
         self.slots[slot_idx].tx_space_available.notify();
         self.slot_freed.notify();
-        self.listener_wakeup.notify();
         if closed_addr.is_some() {
             self.rx_available.notify();
         }
@@ -437,7 +456,7 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn run_peer<S: NetTcpSocket>(
+    async fn run_peer<S: TcpNetworkSocket>(
         &self,
         slot_idx: usize,
         socket: &mut S,
@@ -528,7 +547,11 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
         }
     }
 
-    async fn send_message_too_large<S: NetTcpSocket>(&self, socket: &mut S, config: &TcpConfig) {
+    async fn send_message_too_large<S: TcpNetworkSocket>(
+        &self,
+        socket: &mut S,
+        config: &TcpConfig,
+    ) {
         if let Ok((buf, len)) = encode_message_too_large_frame() {
             let (_, mut tx_sock) = socket.split();
             let _ = with_timeout(config.send_timeout, async {
@@ -681,12 +704,11 @@ impl<const N: usize, const SLOTS: usize, const TX_QUEUE: usize>
             match alloc {
                 SlotAlloc::Found(idx) => return Ok(idx),
                 SlotAlloc::NewConnecting(idx) => {
-                    self.listener_wakeup.notify();
+                    self.slots[idx].wakeup.notify();
                     return Ok(idx);
                 }
                 SlotAlloc::EvictAndWait(evict_idx) => {
                     self.slots[evict_idx].tx_changed.notify();
-                    self.listener_wakeup.notify();
                 }
                 SlotAlloc::Wait => {}
             }

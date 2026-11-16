@@ -42,8 +42,8 @@ use rs_matter_stack::ble::GattPeripheral;
 use rs_matter_stack::eth::{EthernetDriver, EthernetTask, PreexistingEthernet};
 use rs_matter_stack::net::{NetSocket, NetStack, NetTcpStack};
 use rs_matter_stack::tcp::{
-    NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, NoTcp, TcpConfig, TcpNetwork,
-    TcpNetworkBuffers,
+    NoTcp, TcpConfig, TcpNetwork, TcpNetworkBuffers, TcpNetworkRead, TcpNetworkSocket,
+    TcpNetworkSockets, TcpNetworkWrite,
 };
 use rs_matter_stack::wireless::{
     GattDriver, GattTask, PreexistingWireless, ThreadCoexDriver, ThreadCoexTask, ThreadDriver,
@@ -184,7 +184,7 @@ struct MockTcpRead<'a>(&'a MockTcpStream);
 
 struct MockTcpWrite<'a>(&'a MockTcpStream);
 
-impl NetTcpRead for MockTcpRead<'_> {
+impl TcpNetworkRead for MockTcpRead<'_> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         let n = {
             let mut rx = self.0.rx.lock().unwrap();
@@ -206,14 +206,14 @@ impl NetTcpRead for MockTcpRead<'_> {
     }
 }
 
-impl NetTcpWrite for MockTcpWrite<'_> {
+impl TcpNetworkWrite for MockTcpWrite<'_> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         self.0.tx.lock().unwrap().extend_from_slice(buf);
         Ok(buf.len())
     }
 }
 
-impl NetTcpSocket for MockTcpStream {
+impl TcpNetworkSocket for MockTcpStream {
     type Read<'a> = MockTcpRead<'a>;
     type Write<'a> = MockTcpWrite<'a>;
 
@@ -231,10 +231,10 @@ struct MockTcpListener {
     peers: std::sync::Arc<Mutex<std::collections::VecDeque<(SocketAddr, MockTcpStream)>>>,
 }
 
-impl NetTcpListener for MockTcpListener {
+impl TcpNetworkSockets for MockTcpListener {
     type Socket = MockTcpStream;
 
-    async fn accept(&mut self) -> Result<(SocketAddr, Self::Socket), Error> {
+    async fn accept(&self) -> Result<(SocketAddr, Self::Socket), Error> {
         let peer = self.peers.lock().unwrap().pop_front();
         match peer {
             Some(peer) => Ok(peer),

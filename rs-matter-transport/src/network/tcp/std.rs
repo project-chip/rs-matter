@@ -17,7 +17,7 @@
 
 #![cfg(all(feature = "std", feature = "async-io"))]
 
-//! `async-io` implementations of [`NetTcpListener`] and [`NetTcpSocket`].
+//! `async-io` implementations of [`TcpNetworkSockets`] and [`TcpNetworkSocket`].
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -27,18 +27,18 @@ use socket2::{SockRef, TcpKeepalive};
 
 use crate::error::Error;
 
-use super::{NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, TcpKeepAlive};
+use super::{TcpKeepAlive, TcpNetworkRead, TcpNetworkSocket, TcpNetworkSockets, TcpNetworkWrite};
 
-impl NetTcpListener for Async<TcpListener> {
+impl TcpNetworkSockets for Async<TcpListener> {
     type Socket = Async<TcpStream>;
 
-    async fn accept(&mut self) -> Result<(SocketAddr, Self::Socket), Error> {
+    async fn accept(&self) -> Result<(SocketAddr, Self::Socket), Error> {
         let (stream, addr) = Async::<TcpListener>::accept(self).await?;
         let _ = stream.get_ref().set_nodelay(true);
         Ok((addr, stream))
     }
 
-    async fn connect(&mut self, addr: SocketAddr) -> Result<Self::Socket, Error> {
+    async fn connect(&self, addr: SocketAddr) -> Result<Self::Socket, Error> {
         let stream = Async::<TcpStream>::connect(addr).await?;
         let _ = stream.get_ref().set_nodelay(true);
         Ok(stream)
@@ -48,7 +48,7 @@ impl NetTcpListener for Async<TcpListener> {
 /// Readable half of an [`Async<TcpStream>`].
 pub struct AsyncTcpRead<'a>(&'a Async<TcpStream>);
 
-impl NetTcpRead for AsyncTcpRead<'_> {
+impl TcpNetworkRead for AsyncTcpRead<'_> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         self.0
             .read_with(|mut stream| stream.read(buf))
@@ -60,7 +60,7 @@ impl NetTcpRead for AsyncTcpRead<'_> {
 /// Writable half of an [`Async<TcpStream>`].
 pub struct AsyncTcpWrite<'a>(&'a Async<TcpStream>);
 
-impl NetTcpWrite for AsyncTcpWrite<'_> {
+impl TcpNetworkWrite for AsyncTcpWrite<'_> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         self.0
             .write_with(|mut stream| stream.write(buf))
@@ -69,7 +69,7 @@ impl NetTcpWrite for AsyncTcpWrite<'_> {
     }
 }
 
-impl NetTcpSocket for Async<TcpStream> {
+impl TcpNetworkSocket for Async<TcpStream> {
     type Read<'a> = AsyncTcpRead<'a>;
     type Write<'a> = AsyncTcpWrite<'a>;
 
@@ -290,8 +290,8 @@ mod tests {
                 .unwrap();
             server.set_keep_alive(None).unwrap();
 
-            NetTcpSocket::close(&mut client).await.unwrap();
-            NetTcpSocket::close(&mut server).await.unwrap();
+            TcpNetworkSocket::close(&mut client).await.unwrap();
+            TcpNetworkSocket::close(&mut server).await.unwrap();
         });
     }
 

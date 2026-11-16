@@ -19,8 +19,8 @@
 
 pub use crate::net::{NetTcp, NetTcpStack};
 pub use rs_matter_transport::network::tcp::{
-    NetTcpListener, NetTcpRead, NetTcpSocket, NetTcpWrite, NoTcp, TcpConfig, TcpKeepAlive,
-    TcpNetwork, TcpNetworkBuffers,
+    NoTcp, TcpConfig, TcpKeepAlive, TcpNetwork, TcpNetworkBuffers, TcpNetworkRead,
+    TcpNetworkSocket, TcpNetworkSockets, TcpNetworkWrite,
 };
 
 #[cfg(test)]

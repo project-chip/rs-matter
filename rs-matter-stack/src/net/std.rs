@@ -95,7 +95,7 @@ mod tcp {
     use socket2::{Domain, Protocol, Socket, Type};
 
     use crate::net::NetTcpStack;
-    use crate::tcp::{NetTcpListener, TcpConfig, TcpNetwork, TcpNetworkBuffers};
+    use crate::tcp::{TcpConfig, TcpNetwork, TcpNetworkBuffers, TcpNetworkSockets};
     use rs_matter_utils::error::Error;
 
     /// An `async-io` TCP listener, usable with [`TcpNetwork`].
@@ -130,15 +130,15 @@ mod tcp {
         }
     }
 
-    impl NetTcpListener for StdTcpListener {
+    impl TcpNetworkSockets for StdTcpListener {
         type Socket = Async<TcpStream>;
 
-        async fn accept(&mut self) -> Result<(SocketAddr, Self::Socket), Error> {
-            NetTcpListener::accept(&mut self.0).await
+        async fn accept(&self) -> Result<(SocketAddr, Self::Socket), Error> {
+            TcpNetworkSockets::accept(&self.0).await
         }
 
-        async fn connect(&mut self, addr: SocketAddr) -> Result<Self::Socket, Error> {
-            NetTcpListener::connect(&mut self.0, addr).await
+        async fn connect(&self, addr: SocketAddr) -> Result<Self::Socket, Error> {
+            TcpNetworkSockets::connect(&self.0, addr).await
         }
     }
 
