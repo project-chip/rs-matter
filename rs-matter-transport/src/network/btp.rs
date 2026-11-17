@@ -196,6 +196,10 @@ impl Btp {
     ///   If `None` is provided, the processing will assume that the GATT MTU is unknown, and will use the minimum MTU for processing the handshake packets.
     /// - `addr`: the address of the peer from where the packet originates
     /// - `data`: the incoming packet data, which is expected to be the payload of a GATT Write request (when we are the Peripheral) or a GATT indication (when we are the Central)
+    ///
+    /// # Returns
+    /// - As the Peripheral, always `Ok`: a packet that breaks the protocol closes the session with the peer instead.
+    /// - As the Central, `Err` for such a packet.
     pub fn process_incoming(
         &self,
         gatt_mtu: Option<u16>,
@@ -206,6 +210,8 @@ impl Btp {
             inner.borrow_mut().process_incoming(gatt_mtu, addr, data)?;
 
             self.recv_notif.notify();
+            // A closed or new session drops an SDU left unsent, so a sender may proceed.
+            self.send_notif.notify();
             self.outg_notif.notify();
 
             Ok(())
@@ -450,7 +456,28 @@ impl BtpInner {
         addr: BtAddr,
         data: &[u8],
     ) -> Result<(), Error> {
-        self.session.process_rx(gatt_mtu, addr, data)
+        if self.session.is_initiator() {
+            return self.session.process_rx(gatt_mtu, addr, data);
+        }
+
+        // As the peripheral, a bad segment closes the session, rather than
+        // fail the GATT peripheral and with it the device: the client then
+        // times out, or starts a new session.
+        if let Err(err) = self.session.process_rx(gatt_mtu, addr, data) {
+            warn!(
+                "BTP: closing the session with {} after a bad segment, error code {:?}",
+                addr,
+                err.code()
+            );
+
+            self.session.reset();
+            self.outgoing_sdu.reset();
+        } else if self.session.is_handshake_due() {
+            // A new session: what an earlier one left unsent is not for it
+            self.outgoing_sdu.reset();
+        }
+
+        Ok(())
     }
 
     /// Process outgoing data and prepare it to be sent to the peer.
@@ -964,6 +991,142 @@ mod test {
         let (len, addr) = block_on(initiator.recv(&mut buf)).unwrap();
         assert_eq!(addr, RESPONDER_ADDR);
         assert_eq!(&buf[..len], reply);
+    }
+
+    /// An initiator skips a data segment that comes before the handshake
+    /// response, as a GATT stack may hand it one left over from an earlier
+    /// connection (BlueZ hands a new subscriber the characteristic's current
+    /// value), and the handshake then goes on as usual.
+    #[test]
+    fn test_initiator_skips_a_data_segment_before_the_handshake_response() {
+        const INITIATOR_ADDR: BtAddr = BtAddr([0xaa; 6]);
+        const RESPONDER_ADDR: BtAddr = BtAddr([0xbb; 6]);
+
+        let gatt_mtu = Some(0xc8);
+
+        let initiator = Btp::new();
+        initiator.set_initiator(true);
+
+        let responder = Btp::new();
+
+        let sdu: &[u8] = &[1, 2, 3, 4, 5];
+        send_to(&initiator, RESPONDER_ADDR, sdu);
+
+        assert!(pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu));
+
+        // A whole SDU in one segment (Beginning and End), acking 0, sequence 5,
+        // as the last segment of an earlier connection might be.
+        initiator
+            .process_incoming(gatt_mtu, RESPONDER_ADDR, &[0x0d, 0, 5, 3, 0, 9, 9, 9])
+            .unwrap();
+        assert!(!initiator.is_session_established(RESPONDER_ADDR));
+
+        assert!(pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu));
+        assert!(initiator.is_session_established(RESPONDER_ADDR));
+
+        for _ in 0..8 {
+            if !pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu) {
+                break;
+            }
+        }
+
+        let mut buf = [0u8; 512];
+        let (len, addr) = block_on(responder.recv(&mut buf)).unwrap();
+        assert_eq!(addr, INITIATOR_ADDR);
+        assert_eq!(&buf[..len], sdu);
+    }
+
+    /// A client can close its session by unsubscribing from `C2` and start a
+    /// new one on the same connection. The responder then starts afresh on the
+    /// new Handshake Request, rather than go on with the old sequence numbers.
+    #[test]
+    fn test_responder_starts_afresh_on_a_new_handshake() {
+        const INITIATOR_ADDR: BtAddr = BtAddr([0xaa; 6]);
+        const RESPONDER_ADDR: BtAddr = BtAddr([0xbb; 6]);
+
+        let gatt_mtu = Some(0xc8);
+
+        let responder = Btp::new();
+
+        for (sdu, reply) in [(&[1u8, 2, 3][..], &[4u8, 5][..]), (&[6, 7, 8, 9], &[10])] {
+            let initiator = Btp::new();
+            initiator.set_initiator(true);
+
+            send_to(&initiator, RESPONDER_ADDR, sdu);
+
+            assert!(pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu));
+            assert!(pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu));
+
+            for _ in 0..8 {
+                if !pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu) {
+                    break;
+                }
+            }
+
+            assert!(responder.inner.lock(|inner| inner.borrow().available()));
+
+            let mut buf = [0u8; 512];
+            let (len, addr) = block_on(responder.recv(&mut buf)).unwrap();
+            assert_eq!(addr, INITIATOR_ADDR);
+            assert_eq!(&buf[..len], sdu);
+
+            send_to(&responder, INITIATOR_ADDR, reply);
+
+            for _ in 0..8 {
+                if !pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu) {
+                    break;
+                }
+            }
+
+            let (len, addr) = block_on(initiator.recv(&mut buf)).unwrap();
+            assert_eq!(addr, RESPONDER_ADDR);
+            assert_eq!(&buf[..len], reply);
+        }
+    }
+
+    /// A bad segment closes the responder's session, rather than fail, and the
+    /// client can then start a new one.
+    #[test]
+    fn test_responder_closes_the_session_on_a_bad_segment() {
+        const INITIATOR_ADDR: BtAddr = BtAddr([0xaa; 6]);
+        const RESPONDER_ADDR: BtAddr = BtAddr([0xbb; 6]);
+
+        let gatt_mtu = Some(0xc8);
+
+        let responder = Btp::new();
+
+        let initiator = Btp::new();
+        initiator.set_initiator(true);
+
+        assert!(pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu));
+        assert!(pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu));
+        assert!(responder.is_session_established(INITIATOR_ADDR));
+
+        // A whole SDU in one segment, with sequence 5 where 0 is due
+        responder
+            .process_incoming(gatt_mtu, INITIATOR_ADDR, &[0x0d, 0, 5, 3, 0, 9, 9, 9])
+            .unwrap();
+        assert!(!responder.is_session_established(INITIATOR_ADDR));
+
+        let initiator = Btp::new();
+        initiator.set_initiator(true);
+
+        let sdu: &[u8] = &[1, 2, 3, 4, 5];
+        send_to(&initiator, RESPONDER_ADDR, sdu);
+
+        assert!(pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu));
+        assert!(pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu));
+
+        for _ in 0..8 {
+            if !pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu) {
+                break;
+            }
+        }
+
+        let mut buf = [0u8; 512];
+        let (len, addr) = block_on(responder.recv(&mut buf)).unwrap();
+        assert_eq!(addr, INITIATOR_ADDR);
+        assert_eq!(&buf[..len], sdu);
     }
 
     fn send_to(btp: &Btp, addr: BtAddr, data: &[u8]) {
