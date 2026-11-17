@@ -210,7 +210,7 @@ impl Btp {
             inner.borrow_mut().process_incoming(gatt_mtu, addr, data)?;
 
             self.recv_notif.notify();
-            // A closed or new session drops an SDU left unsent, so a sender may go on
+            // A closed or new session drops an SDU left unsent, so a sender may proceed.
             self.send_notif.notify();
             self.outg_notif.notify();
 
