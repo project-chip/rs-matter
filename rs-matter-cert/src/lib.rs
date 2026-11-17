@@ -614,7 +614,7 @@ impl<'a> CertRef<'a> {
     }
 
     fn issuer(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
-        TLVList::new(self.0.structure()?.find_ctx(3)?)
+        Ok(TLVList::new(self.0.structure()?.find_ctx(3)?)?)
     }
 
     fn not_before(&self) -> Result<u32, Error> {
@@ -626,7 +626,7 @@ impl<'a> CertRef<'a> {
     }
 
     fn subject(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
-        TLVList::new(self.0.structure()?.find_ctx(6)?)
+        Ok(TLVList::new(self.0.structure()?.find_ctx(6)?)?)
     }
 
     fn pubkey_algo(&self) -> Result<u8, Error> {
@@ -642,7 +642,7 @@ impl<'a> CertRef<'a> {
     }
 
     fn extensions(&self) -> Result<TLVList<'a, Extension<'a>>, Error> {
-        TLVList::new(self.0.structure()?.find_ctx(10)?)
+        Ok(TLVList::new(self.0.structure()?.find_ctx(10)?)?)
     }
 
     fn signature(&self) -> Result<&[u8], Error> {

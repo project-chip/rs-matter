@@ -48,8 +48,6 @@ pub trait TLVWrite {
     /// separately - and, because the builders carry both the parent chain and
     /// the field index in their type, once per (field, parent, index) rather
     /// than once per type.
-    // The only method here that calls `ToTLV`, so it keeps reporting the shared
-    // `Error` until that trait is converted too.
     fn write_ctx<T: ToTLV>(&mut self, ctx: u8, value: &T) -> Result<(), TlvError>
     where
         Self: Sized,

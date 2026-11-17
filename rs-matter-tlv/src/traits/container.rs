@@ -29,7 +29,6 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::error::Error;
 use crate::utils::init;
 
 use super::{
@@ -102,7 +101,7 @@ where
     T: FromTLV<'a>,
 {
     /// Creates a new `TLVContainer` from a TLV element that can be any container.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, Error> {
+    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
         if !element.is_empty() {
             element.container()?;
         }
@@ -130,7 +129,7 @@ where
     T: FromTLV<'a>,
 {
     /// Creates a new `TLVContainer` from a TLV element that is expected to be of type list.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, Error> {
+    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
         if !element.is_empty() {
             element.list()?;
         }
@@ -144,7 +143,7 @@ where
     T: FromTLV<'a>,
 {
     /// Creates a new `TLVContainer` from a TLV element that is expected to be of type struct.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, Error> {
+    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
         if !element.is_empty() {
             element.structure()?;
         }
@@ -314,7 +313,7 @@ where
     }
 
     /// Returns an iterator over the elements of the array.
-    pub fn iter(&self) -> Result<TLVArrayOrSliceIter<'a, T>, Error> {
+    pub fn iter(&self) -> Result<TLVArrayOrSliceIter<'a, T>, TlvError> {
         match self {
             Self::Array(array) => Ok(TLVArrayOrSliceIter::Array(array.iter())),
             Self::Slice(slice) => Ok(TLVArrayOrSliceIter::Slice(slice.iter())),
