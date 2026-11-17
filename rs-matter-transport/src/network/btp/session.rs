@@ -504,7 +504,10 @@ impl Session {
         self.address != BtAddr([0; 6])
     }
 
-    #[allow(unused)]
+    pub fn is_initiator(&self) -> bool {
+        self.initiator
+    }
+
     pub fn is_handshake_due(&self) -> bool {
         self.handshake_pending
     }
@@ -560,8 +563,26 @@ impl Session {
             if self.initiator {
                 self.process_rx_handshake_resp(address, data)
             } else {
+                // A client closes its session by unsubscribing from `C2`, and can
+                // then start a new one on the same connection. So a Handshake
+                // Request always starts afresh, also if the GATT peripheral did
+                // not reset us on the unsubscription.
+                self.reset();
+
                 self.process_rx_handshake_req(gatt_mtu, address, data)
             }
+        } else if self.initiator && !self.is_established() {
+            // Before the handshake response, a data segment can only be left
+            // over from an earlier session: BlueZ, for one, hands a new
+            // subscriber the characteristic's current value, which is the last
+            // segment of the previous session while it keeps the device.
+            // Skip it, rather than fail the new session.
+            warn!(
+                "BTP: skipping a data segment from {} that came before the handshake response",
+                address
+            );
+
+            Ok(())
         } else {
             self.process_rx_data(data)
         }

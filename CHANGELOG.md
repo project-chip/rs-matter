@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a BTP peripheral starts a new session on every handshake request, so that a central can unsubscribe from `C2` and start a new session over the same connection (#670)
+* Fix: a bad segment closes a BTP peripheral's session, rather than failing the GATT peripheral and with it the stack (#670)
+* Fix: a BTP central skips a data segment that comes before the handshake response, which BlueZ hands over as the last value of an earlier session (#670)
 * Fix: when `BasicInfoConfig::unique_id` is empty (the default), `rs-matter` serves its own random and persisted ID (#669)
 * New: the `Commissioner` reports its steps and can be cancelled through `CommissionHooks`; a cancel rolls the device back by disarming its fail-safe, and returns the new `ErrorCode::Cancelled` (#668)
   * Breaking: `Commissioner::commission`, `commission_over_pase` and `complete_via_case` take an `impl CommissionHooks` (`()` for none)
