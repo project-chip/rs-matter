@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: operational Matter-over-TCP transport and stack integration, supporting large-message framing, multiple concurrent peer slots, and client/server connections (#658)
+  * Breaking: `BasicInfoConfig::tcp_supported` is removed; the mDNS `T` TXT key and TCP session parameters now follow `Transport::tcp_capability`, which the stack runner sets once the listener is bound
+  * Breaking: `large-buffers` now means 64 KB rather than 1 MB, and the new `large-buffers-*` features (`4096`..`1048576`) select other sizes
+  * Breaking: the std `TcpNetwork<N>` is replaced by `TcpNetwork` over `TcpNetworkSockets` and `TcpNetworkBuffers`
+  * Breaking: `StdNetStack` has a type parameter for TCP, which defaults to `NoTcp`; `StdNetStack::with_tcp(&buffers, &config)` enables operational TCP
 * Fix: when `BasicInfoConfig::unique_id` is empty (the default), `rs-matter` serves its own random and persisted ID (#669)
 * New: the `Commissioner` reports its steps and can be cancelled through `CommissionHooks`; a cancel rolls the device back by disarming its fail-safe, and returns the new `ErrorCode::Cancelled` (#668)
   * Breaking: `Commissioner::commission`, `commission_over_pase` and `complete_via_case` take an `impl CommissionHooks` (`()` for none)

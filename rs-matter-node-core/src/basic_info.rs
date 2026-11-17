@@ -240,13 +240,6 @@ pub struct BasicInfoConfig<'a> {
     ///
     /// Not a real attribute, just used to configure the session timeouts
     pub sii: Option<u32>,
-    /// Whether the device supports TCP transport.
-    ///
-    /// Not a real attribute; advertised via the `T` TXT record key in mDNS.
-    /// Per the Matter Core Spec, `T` is a bitmap: bit 2 (value 4)
-    /// indicates TCP server support. Required for large payloads such as WebRTC SDP
-    /// exchanges and camera snapshots.
-    pub tcp_supported: bool,
     /// The least max interval granted to a subscription, in seconds: what the
     /// subscriber asks for, but no less than this. A subscription with nothing to
     /// report keeps alive halfway through its max interval, so this bounds how
@@ -302,7 +295,6 @@ impl BasicInfoConfig<'_> {
             pairing_instruction: "",
             sai: None,
             sii: None,
-            tcp_supported: false,
             min_subscription_max_interval_secs: DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
             max_subscription_max_interval_secs: DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS,
         }

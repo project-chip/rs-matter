@@ -136,6 +136,9 @@ impl<const N: usize> Bump<N> {
     ///
     /// # Panics
     /// This function will panic if there is not enough memory left in the bump allocator
+    // Keep out-of-line so `T` / `f()` temporaries stay in a transient stack frame
+    // instead of being spilled into a caller `async fn` state machine.
+    #[inline(never)]
     pub fn pin_alloc_with<T, F>(&self, f: F, location: &str) -> Pin<BumpBox<'_, T>>
     where
         T: Sized,
@@ -157,6 +160,9 @@ impl<const N: usize> Bump<N> {
     ///
     /// # Panics
     /// This function will panic if there is not enough memory left in the bump allocator
+    // Keep out-of-line so `T` / `f()` temporaries stay in a transient stack frame
+    // instead of being spilled into a caller `async fn` state machine.
+    #[inline(never)]
     pub fn alloc_with<T, F>(&self, f: F, location: &str) -> BumpBox<'_, T>
     where
         T: Sized,
@@ -180,6 +186,9 @@ impl<const N: usize> Bump<N> {
     }
 
     /// Allocate an object, built in its slot by the in-place initializer `init`.
+    // Keep out-of-line so in-place initialization intermediates are not captured in
+    // a caller `async fn` state machine.
+    #[inline(never)]
     pub fn alloc_init<T, I>(&self, init: I, location: &str) -> BumpBox<'_, T>
     where
         T: Sized,

@@ -246,8 +246,17 @@ log-tlv-payload = ["rs-matter-transport/log-tlv-payload"]
 log-mrp = ["rs-matter-transport/log-mrp"]
 # Typically enabled when TCP is used.
 # When enabled, this feature extends the Transport layer packet buffers, as well as the ones
-# served by `MatterBuffers` to 1MB (from 1500 B).
-large-buffers = ["rs-matter-dm-core/large-buffers", "rs-matter-transport/large-buffers"]
+# served by `MatterBuffers` to 64 KiB (matching the Matter spec default MAX_TCP_MESSAGE_SIZE).
+large-buffers = ["large-buffers-65536"]
+large-buffers-1048576 = ["rs-matter-dm-core/large-buffers-1048576", "rs-matter-transport/large-buffers-1048576"]
+large-buffers-524288 = ["rs-matter-dm-core/large-buffers-524288", "rs-matter-transport/large-buffers-524288"]
+large-buffers-262144 = ["rs-matter-dm-core/large-buffers-262144", "rs-matter-transport/large-buffers-262144"]
+large-buffers-131072 = ["rs-matter-dm-core/large-buffers-131072", "rs-matter-transport/large-buffers-131072"]
+large-buffers-65536 = ["rs-matter-dm-core/large-buffers-65536", "rs-matter-transport/large-buffers-65536"]
+large-buffers-32768 = ["rs-matter-dm-core/large-buffers-32768", "rs-matter-transport/large-buffers-32768"]
+large-buffers-16384 = ["rs-matter-dm-core/large-buffers-16384", "rs-matter-transport/large-buffers-16384"]
+large-buffers-8192 = ["rs-matter-dm-core/large-buffers-8192", "rs-matter-transport/large-buffers-8192"]
+large-buffers-4096 = ["rs-matter-dm-core/large-buffers-4096", "rs-matter-transport/large-buffers-4096"]
 # Multicast groups support.
 groups = ["rs-matter-crypto/groups", "rs-matter-node-core/groups", "rs-matter-transport/groups", "rs-matter-node/groups", "rs-matter-sc/groups", "rs-matter-im/groups", "rs-matter-dm/groups"]
 # Persist accepted subscriptions and resume them across a reboot.

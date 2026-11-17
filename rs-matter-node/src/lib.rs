@@ -1429,6 +1429,77 @@ pub mod test {
     }
 
     #[test]
+    fn operational_tcp_advertisement_tracks_bound_capability() {
+        use crate::transport::network::tcp::TcpCapability;
+        use crate::transport::network::MatterLocalService;
+
+        let service = MatterLocalService::Commissioned {
+            compressed_fabric_id: 1,
+            node_id: 2,
+        };
+        let matter = Matter::new(
+            &rs_matter_node_core::test_device::TEST_DEV_DET,
+            rs_matter_node_core::test_device::TEST_DEV_COMM,
+            &rs_matter_node_core::test_device::TEST_DEV_ATT,
+            0,
+        );
+
+        let max_msg_size = crate::transport::MAX_RX_BUF_SIZE as u32;
+        for (capability, expected) in [
+            (TcpCapability::None, None),
+            (TcpCapability::ServerOnly(max_msg_size), Some("4")),
+            (TcpCapability::ClientAndServer(max_msg_size), Some("6")),
+        ] {
+            matter.transport().set_tcp_capability(capability);
+            let mut buf = [0u8; 512];
+            let (mut record, _) = service.service(&matter, &mut buf).unwrap();
+            assert_eq!(
+                record
+                    .txt_kvs
+                    .find(|(key, _)| *key == "T")
+                    .map(|(_, value)| value),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn commissionable_tcp_advertisement_tracks_bound_capability() {
+        use crate::transport::network::tcp::TcpCapability;
+        use crate::transport::network::MatterLocalService;
+
+        let service = MatterLocalService::Commissionable {
+            id: 1,
+            discriminator: 840,
+            enhanced: false,
+        };
+        let matter = Matter::new(
+            &rs_matter_node_core::test_device::TEST_DEV_DET,
+            rs_matter_node_core::test_device::TEST_DEV_COMM,
+            &rs_matter_node_core::test_device::TEST_DEV_ATT,
+            0,
+        );
+
+        let max_msg_size = crate::transport::MAX_RX_BUF_SIZE as u32;
+        for (capability, expected) in [
+            (TcpCapability::None, None),
+            (TcpCapability::ServerOnly(max_msg_size), Some("4")),
+            (TcpCapability::ClientAndServer(max_msg_size), Some("6")),
+        ] {
+            matter.transport().set_tcp_capability(capability);
+            let mut buf = [0u8; 512];
+            let (mut record, _) = service.service(&matter, &mut buf).unwrap();
+            assert_eq!(
+                record
+                    .txt_kvs
+                    .find(|(key, _)| *key == "T")
+                    .map(|(_, value)| value),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn with_fabrics_hands_out_the_sessions_and_the_fabrics() {
         use crate::transport::TransportHost;
 

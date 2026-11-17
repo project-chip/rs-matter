@@ -23,7 +23,7 @@
 use core::future::Future;
 
 pub use embassy_futures::block_on;
-pub use embassy_futures::join::{join, Join, Join3, Join4, Join5};
+pub use embassy_futures::join::{join, join_array, Join, Join3, Join4, Join5};
 pub use embassy_futures::select::{
     select, select3, select4, select_slice, Either, Either3, Either4, Select, Select3, Select4,
 };

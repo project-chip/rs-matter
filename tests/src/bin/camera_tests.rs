@@ -367,6 +367,8 @@ type WebRtc =
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static TCP_BUFFERS: StaticCell<rs_matter::transport::network::tcp::TcpNetworkBuffers> =
+    StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CamAv> = StaticCell::new();
 static CAM_AV_SETTINGS: StaticCell<
@@ -390,6 +392,12 @@ fn main() -> Result<(), Error> {
         &TEST_DEV_ATT,
         args::port_override(),
     ));
+
+    matter.transport().set_tcp_capability(
+        rs_matter::transport::network::tcp::TcpCapability::ServerOnly(
+            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+        ),
+    );
 
     // Dump the data model as JSON for `cargo xtask pics`, then exit.
     if args::dump_pics_json(matter, &NODE)? {
@@ -581,7 +589,14 @@ fn main() -> Result<(), Error> {
 
     let udp_socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
     let tcp_socket = async_io::Async::<TcpListener>::bind(args::bind_addr())?;
-    let tcp = rs_matter::transport::network::tcp::TcpNetwork::<8>::new(tcp_socket);
+    let tcp_buffers = TCP_BUFFERS
+        .uninit()
+        .init_with(rs_matter::transport::network::tcp::TcpNetworkBuffers::init());
+    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(
+        tcp_socket,
+        tcp_buffers,
+        &rs_matter::transport::network::tcp::TcpConfig::new(),
+    )?;
     let (mut net_send, mut net_recv, mut net_multicast) = {
         use rs_matter::transport::network::{Address, ChainedNetwork};
         let net_send = ChainedNetwork::new(|addr: &Address| addr.is_tcp(), &tcp, &udp_socket);
@@ -590,7 +605,11 @@ fn main() -> Result<(), Error> {
     };
 
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
+    let mut transport = pin!(rs_matter::utils::futures::select(
+        matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast),
+        tcp.run(),
+    )
+    .coalesce());
 
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
 
@@ -628,7 +647,6 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     },
     device_type: Some(DEV_TYPE_CAMERA.dtype),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
-    tcp_supported: true,
     ..TEST_DEV_DET
 };
 
