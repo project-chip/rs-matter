@@ -1317,7 +1317,7 @@ impl NodeInfo {
             ("MCORE.DD.COMMISSIONING_SUBTYPE_V", subtype("_V")),
             ("MCORE.DD.COMMISSIONING_SUBTYPE_T", subtype("_T")),
             // The operational `T` key is the TCP support bitmap, and the stack
-            // emits it only when operational TCP is bound (`Transport::tcp_mdns_capability`
+            // emits it only when operational TCP is bound (`Transport::tcp_capability`
             // is non-empty; empty values are filtered out of the TXT record). Its
             // presence is therefore exactly the question this item asks - and it
             // gates the whole TC-SC-8 suite.

@@ -391,6 +391,12 @@ fn main() -> Result<(), Error> {
         args::port_override(),
     ));
 
+    matter.transport().set_tcp_capability(
+        rs_matter::transport::network::tcp::TcpCapability::ServerOnly(
+            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+        ),
+    );
+
     // Dump the data model as JSON for `cargo xtask pics`, then exit.
     if args::dump_pics_json(matter, &NODE)? {
         return Ok(());
@@ -588,11 +594,6 @@ fn main() -> Result<(), Error> {
         &tcp_buffers,
         &rs_matter::transport::network::tcp::TcpConfig::new(),
     )?;
-    matter.transport().set_tcp_capability(
-        rs_matter::transport::network::tcp::TcpCapability::ServerOnly(
-            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
-        ),
-    );
     let (mut net_send, mut net_recv, mut net_multicast) = {
         use rs_matter::transport::network::{Address, ChainedNetwork};
         let net_send = ChainedNetwork::new(|addr: &Address| addr.is_tcp(), &tcp, &udp_socket);

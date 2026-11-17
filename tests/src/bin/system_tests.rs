@@ -347,6 +347,13 @@ fn main() -> Result<(), Error> {
         &NODE
     };
 
+    #[cfg(feature = "test-tcp")]
+    matter.transport().set_tcp_capability(
+        rs_matter::transport::network::tcp::TcpCapability::ServerOnly(
+            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+        ),
+    );
+
     // Dump the data model as JSON for `cargo xtask pics`, then exit.
     if args::dump_pics_json(matter, node)? {
         return Ok(());
@@ -475,15 +482,9 @@ fn main() -> Result<(), Error> {
         rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
     #[cfg(feature = "test-tcp")]
     let tcp = {
-        use rs_matter::transport::network::tcp::{TcpCapability, TcpConfig, TcpNetwork};
+        use rs_matter::transport::network::tcp::{TcpConfig, TcpNetwork};
 
         let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(bind_addr)?;
-
-        matter
-            .transport()
-            .set_tcp_capability(TcpCapability::ServerOnly(
-                rs_matter::transport::MAX_RX_BUF_SIZE as u32,
-            ));
 
         info!("TCP transport enabled, listening on {}", bind_addr);
 
