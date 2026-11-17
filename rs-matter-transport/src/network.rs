@@ -420,27 +420,41 @@ impl NetworkMulticast for NoNetwork {
     }
 }
 
-impl<T: NetworkSend> NetworkSend for Option<T> {
+/// A network endpoint that delegates to either `A` or `B`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum EitherNetwork<A, B> {
+    First(A),
+    Second(B),
+}
+
+impl<A: NetworkSend, B: NetworkSend> NetworkSend for EitherNetwork<A, B> {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
         match self {
-            Some(net) => net.send_to(data, addr).await,
-            None => NoNetwork.send_to(data, addr).await,
+            Self::First(net) => net.send_to(data, addr).await,
+            Self::Second(net) => net.send_to(data, addr).await,
         }
     }
 }
 
-impl<T: NetworkReceive> NetworkReceive for Option<T> {
+impl<A: NetworkReceive, B: NetworkReceive> NetworkReceive for EitherNetwork<A, B> {
     async fn wait_available(&mut self) -> Result<(), Error> {
         match self {
-            Some(net) => net.wait_available().await,
-            None => NoNetwork.wait_available().await,
+            Self::First(net) => net.wait_available().await,
+            Self::Second(net) => net.wait_available().await,
+        }
+    }
+
+    async fn wait_available_or_closed(&mut self) -> Result<Option<Address>, Error> {
+        match self {
+            Self::First(net) => net.wait_available_or_closed().await,
+            Self::Second(net) => net.wait_available_or_closed().await,
         }
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
         match self {
-            Some(net) => net.recv_from(buffer).await,
-            None => NoNetwork.recv_from(buffer).await,
+            Self::First(net) => net.recv_from(buffer).await,
+            Self::Second(net) => net.recv_from(buffer).await,
         }
     }
 }

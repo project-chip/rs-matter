@@ -57,7 +57,8 @@ use rs_matter_sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter_transport::exchange::MatterBuffers;
 use rs_matter_transport::network::tcp::TcpCapability;
 use rs_matter_transport::network::{
-    Address, ChainedNetwork, NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork,
+    Address, ChainedNetwork, EitherNetwork, NetworkMulticast, NetworkReceive, NetworkSend,
+    NoNetwork,
 };
 use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
@@ -609,70 +610,78 @@ where
             )
             .await?;
 
-        let (send, recv, multicast) = socket.split();
+        let (udp_send, udp_recv, multicast) = socket.split();
 
         let tcp_stack = net_stack.tcp();
-        let mut tcp = None;
-        if let Some(tcp_stack) = tcp_stack.as_ref() {
-            match tcp_stack
-                .bind(SocketAddr::V6(SocketAddrV6::new(
-                    Ipv6Addr::UNSPECIFIED,
-                    self.matter().port(),
-                    0,
-                    net_interface,
-                )))
-                .await
-            {
-                Ok(bound) => {
-                    let max_message_size = bound.max_message_size() as u32;
-                    let capability = if tcp_stack.supports_client() {
-                        TcpCapability::ClientAndServer(max_message_size)
-                    } else {
-                        TcpCapability::ServerOnly(max_message_size)
-                    };
-                    self.matter().transport().set_tcp_capability(capability);
-                    self.matter().transport().notify_mdns_changed();
-                    tcp = Some(bound);
-                }
-                Err(_err) => {
-                    warn!(
-                        "Failed to bind Matter-over-TCP listener ({:?}); continuing UDP-only",
-                        _err
-                    );
-                }
+        let bound = self.bind_tcp(tcp_stack.as_ref(), net_interface).await;
+        let tcp = bound.as_deref();
+
+        let (send, recv) = if let Some(tcp) = tcp {
+            (
+                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.send(), udp_send)),
+                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.recv(), udp_recv)),
+            )
+        } else {
+            (
+                EitherNetwork::Second(udp_send),
+                EitherNetwork::Second(udp_recv),
+            )
+        };
+
+        let mut transport =
+            pin!(
+                self.run_transport_oper(crypto, send, recv, multicast, comm, |a: &Address| a
+                    .is_udp()
+                    || a.is_tcp(),)
+            );
+
+        if let Some(tcp) = tcp {
+            let mut tcp_runner = pin!(tcp.run());
+            select(&mut transport, &mut tcp_runner).coalesce().await
+        } else {
+            transport.await
+        }
+    }
+
+    async fn bind_tcp<'t, T: NetTcpStack>(
+        &'t self,
+        tcp_stack: Option<&'t T>,
+        net_interface: u32,
+    ) -> Option<impl core::ops::Deref<Target = T::Tcp<'t>> + 't> {
+        let tcp_stack = tcp_stack?;
+        let addr = SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::UNSPECIFIED,
+            self.matter().port(),
+            0,
+            net_interface,
+        ));
+
+        match tcp_stack.bind(addr).await {
+            Ok(tcp) => {
+                let max_message_size = tcp.max_message_size() as u32;
+                let capability = if tcp_stack.supports_client() {
+                    TcpCapability::ClientAndServer(max_message_size)
+                } else {
+                    TcpCapability::ServerOnly(max_message_size)
+                };
+                self.set_tcp_capability(capability);
+                Some(scopeguard::guard(tcp, |_| {
+                    self.set_tcp_capability(TcpCapability::None);
+                }))
+            }
+            Err(_err) => {
+                warn!(
+                    "Failed to bind Matter-over-TCP listener ({:?}); continuing UDP-only",
+                    _err
+                );
+                None
             }
         }
+    }
 
-        let _guard = scopeguard::guard(tcp.is_some(), |had_tcp| {
-            if had_tcp {
-                self.matter()
-                    .transport()
-                    .set_tcp_capability(TcpCapability::None);
-                self.matter().transport().notify_mdns_changed();
-            }
-        });
-
-        let has_tcp = tcp.is_some();
-        let is_oper = move |a: &Address| a.is_udp() || (has_tcp && a.is_tcp());
-        let tcp_send = tcp.as_ref().map(NetTcp::send);
-        let tcp_recv = tcp.as_ref().map(NetTcp::recv);
-
-        let mut transport = pin!(self.run_transport_oper(
-            crypto,
-            ChainedNetwork::new(Address::is_udp, send, tcp_send),
-            ChainedNetwork::new(Address::is_udp, recv, tcp_recv),
-            multicast,
-            comm,
-            is_oper,
-        ));
-        let mut tcp_runner = pin!(async {
-            match tcp.as_ref() {
-                Some(t) => t.run().await,
-                None => core::future::pending().await,
-            }
-        });
-
-        select(&mut transport, &mut tcp_runner).coalesce().await
+    fn set_tcp_capability(&self, capability: TcpCapability) {
+        self.matter().transport().set_tcp_capability(capability);
+        self.matter().transport().notify_mdns_changed();
     }
 
     async fn run_transport_oper<C, S, R, M, CR, CS, F>(
