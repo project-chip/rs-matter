@@ -367,6 +367,8 @@ type WebRtc =
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static TCP_BUFFERS: StaticCell<rs_matter::transport::network::tcp::TcpNetworkBuffers> =
+    StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CamAv> = StaticCell::new();
 static CAM_AV_SETTINGS: StaticCell<
@@ -587,11 +589,12 @@ fn main() -> Result<(), Error> {
 
     let udp_socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
     let tcp_socket = async_io::Async::<TcpListener>::bind(args::bind_addr())?;
-    let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
-        rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
+    let tcp_buffers = TCP_BUFFERS
+        .uninit()
+        .init_with(rs_matter::transport::network::tcp::TcpNetworkBuffers::init());
     let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(
         tcp_socket,
-        &tcp_buffers,
+        tcp_buffers,
         &rs_matter::transport::network::tcp::TcpConfig::new(),
     )?;
     let (mut net_send, mut net_recv, mut net_multicast) = {

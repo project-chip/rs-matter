@@ -146,6 +146,9 @@ use pipe::run_app_pipe_actions;
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
+#[cfg(feature = "test-tcp")]
+static TCP_BUFFERS: StaticCell<rs_matter::transport::network::tcp::TcpNetworkBuffers> =
+    StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<Mutex<RefCell<UnitTestingHandlerData>>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 static ICD: StaticCell<LitIcd> = StaticCell::new();
@@ -478,17 +481,15 @@ fn main() -> Result<(), Error> {
 
     // Optionally bind a TCP listener as well
     #[cfg(feature = "test-tcp")]
-    let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
-        rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
-    #[cfg(feature = "test-tcp")]
     let tcp = {
-        use rs_matter::transport::network::tcp::{TcpConfig, TcpNetwork};
+        use rs_matter::transport::network::tcp::{TcpConfig, TcpNetwork, TcpNetworkBuffers};
 
         let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(bind_addr)?;
+        let tcp_buffers = TCP_BUFFERS.uninit().init_with(TcpNetworkBuffers::init());
 
         info!("TCP transport enabled, listening on {}", bind_addr);
 
-        TcpNetwork::new(tcp_socket, &tcp_buffers, &TcpConfig::new())?
+        TcpNetwork::new(tcp_socket, tcp_buffers, &TcpConfig::new())?
     };
 
     // Optionally create a chained UDP+TCP network

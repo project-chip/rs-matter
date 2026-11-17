@@ -1088,6 +1088,8 @@ impl WebRtcHooks for Str0mHooks {
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static TCP_BUFFERS: StaticCell<rs_matter::transport::network::tcp::TcpNetworkBuffers> =
+    StaticCell::new();
 static STATE: StaticCell<InteractionModelState> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
@@ -1306,11 +1308,12 @@ fn main() -> Result<(), Error> {
     // and publish live TCP capability on `Transport` so the controller can
     // fall back to TCP for large payloads.
     let tcp_socket = Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let tcp_buffers: rs_matter::transport::network::tcp::TcpNetworkBuffers =
-        rs_matter::transport::network::tcp::TcpNetworkBuffers::new();
+    let tcp_buffers = TCP_BUFFERS
+        .uninit()
+        .init_with(rs_matter::transport::network::tcp::TcpNetworkBuffers::init());
     let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(
         tcp_socket,
-        &tcp_buffers,
+        tcp_buffers,
         &rs_matter::transport::network::tcp::TcpConfig::new(),
     )?;
     matter.transport().set_tcp_capability(
