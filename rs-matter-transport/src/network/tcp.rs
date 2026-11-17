@@ -262,7 +262,11 @@ pub struct TcpConfig {
     /// made progress for this duration. Defaults to `None` so quiet long-lived
     /// connections (such as WebRTC signaling) are preserved by TCP keep-alive.
     pub idle_timeout: Option<Duration>,
-    /// Bound a complete outbound frame write, including time spent queued.
+    /// Timeout for outbound TCP write progress and slot/queue waits:
+    /// - Closes an active connection when queued outbound data makes no write
+    ///   progress for this duration (restarted on each successful write).
+    /// - Bounds how long `send_to` waits for a peer slot and for TX queue space,
+    ///   and how long an accepted connection waits for an evicted slot to clear.
     pub send_timeout: Duration,
     /// Bound an outbound `connect` handshake.
     pub connect_timeout: Duration,
