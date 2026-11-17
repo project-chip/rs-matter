@@ -1088,6 +1088,8 @@ impl WebRtcHooks for Str0mHooks {
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static TCP_BUFFERS: StaticCell<rs_matter::transport::network::tcp::TcpNetworkBuffers> =
+    StaticCell::new();
 static STATE: StaticCell<InteractionModelState> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
@@ -1303,11 +1305,22 @@ fn main() -> Result<(), Error> {
 
     // WebRTC ICE / STUN / DTLS messages routed over Matter can easily
     // exceed Matter's UDP MRU (~1200 B post-PASE); attach a TCP transport
-    // so the controller can fall back to TCP for large payloads. The
-    // `tcp_supported: true` flag in `BASIC_INFO` advertises this via
-    // mDNS (`T=1`).
+    // and publish live TCP capability on `Transport` so the controller can
+    // fall back to TCP for large payloads.
     let tcp_socket = Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let tcp = rs_matter::transport::network::tcp::TcpNetwork::<8>::new(tcp_socket);
+    let tcp_buffers = TCP_BUFFERS
+        .uninit()
+        .init_with(rs_matter::transport::network::tcp::TcpNetworkBuffers::init());
+    let tcp = rs_matter::transport::network::tcp::TcpNetwork::new(
+        tcp_socket,
+        tcp_buffers,
+        &rs_matter::transport::network::tcp::TcpConfig::new(),
+    )?;
+    matter.transport().set_tcp_capability(
+        rs_matter::transport::network::tcp::TcpCapability::ClientAndServer(
+            rs_matter::transport::MAX_RX_BUF_SIZE as u32,
+        ),
+    );
     info!(
         "TCP transport enabled, listening on {}",
         MATTER_SOCKET_BIND_ADDR
@@ -1322,7 +1335,11 @@ fn main() -> Result<(), Error> {
     };
 
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
+    let mut transport = pin!(rs_matter::utils::futures::select(
+        matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast),
+        tcp.run(),
+    )
+    .coalesce());
     let mut driver = pin!(shared.drive());
 
     if !matter.has_fabrics() {
@@ -1340,14 +1357,7 @@ fn main() -> Result<(), Error> {
 // Node + handler wiring
 // ---------------------------------------------------------------------------
 
-/// Basic-info override: same as `TEST_DEV_DET` but advertises TCP support
-/// (`T=1` in the mDNS TXT record). Required because some WebRTC payloads
-/// (large ICE / STUN / DTLS messages) exceed Matter's UDP MRU and need to
-/// fall back to TCP.
-const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
-    tcp_supported: true,
-    ..TEST_DEV_DET
-};
+const BASIC_INFO: BasicInfoConfig<'static> = TEST_DEV_DET;
 
 const NODE: Node<'static> = Node {
     endpoints: &[

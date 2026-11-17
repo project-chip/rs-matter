@@ -71,11 +71,11 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
-use rs_matter::transport::network::tcp::TcpNetwork;
+use rs_matter::transport::network::tcp::{TcpConfig, TcpNetwork, TcpNetworkBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::session::{Session, SessionMode};
 use rs_matter::transport::{TransportPreference, MATTER_SOCKET_BIND_ADDR};
-use rs_matter::utils::futures::{join, select, select3, Coalesce, Either};
+use rs_matter::utils::futures::{join, select, select4, Coalesce, Either};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::timers::{Duration, Timer};
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
@@ -166,13 +166,10 @@ macro_rules! commissioning_test {
     ) => {
         #[test]
         fn $test_name() {
-            let thread = std::thread::spawn(|| {
-                init_env_logger();
-                futures_lite::future::block_on(async {
-                    $run_name().await.unwrap();
-                });
+            init_env_logger();
+            futures_lite::future::block_on(async {
+                $run_name().await.unwrap();
             });
-            thread.join().unwrap();
         }
 
         async fn $run_name() -> Result<(), Error> {
@@ -241,8 +238,9 @@ macro_rules! commissioning_test {
             // (SO_REUSEPORT semantics + any system avahi-daemon). The mDNS
             // protocol code is covered by unit tests instead.
             let device_fut = async {
-                select3(
+                select4(
                     device_matter.run(&device_crypto, &device_net, &device_net, NoNetwork),
+                    device_net.run_transport(),
                     responder.run::<4, 4>(),
                     dm.run(),
                 )
@@ -251,7 +249,11 @@ macro_rules! commissioning_test {
             };
 
             let controller_fut = run_with_transport(
-                ctrl_matter.run(&ctrl_crypto, &ctrl_net, &ctrl_net, NoNetwork),
+                select(
+                    ctrl_matter.run(&ctrl_crypto, &ctrl_net, &ctrl_net, NoNetwork),
+                    ctrl_net.run_transport(),
+                )
+                .coalesce(),
                 run_controller_flow(
                     ctrl_matter,
                     &ctrl_crypto,
@@ -278,6 +280,31 @@ commissioning_test! {
     ctrl_transport: create_dual_stack_socket()?,
 }
 
+trait TransportRun {
+    async fn run_transport(&self) -> Result<(), Error>;
+}
+
+impl TransportRun for async_io::Async<UdpSocket> {
+    async fn run_transport(&self) -> Result<(), Error> {
+        core::future::pending().await
+    }
+}
+
+impl<
+        L: rs_matter::transport::network::tcp::TcpNetworkSockets,
+        const N: usize,
+        const SLOTS: usize,
+        const TX: usize,
+    > TransportRun for TcpNetwork<'_, L, N, SLOTS, TX>
+{
+    async fn run_transport(&self) -> Result<(), Error> {
+        self.run().await
+    }
+}
+
+static TCP_DEVICE_NET_BUFFERS: StaticCell<TcpNetworkBuffers> = StaticCell::new();
+static TCP_CTRL_NET_BUFFERS: StaticCell<TcpNetworkBuffers> = StaticCell::new();
+
 commissioning_test! {
     test_name: test_commissioning_onoff_cluster_tcp,
     run_name: run_test_tcp,
@@ -286,12 +313,18 @@ commissioning_test! {
     device_subscriptions: TCP_DEVICE_STATE,
     ctrl_matter: TCP_CTRL_MATTER,
     use_tcp: true,
-    device_transport: TcpNetwork::<8>::new(
+    device_transport: TcpNetwork::new(
         async_io::Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?,
-    ),
-    ctrl_transport: TcpNetwork::<8>::new(async_io::Async::<TcpListener>::bind(
-        SocketAddr::V6(SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
-    )?),
+        TCP_DEVICE_NET_BUFFERS.uninit().init_with(TcpNetworkBuffers::init()),
+        &TcpConfig::new(),
+    )?,
+    ctrl_transport: TcpNetwork::new(
+        async_io::Async::<TcpListener>::bind(
+            SocketAddr::V6(SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+        )?,
+        TCP_CTRL_NET_BUFFERS.uninit().init_with(TcpNetworkBuffers::init()),
+        &TcpConfig::new(),
+    )?,
 }
 
 async fn run_controller_flow<C: Crypto, D: Crypto>(

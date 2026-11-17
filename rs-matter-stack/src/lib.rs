@@ -55,8 +55,10 @@ use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_respond::{DefaultResponder, ExchangeHandler, Responder};
 use rs_matter_sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter_transport::exchange::MatterBuffers;
+use rs_matter_transport::network::tcp::TcpCapability;
 use rs_matter_transport::network::{
-    Address, ChainedNetwork, NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork,
+    Address, ChainedNetwork, EitherNetwork, NetworkMulticast, NetworkReceive, NetworkSend,
+    NoNetwork,
 };
 use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
@@ -69,7 +71,7 @@ use rs_matter_utils::timers::{Duration, Timer};
 
 use crate::bump::Bump;
 use crate::mdns::{Mdns, MAX_NETIF_IPV6_ADDRS};
-use crate::net::{NetSocket, NetStack};
+use crate::net::{NetSocket, NetStack, NetTcp, NetTcpStack};
 use crate::network::{Embedding, StackNetwork};
 
 #[cfg(feature = "alloc")]
@@ -85,6 +87,7 @@ pub mod eth;
 pub mod mdns;
 pub mod net;
 pub mod network;
+pub mod tcp;
 pub mod wireless;
 
 cfg_if! {
@@ -548,7 +551,7 @@ where
         }
     }
 
-    /// This method is a specialization of `run_transport_net` over the UDP transport (both IPv4 and IPv6).
+    /// Run operational UDP and, when enabled by the driver, the TCP listener.
     /// It calls `run_transport_net`.
     ///
     /// #Arguments
@@ -565,12 +568,31 @@ where
         net_stack: &U,
         net_interface: u32,
         until: X,
-        mut comm: Option<(R, S)>,
+        comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
         C: Crypto,
         U: NetStack,
         X: Future<Output = Result<(), Error>> + MaybeSend,
+        R: NetworkReceive,
+        S: NetworkSend,
+    {
+        let mut until_task = pin!(until);
+        let mut netw_task = pin!(self.run_oper_loop(crypto, net_stack, net_interface, comm));
+
+        select(&mut netw_task, &mut until_task).coalesce().await
+    }
+
+    async fn run_oper_loop<C, U, R, S>(
+        &self,
+        crypto: &C,
+        net_stack: &U,
+        net_interface: u32,
+        comm: Option<(R, S)>,
+    ) -> Result<(), Error>
+    where
+        C: Crypto,
+        U: NetStack,
         R: NetworkReceive,
         S: NetworkSend,
     {
@@ -588,27 +610,109 @@ where
             )
             .await?;
 
-        let (send, recv, multicast) = socket.split();
+        let (udp_send, udp_recv, multicast) = socket.split();
 
-        let mut until_task = pin!(until);
+        let tcp_stack = net_stack.tcp();
+        let bound = self.bind_tcp(tcp_stack.as_ref(), net_interface).await;
+        let tcp = bound.as_deref();
 
+        let (send, recv) = if let Some(tcp) = tcp {
+            (
+                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.send(), udp_send)),
+                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.recv(), udp_recv)),
+            )
+        } else {
+            (
+                EitherNetwork::Second(udp_send),
+                EitherNetwork::Second(udp_recv),
+            )
+        };
+
+        let is_oper = |a: &Address| a.is_udp() || a.is_tcp();
+        let mut transport =
+            pin!(self.run_transport_oper(crypto, send, recv, multicast, comm, is_oper));
+
+        if let Some(tcp) = tcp {
+            let mut tcp_runner = pin!(tcp.run());
+            select(&mut transport, &mut tcp_runner).coalesce().await
+        } else {
+            transport.await
+        }
+    }
+
+    async fn bind_tcp<'t, T: NetTcpStack>(
+        &'t self,
+        tcp_stack: Option<&'t T>,
+        net_interface: u32,
+    ) -> Option<impl core::ops::Deref<Target = T::Tcp<'t>> + 't> {
+        let tcp_stack = tcp_stack?;
+        let addr = SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::UNSPECIFIED,
+            self.matter().port(),
+            0,
+            net_interface,
+        ));
+
+        match tcp_stack.bind(addr).await {
+            Ok(tcp) => {
+                let max_message_size = tcp.max_message_size() as u32;
+                let capability = if tcp_stack.supports_client() {
+                    TcpCapability::ClientAndServer(max_message_size)
+                } else {
+                    TcpCapability::ServerOnly(max_message_size)
+                };
+                self.set_tcp_capability(capability);
+                Some(scopeguard::guard(tcp, |_| {
+                    self.set_tcp_capability(TcpCapability::None);
+                }))
+            }
+            Err(_err) => {
+                warn!(
+                    "Failed to bind Matter-over-TCP listener ({:?}); continuing UDP-only",
+                    _err
+                );
+                None
+            }
+        }
+    }
+
+    fn set_tcp_capability(&self, capability: TcpCapability) {
+        self.matter().transport().set_tcp_capability(capability);
+        self.matter().transport().notify_mdns_changed();
+    }
+
+    async fn run_transport_oper<C, S, R, M, CR, CS, F>(
+        &self,
+        crypto: &C,
+        send: S,
+        recv: R,
+        multicast: M,
+        mut comm: Option<(CR, CS)>,
+        is_oper: F,
+    ) -> Result<(), Error>
+    where
+        C: Crypto,
+        S: NetworkSend,
+        R: NetworkReceive,
+        M: NetworkMulticast,
+        CR: NetworkReceive,
+        CS: NetworkSend,
+        F: Fn(&Address) -> bool + Copy + MaybeSend,
+    {
         if let Some((comm_recv, comm_send)) = comm.as_mut() {
             info!("Running operational and commissioning networks");
 
-            let mut netw_task = pin!(self.run_transport_net(
+            self.run_transport_net(
                 crypto,
-                ChainedNetwork::new(Address::is_udp, send, comm_send),
-                ChainedNetwork::new(Address::is_udp, recv, comm_recv),
+                ChainedNetwork::new(is_oper, send, comm_send),
+                ChainedNetwork::new(is_oper, recv, comm_recv),
                 ChainedNetwork::new(Address::is_udp, multicast, NoNetwork),
-            ));
-
-            select(&mut netw_task, &mut until_task).coalesce().await
+            )
+            .await
         } else {
             info!("Running operational network");
 
-            let mut netw_task = pin!(self.run_transport_net(crypto, send, recv, multicast));
-
-            select(&mut netw_task, &mut until_task).coalesce().await
+            self.run_transport_net(crypto, send, recv, multicast).await
         }
     }
 

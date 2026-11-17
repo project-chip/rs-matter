@@ -45,25 +45,16 @@ use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 ///
-/// When the `large-buffers` feature is enabled, this tracks the larger TCP-capable packet
-/// size, so that IM-level buffers (e.g. `IMBuffer`) can absorb a full Matter-over-TCP
-/// message. Otherwise it stays at the UDP-sized default.
+/// Tracks `IM_BUFFER_SIZE` (`MAX_RX_BUF_SIZE`), scaling automatically with `large-buffers-*`.
 pub const MAX_EXCHANGE_RX_BUF_SIZE: usize = crate::dm::IM_BUFFER_SIZE;
 
-#[cfg(feature = "large-buffers")]
-const _: () = core::assert!(MAX_EXCHANGE_RX_BUF_SIZE == network::MAX_RX_LARGE_PACKET_SIZE);
-#[cfg(not(feature = "large-buffers"))]
-const _: () = core::assert!(MAX_EXCHANGE_RX_BUF_SIZE == network::MAX_RX_PACKET_SIZE);
+const _: () = core::assert!(MAX_EXCHANGE_RX_BUF_SIZE == MAX_RX_BUF_SIZE);
 
 /// Maximum buffer which should be allocated and used by user code that wants to send messages via `Exchange::send`
 ///
-/// Mirrors `MAX_EXCHANGE_RX_BUF_SIZE` with respect to the `large-buffers` feature.
-#[cfg(feature = "large-buffers")]
+/// Mirrors `MAX_TX_BUF_SIZE` with respect to the `large-buffers-*` features.
 pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
-    network::MAX_TX_LARGE_PACKET_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
-#[cfg(not(feature = "large-buffers"))]
-pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
-    network::MAX_TX_PACKET_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
+    MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
 
 /// A protocol payload buffer, sized to hold a full exchange RX message
 /// ([`MAX_EXCHANGE_RX_BUF_SIZE`]).
