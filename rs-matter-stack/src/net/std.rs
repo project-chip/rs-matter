@@ -61,10 +61,13 @@ impl StdNetStack<crate::tcp::NoTcp> {
 }
 
 impl<'a> StdNetStack<StdTcpStack<'a>> {
-    /// Create a new `StdNetStack` with operational TCP enabled over caller-owned buffers.
-    pub const fn with_tcp(tcp: &'a crate::tcp::TcpNetworkBuffers) -> Self {
+    /// Create a new `StdNetStack` with operational TCP enabled over caller-owned buffers and config.
+    pub const fn with_tcp(
+        buffers: &'a crate::tcp::TcpNetworkBuffers,
+        config: &'a crate::tcp::TcpConfig,
+    ) -> Self {
         Self {
-            tcp: Some(StdTcpStack(tcp)),
+            tcp: Some(StdTcpStack { buffers, config }),
         }
     }
 }
@@ -148,9 +151,12 @@ mod tcp {
     pub type StdTcpSocket = Async<TcpStream>;
 
     /// Operational TCP stack for [`StdNetStack`](super::StdNetStack) backed by
-    /// caller-owned [`TcpNetworkBuffers`].
+    /// caller-owned [`TcpNetworkBuffers`] and [`TcpConfig`].
     #[derive(Clone, Copy)]
-    pub struct StdTcpStack<'a>(pub(super) &'a TcpNetworkBuffers);
+    pub struct StdTcpStack<'a> {
+        pub(super) buffers: &'a TcpNetworkBuffers,
+        pub(super) config: &'a TcpConfig,
+    }
 
     impl<'a> NetTcpStack for StdTcpStack<'a> {
         type Tcp<'s>
@@ -160,7 +166,7 @@ mod tcp {
 
         async fn bind(&self, addr: SocketAddr) -> Result<Self::Tcp<'_>, Error> {
             let listener = StdTcpListener::bind(addr)?;
-            TcpNetwork::new(listener, self.0, &TcpConfig::new())
+            TcpNetwork::new(listener, self.buffers, self.config)
         }
 
         fn supports_client(&self) -> bool {
@@ -275,12 +281,13 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn std_net_stack_binds_tcp_server() {
         use crate::net::NetTcpStack;
-        use crate::tcp::TcpNetworkBuffers;
+        use crate::tcp::{TcpConfig, TcpNetworkBuffers};
         use rs_matter_utils::init::InitMaybeUninit;
 
         futures_lite::future::block_on(async {
             let buffers = Box::leak(Box::new_uninit()).init_with(TcpNetworkBuffers::init());
-            let stack = StdNetStack::with_tcp(buffers);
+            let config = TcpConfig::new();
+            let stack = StdNetStack::with_tcp(buffers, &config);
             let addr = "127.0.0.1:0".parse().unwrap();
             let tcp_stack = stack.tcp().unwrap();
             assert!(tcp_stack.supports_client());
