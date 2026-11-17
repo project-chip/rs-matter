@@ -326,11 +326,11 @@ pub struct TcpNetwork<
 impl<'a, L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_BUF: usize>
     TcpNetwork<'a, L, N, SLOTS, TX_BUF>
 {
-    /// Try to bind `sockets` to caller-owned `buffers` with `config`.
+    /// Bind `sockets` to caller-owned `buffers` with `config`.
     ///
     /// Returns [`ErrorCode::ResourceExhausted`] if `buffers` is already bound
     /// to another active [`TcpNetwork`] instance.
-    pub fn try_new(
+    pub fn new(
         sockets: L,
         buffers: &'a TcpNetworkBuffers<N, SLOTS, TX_BUF>,
         config: &TcpConfig,
@@ -345,19 +345,6 @@ impl<'a, L: TcpNetworkSockets, const N: usize, const SLOTS: usize, const TX_BUF:
             buffers,
             config: *config,
         })
-    }
-
-    /// Bind `sockets` to caller-owned `buffers` with `config`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `buffers` is already bound to another active [`TcpNetwork`] instance.
-    pub fn new(
-        sockets: L,
-        buffers: &'a TcpNetworkBuffers<N, SLOTS, TX_BUF>,
-        config: &TcpConfig,
-    ) -> Self {
-        Self::try_new(sockets, buffers, config).expect("TcpNetworkBuffers already bound")
     }
 
     /// Drive TCP accept/connect and all `SLOTS` concurrent peer I/O loops.
@@ -620,10 +607,10 @@ mod tests {
         let buffers = TcpNetworkBuffers::<64, 1, 68>::new();
         let config = TcpConfig::default();
 
-        let first = TcpNetwork::try_new(MockListener::default(), &buffers, &config);
+        let first = TcpNetwork::new(MockListener::default(), &buffers, &config);
         assert!(first.is_ok());
 
-        let second = TcpNetwork::try_new(MockListener::default(), &buffers, &config);
+        let second = TcpNetwork::new(MockListener::default(), &buffers, &config);
         assert!(matches!(
             second,
             Err(e) if e.code() == ErrorCode::ResourceExhausted
@@ -631,7 +618,7 @@ mod tests {
 
         drop(first);
 
-        let third = TcpNetwork::try_new(MockListener::default(), &buffers, &config);
+        let third = TcpNetwork::new(MockListener::default(), &buffers, &config);
         assert!(third.is_ok());
     }
 
@@ -641,7 +628,7 @@ mod tests {
             let listener = MockListener::default();
             let peer = listener.peer(10, &[3, 0]);
             let buffers = TcpNetworkBuffers::<64>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -680,7 +667,7 @@ mod tests {
             listener.errors_remaining.store(2, Ordering::SeqCst);
             let _peer = listener.peer(11, &[2, 0, 0, 0, b'o', b'k']);
             let buffers = TcpNetworkBuffers::<64>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -710,7 +697,7 @@ mod tests {
             let len = 65u32.to_le_bytes();
             let peer = listener.peer(12, &len);
             let buffers = TcpNetworkBuffers::<64>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -753,7 +740,7 @@ mod tests {
             let peer1 = listener.peer(20, &[1, 0, 0, 0, b'a']);
             let peer2 = listener.peer(21, &[1, 0, 0, 0, b'b']);
             let buffers = TcpNetworkBuffers::<64, 2>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -818,7 +805,8 @@ mod tests {
                     idle_timeout: Some(Duration::from_millis(30)),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -857,7 +845,8 @@ mod tests {
                     idle_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -897,7 +886,7 @@ mod tests {
             let listener = MockListener::default();
             let outbound = listener.outbound.clone();
             let buffers = TcpNetworkBuffers::<64>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5540)));
 
             let runner = pin!(net.run());
@@ -946,7 +935,8 @@ mod tests {
                     connect_timeout: Duration::from_secs(1),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let addr1 = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5541)));
             let addr2 = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5542)));
 
@@ -1002,7 +992,7 @@ mod tests {
             let peer2 = listener.peer(61, &plain_frame);
 
             let buffers = TcpNetworkBuffers::<64, 2>::new();
-            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -1084,7 +1074,7 @@ mod tests {
             );
 
             let buffers = TcpNetworkBuffers::<64, 2>::new();
-            let net = TcpNetwork::new(listener, &buffers, &config);
+            let net = TcpNetwork::new(listener, &buffers, &config).unwrap();
             let runner = pin!(net.run());
             let test = pin!(async {
                 // Outbound connect triggers set_keep_alive on connected socket too.
@@ -1154,7 +1144,8 @@ mod tests {
                     send_timeout: Duration::from_millis(50),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 80)));
 
             let runner = pin!(net.run());
@@ -1209,7 +1200,7 @@ mod tests {
             let listener = MockListener::default();
             let peer = listener.peer(90, &[]);
             let buffers = TcpNetworkBuffers::<64, 2>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -1264,7 +1255,8 @@ mod tests {
                     send_timeout: Duration::from_secs(2),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let outbound_addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5545)));
 
             let mut runner = pin!(net.run());
@@ -1328,7 +1320,7 @@ mod tests {
             listener.connect_errors_remaining.store(1, Ordering::SeqCst);
             let outbound = listener.outbound.clone();
             let buffers = TcpNetworkBuffers::<64, 1, 68>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5546)));
 
             let runner = pin!(net.run());
@@ -1386,7 +1378,8 @@ mod tests {
                     connect_timeout: Duration::from_millis(25),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 5547)));
 
             let runner = pin!(net.run());
@@ -1443,7 +1436,8 @@ mod tests {
                     send_timeout: Duration::from_secs(2),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let peer_port = 5548;
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], peer_port)));
 
@@ -1536,7 +1530,7 @@ mod tests {
             let peer1 = listener.peer(80, &spoofed_frame);
 
             let buffers = TcpNetworkBuffers::<64, 1>::new();
-            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -1584,7 +1578,7 @@ mod tests {
             let peer2 = listener.peer(91, &plain_frame);
 
             let buffers = TcpNetworkBuffers::<64, 2>::new();
-            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener.clone(), &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -1653,7 +1647,8 @@ mod tests {
                     },
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 95)));
 
             let runner = pin!(net.run());
@@ -1706,7 +1701,7 @@ mod tests {
             let listener = MockListener::default();
             let peer = listener.peer(96, &[10, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
             let buffers = TcpNetworkBuffers::<64, 1, 68>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -1743,7 +1738,7 @@ mod tests {
             let peer = listener.peer(97, &[]);
             peer.lock().unwrap().write_eof = true;
             let buffers = TcpNetworkBuffers::<64, 1, 68>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
             let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 97)));
 
             let runner = pin!(net.run());

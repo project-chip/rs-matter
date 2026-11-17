@@ -628,12 +628,9 @@ where
             )
         };
 
+        let is_oper = |a: &Address| a.is_udp() || a.is_tcp();
         let mut transport =
-            pin!(
-                self.run_transport_oper(crypto, send, recv, multicast, comm, |a: &Address| a
-                    .is_udp()
-                    || a.is_tcp(),)
-            );
+            pin!(self.run_transport_oper(crypto, send, recv, multicast, comm, is_oper));
 
         if let Some(tcp) = tcp {
             let mut tcp_runner = pin!(tcp.run());

@@ -166,7 +166,7 @@ impl<'a> NetTcpStack for FakeTcpNetStack<'a> {
     ) -> impl Future<Output = Result<Self::Tcp<'_>, Error>> + MaybeSend {
         assert_eq!(addr.port(), MATTER_PORT);
         self.log.event("tcp listener bound");
-        ready(TcpNetwork::try_new(NoTcp, self.buffers, &TcpConfig::new()))
+        ready(TcpNetwork::new(NoTcp, self.buffers, &TcpConfig::new()))
     }
 
     fn supports_client(&self) -> bool {
@@ -306,7 +306,7 @@ impl<'a> NetTcpStack for StreamTcpNetStack<'a> {
     ) -> impl Future<Output = Result<Self::Tcp<'_>, Error>> + MaybeSend {
         assert_eq!(addr.port(), MATTER_PORT);
         self.log.event("tcp listener bound");
-        ready(TcpNetwork::try_new(
+        ready(TcpNetwork::new(
             MockTcpListener {
                 peers: self.peers.clone(),
             },

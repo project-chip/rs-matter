@@ -487,7 +487,7 @@ fn main() -> Result<(), Error> {
 
         info!("TCP transport enabled, listening on {}", bind_addr);
 
-        TcpNetwork::new(tcp_socket, &tcp_buffers, &TcpConfig::new())
+        TcpNetwork::new(tcp_socket, &tcp_buffers, &TcpConfig::new())?
     };
 
     // Optionally create a chained UDP+TCP network

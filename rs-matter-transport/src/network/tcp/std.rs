@@ -134,7 +134,7 @@ mod tests {
             let listener = ephemeral_listener();
             let addr = listener.get_ref().local_addr().unwrap();
             let buffers = TcpNetworkBuffers::<256>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -180,7 +180,7 @@ mod tests {
 
             let local = ephemeral_listener();
             let buffers = TcpNetworkBuffers::<256>::new();
-            let net = TcpNetwork::new(local, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(local, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -229,7 +229,7 @@ mod tests {
             let listener = ephemeral_listener();
             let addr = listener.get_ref().local_addr().unwrap();
             let buffers = TcpNetworkBuffers::<64>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {
@@ -302,7 +302,7 @@ mod tests {
             let listener = ephemeral_listener();
             let addr = listener.get_ref().local_addr().unwrap();
             let buffers = TcpNetworkBuffers::<256>::new();
-            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default());
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
 
             let runner = pin!(net.run());
             let test = pin!(async {

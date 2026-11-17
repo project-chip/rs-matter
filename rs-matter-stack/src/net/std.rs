@@ -160,7 +160,7 @@ mod tcp {
 
         async fn bind(&self, addr: SocketAddr) -> Result<Self::Tcp<'_>, Error> {
             let listener = StdTcpListener::bind(addr)?;
-            TcpNetwork::try_new(listener, self.0, &TcpConfig::new())
+            TcpNetwork::new(listener, self.0, &TcpConfig::new())
         }
 
         fn supports_client(&self) -> bool {
@@ -307,7 +307,8 @@ mod tests {
                     idle_timeout: Some(Duration::from_millis(500)),
                     ..Default::default()
                 },
-            );
+            )
+            .unwrap();
             let service = async {
                 let mut receiver = &server;
                 let mut buffer = [0u8; 32];

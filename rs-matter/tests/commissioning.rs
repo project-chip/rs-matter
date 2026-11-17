@@ -317,14 +317,14 @@ commissioning_test! {
         async_io::Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?,
         TCP_DEVICE_NET_BUFFERS.uninit().init_with(TcpNetworkBuffers::init()),
         &TcpConfig::new(),
-    ),
+    )?,
     ctrl_transport: TcpNetwork::new(
         async_io::Async::<TcpListener>::bind(
             SocketAddr::V6(SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
         )?,
         TCP_CTRL_NET_BUFFERS.uninit().init_with(TcpNetworkBuffers::init()),
         &TcpConfig::new(),
-    ),
+    )?,
 }
 
 async fn run_controller_flow<C: Crypto, D: Crypto>(

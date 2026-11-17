@@ -1312,7 +1312,7 @@ fn main() -> Result<(), Error> {
         tcp_socket,
         &tcp_buffers,
         &rs_matter::transport::network::tcp::TcpConfig::new(),
-    );
+    )?;
     matter.transport().set_tcp_capability(
         rs_matter::transport::network::tcp::TcpCapability::ClientAndServer(
             rs_matter::transport::MAX_RX_BUF_SIZE as u32,
