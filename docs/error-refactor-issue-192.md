@@ -448,81 +448,79 @@ converting them breaks a dependent that has not had its turn yet:
 
 ## `rs-matter-tlv` and `rs-matter-macros`
 
-One error type covers both crates: `TlvError`, with the codes below.
-`rs-matter-macros` needs none of its own - it only generates code that lands in
-other crates, and that code names tlv's type.
+One error type covers both crates: `TlvError`. `rs-matter-macros` needs none of
+its own - it only generates code that lands in other crates, and that code names
+tlv's type, reached through `rs_matter_tlv::__private`.
 
-### The new codes
+`Error` and `ErrorCode` are gone from both crates. What remains is the bridge in
+`rs-matter-tlv/src/error.rs`, which lets unconverted crates keep using `?`; it
+goes when the last of them is converted.
+
+### The codes
 
 | Code | Means |
 |---|---|
 | `Malformed` | The bytes are not valid TLV. A bad control byte, a value shorter than its declared type needs, a UTF-8 string that is not valid UTF-8. |
-| `TypeMismatch` | The element is fine, but it is not the type the caller asked for - reading a `u8` from an element holding a string. |
+| `TypeMismatch` | The element is fine, but it is not the type the caller asked for - reading a `u8` from an element holding a string, or a tag that is not a context tag. |
 | `NotFound` | A required element or context tag is missing. |
-| `InvalidValue` | Right type, unacceptable value - an unknown enum discriminant, or zero where a `NonZero` was expected. |
+| `InvalidValue` | Right type, unacceptable value - an unknown enum discriminant or bitflag, or zero where a `NonZero` was expected. |
 | `CapacityExceeded` | The decoded data did not fit in the destination - too many array items, a string longer than the buffer. |
 | `UnexpectedNull` | The value is the reserved "null" marker somewhere null is not allowed. |
-| `NoSpace` | The TLV writer ran out of room. The interaction model watches for this one to decide that a long response must be split into chunks. |
+| `NoSpace` | The TLV writer ran out of room. Not a failure to report - the interaction model watches for it to decide that a long response must be split into chunks. |
 
-The old codes did not line up one-to-one with these, which is the reason for the
-split. `TLVTypeMismatch` alone was doing three unrelated jobs: wrong type, bad
-bytes, and missing element. `ConstraintError` covered both "the buffer is full"
-and "this value is the null marker". `Invalid` covered a wrong type and an
-out-of-range value.
+Seven codes replace the five that were in use, because the old ones did not line
+up one-to-one. `TLVTypeMismatch` alone was doing three unrelated jobs: wrong
+type, bad bytes, and missing element. `ConstraintError` covered both "the buffer
+is full" and "this value is the null marker". `Invalid` covered a wrong type and
+an out-of-range value.
 
-### Progress
+### Callbacks keep the caller's error
 
-This is being done in several steps, because changing a TLV trait forces every
-implementor of it to change at the same time, across many crates. One trait per
-step keeps each change reviewable.
+A few methods take a callback supplied by the caller. Their failures are not TLV
+failures - in `rs-matter-sc` the callback encrypts a CASE Sigma3 message, in
+`rs-matter-dm` it generates a certificate signing request - and tlv only passes
+them along. These are generic over the caller's error rather than forcing it into
+a `TlvError`:
 
-**Step 1 - the reader methods.** The plain accessors on `TLVElement` (`u8`,
-`utf8`, `str`, `tag`, and friends) and `TLVControl::parse` report `TlvError`.
+- `WriteBuf::append_with_buf` and `TLVBuilder::with` - no bound, since their
+  bodies never produce an error of their own
+- `TLVWrite::str_cb` / `utf8_cb`, and `TLVBuilder::with_some`, `with_some_if`,
+  `with_non_null`, `with_non_null_if` - bounded `E: From<TlvError>`, because
+  their bodies do TLV work that has to fold into the caller's error
 
-| Old code | Sites | New code |
-|---|---|---|
-| `TLVTypeMismatch` | 55 | `Malformed` where the bytes are bad, `TypeMismatch` where the type is wrong |
-| `InvalidData` | 14 | `Malformed` - a value whose length contradicts its declared type |
-| `Invalid` | 3 | `TypeMismatch` - asking for a string from a non-string element |
-| `NotFound` | 1 | `NotFound` |
-
-**Step 2a - the `FromTLV` trait** (this branch). `from_tlv`, `init_from_tlv`,
-`nullable_from_tlv` and `init_nullable_from_tlv` now report `TlvError`, together
-with every implementation of them: 55 methods, the `#[derive(FromTLV)]` templates
-in `rs-matter-macros`, and the generated cluster structs from `rs-matter-codegen`.
-The iterating reader methods (`find_ctx`, `ctx`, `read`, `read_opt`) moved with
-them, since they call `FromTLV`.
-
-New codes used by the converted implementations:
-
-| New code | Where |
-|---|---|
-| `InvalidValue` | An unknown enum discriminant or bitflag - `AuthMode`, `Privilege`, `IMStatusCode`, `DNTag`, `EventDataTag`, and the derived enums |
-| `CapacityExceeded` | A `Vec`, `String` or array that could not hold the decoded value |
-| `UnexpectedNull` | The null marker read into a type that does not allow null |
-| `NotFound` | A mandatory field absent from a struct - the `EventData` fields |
-| `TypeMismatch` | A tag that is not a context tag |
-
-`ToTLV` still reports the shared `Error`, so the two traits disagree for now.
-That is deliberate: it is what keeps this step to one trait.
+The bound is what will require whatever `rs-matter-dm-core` ends up using as its
+error to implement `From<TlvError>`.
 
 ### Converting a dependent crate
 
-Crates that are not yet converted keep reporting the shared `Error`. Where they
-call TLV, the two meet, and the conversion goes at that boundary rather than
-spreading `TlvError` into the crate:
+A crate that has not been converted keeps reporting the shared `Error`. Where it
+calls TLV the two meet, and the conversion goes at that boundary rather than
+spreading `TlvError` through the crate. In order of preference:
 
-- A tail call becomes `Ok(expr?)`, or `.map_err(Into::into)` where `?` does not fit.
-- If a helper is called many times, change its parameter instead of every call.
-  `AudioAvStreamHandler::validate` takes `Result<T, TlvError>` and returns
-  `Result<T, Error>`, which fixed six call sites at once.
-- If a crate error already wraps `Error`, give it `From<TlvError>` and `?` keeps
-  working untouched - see `NetworksError` in `rs-matter-node-core`.
+1. **Let the closure carry the caller's error.** If a closure does TLV work *and*
+   something else, give it the outer function's error type and let `?` widen the
+   TLV calls into it. No wrapper, nothing lost. `supported_wi_fi_bands` in
+   `rs-matter-dm/src/clusters/net_comm.rs` is the worked example.
+2. **Wrap the whole expression, not each arm.** `Ok(match … { … })` with `?` on
+   each builder call inside, rather than converting arm by arm - see
+   `parts_list` in `rs-matter-dm/src/clusters/desc.rs`.
+3. **Change a helper's parameter instead of every call.**
+   `AudioAvStreamHandler::validate` takes `Result<T, TlvError>` and returns
+   `Result<T, Error>`, which fixed six call sites at once.
+4. **Give the crate's own error a `From<TlvError>`** and `?` keeps working
+   untouched - see `NetworksError` in `rs-matter-node-core`.
+5. **Otherwise `Ok(expr?)`**, or `.map_err(Into::into)` where `?` does not fit -
+   a match arm or a `return`.
 
-These conversions are temporary. They disappear when the crate gets its own
-error type, so they are marked with a TODO where they are not obvious.
+Note that the `Ok(expr?)` wrappers are **not** temporary scaffolding. A `From`
+impl is what makes the `?` legal; it does not make a tail expression's type
+match. They stay when the crate gets its own error - only the name of the error
+changes.
 
-**Still to do:** `ToTLV`, `TLVWrite` and `TLVBuilder`, one at a time; the
-`ConstraintError` and `NoSpace` sites that live in those implementations; and
-`TLVWrite::str_cb` / `utf8_cb`, whose callbacks should stay generic over the
-caller's error (see above).
+Where an API forces a closure's error type and the closure needs to report
+something that type cannot express, carry the fact out of band rather than
+flattening it. `HandoverNetworks::to_tlv` in `rs-matter-node-core` does this for
+a store read that fails, and `EventWriter` in `rs-matter-im` does it for an event
+larger than the whole ring buffer - in both cases the error is logged before the
+information is lost.
+
