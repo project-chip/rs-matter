@@ -275,16 +275,16 @@ impl ClusterHandler for NocHandler<'_> {
                         builder = builder.push(Octets::new(cert))?;
                     }
 
-                    builder.end()
+                    Ok(builder.end()?)
                 }
                 ArrayAttributeRead::ReadOne(index, builder) => {
                     if let Some(cert) = certs.nth(index as _) {
-                        builder.set(Octets::new(cert))
+                        Ok(builder.set(Octets::new(cert))?)
                     } else {
                         Err(ErrorCode::ConstraintError.into())
                     }
                 }
-                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+                ArrayAttributeRead::ReadNone(builder) => builder.end().map_err(Into::into),
             }
         })
     }

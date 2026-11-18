@@ -70,7 +70,7 @@
 //! ```
 
 use crate::error::Error;
-use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, TlvError, ToTLV};
 use crate::{
     AttrPath, AttrPathArrayBuilder, DataVersionFilter, EventFilter, EventPath, SubscribeReqTag,
     IM_REVISION,
@@ -106,7 +106,7 @@ where
     /// Begin a new `SubscribeRequestMessage` — opens a struct at the
     /// given tag on the parent's writer. For top-level use (the usual
     /// case) pass `&TLVTag::Anonymous`.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_struct(tag)?;
         Ok(Self { p })
     }
@@ -116,7 +116,7 @@ impl<P> TLVBuilder<P> for SubscribeReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -192,10 +192,10 @@ where
     /// yields an [`AttrPathBuilder`]; close with `.end()` to advance
     /// to the next message field.
     pub fn attr_requests(self) -> Result<AttrPathArrayBuilder<SubscribeReqBuilder<P, 4>>, Error> {
-        AttrPathArrayBuilder::new(
+        Ok(AttrPathArrayBuilder::new(
             SubscribeReqBuilder { p: self.p },
             &TLVTag::Context(SubscribeReqTag::AttrRequests as u8),
-        )
+        )?)
     }
 
     /// Write `AttributeRequests` from a pre-built slice. Convenience
