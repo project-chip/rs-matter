@@ -22,7 +22,7 @@ use rs_matter_utils::error::Error2;
 // TODO: Remove once the TLV traits (`ToTLV`, `FromTLV`, `TLVBuilder`) report
 // `TlvError` too. Until then their implementors still name the shared `Error`,
 // and reach it through this module.
-pub use rs_matter_utils::error::{Error, ErrorCode};
+use rs_matter_utils::error::{Error, ErrorCode};
 
 pub type TlvError = Error2<TlvErrorCode>;
 

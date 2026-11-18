@@ -372,7 +372,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             &mut settings.recovery_identifier
         })?;
 
-        builder.set(Octets::new(&id.to_be_bytes()))
+        Ok(builder.set(Octets::new(&id.to_be_bytes()))?)
     }
 
     fn network_recovery_reason(

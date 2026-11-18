@@ -738,7 +738,7 @@ pub mod globals {
     pub struct CurrencyStructBuilder<P, const F: usize = 0usize> (P);
     impl<P> CurrencyStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Create a new instance"]
-        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> {
             use rs_matter_crate::tlv::TLVWrite;
             parent.writer().start_struct(tag)?;
             Ok(Self(parent))
@@ -774,19 +774,19 @@ pub mod globals {
         fn writer(&mut self) -> &mut P::Write { self.0.writer() }
     }
     impl<P> rs_matter_crate::tlv::TLVBuilder<P> for CurrencyStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
-        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> { Self::new(parent, tag) }
         fn unchecked_into_parent(self) -> P { self.0 }
     }
     pub struct CurrencyStructArrayBuilder<P> (P);
     impl<P> CurrencyStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Create a new instance"]
-        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> {
             use rs_matter_crate::tlv::TLVWrite;
             parent.writer().start_array(tag)?;
             Ok(Self(parent))
         }
         #[doc = "Push a new element into the array"]
-        pub fn push(self) -> Result<CurrencyStructBuilder<CurrencyStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(CurrencyStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous) }
+        pub fn push(self) -> Result<CurrencyStructBuilder<CurrencyStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(CurrencyStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous).map_err(Into::into) }
         #[doc = "Finish the array and return the parent"]
         pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
@@ -802,13 +802,13 @@ pub mod globals {
         fn writer(&mut self) -> &mut P::Write { self.0.writer() }
     }
     impl<P> rs_matter_crate::tlv::TLVBuilder<P> for CurrencyStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
-        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> { Self::new(parent, tag) }
         fn unchecked_into_parent(self) -> P { self.0 }
     }
     pub struct PriceStructBuilder<P, const F: usize = 0usize> (P);
     impl<P> PriceStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Create a new instance"]
-        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> {
             use rs_matter_crate::tlv::TLVWrite;
             parent.writer().start_struct(tag)?;
             Ok(Self(parent))
@@ -821,7 +821,7 @@ pub mod globals {
             Ok(PriceStructBuilder(self.0))
         }
     }
-    impl<P> PriceStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent, { pub fn currency(self) -> Result<CurrencyStructBuilder<PriceStructBuilder<P, 2usize>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(PriceStructBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Context(1)) } }
+    impl<P> PriceStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent, { pub fn currency(self) -> Result<CurrencyStructBuilder<PriceStructBuilder<P, 2usize>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(PriceStructBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Context(1)).map_err(Into::into) } }
     impl<P> PriceStructBuilder<P, 2usize> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Finish the struct and return the parent"]
         pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -838,19 +838,19 @@ pub mod globals {
         fn writer(&mut self) -> &mut P::Write { self.0.writer() }
     }
     impl<P> rs_matter_crate::tlv::TLVBuilder<P> for PriceStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
-        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> { Self::new(parent, tag) }
         fn unchecked_into_parent(self) -> P { self.0 }
     }
     pub struct PriceStructArrayBuilder<P> (P);
     impl<P> PriceStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Create a new instance"]
-        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> {
             use rs_matter_crate::tlv::TLVWrite;
             parent.writer().start_array(tag)?;
             Ok(Self(parent))
         }
         #[doc = "Push a new element into the array"]
-        pub fn push(self) -> Result<PriceStructBuilder<PriceStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(PriceStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous) }
+        pub fn push(self) -> Result<PriceStructBuilder<PriceStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(PriceStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous).map_err(Into::into) }
         #[doc = "Finish the array and return the parent"]
         pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
@@ -866,13 +866,13 @@ pub mod globals {
         fn writer(&mut self) -> &mut P::Write { self.0.writer() }
     }
     impl<P> rs_matter_crate::tlv::TLVBuilder<P> for PriceStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
-        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> { Self::new(parent, tag) }
         fn unchecked_into_parent(self) -> P { self.0 }
     }
     pub struct MeasurementAccuracyRangeStructBuilder<P, const F: usize = 0usize> (P);
     impl<P> MeasurementAccuracyRangeStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Create a new instance"]
-        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> {
             use rs_matter_crate::tlv::TLVWrite;
             parent.writer().start_struct(tag)?;
             Ok(Self(parent))
@@ -950,19 +950,19 @@ pub mod globals {
         fn writer(&mut self) -> &mut P::Write { self.0.writer() }
     }
     impl<P> rs_matter_crate::tlv::TLVBuilder<P> for MeasurementAccuracyRangeStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
-        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> { Self::new(parent, tag) }
         fn unchecked_into_parent(self) -> P { self.0 }
     }
     pub struct MeasurementAccuracyRangeStructArrayBuilder<P> (P);
     impl<P> MeasurementAccuracyRangeStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
         #[doc = "Create a new instance"]
-        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> {
             use rs_matter_crate::tlv::TLVWrite;
             parent.writer().start_array(tag)?;
             Ok(Self(parent))
         }
         #[doc = "Push a new element into the array"]
-        pub fn push(self) -> Result<MeasurementAccuracyRangeStructBuilder<MeasurementAccuracyRangeStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(MeasurementAccuracyRangeStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous) }
+        pub fn push(self) -> Result<MeasurementAccuracyRangeStructBuilder<MeasurementAccuracyRangeStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(MeasurementAccuracyRangeStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous).map_err(Into::into) }
         #[doc = "Finish the array and return the parent"]
         pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
@@ -978,7 +978,7 @@ pub mod globals {
         fn writer(&mut self) -> &mut P::Write { self.0.writer() }
     }
     impl<P> rs_matter_crate::tlv::TLVBuilder<P> for MeasurementAccuracyRangeStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
-        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::tlv::TlvError> { Self::new(parent, tag) }
         fn unchecked_into_parent(self) -> P { self.0 }
     }
 }

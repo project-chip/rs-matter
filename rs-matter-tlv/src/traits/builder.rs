@@ -33,13 +33,13 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
 //!         p.writer().start_struct(tag)?;
 //!
 //!         Ok(Self { p })
 //!     }
 //!
-//!     pub fn field1(mut self, value: i32) -> Result<FooBuilder<P, 1>, Error> {
+//!     pub fn field1(mut self, value: i32) -> Result<FooBuilder<P, 1>, TlvError> {
 //!         self.p.writer().i32(&TLVTag::Context(0), value)?;
 //!
 //!         Ok(FooBuilder {
@@ -52,7 +52,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn field2(mut self, value: u8) -> Result<FooBuilder<P, 2>, Error> {
+//!     pub fn field2(mut self, value: u8) -> Result<FooBuilder<P, 2>, TlvError> {
 //!         value.to_tlv(&TLVTag::Context(1), self.p.writer())?;
 //!
 //!         Ok(FooBuilder {
@@ -65,7 +65,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn field3(self) -> Result<BarBuilder<FooBuilder<P, 3>, 0>, Error> {
+//!     pub fn field3(self) -> Result<BarBuilder<FooBuilder<P, 3>, 0>, TlvError> {
 //!         BarBuilder::new(FooBuilder { p: self.p }, &TLVTag::Context(2))
 //!     }
 //! }
@@ -74,7 +74,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn finish(mut self) -> Result<P, Error> {
+//!     pub fn finish(mut self) -> Result<P, TlvError> {
 //!         self.p.writer().end_container()?;
 //!
 //!         Ok(self.p)
@@ -100,7 +100,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
 //!         Self::new(parent, tag)
 //!     }
 //! }
@@ -113,17 +113,17 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
 //!         p.writer().start_array(&tag)?;
 //!
 //!         Ok(Self { p })
 //!     }
 //!
-//!     pub fn push(self) -> Result<FooBuilder<Self, 0>, Error> {
+//!     pub fn push(self) -> Result<FooBuilder<Self, 0>, TlvError> {
 //!         FooBuilder::new(self, &TLVTag::Anonymous)
 //!     }
 //!
-//!     pub fn end(mut self) -> Result<P, Error> {
+//!     pub fn end(mut self) -> Result<P, TlvError> {
 //!         self.p.writer().end_container()?;
 //!
 //!         Ok(self.p)
@@ -149,7 +149,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
 //!         Self::new(parent, tag)
 //!     }
 //! }
@@ -162,13 +162,13 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
 //!         p.writer().start_struct(tag)?;
 //!
 //!         Ok(Self { p })
 //!     }
 //!
-//!     pub fn field1(mut self, value: i32) -> Result<BarBuilder<P, 1>, Error> {
+//!     pub fn field1(mut self, value: i32) -> Result<BarBuilder<P, 1>, TlvError> {
 //!         self.p.writer().i32(&TLVTag::Context(0), value)?;
 //!
 //!         Ok(BarBuilder {
@@ -181,7 +181,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     pub fn finish(mut self) -> Result<P, Error> {
+//!     pub fn finish(mut self) -> Result<P, TlvError> {
 //!         self.p.writer().end_container()?;
 //!
 //!         Ok(self.p)
@@ -207,7 +207,7 @@
 //! where
 //!     P: TLVBuilderParent,
 //! {
-//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
 //!         Self::new(parent, tag)
 //!     }
 //! }
@@ -215,7 +215,7 @@
 
 use core::marker::PhantomData;
 
-use crate::error::Error;
+use crate::error::TlvError;
 use crate::utils::sync::MaybeSend;
 use crate::{TLVTag, TLVWrite};
 
@@ -233,12 +233,12 @@ where
     P: TLVBuilderParent,
 {
     /// Create a new TLV builder for the given parent and tag.
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error>;
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError>;
 
     /// Call a closure with the builder and return the result.
-    fn with<F>(self, f: F) -> Result<P, Error>
+    fn with<F, E>(self, f: F) -> Result<P, E>
     where
-        F: FnOnce(Self) -> Result<P, Error>,
+        F: FnOnce(Self) -> Result<P, E>,
     {
         f(self)
     }
@@ -369,7 +369,7 @@ where
 
     /// Write the TLV type into the writer.
     #[cfg(not(feature = "defmt"))]
-    pub fn set(mut self, tlv: &T) -> Result<P, Error>
+    pub fn set(mut self, tlv: &T) -> Result<P, TlvError>
     where
         T: core::fmt::Debug,
     {
@@ -382,7 +382,7 @@ where
     }
 
     #[cfg(feature = "defmt")]
-    pub fn set(mut self, tlv: &T) -> Result<P, Error>
+    pub fn set(mut self, tlv: &T) -> Result<P, TlvError>
     where
         T: core::fmt::Debug + defmt::Format,
     {
@@ -429,7 +429,7 @@ where
     P: TLVBuilderParent,
     T: ToTLV + 'static,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Ok(Self::new(parent, tag))
     }
 
@@ -456,7 +456,7 @@ where
     T: ToTLV + 'static,
 {
     /// Create a new TLV array builder for the given parent and tag.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_array(tag)?;
 
         Ok(Self {
@@ -467,7 +467,7 @@ where
 
     /// Push a new element into the array.
     #[cfg(not(feature = "defmt"))]
-    pub fn push(mut self, tlv: &T) -> Result<Self, Error>
+    pub fn push(mut self, tlv: &T) -> Result<Self, TlvError>
     where
         T: core::fmt::Debug,
     {
@@ -480,7 +480,7 @@ where
     }
 
     #[cfg(feature = "defmt")]
-    pub fn push(mut self, tlv: &T) -> Result<Self, Error>
+    pub fn push(mut self, tlv: &T) -> Result<Self, TlvError>
     where
         T: core::fmt::Debug + defmt::Format,
     {
@@ -492,7 +492,7 @@ where
     }
 
     /// Finish the array and return the parent.
-    pub fn end(mut self) -> Result<P, Error> {
+    pub fn end(mut self) -> Result<P, TlvError> {
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
@@ -534,7 +534,7 @@ where
     P: TLVBuilderParent,
     T: ToTLV + 'static,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -562,7 +562,7 @@ where
     }
 
     /// Write the Utf8 string type into the writer.
-    pub fn set(mut self, tlv: Utf8Str<'_>) -> Result<P, Error> {
+    pub fn set(mut self, tlv: Utf8Str<'_>) -> Result<P, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::Utf8 -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
@@ -608,7 +608,7 @@ impl<P> TLVBuilder<P> for Utf8StrBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Ok(Self::new(parent, tag))
     }
 
@@ -628,14 +628,14 @@ where
     P: TLVBuilderParent,
 {
     /// Create a new TLV Utf8 array builder for the given parent and tag.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_array(tag)?;
 
         Ok(Self { parent: p })
     }
 
     /// Push a new Utf8 string into the array.
-    pub fn push(mut self, tlv: Utf8Str<'_>) -> Result<Self, Error> {
+    pub fn push(mut self, tlv: Utf8Str<'_>) -> Result<Self, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::Utf8[] -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
@@ -647,7 +647,7 @@ where
     }
 
     /// Finish the array and return the parent.
-    pub fn end(mut self) -> Result<P, Error> {
+    pub fn end(mut self) -> Result<P, TlvError> {
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
@@ -688,7 +688,7 @@ impl<P> TLVBuilder<P> for Utf8StrArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -716,7 +716,7 @@ where
     }
 
     /// Write the TLV type into the writer.
-    pub fn set(mut self, tlv: Octets<'_>) -> Result<P, Error> {
+    pub fn set(mut self, tlv: Octets<'_>) -> Result<P, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::Octets -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
@@ -762,7 +762,7 @@ impl<P> TLVBuilder<P> for OctetsBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Ok(Self::new(parent, tag))
     }
 
@@ -782,14 +782,14 @@ where
     P: TLVBuilderParent,
 {
     /// Create a new octets TLV array builder for the given parent and tag.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_array(tag)?;
 
         Ok(Self { parent: p })
     }
 
     /// Push a new octet string into the array.
-    pub fn push(mut self, tlv: Octets<'_>) -> Result<Self, Error> {
+    pub fn push(mut self, tlv: Octets<'_>) -> Result<Self, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::Octets[] -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
@@ -801,7 +801,7 @@ where
     }
 
     /// Finish the array and return the parent.
-    pub fn end(mut self) -> Result<P, Error> {
+    pub fn end(mut self) -> Result<P, TlvError> {
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
@@ -842,7 +842,7 @@ impl<P> TLVBuilder<P> for OctetsArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -873,7 +873,7 @@ where
     }
 
     /// Write a null value into the TLV and return the parent.
-    pub fn null(mut self) -> Result<P, Error> {
+    pub fn null(mut self) -> Result<P, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::nullable -> null +", self);
         #[cfg(feature = "log")]
@@ -885,7 +885,7 @@ where
     }
 
     /// Create and return the builder for the non-null value.
-    pub fn non_null(self) -> Result<T, Error> {
+    pub fn non_null(self) -> Result<T, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::nullable -> (not_null) +", self);
         #[cfg(feature = "log")]
@@ -896,27 +896,29 @@ where
 
     /// If `condition` is `true`, call the closure with the non-null builder.
     /// If `condition` is `false`, write null and return the parent.
-    pub fn with_non_null_if<F>(self, condition: bool, f: F) -> Result<P, Error>
+    pub fn with_non_null_if<F, E>(self, condition: bool, f: F) -> Result<P, E>
     where
-        F: FnOnce(T) -> Result<P, Error>,
+        F: FnOnce(T) -> Result<P, E>,
+        E: From<TlvError>,
     {
         if condition {
             f(self.non_null()?)
         } else {
-            self.null()
+            Ok(self.null()?)
         }
     }
 
     /// If the input is non-null, call the closure with the non-null builder and the input.
     /// If the input is null, write null and return the parent.
-    pub fn with_non_null<I, F>(self, input: Nullable<I>, f: F) -> Result<P, Error>
+    pub fn with_non_null<I, F, E>(self, input: Nullable<I>, f: F) -> Result<P, E>
     where
-        F: FnOnce(&I, T) -> Result<P, Error>,
+        F: FnOnce(&I, T) -> Result<P, E>,
+        E: From<TlvError>,
     {
         if let Some(input) = input.as_opt_ref() {
             f(input, self.non_null()?)
         } else {
-            self.null()
+            Ok(self.null()?)
         }
     }
 }
@@ -956,7 +958,7 @@ where
     P: TLVBuilderParent,
     T: TLVBuilder<P>,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Ok(Self::new(parent, tag))
     }
 
@@ -997,7 +999,7 @@ where
     }
 
     /// Create and return the builder for the non-optional value.
-    pub fn some(self) -> Result<T, Error> {
+    pub fn some(self) -> Result<T, TlvError> {
         #[cfg(feature = "defmt")]
         defmt::debug!("{:?}::optional -> (some) +", self);
         #[cfg(feature = "log")]
@@ -1008,9 +1010,10 @@ where
 
     /// If `condition` is `true`, call the closure with the non-optional builder.
     /// If `condition` is `false`, return the parent.
-    pub fn with_some_if<F>(self, condition: bool, f: F) -> Result<P, Error>
+    pub fn with_some_if<F, E>(self, condition: bool, f: F) -> Result<P, E>
     where
-        F: FnOnce(T) -> Result<P, Error>,
+        F: FnOnce(T) -> Result<P, E>,
+        E: From<TlvError>,
     {
         if condition {
             f(self.some()?)
@@ -1021,9 +1024,10 @@ where
 
     /// If the input is `Some`, call the closure with the non-optional builder and the input.
     /// If the input is `None`, return the parent.
-    pub fn with_some<I, F>(self, input: Option<I>, f: F) -> Result<P, Error>
+    pub fn with_some<I, F, E>(self, input: Option<I>, f: F) -> Result<P, E>
     where
-        F: FnOnce(&I, T) -> Result<P, Error>,
+        F: FnOnce(&I, T) -> Result<P, E>,
+        E: From<TlvError>,
     {
         if let Some(input) = input.as_ref() {
             f(input, self.some()?)
@@ -1068,7 +1072,7 @@ where
     P: TLVBuilderParent,
     T: TLVBuilder<P>,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Ok(Self::new(parent, tag))
     }
 
@@ -1080,7 +1084,7 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::error::{Error, ErrorCode};
+    use crate::error::{TlvError, TlvErrorCode};
     use crate::utils::storage::WriteBuf;
     use crate::{FromTLV, Nullable, Octets, TLVArray, TLVElement, TLVTag, TLVWrite};
 
@@ -1105,12 +1109,12 @@ mod tests {
     }
 
     impl<P: TLVBuilderParent> PairBuilder<P, 0> {
-        fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
             p.writer().start_struct(tag)?;
             Ok(Self { p })
         }
 
-        fn first(mut self, value: u8) -> Result<PairBuilder<P, 1>, Error> {
+        fn first(mut self, value: u8) -> Result<PairBuilder<P, 1>, TlvError> {
             self.p.writer().u8(&TLVTag::Context(0), value)?;
             Ok(PairBuilder { p: self.p })
         }
@@ -1123,7 +1127,7 @@ mod tests {
     }
 
     impl<P: TLVBuilderParent> PairBuilder<P, 2> {
-        fn finish(mut self) -> Result<P, Error> {
+        fn finish(mut self) -> Result<P, TlvError> {
             self.p.writer().end_container()?;
             Ok(self.p)
         }
@@ -1151,7 +1155,7 @@ mod tests {
     }
 
     impl<P: TLVBuilderParent> TLVBuilder<P> for PairBuilder<P, 0> {
-        fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
             Self::new(parent, tag)
         }
 
@@ -1166,16 +1170,16 @@ mod tests {
     }
 
     impl<P: TLVBuilderParent> PairArrayBuilder<P> {
-        fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
             p.writer().start_array(tag)?;
             Ok(Self { p })
         }
 
-        fn push(self) -> Result<PairBuilder<Self, 0>, Error> {
+        fn push(self) -> Result<PairBuilder<Self, 0>, TlvError> {
             PairBuilder::new(self, &TLVTag::Anonymous)
         }
 
-        fn end(mut self) -> Result<P, Error> {
+        fn end(mut self) -> Result<P, TlvError> {
             self.p.writer().end_container()?;
             Ok(self.p)
         }
@@ -1499,7 +1503,7 @@ mod tests {
     }
 
     /// Writes a fixed nested value through the builders; used by the sizing test.
-    fn write_sample(wb: &mut WriteBuf<'_>) -> Result<(), Error> {
+    fn write_sample(wb: &mut WriteBuf<'_>) -> Result<(), TlvError> {
         PairArrayBuilder::new(root(wb), &TLVTag::Anonymous)?
             .push()?
             .first(1)?
@@ -1534,7 +1538,7 @@ mod tests {
         let mut wb = WriteBuf::new(&mut short[..len - 1]);
         let tail = wb.get_tail();
         let err = write_sample(&mut wb).unwrap_err();
-        assert_eq!(err.code(), ErrorCode::NoSpace);
+        assert_eq!(err.code(), TlvErrorCode::NoSpace);
         assert_eq!(wb.as_slice(), &full[..len - 1]);
 
         wb.rewind_to(tail);

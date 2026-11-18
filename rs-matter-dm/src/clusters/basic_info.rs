@@ -155,7 +155,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(self.config().vendor_name)
+        Ok(out.set(self.config().vendor_name)?)
     }
 
     fn product_id(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
@@ -167,7 +167,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(self.config().product_name)
+        Ok(out.set(self.config().product_name)?)
     }
 
     fn hardware_version(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
@@ -179,7 +179,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(self.config().hw_ver_str)
+        Ok(out.set(self.config().hw_ver_str)?)
     }
 
     fn software_version(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
@@ -191,7 +191,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(self.config().sw_ver_str)
+        Ok(out.set(self.config().sw_ver_str)?)
     }
 
     fn node_label<P: TLVBuilderParent>(
@@ -200,7 +200,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         self.with_settings(ctx.transaction_id(), |settings| {
-            out.set(settings.node_label.as_str())
+            Ok(out.set(settings.node_label.as_str())?)
         })
     }
 
@@ -235,13 +235,13 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         let config = self.config();
 
         self.with_settings(ctx.transaction_id(), |settings| {
-            out.set(
+            Ok(out.set(
                 settings
                     .location
                     .as_deref()
                     .or(config.location)
                     .unwrap_or("XX"),
-            )
+            )?)
         })
     }
 
@@ -315,7 +315,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
                         location.floor_number,
                         location.area_type,
                     ),
-                    None => return builder.null(),
+                    None => return builder.null().map_err(Into::into),
                 },
                 None => match config.device_location {
                     Some(location) => (
@@ -323,7 +323,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
                         location.floor_number,
                         location.area_type,
                     ),
-                    None => return builder.null(),
+                    None => return builder.null().map_err(Into::into),
                 },
             };
 
@@ -397,7 +397,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().manufacturing_date)
+        Ok(builder.set(self.config().manufacturing_date)?)
     }
 
     fn part_number<P: TLVBuilderParent>(
@@ -405,7 +405,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().part_number)
+        Ok(builder.set(self.config().part_number)?)
     }
 
     fn product_url<P: TLVBuilderParent>(
@@ -413,7 +413,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().product_url)
+        Ok(builder.set(self.config().product_url)?)
     }
 
     fn product_label<P: TLVBuilderParent>(
@@ -421,7 +421,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().product_label)
+        Ok(builder.set(self.config().product_label)?)
     }
 
     fn serial_number<P: TLVBuilderParent>(
@@ -429,7 +429,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.config().serial_no)
+        Ok(builder.set(self.config().serial_no)?)
     }
 
     fn local_config_disabled(&self, ctx: impl ReadContext) -> Result<bool, Error> {
@@ -471,7 +471,7 @@ impl ClusterHandler for BasicInfoHandler<'_> {
             unique_id = core::str::from_utf8(&text).map_err(|_| ErrorCode::InvalidData)?;
         }
 
-        builder.set(unique_id)
+        Ok(builder.set(unique_id)?)
     }
 
     fn product_appearance<P: TLVBuilderParent>(

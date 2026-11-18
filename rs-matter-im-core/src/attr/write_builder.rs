@@ -104,7 +104,7 @@
 use core::marker::PhantomData;
 
 use crate::error::Error;
-use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
+use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, TlvError};
 use crate::{AttrDataTag, AttrPathTag, WriteReqTag, IM_REVISION};
 use crate::{AttrId, ClusterId, EndptId};
 
@@ -139,7 +139,7 @@ where
     /// Begin a new `WriteRequestMessage` — opens a struct at the
     /// given tag on the parent's writer. For top-level use (the
     /// usual case) pass `&TLVTag::Anonymous`.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_struct(tag)?;
         Ok(Self { p })
     }
@@ -149,7 +149,7 @@ impl<P> TLVBuilder<P> for WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -236,10 +236,10 @@ where
     /// builder starts one `AttrData` entry; close with `.end()` to
     /// return to the message builder.
     pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
-        AttrDataArrayBuilder::new(
+        Ok(AttrDataArrayBuilder::new(
             WriteReqBuilder { p: self.p },
             &TLVTag::Context(WriteReqTag::WriteRequests as u8),
-        )
+        )?)
     }
 }
 
@@ -372,7 +372,7 @@ where
     /// Begin a new `AttrData` array — opens an array at the given
     /// tag on the parent's writer. Use the [`TLVBuilder`] trait
     /// constructor for the standard call.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_array(tag)?;
         Ok(Self { p })
     }
@@ -381,7 +381,7 @@ where
     /// terminates with `.end()` which returns this array builder.
     pub fn push(self) -> Result<AttrDataBuilder<Self, 0>, Error> {
         // Each AttrData is an anonymous-tagged struct (we're inside an array).
-        AttrDataBuilder::new(self, &TLVTag::Anonymous)
+        Ok(AttrDataBuilder::new(self, &TLVTag::Anonymous)?)
     }
 
     /// Close the array and return the message builder.
@@ -395,7 +395,7 @@ impl<P> TLVBuilder<P> for AttrDataArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -454,7 +454,7 @@ where
     /// Begin a new `AttrData` entry — opens a struct at the given
     /// tag. Use `&TLVTag::Anonymous` when pushed into the
     /// `WriteRequests` array (the typical case).
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_struct(tag)?;
         Ok(Self { p, _f: PhantomData })
     }
@@ -464,7 +464,7 @@ impl<P> TLVBuilder<P> for AttrDataBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -633,7 +633,7 @@ where
             p: self.p,
             _f: PhantomData,
         };
-        B::new(advanced, &TLVTag::Context(AttrDataTag::Data as u8))
+        Ok(B::new(advanced, &TLVTag::Context(AttrDataTag::Data as u8))?)
     }
 }
 

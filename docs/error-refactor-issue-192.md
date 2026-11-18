@@ -165,6 +165,52 @@ The rule is: **collapse at the layer where the distinction stops being
 actionable.** If a caller could plausibly branch on the difference, keep it; if no
 caller could, collapse it and log.
 
+## A note for the `dm-core` step: not every error is a status
+
+When `rs-matter-dm-core` gets its own error, the obvious shape for it is the set
+of Matter status codes - a cluster handler fails, and that failure becomes a
+status field in the response. Mostly that is right.
+
+There is one case where it is not, and it is easy to miss because the wrong
+version still compiles.
+
+`TlvErrorCode::NoSpace` means "the TLV writer ran out of room". It is not a
+failure to report to the peer - it is a signal that the response must be split
+into chunks and continued in the next message. The interaction model acts on it
+in `rs-matter-im/src/invoker.rs`:
+
+```rust
+let result = self.read(attr, &mut *tw).await;   // calls the cluster handler
+
+match result {
+    Ok(()) => Ok(None),
+    Err(e) if e.code() != ErrorCode::NoSpace => {
+        tw.rewind_to(pos);
+        Ok(attr.status(e.into()))               // a real failure -> status
+    }
+    Err(e) => Err(e),                           // out of room -> chunk and retry
+}
+```
+
+The handler's error type therefore carries two different kinds of thing: real
+failures, which become a status, and "the buffer filled up", which has to pass
+through untouched.
+
+If the handler's error were exactly the status-code set, `NoSpace` would have to
+be mapped to *some* status, and this code could no longer tell the two apart. It
+would write a status where it should have chunked - and both branches typecheck,
+so nothing would complain. Long reads would quietly return a truncated response.
+
+So the handler error needs either a variant that is not a status, or a separate
+way to carry this one signal. Worth settling before the `dm-core` step rather
+than after.
+
+A related constraint, for the same step: the TLV builder's closure-taking methods
+(`TLVBuilder::with_some`, `with_non_null`, `TLVWrite::str_cb`, and friends) are
+generic over the caller's error with a `From<TlvError>` bound, because their
+bodies do TLV work of their own. Cluster handlers pass closures to them, so
+whatever `dm-core` ends up with has to implement `From<TlvError>`.
+
 ---
 
 # Appendix A - ErrorCode / IMStatusCode usage by crate (production code only)

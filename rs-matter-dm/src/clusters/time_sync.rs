@@ -1314,7 +1314,7 @@ impl ClusterHandler for TimeSyncHandler<'_> {
                 .node_id(tts.node_id)?
                 .endpoint(tts.endpoint)?
                 .end(),
-            None => builder.null(),
+            None => builder.null().map_err(Into::into),
         }
     }
 
@@ -1329,8 +1329,8 @@ impl ClusterHandler for TimeSyncHandler<'_> {
             .default_ntp()?
             .into_option()
         {
-            Some(s) => builder.non_null()?.set(s),
-            None => builder.null(),
+            Some(s) => builder.non_null()?.set(s).map_err(Into::into),
+            None => builder.null().map_err(Into::into),
         }
     }
 

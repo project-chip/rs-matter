@@ -64,7 +64,7 @@
 use core::marker::PhantomData;
 
 use crate::error::Error;
-use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, TlvError, ToTLV};
 use crate::{AttrId, ClusterId, EndptId};
 use crate::{
     AttrPath, AttrPathTag, DataVersionFilter, EventFilter, EventPath, NodeId, ReadReqTag,
@@ -98,7 +98,7 @@ where
     /// Begin a new `ReadRequestMessage` — opens a struct at the given
     /// tag on the parent's writer. For top-level use (the usual case)
     /// pass `&TLVTag::Anonymous`.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_struct(tag)?;
         Ok(Self { p })
     }
@@ -108,7 +108,7 @@ impl<P> TLVBuilder<P> for ReadReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -128,10 +128,10 @@ where
     /// yields an [`AttrPathBuilder`]; close with `.end()` to advance
     /// to the next message field.
     pub fn attr_requests(self) -> Result<AttrPathArrayBuilder<ReadReqBuilder<P, 1>>, Error> {
-        AttrPathArrayBuilder::new(
+        Ok(AttrPathArrayBuilder::new(
             ReadReqBuilder { p: self.p },
             &TLVTag::Context(ReadReqTag::AttrRequests as u8),
-        )
+        )?)
     }
 
     /// Write `AttributeRequests` from a pre-built slice. Convenience
@@ -415,7 +415,7 @@ where
 {
     /// Begin a new `AttrPath` array — opens an array at the given
     /// tag on the parent's writer.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_array(tag)?;
         Ok(Self { p })
     }
@@ -423,7 +423,7 @@ where
     /// Start a new `AttrPath` entry. The returned [`AttrPathBuilder`]
     /// terminates with `.end()` which returns this array builder.
     pub fn push(self) -> Result<AttrPathBuilder<Self, 0>, Error> {
-        AttrPathBuilder::new(self, &TLVTag::Anonymous)
+        Ok(AttrPathBuilder::new(self, &TLVTag::Anonymous)?)
     }
 
     /// Close the array and return the message builder.
@@ -437,7 +437,7 @@ impl<P> TLVBuilder<P> for AttrPathArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -508,7 +508,7 @@ where
     /// Begin a new `AttrPath` entry — opens a TLV list at the given
     /// tag. Use `&TLVTag::Anonymous` when pushed into an
     /// `AttributeRequests` array (the typical case).
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_list(tag)?;
         Ok(Self { p, _f: PhantomData })
     }
@@ -518,7 +518,7 @@ impl<P> TLVBuilder<P> for AttrPathBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 

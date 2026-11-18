@@ -953,7 +953,7 @@ where
                     Ok(())
                 })?;
 
-                unwrap!(builder.take()).end()
+                Ok(unwrap!(builder.take()).end()?)
             }),
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let mut current = 0;
@@ -979,7 +979,7 @@ where
                     }
                 }
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            ArrayAttributeRead::ReadNone(builder) => builder.end().map_err(Into::into),
         })
     }
 
@@ -1085,14 +1085,14 @@ where
     ) -> impl Future<Output = Result<P, Error>> {
         ready((|| {
             if !self.has_networks()? {
-                return builder.null();
+                return builder.null().map_err(Into::into);
             }
 
             self.net_ctl.last_network_id(|network_id| {
                 if let Some(network_id) = network_id {
-                    builder.non_null()?.set(Octets::new(network_id))
+                    Ok(builder.non_null()?.set(Octets::new(network_id))?)
                 } else {
-                    builder.null()
+                    Ok(builder.null()?)
                 }
             })
         })())
