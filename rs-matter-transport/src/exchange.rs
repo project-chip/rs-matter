@@ -41,7 +41,9 @@ use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
 use super::session::{Session, SessionMode};
-use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
+use super::{
+    PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE, MAX_TX_PAYLOAD_SIZE, MAX_TX_UDP_PAYLOAD_SIZE,
+};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 ///
@@ -129,6 +131,24 @@ impl ExchangeId {
     #[inline(never)]
     pub(crate) fn check_session(&self, transport: &Transport) -> Result<(), Error> {
         self.with_sessions(transport, |_| Ok(()))
+    }
+
+    /// Maximum application payload that fits in one message on this exchange.
+    ///
+    /// UDP and BTP are kept within Matter's IPv6 MTU budget even when
+    /// `large-buffers-*` is enabled for Matter-over-TCP.
+    pub(crate) fn max_tx_payload_size(&self, transport: &Transport) -> Result<usize, Error> {
+        self.with_sessions(transport, |sessions| {
+            let session = self.session(sessions);
+            let supports_large = !matches!(session.get_session_mode(), SessionMode::Group { .. })
+                && session.get_peer_addr().is_tcp();
+
+            Ok(if supports_large {
+                MAX_TX_PAYLOAD_SIZE
+            } else {
+                MAX_TX_UDP_PAYLOAD_SIZE
+            })
+        })
     }
 
     /// Get the exchange state associated with this exchange from the given sessions store.
@@ -221,7 +241,7 @@ impl ExchangeId {
 
         // Taken because our session is gone: the slot may still hold someone
         // else's unsent packet, so leave it in place.
-        self.check_session(transport)?;
+        let max_payload_len = self.max_tx_payload_size(transport)?;
 
         // TODO: Resizing might be a bit expensive with large buffers
         unwrap!(packet.buf.resize_default(MAX_TX_BUF_SIZE));
@@ -232,6 +252,7 @@ impl ExchangeId {
             exchange_id: *self,
             transport,
             packet,
+            max_payload_len,
         })
     }
 
@@ -708,12 +729,13 @@ pub struct TxMessage<'a> {
     exchange_id: ExchangeId,
     transport: &'a Transport,
     packet: PacketAccess<'a, MAX_TX_BUF_SIZE>,
+    max_payload_len: usize,
 }
 
 impl TxMessage<'_> {
     /// Get a reference to the payload buffer of the TX message being built
     pub fn payload(&mut self) -> &mut [u8] {
-        &mut self.packet.buf[PacketHdr::HDR_RESERVE..MAX_TX_BUF_SIZE - PacketHdr::TAIL_RESERVE]
+        &mut self.packet.buf[PacketHdr::HDR_RESERVE..PacketHdr::HDR_RESERVE + self.max_payload_len]
     }
 
     /// Complete and send a TX message by providing:
@@ -728,10 +750,7 @@ impl TxMessage<'_> {
     where
         M: Into<MessageMeta>,
     {
-        if payload_start > payload_end
-            || payload_end - payload_start
-                > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE
-        {
+        if payload_start > payload_end || payload_end - payload_start > self.max_payload_len {
             Err(ErrorCode::Invalid)?;
         }
 
@@ -1533,6 +1552,14 @@ impl<'a> Exchange<'a> {
         })
     }
 
+    /// Maximum application payload that fits in one message on this exchange.
+    ///
+    /// UDP is kept within Matter's IPv6 MTU budget even when large buffers are
+    /// enabled for Matter-over-TCP.
+    pub fn max_tx_payload_size(&self) -> Result<usize, Error> {
+        self.id.max_tx_payload_size(self.transport)
+    }
+
     pub fn is_groupcast(&self) -> Result<bool, Error> {
         self.id.with_sessions(self.transport, |sessions| {
             Ok(matches!(
@@ -1598,6 +1625,63 @@ mod tests {
     use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
     use crate::session::SessionMode;
     use futures_lite::future::block_on;
+
+    #[test]
+    fn tx_payload_limit_matches_peer_transport() {
+        let transport = Transport::new(None);
+        let crypto = test_only_crypto();
+        let udp_peer = network::Address::Udp(core::net::SocketAddr::from(([192, 0, 2, 1], 5540)));
+        let tcp_peer = network::Address::Tcp(core::net::SocketAddr::from(([192, 0, 2, 2], 5540)));
+
+        let udp = block_on(Exchange::initiate_plaintext(&transport, &crypto, udp_peer)).unwrap();
+        let tcp = block_on(Exchange::initiate_plaintext(&transport, &crypto, tcp_peer)).unwrap();
+
+        assert_eq!(
+            udp.max_tx_payload_size().unwrap(),
+            crate::MAX_TX_UDP_PAYLOAD_SIZE
+        );
+        assert_eq!(
+            tcp.max_tx_payload_size().unwrap(),
+            crate::MAX_TX_PAYLOAD_SIZE
+        );
+        assert!(tcp.max_tx_payload_size().unwrap() >= udp.max_tx_payload_size().unwrap());
+    }
+
+    #[test]
+    fn tx_message_payload_is_bounded_by_peer_transport() {
+        let transport = Transport::new(None);
+        let crypto = test_only_crypto();
+        let udp_peer = network::Address::Udp(core::net::SocketAddr::from(([192, 0, 2, 1], 5540)));
+        let tcp_peer = network::Address::Tcp(core::net::SocketAddr::from(([192, 0, 2, 2], 5540)));
+
+        let udp = block_on(Exchange::initiate_plaintext(&transport, &crypto, udp_peer)).unwrap();
+        let mut udp_tx = block_on(udp.id.init_send(&transport)).unwrap();
+        assert_eq!(udp_tx.payload().len(), crate::MAX_TX_UDP_PAYLOAD_SIZE);
+        drop(udp_tx);
+        drop(udp);
+
+        let tcp = block_on(Exchange::initiate_plaintext(&transport, &crypto, tcp_peer)).unwrap();
+        let mut tcp_tx = block_on(tcp.id.init_send(&transport)).unwrap();
+        assert_eq!(tcp_tx.payload().len(), crate::MAX_TX_PAYLOAD_SIZE);
+    }
+
+    #[test]
+    fn tx_message_complete_rejects_oversized_udp_payload() {
+        let transport = Transport::new(None);
+        let crypto = test_only_crypto();
+        let udp_peer = network::Address::Udp(core::net::SocketAddr::from(([192, 0, 2, 1], 5540)));
+
+        let udp = block_on(Exchange::initiate_plaintext(&transport, &crypto, udp_peer)).unwrap();
+        let udp_tx = block_on(udp.id.init_send(&transport)).unwrap();
+        let err = udp_tx
+            .complete(
+                0,
+                crate::MAX_TX_UDP_PAYLOAD_SIZE + 1,
+                im::OpCode::ReportData,
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::Invalid);
+    }
 
     #[test]
     fn im_opcode_meta() {

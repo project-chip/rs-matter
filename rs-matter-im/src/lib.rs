@@ -55,7 +55,7 @@ use crate::subscriptions::{
     Subscriptions, SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
 };
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
+use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::utils::epoch::UtcTime;
 use crate::utils::futures::{select, select3, Coalesce};
 use crate::utils::init::{init, Init};
@@ -1364,8 +1364,9 @@ where
             Exchange::initiate(matter, crypto, ids.fab_idx, ids.peer_node_id).await?;
 
         if let Some(mut tx) = self.buffers.get().await {
-            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-            unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+            // Always safe as `IMBuffer` is `MAX_EXCHANGE_RX_BUF_SIZE` >= `max_tx_payload_size()`.
+            let max_tx = exchange.max_tx_payload_size()?;
+            unwrap!(tx.resize_default(max_tx));
 
             let primed = self
                 .report_data(rctx, &mut tx, &mut exchange, false, send_if_empty)
@@ -1552,7 +1553,7 @@ where
     ///
     /// If there are no free buffers available, this method will send a `Busy` status response to the peer.
     ///
-    /// Upon returning, the TX buffer will be resized to `MAX_EXCHANGE_TX_BUF_SIZE` and will be ready to be written to.
+    /// Upon returning, the TX buffer will be resized to `exchange.max_tx_payload_size()` and will be ready to be written to.
     ///
     /// Returns:
     /// - `Ok(Some(tx))` - if a TX buffer is available
@@ -1560,8 +1561,9 @@ where
     /// - `Err(Error)` - if an error occurred while fetching the buffer or sending the status response
     async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
         if let Some(mut buffer) = self.buffer(exchange).await? {
-            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-            unwrap!(buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+            // Always safe as `IMBuffer` is `MAX_EXCHANGE_RX_BUF_SIZE` >= `max_tx_payload_size()`.
+            let max_tx = exchange.max_tx_payload_size()?;
+            unwrap!(buffer.resize_default(max_tx));
 
             Ok(Some(buffer))
         } else {

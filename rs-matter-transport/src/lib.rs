@@ -149,6 +149,10 @@ pub const MAX_RX_PAYLOAD_SIZE: usize =
 pub const MAX_TX_PAYLOAD_SIZE: usize =
     MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
 
+/// Maximum application payload for a Matter message sent over UDP.
+pub const MAX_TX_UDP_PAYLOAD_SIZE: usize =
+    network::MAX_TX_PACKET_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
+
 /// Represents the state of the transport layer of a `Matter` instance.
 pub struct Transport {
     /// Buffer for an incoming (RX) packet.
