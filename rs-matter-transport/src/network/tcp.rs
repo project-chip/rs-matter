@@ -157,7 +157,18 @@ pub trait TcpNetworkSocket: MaybeSend {
     fn split(&mut self) -> (Self::Read<'_>, Self::Write<'_>);
 
     /// Gracefully close the stream (for example, send TCP FIN and flush).
+    ///
+    /// This may wait for as long as the peer does not acknowledge. [`TcpNetwork`] waits
+    /// at most [`TcpConfig::close_timeout`], and then calls [`Self::abort`].
     fn close(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend;
+
+    /// Reset the stream (for example, send TCP RST), and wait until the reset is sent.
+    ///
+    /// Implementations that send the reset without waiting, or whose [`Self::close`]
+    /// does not wait for the peer, may keep the default no-op implementation.
+    fn abort(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        core::future::ready(Ok(()))
+    }
 
     /// Configure TCP keep-alive on this stream.
     ///
@@ -185,6 +196,10 @@ impl<T: TcpNetworkSocket> TcpNetworkSocket for &mut T {
 
     fn close(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
         (*self).close()
+    }
+
+    fn abort(&mut self) -> impl Future<Output = Result<(), Error>> + MaybeSend {
+        (*self).abort()
     }
 
     fn set_keep_alive(&mut self, keep_alive: Option<TcpKeepAlive>) -> Result<(), Error> {
@@ -270,6 +285,9 @@ pub struct TcpConfig {
     pub send_timeout: Duration,
     /// Bound an outbound `connect` handshake.
     pub connect_timeout: Duration,
+    /// Bound a graceful close: a stream whose peer does not acknowledge the close in
+    /// this time is reset, and the reset is given as long again to be sent.
+    pub close_timeout: Duration,
     /// Optional TCP keep-alive configuration applied to accepted and connected sockets.
     pub keep_alive: Option<TcpKeepAlive>,
 }
@@ -281,6 +299,7 @@ impl TcpConfig {
             idle_timeout: None,
             send_timeout: Duration::from_secs(5),
             connect_timeout: Duration::from_secs(5),
+            close_timeout: Duration::from_secs(2),
             keep_alive: Some(TcpKeepAlive::new()),
         }
     }
@@ -448,6 +467,8 @@ mod tests {
         eof: bool,
         write_eof: bool,
         closed: bool,
+        close_hangs: bool,
+        aborted: bool,
         write_budget: Option<usize>,
         keep_alive: Option<TcpKeepAlive>,
         read_notif: Arc<Notification>,
@@ -514,10 +535,23 @@ mod tests {
         }
 
         async fn close(&mut self) -> Result<(), Error> {
-            let mut state = self.0.lock().unwrap();
-            state.closed = true;
-            state.eof = true;
-            state.read_notif.notify();
+            let hangs = {
+                let mut state = self.0.lock().unwrap();
+                state.closed = true;
+                state.eof = true;
+                state.read_notif.notify();
+                state.close_hangs
+            };
+
+            if hangs {
+                core::future::pending::<()>().await;
+            }
+
+            Ok(())
+        }
+
+        async fn abort(&mut self) -> Result<(), Error> {
+            self.0.lock().unwrap().aborted = true;
             Ok(())
         }
 
@@ -823,6 +857,49 @@ mod tests {
                 .unwrap()
                 .unwrap();
                 assert!(peer1.lock().unwrap().closed);
+                assert!(!peer1.lock().unwrap().aborted);
+                assert_eq!(&buffer[..count], b"hi");
+                assert_eq!(addr, Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 31))));
+            });
+
+            match select(runner, test).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn unacknowledged_close_is_aborted_and_releases_slot() {
+        block_on(async {
+            let listener = MockListener::default();
+            let peer1 = listener.peer(30, &[]);
+            peer1.lock().unwrap().close_hangs = true;
+            let _peer2 = listener.peer(31, &[2, 0, 0, 0, b'h', b'i']);
+            let buffers = TcpNetworkBuffers::<64, 1>::new();
+            let net = TcpNetwork::new(
+                listener,
+                &buffers,
+                &TcpConfig {
+                    idle_timeout: Some(Duration::from_millis(30)),
+                    close_timeout: Duration::from_millis(30),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+            let runner = pin!(net.run());
+            let test = pin!(async {
+                let mut buffer = [0u8; 8];
+                let (count, addr) = with_timeout(
+                    Duration::from_secs(2),
+                    NetworkReceive::recv_from(&mut &net, &mut buffer),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                assert!(peer1.lock().unwrap().aborted);
                 assert_eq!(&buffer[..count], b"hi");
                 assert_eq!(addr, Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 31))));
             });
