@@ -57,8 +57,7 @@ use rs_matter_sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter_transport::exchange::MatterBuffers;
 use rs_matter_transport::network::tcp::TcpCapability;
 use rs_matter_transport::network::{
-    Address, ChainedNetwork, EitherNetwork, NetworkMulticast, NetworkReceive, NetworkSend,
-    NoNetwork,
+    Address, ChainedNetwork, NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork,
 };
 use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
@@ -616,17 +615,8 @@ where
         let bound = self.bind_tcp(tcp_stack.as_ref(), net_interface).await;
         let tcp = bound.as_deref();
 
-        let (send, recv) = if let Some(tcp) = tcp {
-            (
-                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.send(), udp_send)),
-                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.recv(), udp_recv)),
-            )
-        } else {
-            (
-                EitherNetwork::Second(udp_send),
-                EitherNetwork::Second(udp_recv),
-            )
-        };
+        let send = NetTcp::chain_send(tcp, udp_send);
+        let recv = NetTcp::chain_recv(tcp, udp_recv);
 
         let is_oper = |a: &Address| a.is_udp() || a.is_tcp();
         let mut transport =

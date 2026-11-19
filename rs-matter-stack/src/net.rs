@@ -22,7 +22,10 @@ use core::future::{pending, ready, Future};
 use core::net::{Ipv4Addr, SocketAddr};
 
 use rs_matter_transport::network::tcp::{NoTcp, TcpNetwork, TcpNetworkSockets};
-use rs_matter_transport::network::{NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork};
+use rs_matter_transport::network::{
+    Address, ChainedNetwork, EitherNetwork, NetworkMulticast, NetworkReceive, NetworkSend,
+    NoNetwork,
+};
 use rs_matter_utils::error::{Error, ErrorCode};
 use rs_matter_utils::sync::{MaybeSend, MaybeSendSync};
 
@@ -146,6 +149,36 @@ pub trait NetTcp: MaybeSendSync {
     fn max_message_size(&self) -> usize {
         rs_matter_transport::MAX_RX_BUF_SIZE
     }
+
+    /// Chain the sending half of `tcp`, if bound, with the sending half of the UDP socket.
+    ///
+    /// Only [`NoTcpNetwork`] overrides this, to keep the UDP half as it is.
+    fn chain_send<'a, U>(tcp: Option<&'a Self>, udp: U) -> impl NetworkSend + 'a
+    where
+        U: NetworkSend + 'a,
+    {
+        match tcp {
+            Some(tcp) => {
+                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.send(), udp))
+            }
+            None => EitherNetwork::Second(udp),
+        }
+    }
+
+    /// Chain the receiving half of `tcp`, if bound, with the receiving half of the UDP socket.
+    ///
+    /// Only [`NoTcpNetwork`] overrides this, to keep the UDP half as it is.
+    fn chain_recv<'a, U>(tcp: Option<&'a Self>, udp: U) -> impl NetworkReceive + 'a
+    where
+        U: NetworkReceive + 'a,
+    {
+        match tcp {
+            Some(tcp) => {
+                EitherNetwork::First(ChainedNetwork::new(Address::is_tcp, tcp.recv(), udp))
+            }
+            None => EitherNetwork::Second(udp),
+        }
+    }
 }
 
 impl<T: NetTcp> NetTcp for &T {
@@ -173,6 +206,20 @@ impl<T: NetTcp> NetTcp for &T {
 
     fn max_message_size(&self) -> usize {
         (*self).max_message_size()
+    }
+
+    fn chain_send<'a, U>(tcp: Option<&'a Self>, udp: U) -> impl NetworkSend + 'a
+    where
+        U: NetworkSend + 'a,
+    {
+        T::chain_send(tcp.copied(), udp)
+    }
+
+    fn chain_recv<'a, U>(tcp: Option<&'a Self>, udp: U) -> impl NetworkReceive + 'a
+    where
+        U: NetworkReceive + 'a,
+    {
+        T::chain_recv(tcp.copied(), udp)
     }
 }
 
@@ -227,13 +274,70 @@ impl NetTcp for NoTcp {
 }
 
 impl NetTcpStack for NoTcp {
-    type Tcp<'a> = Self;
+    type Tcp<'a> = NoTcpNetwork;
 
     fn bind(
         &self,
         _addr: SocketAddr,
     ) -> impl Future<Output = Result<Self::Tcp<'_>, Error>> + MaybeSend {
         ready(Err(ErrorCode::NoNetworkInterface.into()))
+    }
+}
+
+/// The bound TCP of [`NoTcp`], which has no values, as binding [`NoTcp`] always fails.
+///
+/// The stack then runs the operational transport over the UDP socket alone, without
+/// the code for chaining TCP.
+pub enum NoTcpNetwork {}
+
+impl NetTcp for NoTcpNetwork {
+    type Send<'a> = Self;
+    type Receive<'a> = Self;
+
+    fn send(&self) -> Self::Send<'_> {
+        match *self {}
+    }
+
+    fn recv(&self) -> Self::Receive<'_> {
+        match *self {}
+    }
+
+    async fn run(&self) -> Result<(), Error> {
+        match *self {}
+    }
+
+    fn max_message_size(&self) -> usize {
+        match *self {}
+    }
+
+    fn chain_send<'a, U>(_tcp: Option<&'a Self>, udp: U) -> impl NetworkSend + 'a
+    where
+        U: NetworkSend + 'a,
+    {
+        udp
+    }
+
+    fn chain_recv<'a, U>(_tcp: Option<&'a Self>, udp: U) -> impl NetworkReceive + 'a
+    where
+        U: NetworkReceive + 'a,
+    {
+        udp
+    }
+}
+
+impl NetworkSend for NoTcpNetwork {
+    async fn send_to(&mut self, _data: &[u8], _addr: Address) -> Result<(), Error> {
+        match *self {}
+    }
+}
+
+impl NetworkReceive for NoTcpNetwork {
+    async fn wait_available(&mut self) -> Result<(), Error> {
+        match *self {}
+    }
+
+    async fn recv_from(&mut self, _buffer: &mut [u8]) -> Result<(usize, Address), Error> {
+        match *self {}
     }
 }
 

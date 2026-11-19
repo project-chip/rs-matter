@@ -17,7 +17,7 @@
 
 //! Operational TCP stack abstractions for embedded and host network stacks.
 
-pub use crate::net::{NetTcp, NetTcpStack};
+pub use crate::net::{NetTcp, NetTcpStack, NoTcpNetwork};
 pub use rs_matter_transport::network::tcp::{
     NoTcp, TcpConfig, TcpKeepAlive, TcpNetwork, TcpNetworkBuffers, TcpNetworkRead,
     TcpNetworkSocket, TcpNetworkSockets, TcpNetworkWrite,

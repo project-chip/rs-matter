@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a stack without TCP no longer carries the code that chains TCP with UDP, and `Bump` keeps one copy of its allocation code for all types, which saves 3 to 5 KB of flash on thumbv6m and thumbv7em (#672)
+  * New: `NoTcpNetwork`, which `NoTcp` binds to, and the provided methods `NetTcp::chain_send` and `NetTcp::chain_recv` (#672)
 * Fix: with a `large-buffers-*` feature, IM reports and BDX blocks over UDP and BTP stay within the UDP packet size; only TCP exchanges send larger messages (#673)
   * Fix: TCP messages stay within the `MAX_TCP_MESSAGE_SIZE` the peer advertised, or 64000 bytes if it advertised none
   * New: `Exchange::max_tx_payload_size`, the largest payload of one message on an exchange
