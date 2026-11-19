@@ -186,8 +186,9 @@ cfg_if! {
         /// Max number of IM buffers
         const MAX_IM_BUFFERS: usize = 4;
     } else {
-        /// Max number of IM buffers
-        const MAX_IM_BUFFERS: usize = 10;
+        /// Max number of IM buffers: a TX and an RX one for each responder, and one
+        /// for the subscription reports
+        const MAX_IM_BUFFERS: usize = 2 * MAX_RESPONDERS + 1;
     }
 }
 

@@ -74,6 +74,7 @@ use rs_matter_dm_core::persist;
 use rs_matter_node::groupcast;
 use rs_matter_node::transport;
 use rs_matter_node::{acl, Matter};
+use rs_matter_node_core::basic_info;
 use rs_matter_node_core::fabric;
 use rs_matter_sc::ExchangeInitiator as _;
 use rs_matter_tlv as tlv;
@@ -232,7 +233,7 @@ pub struct InteractionModel<
     crypto: C,
     buffers: &'a B,
     kv: K,
-    subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
+    subscriptions_buffers: SubscriptionsBuffers<'a, NS>,
     state: &'a InteractionModelState<NS, NE>,
     handler: T,
     /// The controller-side `ReportData` consumer. Defaults to `()`, which
@@ -884,11 +885,14 @@ where
             min_int_secs,
             max_int_secs,
             self.state.events.watermark(),
-            rx,
+            &rx,
             &self.subscriptions_buffers,
         ) else {
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
+
+        // The subscription keeps a copy of the request
+        drop(rx);
 
         let primed = self
             .report_data(&mut rctx, &mut tx, exchange, true, true)
@@ -1134,7 +1138,6 @@ where
 
         self.kv.access(|store, buf| {
             self.state.subscriptions.load_persist(
-                self.buffers,
                 &self.subscriptions_buffers,
                 store,
                 buf,
@@ -1349,7 +1352,7 @@ where
     async fn process_subscription(
         &self,
         matter: &Matter<'_>,
-        rctx: &mut SubscriptionReport<'_, '_, B, NS>,
+        rctx: &mut SubscriptionReport<'_, '_, NS>,
         send_if_empty: bool,
     ) -> Result<bool, Error> {
         // Route the report by the subscriber's `(fabric, node)`: reuse the best
@@ -1440,7 +1443,7 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn report_data(
         &self,
-        rctx: &mut SubscriptionReport<'_, '_, B, NS>,
+        rctx: &mut SubscriptionReport<'_, '_, NS>,
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
         with_dataver: bool,

@@ -23,6 +23,7 @@ use core::str::FromStr;
 
 use crate::dm::{AttrId, ClusterId};
 use crate::error::Error;
+use crate::im::SubscribeReq;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::session::CASE_SESSIONS_PER_FABRIC;
 use crate::tlv::{FromTLV, Nullable, TLVElement, ToTLV};
@@ -340,8 +341,19 @@ const SIMULTANEOUS_INVOCATIONS_SUPPORTED: u16 = 1;
 const SIMULTANEOUS_WRITES_SUPPORTED: u16 = 1;
 /// Constraint is `9 to 10000`; see Core spec 2.11.2.1 "Read Interaction Limits".
 const READ_PATHS_SUPPORTED: u16 = 9;
-/// Constraint is `3 to 10000`; see Core spec 2.11.2.2 "Subscribe Interaction Limits".
-const SUBSCRIBE_PATHS_SUPPORTED: u16 = 3;
+
+/// The size of the buffer which keeps the request of a subscription.
+///
+/// A larger request is kept without its data version filters, which only matter
+/// for the priming report.
+pub const SUBSCRIPTION_BUFFER_SIZE: usize = 256;
+
+/// The default `SubscribePathsSupported` of the Basic Information cluster: the paths which
+/// fit in [`SUBSCRIPTION_BUFFER_SIZE`] at their largest encoding. Constraint is `3 to 10000`.
+pub const SUBSCRIBE_PATHS_SUPPORTED: u16 =
+    ((SUBSCRIPTION_BUFFER_SIZE - SubscribeReq::MAX_FIXED_LEN) / SubscribeReq::MAX_PATH_LEN) as u16;
+
+const _: () = ::core::assert!(SUBSCRIBE_PATHS_SUPPORTED >= 3);
 
 impl CapabilityMinima {
     /// Create a default instance of `CapabilityMinima`, with the CASE sessions

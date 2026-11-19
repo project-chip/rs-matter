@@ -70,7 +70,10 @@ where
 }
 
 /// The default number of buffers held by a [`PooledBuffers`] pool.
-pub const DEFAULT_BUFFER_POOL_SIZE: usize = 10;
+///
+/// As many as the Interaction Model needs with four responders: two for each, and one
+/// for the subscription reports.
+pub const DEFAULT_BUFFER_POOL_SIZE: usize = 9;
 
 /// A concrete implementation of `Buffers` utilizing an internal pool of buffers.
 /// Accessing a buffer would fail when all buffers are still used elsewhere after a wait timeout expires.

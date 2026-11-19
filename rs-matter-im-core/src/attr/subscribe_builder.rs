@@ -469,7 +469,7 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::tlv::{TLVElement, TLVTag, TLVWriteParent};
+    use crate::tlv::{Nullable, TLVElement, TLVTag, TLVWriteParent};
     use crate::utils::storage::WriteBuf;
     use crate::{
         AttrPath, ClusterPath, DataVersionFilter, EventFilter, EventPath, SubscribeReq, IM_REVISION,
@@ -481,6 +481,163 @@ mod tests {
 
     fn root<'a, 'b>(wb: &'a mut WriteBuf<'b>) -> Root<'a, 'b> {
         TLVWriteParent::new((), wb)
+    }
+
+    #[test]
+    fn subscribe_max_lens() {
+        // All fields of the paths and the filter, with values of their full width
+        let path = AttrPath {
+            tag_compression: Some(false),
+            node: Some(0x1234_5678_9abc_def0),
+            endpoint: Some(0x1234),
+            cluster: Some(0x1234_5678),
+            attr: Some(0x1234_5678),
+            list_index: Some(Nullable::some(0x1234)),
+        };
+        let event_path = EventPath {
+            node: Some(0x1234_5678_9abc_def0),
+            endpoint: Some(0x1234),
+            cluster: Some(0x1234_5678),
+            event: Some(0x1234_5678),
+            is_urgent: Some(true),
+        };
+        let filters = [EventFilter {
+            node: Some(0x1234_5678_9abc_def0),
+            event_min: Some(0x1234_5678_9abc_def0),
+        }];
+
+        let len = |paths: &[AttrPath], events: &[EventPath]| {
+            let mut buf = [0; 256];
+            let mut wb = WriteBuf::new(&mut buf);
+
+            SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+                .unwrap()
+                .keep_subs(true)
+                .unwrap()
+                .min_int_floor(0x1234)
+                .unwrap()
+                .max_int_ceil(0x1234)
+                .unwrap()
+                .attr_requests_from(paths)
+                .unwrap()
+                .event_requests_from(events)
+                .unwrap()
+                .event_filters_from(&filters)
+                .unwrap()
+                .fabric_filtered(true)
+                .unwrap()
+                .end()
+                .unwrap();
+
+            wb.as_slice().len()
+        };
+
+        assert_eq!(len(&[], &[]), SubscribeReq::MAX_FIXED_LEN);
+
+        // `AttrPath` does not have the `WildcardPathFlags` field (a `u32`, 6 bytes)
+        let path_len = len(&[path], &[]) - SubscribeReq::MAX_FIXED_LEN;
+        assert_eq!(path_len + 6, SubscribeReq::MAX_PATH_LEN);
+
+        let event_path_len = len(&[], &[event_path]) - SubscribeReq::MAX_FIXED_LEN;
+        assert!(event_path_len <= SubscribeReq::MAX_PATH_LEN);
+    }
+
+    #[test]
+    fn subscribe_without_dataver_filters() {
+        let paths = [AttrPath {
+            endpoint: Some(1),
+            cluster: Some(6),
+            attr: Some(0),
+            ..Default::default()
+        }];
+        let datavers = [
+            DataVersionFilter {
+                path: ClusterPath {
+                    node: None,
+                    endpoint: 1,
+                    cluster: 6,
+                },
+                data_ver: 0x1234_5678,
+            },
+            DataVersionFilter {
+                path: ClusterPath {
+                    node: None,
+                    endpoint: 0,
+                    cluster: 0x28,
+                },
+                data_ver: 9,
+            },
+        ];
+
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        SubscribeReqBuilder::new(root(&mut wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(1)
+            .unwrap()
+            .max_int_ceil(60)
+            .unwrap()
+            .attr_requests_from(&paths)
+            .unwrap()
+            .event_requests_from(&[])
+            .unwrap()
+            .event_filters_from(&[])
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .dataver_filters_from(&datavers)
+            .unwrap()
+            .interaction_model_revision(IM_REVISION)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        // The same request, built without the filters
+        let mut expected_buf = [0; 256];
+        let mut expected_wb = WriteBuf::new(&mut expected_buf);
+
+        SubscribeReqBuilder::new(root(&mut expected_wb), &TLVTag::Anonymous)
+            .unwrap()
+            .keep_subs(true)
+            .unwrap()
+            .min_int_floor(1)
+            .unwrap()
+            .max_int_ceil(60)
+            .unwrap()
+            .attr_requests_from(&paths)
+            .unwrap()
+            .event_requests_from(&[])
+            .unwrap()
+            .event_filters_from(&[])
+            .unwrap()
+            .fabric_filtered(true)
+            .unwrap()
+            .interaction_model_revision(IM_REVISION)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        let mut stripped_buf = [0; 256];
+        let mut stripped_wb = WriteBuf::new(&mut stripped_buf);
+
+        SubscribeReq::new(TLVElement::new(wb.as_slice()))
+            .write_without_dataver_filters(&mut stripped_wb)
+            .unwrap();
+
+        assert_eq!(stripped_wb.as_slice(), expected_wb.as_slice());
+
+        // A request without filters stays the same
+        let mut again_buf = [0; 256];
+        let mut again_wb = WriteBuf::new(&mut again_buf);
+
+        SubscribeReq::new(TLVElement::new(expected_wb.as_slice()))
+            .write_without_dataver_filters(&mut again_wb)
+            .unwrap();
+
+        assert_eq!(again_wb.as_slice(), expected_wb.as_slice());
     }
 
     #[test]
