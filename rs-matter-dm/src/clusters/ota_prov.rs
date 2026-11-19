@@ -46,8 +46,7 @@ use crate::dm::{Cluster, Dataver, InvokeContext, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::ota::MAX_SOFTWARE_VERSION_STR_LEN;
 use crate::tlv::{Octets, TLVBuilderParent};
-use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
-use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::pooled::ByteBuffers;
 use crate::utils::storage::{String, Vec};
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 use crate::{with, Matter};
@@ -520,8 +519,9 @@ pub struct OtaBdxHandler<B, I> {
 impl<B, I> OtaBdxHandler<B, I> {
     /// Create a new BDX image handler backed by the given image data source.
     ///
-    /// `buffers` is a [`Buffers`] pool ([`BdxBuffer`]-sized): one buffer is
-    /// leased per in-flight download to stage the BDX blocks (the image bytes are
+    /// `buffers` is a [`ByteBuffers`] pool: one buffer, as large as the largest block
+    /// (UDP-sized, except over TCP), is leased per in-flight download to stage the
+    /// BDX blocks (the image bytes are
     /// read straight into it), so the pool's size caps how many downloads run
     /// concurrently. When the pool is exhausted, further downloads are rejected
     /// with [`ResponderBusy`](BdxStatus::ResponderBusy).
@@ -566,7 +566,7 @@ impl<B, I: OtaImages> OtaBdxHandler<B, I> {
 
 impl<B, I> BdxHandler for OtaBdxHandler<B, I>
 where
-    B: Buffers<BdxBuffer>,
+    B: ByteBuffers,
     I: OtaImages,
 {
     async fn handles(&self, responder: &BdxResponder<'_>) -> bool {
@@ -601,19 +601,16 @@ where
         }
         let remaining = size - start_offset;
 
-        // Lease a staging buffer for the duration of this transfer; if the pool is
-        // exhausted, tell the peer we are busy so it can retry later.
-        let Some(mut buf) = self.buffers.get().await else {
+        // Lease a staging buffer for the largest block of this transfer, for the
+        // duration of the transfer; if the pool is exhausted, tell the peer we are
+        // busy so it can retry later.
+        let Some(mut buf) = self.buffers.get(responder.max_block_size()?).await else {
             return responder.reject(BdxStatus::ResponderBusy).await;
         };
 
-        // Expose the whole buffer as the writer's block-staging slice (its length
-        // caps the block size, which the BDX layer further clamps to the TX limit).
-        unwrap!(buf.resize_default(MAX_EXCHANGE_RX_BUF_SIZE));
-
         // Hand it to the writer, which sends each block straight out of it - the
         // image bytes are read directly into the writer's block buffer, no copy.
-        let mut writer = responder.reply(buf.as_mut_slice(), Some(remaining)).await?;
+        let mut writer = responder.reply(&mut buf, Some(remaining)).await?;
 
         let mut offset = start_offset;
 

@@ -85,7 +85,7 @@ use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::MatterBuffers;
 use rs_matter::transport::network::btp::Btp;
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::{

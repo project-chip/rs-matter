@@ -50,6 +50,15 @@ max-im-buffers-6 = []
 max-im-buffers-5 = []
 max-im-buffers-4 = []
 
+# Number of large IM buffers, which exist only with a `large-buffers-*` feature of `rs-matter`.
+# Without one of these, 2.
+max-large-im-buffers-16 = []
+max-large-im-buffers-8 = []
+max-large-im-buffers-4 = []
+max-large-im-buffers-3 = []
+max-large-im-buffers-2 = []
+max-large-im-buffers-1 = []
+
 # Number of concurrent responders.
 max-responders-32 = []
 max-responders-16 = []

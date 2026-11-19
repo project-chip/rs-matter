@@ -26,13 +26,13 @@ use crate::dm::{
     AsyncHandler, AttrChangeNotifier, AttrId, ClusterId, EndptId, EventEmitter, EventId,
     EventNumber, HandlerContext, LifecycleOp, Metadata,
 };
-use crate::dm::{EventTLVWrite, IMBuffer, ImStats};
+use crate::dm::{EventTLVWrite, ImStats};
 use crate::encoding::{EventPriority, IMStatusCode, NodeId, ReportDataResp};
 use crate::error::Error;
 use crate::persist::KvBlobStoreAccess;
 use crate::transport::exchange::Exchange;
 use crate::utils::epoch::UtcTime;
-use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::pooled::ByteBuffers;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
 
 /// The identity of the subscription (and the peer that owns it) that a
@@ -220,7 +220,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
+    fn buffers(&self) -> impl ByteBuffers + '_ {
         self.context.buffers()
     }
 

@@ -54,14 +54,14 @@
 use core::future::Future;
 use core::num::NonZeroU8;
 
-use crate::bdx::{BdxBuffer, BdxUploadInitiator};
+use crate::bdx::{max_tx_block_size, BdxUploadInitiator};
 use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::sc::ExchangeInitiator as _;
 use crate::tlv::{Octets, TLVBuilderParent};
-use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE};
+use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
-use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::pooled::ByteBuffers;
 use crate::utils::storage::String;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification, Signal};
@@ -166,8 +166,9 @@ enum Bdx {
 /// given, returning small logs inline and - when the requestor asks for `BDX` -
 /// streaming larger logs over a BDX transfer it initiates back to the requestor.
 ///
-/// `buffers` is a [`Buffers`] pool ([`BdxBuffer`]-sized): one buffer is
-/// leased to stage the inline read, and one for the duration of a BDX transfer,
+/// `buffers` is a [`ByteBuffers`] pool: one buffer is leased to stage the inline
+/// read, and one as large as the largest block (UDP-sized, except over TCP) for
+/// the duration of a BDX transfer,
 /// so the pool needs at least two buffers to serve an inline request while a BDX
 /// transfer is in flight. When no buffer is free, the request is answered with
 /// `Busy`.
@@ -211,7 +212,7 @@ impl<'a, B, P> DiagLogsHandler<'a, B, P> {
 
 impl<B, P> DiagLogsHandler<'_, B, P>
 where
-    B: Buffers<BdxBuffer>,
+    B: ByteBuffers,
     P: DiagLogs,
 {
     /// Fill `buf` from the `intent` log starting at `offset`, looping until it is
@@ -253,12 +254,11 @@ where
         status: StatusEnum,
         response: RetrieveLogsResponseBuilder<Q>,
     ) -> Result<Q, Error> {
-        let Some(mut buf) = self.buffers.get().await else {
+        let Some(mut buf) = self.buffers.get(MAX_INLINE_LOG).await else {
             return reply_status(response, StatusEnum::Busy);
         };
-        unwrap!(buf.resize_default(MAX_INLINE_LOG));
 
-        let n = self.fill(intent, 0, buf.as_mut_slice()).await?;
+        let n = self.fill(intent, 0, &mut buf).await?;
 
         let result = response
             .status(status)?
@@ -278,12 +278,6 @@ where
     /// handshake (reporting its outcome to the waiting command handler via
     /// [`handshake`](Self::handshake)), then stream the log to completion.
     async fn run_transfer(&self, ctx: &impl HandlerContext, job: &Job) -> Result<(), Error> {
-        let Some(mut buf) = self.buffers.get().await else {
-            self.handshake.signal(false);
-            return Err(ErrorCode::NoSpace.into());
-        };
-        unwrap!(buf.resize_default(MAX_EXCHANGE_RX_BUF_SIZE));
-
         let exchange =
             match Exchange::initiate(self.matter, ctx.crypto(), job.fab_idx, job.node_id).await {
                 Ok(exchange) => exchange,
@@ -293,10 +287,18 @@ where
                 }
             };
 
-        let mut writer = match exchange
-            .upload(buf.as_mut_slice(), job.fd.as_bytes(), None)
-            .await
-        {
+        // A staging buffer for the largest block the exchange carries
+        let buf = match max_tx_block_size(&exchange) {
+            Ok(len) => self.buffers.get(len as usize).await,
+            Err(_) => None,
+        };
+
+        let Some(mut buf) = buf else {
+            self.handshake.signal(false);
+            return Err(ErrorCode::ResourceExhausted.into());
+        };
+
+        let mut writer = match exchange.upload(&mut buf, job.fd.as_bytes(), None).await {
             Ok(writer) => writer,
             // The requestor refused the transfer (or it could not be set up): the
             // command handler turns this into `Denied`.
@@ -328,7 +330,7 @@ where
 
 impl<B, P> ClusterAsyncHandler for DiagLogsHandler<'_, B, P>
 where
-    B: Buffers<BdxBuffer>,
+    B: ByteBuffers,
     P: DiagLogs,
 {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));

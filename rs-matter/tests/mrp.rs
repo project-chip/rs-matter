@@ -67,12 +67,13 @@ use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::sc::{OpCode as ScOpCode, PROTO_ID_SECURE_CHANNEL};
-use rs_matter::transport::exchange::{Exchange, MatterBuffers, MessageMeta};
+use rs_matter::transport::exchange::{Exchange, MessageMeta};
 use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::packet::PacketHdr;
 use rs_matter::transport::session::{NocCatIds, PeerMrpParams, ReservedSession, SessionMode};
+use rs_matter::transport::MatterBuffers;
 use rs_matter::utils::futures::{select, select3, Coalesce, Either, Either3};
 use rs_matter::utils::storage::{self, ParseBuf};
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;

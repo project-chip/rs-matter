@@ -54,11 +54,11 @@ use rs_matter_pairing::qr::QrTextType;
 use rs_matter_pairing::DiscoveryCapabilities;
 use rs_matter_respond::{DefaultResponder, ExchangeHandler, Responder};
 use rs_matter_sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter_transport::exchange::MatterBuffers;
 use rs_matter_transport::network::tcp::TcpCapability;
 use rs_matter_transport::network::{
     Address, ChainedNetwork, NetworkMulticast, NetworkReceive, NetworkSend, NoNetwork,
 };
+use rs_matter_transport::MatterBuffers;
 use rs_matter_utils::cell::RefCell;
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select_slice, Coalesce};
@@ -193,6 +193,31 @@ cfg_if! {
 }
 
 cfg_if! {
+    if #[cfg(feature = "max-large-im-buffers-16")] {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = 16;
+    } else if #[cfg(feature = "max-large-im-buffers-8")] {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = 8;
+    } else if #[cfg(feature = "max-large-im-buffers-4")] {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = 4;
+    } else if #[cfg(feature = "max-large-im-buffers-3")] {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = 3;
+    } else if #[cfg(feature = "max-large-im-buffers-2")] {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = 2;
+    } else if #[cfg(feature = "max-large-im-buffers-1")] {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = 1;
+    } else {
+        /// Max number of large IM buffers
+        const MAX_LARGE_IM_BUFFERS: usize = rs_matter_transport::DEFAULT_LARGE_BUFFER_POOL_SIZE;
+    }
+}
+
+cfg_if! {
     if #[cfg(feature = "max-responders-32")] {
         /// Max number of concurrent responders
         const MAX_RESPONDERS: usize = 32;
@@ -231,11 +256,15 @@ cfg_if! {
 
 const MAX_BUSY_RESPONDERS: usize = 2;
 
+/// The IM buffers of `MatterStack`: the UDP-sized ones and, with a `large-buffers-*`
+/// feature, the large ones
+type StackBuffers = MatterBuffers<MAX_IM_BUFFERS, MAX_LARGE_IM_BUFFERS>;
+
 /// The `InteractionModel` specialization run by `MatterStack`.
 pub type MatterStackInteractionModel<'a, C, H, K> = InteractionModel<
     'a,
     C,
-    MatterBuffers<MAX_IM_BUFFERS>,
+    StackBuffers,
     H,
     K,
     // The accessory role: inbound `ReportData` is disowned.
@@ -263,7 +292,7 @@ where
     S: StackNetwork,
 {
     matter: Matter<'a>,
-    buffers: MatterBuffers<MAX_IM_BUFFERS>,
+    buffers: StackBuffers,
     /// The interaction-model state: subscriptions table and events queue.
     state: MatterStackInteractionModelState,
     bump: Bump<B>,

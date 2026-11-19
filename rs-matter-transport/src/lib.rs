@@ -100,6 +100,7 @@ use rs_matter_tlv as tlv;
 use rs_matter_utils as utils;
 use rs_matter_utils::error;
 
+mod buffers;
 mod case_setup;
 mod dedup;
 
@@ -115,6 +116,7 @@ pub mod proto;
 pub mod proto_hdr;
 pub mod session;
 
+pub use buffers::{MatterBuffers, UdpBuffer, DEFAULT_LARGE_BUFFER_POOL_SIZE, UDP_BUFFER_SIZE};
 pub use host::TransportHost;
 
 pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =

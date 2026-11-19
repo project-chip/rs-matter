@@ -110,6 +110,9 @@ bitflags! {
         const FAB_SCOPED = 0x0040;
         const FAB_SENSITIVE = 0x0080;
         const TIMED_ONLY = 0x0100;
+        /// A command with the Large Message quality, which only a session over a
+        /// transport that carries large messages (TCP) may invoke
+        const LARGE_MESSAGE = 0x0200;
 
         const READ_PRIVILEGE_MASK = Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits() | Self::NEED_OPERATE.bits() | Self::NEED_ADMIN.bits();
         const WRITE_PRIVILEGE_MASK = Self::NEED_MANAGE.bits() | Self::NEED_OPERATE.bits() | Self::NEED_ADMIN.bits();

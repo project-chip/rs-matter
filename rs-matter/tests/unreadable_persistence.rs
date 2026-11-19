@@ -61,7 +61,7 @@ use rs_matter::dm::{Async, Cluster, Dataver, Endpoint, Node};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::persist::{KvBlobStore, KvBlobStoreAccess, NETWORKS_KEY, VENDOR_KEYS_START};
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::MatterBuffers;
 use rs_matter::{clusters, devices, Matter};
 
 use crate::common::{init_env_logger, MemKvBlobStore};

@@ -6,9 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* New: with a `large-buffers-*` feature, `MatterBuffers` holds a few large buffers next to the UDP-sized ones, and only TCP exchanges take a large one: for their reports and invoke responses, and for a request larger than a UDP message (#678)
+  * Breaking: the Interaction Model and the BDX handlers take a `ByteBuffers` pool, which hands out buffers of the length asked for, rather than a `Buffers<IMBuffer>`; `ChainedBuffers` makes one pool of two
+  * Breaking: `MatterBuffers<N, NL>` moved from `transport::exchange` to the root of `transport`, and is a struct of `N` UDP-sized buffers (`UdpBuffer`) and, with a `large-buffers-*` feature, `NL` large ones (`DEFAULT_LARGE_BUFFER_POOL_SIZE`, 2, by default), rather than an alias of `PooledBuffers`
+  * New: the `max-large-im-buffers-*` features of `rs-matter-stack` (`stack-max-large-im-buffers-*` in `rs-matter`), the number of its large IM buffers; 2 by default
+  * The OTA provider and the Diagnostic Logs handler take buffers as large as their largest BDX block, UDP-sized except over TCP. New: `BdxDownloadResponder::max_block_size` and `max_tx_block_size`
 * Fix: a subscription keeps its request in a buffer of its own, of `SUBSCRIPTION_BUFFER_SIZE` (256 bytes), rather than in one of the IM buffers for its whole life. A larger request is kept without its data version filters, which only matter for the priming report (#677)
+  * Fix: a subscription report which finds no free buffer is retried later, like any other failed report, rather than dropping the subscription
+  * New: a command with the Large Message quality (`CaptureSnapshot`, the WebRTC, Push AV and TLS commands) is answered `INVALID_TRANSPORT_TYPE` over a session that does not carry large messages; `Access::LARGE_MESSAGE` marks such commands
+  * Breaking: `expand_invoke` takes whether the session carries large messages
   * The default `CapabilityMinima::subscribe_paths_supported` is `SUBSCRIBE_PATHS_SUPPORTED` (5 rather than 3): the paths that fit in `SUBSCRIPTION_BUFFER_SIZE` at their largest encoding
-  * New: `SubscribeReq::write_without_dataver_filters`, `SubscribeReq::MAX_PATH_LEN` and `SubscribeReq::MAX_FIXED_LEN`
+  * New: `SubscribeReq::split_dataver_filters`, `SubscribeReq::MAX_PATH_LEN` and `SubscribeReq::MAX_FIXED_LEN`
   * `DEFAULT_BUFFER_POOL_SIZE`, the default size of `MatterBuffers`, is 9 rather than 10, and `rs-matter-stack` without a `max-im-buffers-*` feature has two IM buffers for each responder and one more (9 by default) rather than 10
 * Fix: `TcpNetwork` resets a TCP connection whose peer does not acknowledge the close within `TcpConfig::close_timeout` (2 s by default). Before, a silent peer could keep a slot, or the listener, waiting forever (#676)
   * New: `TcpNetworkSocket::abort`, which resets the stream; the default does nothing

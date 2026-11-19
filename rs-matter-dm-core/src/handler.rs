@@ -26,9 +26,9 @@ use crate::persist::KvBlobStoreAccess;
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::epoch::UtcTime;
 use crate::utils::futures::{select, Coalesce};
-use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::pooled::ByteBuffers;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
-use crate::{EventId, EventNumber, EventTLVWrite, IMBuffer, ImStats, Metadata, EVENT_DATA_TAG};
+use crate::{EventId, EventNumber, EventTLVWrite, ImStats, Metadata, EVENT_DATA_TAG};
 
 use super::{
     AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply, TransactionId,
@@ -302,7 +302,7 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter + MaybeSendSync {
     ///
     /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_;
+    fn buffers(&self) -> impl ByteBuffers + '_;
 
     /// Return the Interaction Model statistics of the node.
     ///
@@ -353,7 +353,7 @@ where
         (**self).handler()
     }
 
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
+    fn buffers(&self) -> impl ByteBuffers + '_ {
         (**self).buffers()
     }
 

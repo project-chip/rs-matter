@@ -28,6 +28,45 @@ use super::id::{ident, idl_attribute_name_to_enum_variant_name};
 use super::parser::{AccessPrivilege, Cluster, Entities, EntityContext, StructType};
 use super::IdlGenerateContext;
 
+/// The `(cluster, command)` IDs of the commands with the Large Message quality.
+///
+/// The IDL does not carry this quality.
+const LARGE_MESSAGE_COMMANDS: &[(u64, u64)] = &[
+    // Commodity Price: GetDetailedForecastRequest
+    (0x0095, 0x02),
+    // Camera AV Stream Management: CaptureSnapshot
+    (0x0551, 0x0C),
+    // WebRTC Transport Provider: SolicitOffer, ProvideOffer, ProvideAnswer,
+    // ProvideICECandidates, EndSession
+    (0x0553, 0x00),
+    (0x0553, 0x02),
+    (0x0553, 0x04),
+    (0x0553, 0x05),
+    (0x0553, 0x06),
+    // WebRTC Transport Requestor: Offer, Answer, ICECandidates, End
+    (0x0554, 0x00),
+    (0x0554, 0x01),
+    (0x0554, 0x02),
+    (0x0554, 0x03),
+    // Push AV Stream Transport: AllocatePushTransport, FindTransport
+    (0x0555, 0x00),
+    (0x0555, 0x06),
+    // TLS Certificate Management: all commands
+    (0x0801, 0x00),
+    (0x0801, 0x02),
+    (0x0801, 0x04),
+    (0x0801, 0x06),
+    (0x0801, 0x07),
+    (0x0801, 0x09),
+    (0x0801, 0x0A),
+    (0x0801, 0x0C),
+    (0x0801, 0x0E),
+    // TLS Client Management: ProvisionEndpoint, FindEndpoint, RemoveEndpoint
+    (0x0802, 0x00),
+    (0x0802, 0x02),
+    (0x0802, 0x04),
+];
+
 /// Check whether a given cluster references any types defined in globals.
 ///
 /// Collects all type names referenced in the cluster's struct fields, attribute fields,
@@ -602,6 +641,10 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
 
         if cmd.is_fabric_scoped {
             access = quote!(#access.union(#krate::dm::Access::FAB_SCOPED));
+        }
+
+        if LARGE_MESSAGE_COMMANDS.contains(&(cluster.code, cmd.code)) {
+            access = quote!(#access.union(#krate::dm::Access::LARGE_MESSAGE));
         }
 
         let resp_id = if cmd.output != NO_RESPONSE {

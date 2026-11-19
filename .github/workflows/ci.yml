@@ -81,7 +81,7 @@ jobs:
       # The steps of `rs-matter` lint the `rs-matter-*` crates too, as they are its path dependencies.
       - name: Clippy - Optional features
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cd rs-matter; cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,zbus,bluer,qr-scan,pics,backtrace,log-tlv-payload,log-mrp,large-buffers,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
+        run: cd rs-matter; cargo clippy --all-targets --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,zbus,bluer,qr-scan,pics,backtrace,log-tlv-payload,log-mrp,large-buffers,stack-max-large-im-buffers-4,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
 
       # The features that do not go with the others: one mDNS backend at a time, and a CASE responder without an initiator
       - name: Clippy - Exclusive features
@@ -185,7 +185,7 @@ jobs:
       # As on Linux, without `zbus` and `bluer`, which are Linux-only
       - name: Clippy - Optional features
         working-directory: rs-matter
-        run: cargo clippy --all-targets --no-default-features --features rustcrypto,os,async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,qr-scan,pics,backtrace,log-tlv-payload,log-mrp,large-buffers,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
+        run: cargo clippy --all-targets --no-default-features --features rustcrypto,os,async-io,log,groups,case-resumption,persistent-subscriptions,ota-dcl,qr-scan,pics,backtrace,log-tlv-payload,log-mrp,large-buffers,stack-max-large-im-buffers-4,max-group-keys-per-fabric-2,max-groups-per-fabric-4 -- -Dwarnings
 
       - name: Clippy - Send Sync
         working-directory: rs-matter

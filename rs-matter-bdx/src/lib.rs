@@ -542,8 +542,8 @@ const MAX_RX_BLOCK_SIZE: u16 = max_block_size(MAX_RX_PAYLOAD_SIZE);
 /// The largest block the *sender* (`BdxWriter`) can emit on `exchange`: what one
 /// message there carries (large only over TCP), minus the block counter. The
 /// writer additionally bounds the block size by its caller-provided staging
-/// buffer.
-fn max_tx_block_size(exchange: &Exchange<'_>) -> Result<u16, Error> {
+/// buffer, so a staging buffer of this length holds every block.
+pub fn max_tx_block_size(exchange: &Exchange<'_>) -> Result<u16, Error> {
     Ok(max_block_size(exchange.max_tx_payload_size()?))
 }
 

@@ -88,6 +88,14 @@ stack-max-im-buffers-6 = ["rs-matter-stack/max-im-buffers-6"]
 stack-max-im-buffers-5 = ["rs-matter-stack/max-im-buffers-5"]
 stack-max-im-buffers-4 = ["rs-matter-stack/max-im-buffers-4"]
 
+# Number of large IM buffers of `rs-matter-stack`, with a `large-buffers-*` feature.
+stack-max-large-im-buffers-16 = ["rs-matter-stack/max-large-im-buffers-16"]
+stack-max-large-im-buffers-8 = ["rs-matter-stack/max-large-im-buffers-8"]
+stack-max-large-im-buffers-4 = ["rs-matter-stack/max-large-im-buffers-4"]
+stack-max-large-im-buffers-3 = ["rs-matter-stack/max-large-im-buffers-3"]
+stack-max-large-im-buffers-2 = ["rs-matter-stack/max-large-im-buffers-2"]
+stack-max-large-im-buffers-1 = ["rs-matter-stack/max-large-im-buffers-1"]
+
 # Number of concurrent responders of `rs-matter-stack`.
 stack-max-responders-32 = ["rs-matter-stack/max-responders-32"]
 stack-max-responders-16 = ["rs-matter-stack/max-responders-16"]

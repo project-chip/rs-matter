@@ -620,24 +620,19 @@ mod tests {
             .end()
             .unwrap();
 
-        let mut stripped_buf = [0; 256];
-        let mut stripped_wb = WriteBuf::new(&mut stripped_buf);
-
-        SubscribeReq::new(TLVElement::new(wb.as_slice()))
-            .write_without_dataver_filters(&mut stripped_wb)
+        let (head, tail) = SubscribeReq::new(TLVElement::new(wb.as_slice()))
+            .split_dataver_filters()
             .unwrap();
 
-        assert_eq!(stripped_wb.as_slice(), expected_wb.as_slice());
+        assert_eq!([head, tail].concat(), expected_wb.as_slice());
 
         // A request without filters stays the same
-        let mut again_buf = [0; 256];
-        let mut again_wb = WriteBuf::new(&mut again_buf);
-
-        SubscribeReq::new(TLVElement::new(expected_wb.as_slice()))
-            .write_without_dataver_filters(&mut again_wb)
+        let (head, tail) = SubscribeReq::new(TLVElement::new(expected_wb.as_slice()))
+            .split_dataver_filters()
             .unwrap();
 
-        assert_eq!(again_wb.as_slice(), expected_wb.as_slice());
+        assert_eq!(head, expected_wb.as_slice());
+        assert!(tail.is_empty());
     }
 
     #[test]

@@ -21,6 +21,7 @@
 use core::num::NonZeroU8;
 
 use crate::crypto::Crypto;
+use crate::dm::EventTLVWrite;
 use crate::dm::ImStats;
 use crate::dm::{
     AsyncHandler, AttrChangeNotifier, AttrDetails, AttrId, ClusterId, CmdDetails, EndptId,
@@ -28,13 +29,12 @@ use crate::dm::{
     Metadata, OperationContext, OwnAttrChangeNotifier, OwnEventEmitter, ReadContext, TransactionId,
     WriteContext,
 };
-use crate::dm::{EventTLVWrite, IMBuffer};
 use crate::encoding::EventPriority;
 use crate::error::Error;
 use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::utils::epoch::UtcTime;
-use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::pooled::ByteBuffers;
 
 /// A concrete implementation of the `ReadContext` trait
 pub(crate) struct ReadContextInstance<'a, C> {
@@ -86,7 +86,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
+    fn buffers(&self) -> impl ByteBuffers + '_ {
         self.context.buffers()
     }
 
@@ -282,7 +282,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
+    fn buffers(&self) -> impl ByteBuffers + '_ {
         self.context.buffers()
     }
 
@@ -482,7 +482,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
+    fn buffers(&self) -> impl ByteBuffers + '_ {
         self.context.buffers()
     }
 

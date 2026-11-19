@@ -69,6 +69,46 @@ where
     }
 }
 
+/// A trait for getting access to a byte buffer of a requested length, potentially awaiting
+/// until one becomes available.
+///
+/// Unlike with [`Buffers`], the buffers might come in different sizes (see [`ChainedBuffers`]).
+pub trait ByteBuffers: MaybeSendSync {
+    type Buffer<'a>: DerefMut<Target = [u8]> + MaybeSendSync
+    where
+        Self: 'a;
+
+    /// Get a buffer of exactly `len` bytes. Its contents are unspecified.
+    /// Might await until a buffer is available, as it might be in use by somebody else.
+    ///
+    /// Returns `None` when `len` is larger than any buffer, or when access to a buffer is
+    /// denied, immediately or after a certain amount of time (subject to the concrete
+    /// implementation of the method).
+    fn get(&self, len: usize) -> impl Future<Output = Option<Self::Buffer<'_>>> + MaybeSend;
+
+    /// Get a buffer of exactly `len` bytes immediately, without waiting.
+    /// If no such buffer is available, return `None`.
+    fn get_immediate(&self, len: usize) -> Option<Self::Buffer<'_>>;
+}
+
+impl<B> ByteBuffers for &B
+where
+    B: ByteBuffers,
+{
+    type Buffer<'a>
+        = B::Buffer<'a>
+    where
+        Self: 'a;
+
+    fn get(&self, len: usize) -> impl Future<Output = Option<Self::Buffer<'_>>> {
+        (*self).get(len)
+    }
+
+    fn get_immediate(&self, len: usize) -> Option<Self::Buffer<'_>> {
+        (*self).get_immediate(len)
+    }
+}
+
 /// The default number of buffers held by a [`PooledBuffers`] pool.
 ///
 /// As many as the Interaction Model needs with four responders: two for each, and one
@@ -270,6 +310,36 @@ where
     }
 }
 
+impl<const L: usize, const N: usize, M> ByteBuffers
+    for PooledBuffers<crate::storage::Vec<u8, L>, N, M>
+where
+    M: RawMutex + MaybeSendSync,
+{
+    type Buffer<'b>
+        = PooledByteBuffer<'b, L, N, M>
+    where
+        Self: 'b;
+
+    async fn get(&self, len: usize) -> Option<Self::Buffer<'_>> {
+        // Do not wait on a pool that can never serve the request
+        if len > L || N == 0 {
+            return None;
+        }
+
+        let buffer = Buffers::get(self).await?;
+
+        Some(PooledByteBuffer::new(buffer, len))
+    }
+
+    fn get_immediate(&self, len: usize) -> Option<Self::Buffer<'_>> {
+        if len > L {
+            return None;
+        }
+
+        Buffers::get_immediate(self).map(|buffer| PooledByteBuffer::new(buffer, len))
+    }
+}
+
 pub struct PooledBuffer<'a, T, const N: usize, M = MatterRawMutex>
 where
     M: RawMutex,
@@ -308,6 +378,142 @@ where
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buffer.deref_mut()
+    }
+}
+
+/// A byte buffer of a [`PooledBuffers`] pool, as returned by [`ByteBuffers::get`].
+pub struct PooledByteBuffer<'a, const L: usize, const N: usize, M = MatterRawMutex>(
+    PooledBuffer<'a, crate::storage::Vec<u8, L>, N, M>,
+)
+where
+    M: RawMutex;
+
+impl<'a, const L: usize, const N: usize, M> PooledByteBuffer<'a, L, N, M>
+where
+    M: RawMutex,
+{
+    /// `len` must not be larger than `L`.
+    fn new(mut buffer: PooledBuffer<'a, crate::storage::Vec<u8, L>, N, M>, len: usize) -> Self {
+        unwrap!(buffer.resize_default(len));
+
+        Self(buffer)
+    }
+}
+
+impl<const L: usize, const N: usize, M> Deref for PooledByteBuffer<'_, L, N, M>
+where
+    M: RawMutex,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_slice()
+    }
+}
+
+impl<const L: usize, const N: usize, M> DerefMut for PooledByteBuffer<'_, L, N, M>
+where
+    M: RawMutex,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut_slice()
+    }
+}
+
+/// Two [`ByteBuffers`] pools used as one: a buffer comes from the first pool when it
+/// has one of the requested length, else from the second one.
+///
+/// Chaining pools of growing buffer sizes gives a pool with size classes, where a
+/// request takes the smallest free buffer that holds it.
+pub struct ChainedBuffers<F, S> {
+    first: F,
+    second: S,
+}
+
+impl<F, S> ChainedBuffers<F, S> {
+    /// Create a new instance from the `first` and the `second` pool.
+    pub const fn new(first: F, second: S) -> Self {
+        Self { first, second }
+    }
+
+    /// Create an in-place initializer from the initializers of the `first` and the `second` pool.
+    pub fn init<IF, IS>(first: IF, second: IS) -> impl Init<Self>
+    where
+        IF: Init<F>,
+        IS: Init<S>,
+    {
+        init!(Self {
+            first <- first,
+            second <- second,
+        })
+    }
+}
+
+impl<F, S> ByteBuffers for ChainedBuffers<F, S>
+where
+    F: ByteBuffers,
+    S: ByteBuffers,
+{
+    type Buffer<'a>
+        = ChainedBuffer<F::Buffer<'a>, S::Buffer<'a>>
+    where
+        Self: 'a;
+
+    async fn get(&self, len: usize) -> Option<Self::Buffer<'_>> {
+        let mut first = pin!(self.first.get(len));
+        let mut second = pin!(self.second.get(len));
+
+        // `select` polls the first pool first, so a free buffer there wins.
+        // When one pool gives up, the other one may still deliver.
+        match select(&mut first, &mut second).await {
+            Either::First(Some(buffer)) => Some(ChainedBuffer::First(buffer)),
+            Either::First(None) => second.await.map(ChainedBuffer::Second),
+            Either::Second(Some(buffer)) => Some(ChainedBuffer::Second(buffer)),
+            Either::Second(None) => first.await.map(ChainedBuffer::First),
+        }
+    }
+
+    fn get_immediate(&self, len: usize) -> Option<Self::Buffer<'_>> {
+        self.first
+            .get_immediate(len)
+            .map(ChainedBuffer::First)
+            .or_else(|| self.second.get_immediate(len).map(ChainedBuffer::Second))
+    }
+}
+
+/// A buffer of a [`ChainedBuffers`] pool.
+pub enum ChainedBuffer<F, S> {
+    /// A buffer of the first pool
+    First(F),
+    /// A buffer of the second pool
+    Second(S),
+}
+
+impl<F, S> Deref for ChainedBuffer<F, S>
+where
+    F: Deref<Target = [u8]>,
+    S: Deref<Target = [u8]>,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::First(buffer) => buffer,
+            Self::Second(buffer) => buffer,
+        }
+    }
+}
+
+impl<F, S> DerefMut for ChainedBuffer<F, S>
+where
+    F: DerefMut<Target = [u8]>,
+    S: DerefMut<Target = [u8]>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::First(buffer) => buffer,
+            Self::Second(buffer) => buffer,
+        }
     }
 }
 
@@ -404,5 +610,128 @@ mod tests {
 
         // SAFETY: `slot` was initialized by `init_with` above
         unsafe { slot.assume_init_drop() };
+    }
+
+    /// `ByteBuffers` lives in a module of its own: `PooledBuffers` of byte vectors
+    /// implement both traits, so method calls would be ambiguous with `Buffers` in scope
+    mod bytes {
+        use core::mem::MaybeUninit;
+
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+        use futures_lite::future::block_on;
+
+        use crate::init::InitMaybeUninit;
+        use crate::storage::Vec;
+
+        use super::super::{ByteBuffers, ChainedBuffer, ChainedBuffers, PooledBuffers};
+
+        type Small = PooledBuffers<Vec<u8, 4>, 1, NoopRawMutex>;
+        type Large = PooledBuffers<Vec<u8, 8>, 1, NoopRawMutex>;
+
+        #[test]
+        fn pooled_buffers_have_the_requested_length() {
+            let pool = PooledBuffers::<Vec<u8, 8>, 2, NoopRawMutex>::new();
+
+            let mut a = pool.get_immediate(3).unwrap();
+            assert_eq!(a.len(), 3);
+            a.copy_from_slice(&[1, 2, 3]);
+
+            // Larger than the buffers of the pool
+            assert!(pool.get_immediate(9).is_none());
+
+            let b = pool.get_immediate(8).unwrap();
+            assert_eq!(b.len(), 8);
+            assert!(pool.get_immediate(0).is_none());
+
+            drop(a);
+            assert!(pool.get_immediate(0).unwrap().is_empty());
+        }
+
+        #[test]
+        fn chained_buffers_prefer_the_first_pool() {
+            let pool = ChainedBuffers::new(Small::new(), Large::new());
+
+            let a = pool.get_immediate(2).unwrap();
+            assert!(matches!(a, ChainedBuffer::First(_)));
+            assert_eq!(a.len(), 2);
+
+            // The first pool is empty now
+            let b = pool.get_immediate(2).unwrap();
+            assert!(matches!(b, ChainedBuffer::Second(_)));
+            assert!(pool.get_immediate(2).is_none());
+
+            drop(a);
+            drop(b);
+
+            // Too large for the first pool
+            let c = pool.get_immediate(5).unwrap();
+            assert!(matches!(c, ChainedBuffer::Second(_)));
+            assert!(pool.get_immediate(5).is_none());
+            assert!(matches!(
+                pool.get_immediate(4).unwrap(),
+                ChainedBuffer::First(_)
+            ));
+
+            // Too large for both pools
+            drop(c);
+            assert!(pool.get_immediate(9).is_none());
+        }
+
+        #[test]
+        fn chained_buffers_get() {
+            let pool = ChainedBuffers::new(Small::new(), Large::new());
+
+            block_on(async {
+                let a = pool.get(4).await.unwrap();
+                assert!(matches!(a, ChainedBuffer::First(_)));
+
+                let b = pool.get(4).await.unwrap();
+                assert!(matches!(b, ChainedBuffer::Second(_)));
+
+                assert!(pool.get(4).await.is_none());
+
+                drop(b);
+                assert!(matches!(pool.get(8).await, Some(ChainedBuffer::Second(_))));
+                drop(a);
+            });
+        }
+
+        #[test]
+        fn chained_buffers_get_with_timeout() {
+            let pool =
+                ChainedBuffers::new(Small::new_with_timeout(10), Large::new_with_timeout(10));
+
+            block_on(async {
+                let _a = pool.get(4).await.unwrap();
+
+                // The first pool waits, but the second one has a free buffer
+                let b = pool.get(4).await.unwrap();
+                assert!(matches!(b, ChainedBuffer::Second(_)));
+
+                // Both pools wait, and nobody releases a buffer
+                assert!(pool.get(4).await.is_none());
+
+                // The first pool cannot ever serve this, the second one times out
+                assert!(pool.get(8).await.is_none());
+
+                drop(b);
+                assert!(pool.get(8).await.is_some());
+            });
+        }
+
+        #[test]
+        fn chained_buffers_init_in_place() {
+            let mut slot = MaybeUninit::<ChainedBuffers<Small, Large>>::uninit();
+            let pool = slot.init_with(ChainedBuffers::init(Small::init(), Large::init()));
+
+            assert!(matches!(
+                pool.get_immediate(1),
+                Some(ChainedBuffer::First(_))
+            ));
+
+            // SAFETY: `slot` was initialized by `init_with` above
+            unsafe { slot.assume_init_drop() };
+        }
     }
 }

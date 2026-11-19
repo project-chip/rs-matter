@@ -1091,3 +1091,24 @@ fn write_rate_distortion<P: TLVBuilderParent>(
         .end()?;
     b.min_bit_rate(p.min_bit_rate)?.end()
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::dm::Access;
+
+    use super::decl;
+
+    #[test]
+    fn capture_snapshot_needs_large_messages() {
+        let access = |id: decl::CommandId| {
+            unwrap!(decl::FULL_CLUSTER
+                .commands()
+                .find(|cmd| cmd.id == id as u32))
+            .access
+        };
+
+        assert!(access(decl::CommandId::CaptureSnapshot).contains(Access::LARGE_MESSAGE));
+        assert!(!access(decl::CommandId::AudioStreamAllocate).contains(Access::LARGE_MESSAGE));
+    }
+}

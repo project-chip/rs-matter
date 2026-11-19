@@ -32,11 +32,11 @@ use rs_matter::persist::{DummyKvBlobStore, KvBlobStore};
 use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use rs_matter::transport::MatterBuffers;
 use rs_matter::utils::futures::{select3, select4, Coalesce};
 use rs_matter::utils::storage::Vec;
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;

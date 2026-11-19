@@ -30,7 +30,9 @@ use crate::tlv::{FromTLV, OctetStr, Octets, TLVTag, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::{Buffers, PooledBuffer, PooledBuffers};
-use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::storage::Vec;
+#[cfg(feature = "persistent-subscriptions")]
+use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 use crate::utils::timers::{Duration, Instant};
@@ -2017,26 +2019,21 @@ fn copy_req(req: &[u8], buffer: &mut SubscriptionBuffer) -> bool {
         return true;
     }
 
-    unwrap!(buffer.resize_default(SUBSCRIPTION_BUFFER_SIZE));
+    let Ok((head, tail)) = SubscribeReq::new(TLVElement::new(req)).split_dataver_filters() else {
+        return false;
+    };
 
-    let mut wb = WriteBuf::new(buffer);
-    let len = SubscribeReq::new(TLVElement::new(req))
-        .write_without_dataver_filters(&mut wb)
-        .map(|_| wb.get_tail());
-
-    if let Ok(len) = len {
-        buffer.truncate(len);
-
-        info!(
-            "Kept a subscribe request of {} bytes as {} bytes, without its data version filters",
-            req.len(),
-            len
-        );
-
-        true
-    } else {
-        false
+    if buffer.extend_from_slice(head).is_err() || buffer.extend_from_slice(tail).is_err() {
+        return false;
     }
+
+    info!(
+        "Kept a subscribe request of {} bytes as {} bytes, without its data version filters",
+        req.len(),
+        buffer.len()
+    );
+
+    true
 }
 
 #[cfg(test)]
@@ -2044,6 +2041,7 @@ fn copy_req(req: &[u8], buffer: &mut SubscriptionBuffer) -> bool {
 mod tests {
     use crate::tlv::{TLVTag, TLVWriteParent};
     use crate::utils::futures::block_on;
+    use crate::utils::storage::WriteBuf;
     use crate::utils::timers::Duration;
     use crate::{AttrPath, ClusterPath, DataVersionFilter, SubscribeReqBuilder};
 

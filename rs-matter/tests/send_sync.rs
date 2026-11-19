@@ -44,9 +44,10 @@ use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::ExchangeInitiator as _;
-use rs_matter::transport::exchange::{Exchange, MatterBuffers};
+use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::{Address, Ipv4Addr};
+use rs_matter::transport::MatterBuffers;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
