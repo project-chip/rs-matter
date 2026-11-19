@@ -136,9 +136,6 @@ impl<const N: usize> Bump<N> {
     ///
     /// # Panics
     /// This function will panic if there is not enough memory left in the bump allocator
-    // Keep out-of-line so `T` / `f()` temporaries stay in a transient stack frame
-    // instead of being spilled into a caller `async fn` state machine.
-    #[inline(never)]
     pub fn pin_alloc_with<T, F>(&self, f: F, location: &str) -> Pin<BumpBox<'_, T>>
     where
         T: Sized,
@@ -210,9 +207,19 @@ impl<const N: usize> Bump<N> {
     where
         T: Sized,
     {
-        self.inner.lock(|inner| {
-            let size = core::mem::size_of::<T>();
+        self.reserve_raw(
+            core::mem::size_of::<T>(),
+            core::mem::align_of::<T>(),
+            location,
+        )
+        .cast()
+    }
 
+    /// Reserve `size` uninitialized bytes, aligned to `align`
+    // Not generic over the allocated type, so all allocations share one copy of this code.
+    #[inline(never)]
+    fn reserve_raw(&self, size: usize, align: usize, location: &str) -> NonNull<u8> {
+        self.inner.lock(|inner| {
             let offset = inner.offset.get();
 
             info!(
@@ -223,24 +230,23 @@ impl<const N: usize> Bump<N> {
                 N - offset
             );
 
-            // Safety: The memory past `offset` is not referenced by any previously handed out
-            // slot, so a unique slice over it does not alias with anything still in use
-            let remaining = unsafe {
-                core::slice::from_raw_parts_mut(
-                    inner.memory.get().cast::<MaybeUninit<u8>>().add(offset),
-                    N - offset,
-                )
-            };
-            let remaining_len = remaining.len();
+            if size == 0 {
+                // Safety: `align` is a power of two, so it is not zero
+                return unsafe { NonNull::new_unchecked(core::ptr::without_provenance_mut(align)) };
+            }
 
-            let (t_buf, r_buf) = align_min::<T>(remaining, 1);
+            let memory = inner.memory.get().cast::<u8>();
 
-            // Safety: `align_min` returns a non-empty, aligned slice for a non-ZST
-            let ptr = unsafe { NonNull::new_unchecked(t_buf.as_mut_ptr()) };
+            let start = offset + ((memory.addr() + offset).wrapping_neg() & (align - 1));
+            if start > N || N - start < size {
+                panic!("Out of bump memory");
+            }
 
-            inner.offset.set(offset + remaining_len - r_buf.len());
+            inner.offset.set(start + size);
 
-            ptr
+            // Safety: `start < N`, so the pointer is within the arena. The memory past `offset`
+            // is not referenced by any previously handed out slot.
+            unsafe { NonNull::new_unchecked(memory.add(start)) }
         })
     }
 }
@@ -317,34 +323,6 @@ impl<const N: usize> Inner<N> {
     }
 }
 
-fn align_min<T>(
-    buf: &mut [MaybeUninit<u8>],
-    count: usize,
-) -> (&mut [MaybeUninit<T>], &mut [MaybeUninit<u8>]) {
-    if count == 0 || core::mem::size_of::<T>() == 0 {
-        return (&mut [], buf);
-    }
-
-    let (t_leading_buf0, t_buf, _) = unsafe { buf.align_to_mut::<MaybeUninit<T>>() };
-    if t_buf.len() < count {
-        panic!("Out of bump memory");
-    }
-
-    // Shrink `t_buf` to the number of requested items (count)
-    let t_buf = &mut t_buf[..count];
-    let t_leading_buf0_len = t_leading_buf0.len();
-    let t_buf_size = core::mem::size_of_val(t_buf);
-
-    let (buf0, remaining_buf) = buf.split_at_mut(t_leading_buf0_len + t_buf_size);
-
-    let (t_leading_buf, t_buf, t_remaining_buf) = unsafe { buf0.align_to_mut::<MaybeUninit<T>>() };
-    assert_eq!(t_leading_buf0_len, t_leading_buf.len());
-    assert_eq!(t_buf.len(), count);
-    assert!(t_remaining_buf.is_empty());
-
-    (t_buf, remaining_buf)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,10 +345,8 @@ mod tests {
     fn test_multiple_concurrent_borrow() {
         let bump = Bump::<BUMP_SIZE>::new();
 
-        let mut all_boxes = alloc::vec::Vec::new();
-        for i in 0..(BUMP_SIZE / core::mem::size_of::<usize>()) {
-            all_boxes.push(alloc!(bump, i));
-        }
+        let all_boxes: [_; BUMP_SIZE / core::mem::size_of::<usize>()] =
+            core::array::from_fn(|i| alloc!(bump, i));
 
         for (i, b) in all_boxes.into_iter().enumerate() {
             assert_eq!(*b, i);
@@ -439,5 +415,88 @@ mod tests {
 
         let b = bump.alloc(7u8, "test");
         assert_eq!(*b, 7);
+    }
+
+    #[test]
+    fn test_alignment() {
+        #[repr(align(64))]
+        struct Aligned64([u8; 3]);
+
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        // A single byte first, so that the slots below do not start at the arena start
+        let a = bump.alloc(1u8, "a");
+        let b = bump.alloc(2u64, "b");
+        let c = bump.alloc(3u128, "c");
+        let d = bump.alloc(Aligned64([4; 3]), "d");
+        let e = bump.alloc(5u16, "e");
+
+        let spans = [span(&*a), span(&*b), span(&*c), span(&*d), span(&*e)];
+        let aligns = [
+            1,
+            core::mem::align_of::<u64>(),
+            core::mem::align_of::<u128>(),
+            64,
+            core::mem::align_of::<u16>(),
+        ];
+
+        for (span, align) in spans.iter().zip(aligns) {
+            assert_eq!(span.start % align, 0);
+        }
+
+        for pair in spans.windows(2) {
+            assert!(pair[0].end <= pair[1].start);
+        }
+
+        assert_eq!(*a, 1);
+        assert_eq!(*b, 2);
+        assert_eq!(*c, 3);
+        assert_eq!(d.0, [4; 3]);
+        assert_eq!(*e, 5);
+    }
+
+    #[test]
+    fn test_zero_sized() {
+        #[repr(align(16))]
+        struct Aligned16;
+
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        for _ in 0..2 * BUMP_SIZE {
+            let _unit = bump.alloc((), "unit");
+            let aligned = bump.alloc(Aligned16, "aligned");
+            assert_eq!(span(&*aligned).start % 16, 0);
+        }
+
+        // The zero-sized values took no space, not even for alignment padding
+        let all = bump.alloc([7u8; BUMP_SIZE], "all");
+        assert!(all.iter().all(|&v| v == 7));
+    }
+
+    #[test]
+    fn test_exact_fit() {
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        let a = bump.alloc(1u8, "a");
+        let b = bump.alloc([2u8; BUMP_SIZE - 1], "b");
+
+        assert_eq!(*a, 1);
+        assert!(b.iter().all(|&v| v == 2));
+    }
+
+    #[test]
+    #[should_panic(expected = "Out of bump memory")]
+    fn test_out_of_memory() {
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        let _a = bump.alloc(1u8, "a");
+        let _b = bump.alloc([2u8; BUMP_SIZE], "b");
+    }
+
+    /// The addresses that `value` occupies
+    fn span<T>(value: &T) -> core::ops::Range<usize> {
+        let start = (value as *const T).addr();
+
+        start..start + core::mem::size_of::<T>()
     }
 }

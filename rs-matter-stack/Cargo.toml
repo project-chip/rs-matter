@@ -104,6 +104,11 @@ rs-matter-utils = { workspace = true, features = ["os"] }
 embassy-time-queue-utils = { workspace = true, features = ["generic-queue-64"] }
 futures-lite = { workspace = true }
 
+# Uses threads and the in-memory `MemKvBlobStore`, which need `std`.
+[[test]]
+name = "drivers"
+required-features = ["std"]
+
 [lints.rust]
 # `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_nightly)'] }
