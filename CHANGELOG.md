@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: with a `large-buffers-*` feature, IM reports and BDX blocks over UDP and BTP stay within the UDP packet size; only TCP exchanges send larger messages (#673)
+  * Fix: TCP messages stay within the `MAX_TCP_MESSAGE_SIZE` the peer advertised, or 64000 bytes if it advertised none
+  * New: `Exchange::max_tx_payload_size`, the largest payload of one message on an exchange
 * Fix: a BTP peripheral starts a new session on every handshake request, so that a central can unsubscribe from `C2` and start a new session over the same connection (#670)
 * Fix: a bad segment closes a BTP peripheral's session, rather than failing the GATT peripheral and with it the stack (#670)
 * Fix: a BTP central skips a data segment that comes before the handshake response, which BlueZ hands over as the last value of an earlier session (#670)

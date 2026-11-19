@@ -36,11 +36,11 @@ use crate::group_keys::KeySet;
 use crate::mrp::{self, ReliableMessage};
 #[cfg(feature = "groups")]
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, GROUP_DATA_COUNTER_KEY};
-use crate::sc::SessionParameters;
+use crate::sc::{SessionParameters, DEFAULT_MAX_TCP_MESSAGE_SIZE};
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::{ParseBuf, Vec, WriteBuf};
 use crate::utils::timers::{Duration, Instant};
-use crate::Transport;
+use crate::{Transport, MAX_TX_PAYLOAD_SIZE, MAX_TX_UDP_PAYLOAD_SIZE};
 
 pub use rs_matter_node_core::session::*;
 
@@ -191,6 +191,8 @@ pub struct Session {
     /// (see [`ReservedSession::update`]) and one created by an incoming message
     /// have just heard from it.
     peer_active_until: Instant,
+    /// Peer's `MAX_TCP_MESSAGE_SIZE`: the largest message it receives over TCP.
+    peer_max_tcp_message_size: u32,
     state: SessionState,
 }
 
@@ -232,6 +234,7 @@ impl Session {
             peer_idle_interval_ms,
             peer_active_threshold_ms,
             peer_active_until: Instant::MIN,
+            peer_max_tcp_message_size: DEFAULT_MAX_TCP_MESSAGE_SIZE,
         }
     }
 
@@ -267,6 +270,7 @@ impl Session {
             peer_idle_interval_ms,
             peer_active_threshold_ms,
             peer_active_until: Instant::MIN,
+            peer_max_tcp_message_size: DEFAULT_MAX_TCP_MESSAGE_SIZE,
         })
     }
 
@@ -364,9 +368,30 @@ impl Session {
         }
     }
 
+    /// Whether the session runs over a transport that carries large messages, i.e. TCP.
+    pub fn supports_large_payload(&self) -> bool {
+        !matches!(self.mode, SessionMode::Group { .. }) && self.peer_addr.is_tcp()
+    }
+
+    /// The largest application payload of one message to the peer.
+    ///
+    /// Over TCP that is our TX buffer, bounded by the largest message the peer
+    /// receives, but never below the UDP size, which every node receives. All
+    /// other messages stay within the UDP size.
+    pub fn max_tx_payload_size(&self) -> usize {
+        if self.supports_large_payload() {
+            (self.peer_max_tcp_message_size as usize)
+                .saturating_sub(PacketHdr::HDR_RESERVE + PacketHdr::TAIL_RESERVE)
+                .clamp(MAX_TX_UDP_PAYLOAD_SIZE, MAX_TX_PAYLOAD_SIZE)
+        } else {
+            MAX_TX_UDP_PAYLOAD_SIZE
+        }
+    }
+
     /// Record the peer's `session_parameters` (any combination of `sai` /
-    /// `sii` / `sat`) for use by MRP retransmission timing on later sends
-    /// to this peer. Only the fields the peer actually advertised get
+    /// `sii` / `sat` / `max_tcp_message_size`) for use by MRP retransmission
+    /// timing and by the size of TCP messages on later sends to this peer.
+    /// Only the fields the peer actually advertised get
     /// overwritten; absent fields leave the seeded default in place so
     /// repeated handshakes don't clobber a stronger earlier hint with a
     /// later-but-emptier one.
@@ -403,6 +428,11 @@ impl Session {
             } else {
                 warn!("Peer advertised session_parameters.sat=0; ignoring");
             }
+        }
+
+        // Any value is safe: `max_tx_payload_size` keeps the payload within bounds
+        if let Some(size) = params.max_tcp_message_size {
+            self.peer_max_tcp_message_size = size;
         }
     }
 
