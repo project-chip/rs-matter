@@ -345,10 +345,8 @@ mod tests {
     fn test_multiple_concurrent_borrow() {
         let bump = Bump::<BUMP_SIZE>::new();
 
-        let mut all_boxes = alloc::vec::Vec::new();
-        for i in 0..(BUMP_SIZE / core::mem::size_of::<usize>()) {
-            all_boxes.push(alloc!(bump, i));
-        }
+        let all_boxes: [_; BUMP_SIZE / core::mem::size_of::<usize>()] =
+            core::array::from_fn(|i| alloc!(bump, i));
 
         for (i, b) in all_boxes.into_iter().enumerate() {
             assert_eq!(*b, i);
@@ -417,5 +415,88 @@ mod tests {
 
         let b = bump.alloc(7u8, "test");
         assert_eq!(*b, 7);
+    }
+
+    #[test]
+    fn test_alignment() {
+        #[repr(align(64))]
+        struct Aligned64([u8; 3]);
+
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        // A single byte first, so that the slots below do not start at the arena start
+        let a = bump.alloc(1u8, "a");
+        let b = bump.alloc(2u64, "b");
+        let c = bump.alloc(3u128, "c");
+        let d = bump.alloc(Aligned64([4; 3]), "d");
+        let e = bump.alloc(5u16, "e");
+
+        let spans = [span(&*a), span(&*b), span(&*c), span(&*d), span(&*e)];
+        let aligns = [
+            1,
+            core::mem::align_of::<u64>(),
+            core::mem::align_of::<u128>(),
+            64,
+            core::mem::align_of::<u16>(),
+        ];
+
+        for (span, align) in spans.iter().zip(aligns) {
+            assert_eq!(span.start % align, 0);
+        }
+
+        for pair in spans.windows(2) {
+            assert!(pair[0].end <= pair[1].start);
+        }
+
+        assert_eq!(*a, 1);
+        assert_eq!(*b, 2);
+        assert_eq!(*c, 3);
+        assert_eq!(d.0, [4; 3]);
+        assert_eq!(*e, 5);
+    }
+
+    #[test]
+    fn test_zero_sized() {
+        #[repr(align(16))]
+        struct Aligned16;
+
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        for _ in 0..2 * BUMP_SIZE {
+            let _unit = bump.alloc((), "unit");
+            let aligned = bump.alloc(Aligned16, "aligned");
+            assert_eq!(span(&*aligned).start % 16, 0);
+        }
+
+        // The zero-sized values took no space, not even for alignment padding
+        let all = bump.alloc([7u8; BUMP_SIZE], "all");
+        assert!(all.iter().all(|&v| v == 7));
+    }
+
+    #[test]
+    fn test_exact_fit() {
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        let a = bump.alloc(1u8, "a");
+        let b = bump.alloc([2u8; BUMP_SIZE - 1], "b");
+
+        assert_eq!(*a, 1);
+        assert!(b.iter().all(|&v| v == 2));
+    }
+
+    #[test]
+    #[should_panic(expected = "Out of bump memory")]
+    fn test_out_of_memory() {
+        let bump = Bump::<BUMP_SIZE>::new();
+
+        let _a = bump.alloc(1u8, "a");
+        let _b = bump.alloc([2u8; BUMP_SIZE], "b");
+    }
+
+    /// The addresses that `value` occupies
+    fn span<T>(value: &T) -> core::ops::Range<usize> {
+        let start = (value as *const T).addr();
+
+        start..start + core::mem::size_of::<T>()
     }
 }
