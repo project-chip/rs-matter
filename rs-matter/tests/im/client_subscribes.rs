@@ -20,12 +20,14 @@
 //! (`SubscribePrimingChunk::complete` →
 //! [`SubscribeOutcome::Established`]).
 
+use rs_matter::crypto::Crypto;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{AttrPath, GenericPath};
 use rs_matter::im::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::utils::futures::{block_on, select, Coalesce};
 
 use crate::common::e2e::im::echo_cluster;
-use crate::common::e2e::new_default_runner;
+use crate::common::e2e::{new_default_runner, E2eRunner};
 use crate::common::init_env_logger;
 
 /// `SubscribeSender::tx` + priming-chunk loop + terminal
@@ -189,4 +191,69 @@ fn test_client_subscribe_sender_chunked_wildcard() {
         .coalesce(),
     )
     .unwrap()
+}
+
+/// A server with no room for another subscription refuses it with a
+/// `StatusResponse(ResourceExhausted)` right away, before any priming report.
+/// The client returns that status as its error.
+#[test]
+fn test_client_subscribe_refused_when_full() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            // The test responder has room for three subscriptions
+            for _ in 0..3 {
+                subscribe(&im).await?;
+            }
+
+            let err = subscribe(&im)
+                .await
+                .expect_err("a fourth subscription should be refused");
+            assert_eq!(err.code(), ErrorCode::ResourceExhausted);
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Subscribe to `Att1` of the echo cluster, keeping the existing subscriptions,
+/// and return the ID of the new one
+async fn subscribe<C: Crypto>(im: &E2eRunner<C>) -> Result<u32, Error> {
+    let exchange = im.initiate_exchange().await?;
+    let mut sender = exchange.subscribe_sender().await?;
+
+    let paths = [AttrPath::from_gp(&GenericPath::new(
+        Some(0),
+        Some(echo_cluster::ID),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
+    ))];
+
+    let mut chunk = loop {
+        match sender.tx().await? {
+            TxOutcome::BuildRequest(builder) => {
+                sender = builder
+                    .keep_subs(true)?
+                    .min_int_floor(0)?
+                    .max_int_ceil(60)?
+                    .attr_requests_from(&paths)?
+                    .fabric_filtered(false)?
+                    .end()?;
+            }
+            TxOutcome::GotResponse(c) => break c,
+        }
+    };
+
+    loop {
+        match chunk.complete().await? {
+            SubscribeOutcome::NextChunk(next) => chunk = next,
+            SubscribeOutcome::Established(est) => break Ok(est.subscription_id),
+        }
+    }
 }
