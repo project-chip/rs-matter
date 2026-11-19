@@ -45,7 +45,7 @@ use num_derive::FromPrimitive;
 use crate::error::{Error, ErrorCode};
 use crate::sc::{GeneralCode, StatusReport};
 use crate::transport::exchange::{Exchange, MessageMeta};
-use crate::transport::{MAX_RX_PAYLOAD_SIZE, MAX_TX_PAYLOAD_SIZE};
+use crate::transport::MAX_RX_PAYLOAD_SIZE;
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
 // The dependencies, under the names the code uses for them
@@ -539,10 +539,13 @@ const fn max_block_size(payload: usize) -> u16 {
 /// application payload (minus the block counter).
 const MAX_RX_BLOCK_SIZE: u16 = max_block_size(MAX_RX_PAYLOAD_SIZE);
 
-/// The largest block the *sender* (`BdxWriter`) can emit into the exchange TX
-/// buffer. The writer additionally bounds the block size by its caller-provided
-/// staging buffer.
-const MAX_TX_BLOCK_SIZE: u16 = max_block_size(MAX_TX_PAYLOAD_SIZE);
+/// The largest block the *sender* (`BdxWriter`) can emit on `exchange`: what one
+/// message there carries (large only over TCP), minus the block counter. The
+/// writer additionally bounds the block size by its caller-provided staging
+/// buffer.
+fn max_tx_block_size(exchange: &Exchange<'_>) -> Result<u16, Error> {
+    Ok(max_block_size(exchange.max_tx_payload_size()?))
+}
 
 /// How this endpoint participates in a synchronous transfer.
 ///

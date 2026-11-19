@@ -41,9 +41,7 @@ use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
 use super::session::{Session, SessionMode};
-use super::{
-    PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE, MAX_TX_PAYLOAD_SIZE, MAX_TX_UDP_PAYLOAD_SIZE,
-};
+use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 ///
@@ -54,7 +52,8 @@ const _: () = core::assert!(MAX_EXCHANGE_RX_BUF_SIZE == MAX_RX_BUF_SIZE);
 
 /// Maximum buffer which should be allocated and used by user code that wants to send messages via `Exchange::send`
 ///
-/// Mirrors `MAX_TX_BUF_SIZE` with respect to the `large-buffers-*` features.
+/// Mirrors `MAX_TX_BUF_SIZE` with respect to the `large-buffers-*` features. Only a TCP
+/// exchange sends that much; see `Exchange::max_tx_payload_size` for the limit of an exchange.
 pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
     MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
 
@@ -133,21 +132,17 @@ impl ExchangeId {
         self.with_sessions(transport, |_| Ok(()))
     }
 
-    /// Maximum application payload that fits in one message on this exchange.
-    ///
-    /// UDP and BTP are kept within Matter's IPv6 MTU budget even when
-    /// `large-buffers-*` is enabled for Matter-over-TCP.
+    /// Whether this exchange runs over a transport that carries large messages, i.e. TCP.
+    pub(crate) fn supports_large_payload(&self, transport: &Transport) -> Result<bool, Error> {
+        self.with_sessions(transport, |sessions| {
+            Ok(self.session(sessions).supports_large_payload())
+        })
+    }
+
+    /// The largest application payload of one message on this exchange.
     pub(crate) fn max_tx_payload_size(&self, transport: &Transport) -> Result<usize, Error> {
         self.with_sessions(transport, |sessions| {
-            let session = self.session(sessions);
-            let supports_large = !matches!(session.get_session_mode(), SessionMode::Group { .. })
-                && session.get_peer_addr().is_tcp();
-
-            Ok(if supports_large {
-                MAX_TX_PAYLOAD_SIZE
-            } else {
-                MAX_TX_UDP_PAYLOAD_SIZE
-            })
+            Ok(self.session(sessions).max_tx_payload_size())
         })
     }
 
@@ -750,7 +745,7 @@ impl TxMessage<'_> {
     where
         M: Into<MessageMeta>,
     {
-        if payload_start > payload_end || payload_end - payload_start > self.max_payload_len {
+        if payload_start > payload_end || payload_end > self.max_payload_len {
             Err(ErrorCode::Invalid)?;
         }
 
@@ -1542,20 +1537,14 @@ impl<'a> Exchange<'a> {
     ///
     /// In practice that means TCP.
     pub fn supports_large_payload(&self) -> Result<bool, Error> {
-        self.id.with_sessions(self.transport, |sessions| {
-            let session = self.id().session(sessions);
-
-            Ok(
-                !matches!(session.get_session_mode(), SessionMode::Group { .. })
-                    && session.get_peer_addr().is_tcp(),
-            )
-        })
+        self.id.supports_large_payload(self.transport)
     }
 
-    /// Maximum application payload that fits in one message on this exchange.
+    /// The largest application payload of one message on this exchange.
     ///
-    /// UDP is kept within Matter's IPv6 MTU budget even when large buffers are
-    /// enabled for Matter-over-TCP.
+    /// UDP, BTP and group messages stay within the UDP size even with a
+    /// `large-buffers-*` feature, which only TCP uses. Over TCP, messages also
+    /// stay within the `MAX_TCP_MESSAGE_SIZE` the peer advertised.
     pub fn max_tx_payload_size(&self) -> Result<usize, Error> {
         self.id.max_tx_payload_size(self.transport)
     }
@@ -1623,8 +1612,20 @@ mod tests {
     use crate::crypto::test_only_crypto;
     use crate::error::ErrorCode;
     use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
+    use crate::sc::{SessionParameters, DEFAULT_MAX_TCP_MESSAGE_SIZE};
     use crate::session::SessionMode;
     use futures_lite::future::block_on;
+
+    /// Let the peer of `exchange` advertise `size` as its `MAX_TCP_MESSAGE_SIZE`.
+    fn set_peer_max_tcp_message_size(transport: &Transport, exchange: &Exchange<'_>, size: u32) {
+        transport.with_sessions(|sessions| {
+            let session = sessions.get(exchange.id.session_id()).unwrap();
+            session.set_peer_session_params(&SessionParameters {
+                max_tcp_message_size: Some(size),
+                ..Default::default()
+            });
+        });
+    }
 
     #[test]
     fn tx_payload_limit_matches_peer_transport() {
@@ -1635,6 +1636,7 @@ mod tests {
 
         let udp = block_on(Exchange::initiate_plaintext(&transport, &crypto, udp_peer)).unwrap();
         let tcp = block_on(Exchange::initiate_plaintext(&transport, &crypto, tcp_peer)).unwrap();
+        set_peer_max_tcp_message_size(&transport, &tcp, u32::MAX);
 
         assert_eq!(
             udp.max_tx_payload_size().unwrap(),
@@ -1661,8 +1663,49 @@ mod tests {
         drop(udp);
 
         let tcp = block_on(Exchange::initiate_plaintext(&transport, &crypto, tcp_peer)).unwrap();
+        set_peer_max_tcp_message_size(&transport, &tcp, u32::MAX);
         let mut tcp_tx = block_on(tcp.id.init_send(&transport)).unwrap();
         assert_eq!(tcp_tx.payload().len(), crate::MAX_TX_PAYLOAD_SIZE);
+    }
+
+    #[test]
+    fn tx_payload_limit_follows_peer_max_tcp_message_size() {
+        const OVERHEAD: usize = PacketHdr::HDR_RESERVE + PacketHdr::TAIL_RESERVE;
+
+        let transport = Transport::new(None);
+        let crypto = test_only_crypto();
+        let udp_peer = network::Address::Udp(core::net::SocketAddr::from(([192, 0, 2, 1], 5540)));
+        let tcp_peer = network::Address::Tcp(core::net::SocketAddr::from(([192, 0, 2, 2], 5540)));
+
+        let udp = block_on(Exchange::initiate_plaintext(&transport, &crypto, udp_peer)).unwrap();
+        let tcp = block_on(Exchange::initiate_plaintext(&transport, &crypto, tcp_peer)).unwrap();
+
+        // A peer that advertises no size receives the default one
+        assert_eq!(
+            tcp.max_tx_payload_size().unwrap(),
+            crate::MAX_TX_PAYLOAD_SIZE.min(DEFAULT_MAX_TCP_MESSAGE_SIZE as usize - OVERHEAD)
+        );
+
+        let payload = crate::MAX_TX_UDP_PAYLOAD_SIZE + 100;
+        set_peer_max_tcp_message_size(&transport, &tcp, (payload + OVERHEAD) as u32);
+        assert_eq!(
+            tcp.max_tx_payload_size().unwrap(),
+            payload.min(crate::MAX_TX_PAYLOAD_SIZE)
+        );
+
+        // Never below the UDP size, which every node receives
+        set_peer_max_tcp_message_size(&transport, &tcp, 0);
+        assert_eq!(
+            tcp.max_tx_payload_size().unwrap(),
+            crate::MAX_TX_UDP_PAYLOAD_SIZE
+        );
+
+        // Only TCP messages use it
+        set_peer_max_tcp_message_size(&transport, &udp, u32::MAX);
+        assert_eq!(
+            udp.max_tx_payload_size().unwrap(),
+            crate::MAX_TX_UDP_PAYLOAD_SIZE
+        );
     }
 
     #[test]

@@ -37,6 +37,7 @@ use rs_matter::error::Error;
 use rs_matter::respond::ExchangeHandler;
 use rs_matter::sc::OpCode as ScOpCode;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::MAX_TX_UDP_PAYLOAD_SIZE;
 use rs_matter::utils::futures::{select, Coalesce, Either};
 use rs_matter::utils::timers::{Duration, Timer};
 
@@ -200,6 +201,71 @@ fn test_bdx_download_asks_for_the_given_block_size() {
     });
 
     assert_eq!(block_size.load(Ordering::Relaxed), 512);
+}
+
+/// The largest block one UDP message carries: its payload minus the block counter.
+const MAX_UDP_BLOCK_SIZE: usize = MAX_TX_UDP_PAYLOAD_SIZE - 4;
+
+/// Over UDP, the sender of a download keeps its blocks within one UDP message,
+/// even when the receiver asks for more and the staging buffer holds more.
+#[test]
+fn test_bdx_download_blocks_fit_one_udp_message() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let image = image_of(5000);
+    let block_size = AtomicUsize::new(0);
+    let responder = BlockSizeResponder {
+        image: &image,
+        block_size: &block_size,
+    };
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(responder), async {
+            let exchange = runner.initiate_exchange().await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR, None, 4096).await?;
+            let received = with_timeout(read_all(&mut reader)).await?;
+            assert_eq!(received, image);
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+
+    assert!(block_size.load(Ordering::Relaxed) <= MAX_UDP_BLOCK_SIZE);
+}
+
+/// Over UDP, the sender of an upload keeps its blocks within one UDP message,
+/// even when the staging buffer holds more.
+#[test]
+fn test_bdx_upload_blocks_fit_one_udp_message() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let images = [image_of(5000)];
+    let responder = UploadResponder {
+        images: &images,
+        next: AtomicUsize::new(0),
+    };
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(responder), async {
+            let exchange = runner.initiate_exchange().await?;
+            let mut wbuf = [0u8; 4096];
+            let mut writer = exchange.upload(&mut wbuf, FILE_DESIGNATOR, None).await?;
+            assert!(writer.max_block_size() <= MAX_UDP_BLOCK_SIZE);
+            with_timeout(async {
+                write_all(&mut writer, &images[0]).await?;
+                writer.finish().await
+            })
+            .await?;
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
 }
 
 /// Responder that honors a requested start offset: serves `image[start_offset..]`,

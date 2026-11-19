@@ -1502,7 +1502,7 @@ where
     ///
     /// Upon returning:
     /// - The RX buffer will contain the payload of the received Interaction Model request
-    /// - The TX buffer will be resized to `MAX_EXCHANGE_TX_BUF_SIZE` and will be ready to be written to
+    /// - The TX buffer will be resized to `exchange.max_tx_payload_size()` and will be ready to be written to
     ///
     /// Returns:
     /// - `Ok(Some((tx, rx)))` - if both TX and RX buffers are available
