@@ -158,6 +158,14 @@ impl ExchangeId {
     pub(crate) async fn recv<'a>(&self, transport: &'a Transport) -> Result<RxMessage<'a>, Error> {
         self.check_no_pending_retrans(transport)?;
 
+        // Fixed once: the loop below goes round each time any session of the
+        // node is removed, and a node that keeps removing sessions would
+        // otherwise never time out
+        let timeout_ms = self.with_sessions(transport, |sessions| {
+            Ok(self.session(sessions).rx_timeout_ms(transport.sai()))
+        })?;
+        let deadline = unwrap!(Instant::now().checked_add(Duration::from_millis(timeout_ms)));
+
         loop {
             let mut recv = pin!(transport.get_if_rx(|packet| {
                 if packet.buf.is_empty() {
@@ -180,11 +188,7 @@ impl ExchangeId {
 
             let mut session_removed = pin!(transport.wait_session_removed());
 
-            let mut timeout = pin!(Timer::after(Duration::from_millis(
-                self.with_sessions(transport, |sessions| {
-                    Ok(self.session(sessions).rx_timeout_ms(transport.sai()))
-                })?
-            )));
+            let mut timeout = pin!(Timer::at(deadline));
 
             match select3(&mut recv, &mut session_removed, &mut timeout).await {
                 Either3::First(mut packet) => {
