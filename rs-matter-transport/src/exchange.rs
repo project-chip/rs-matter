@@ -158,9 +158,8 @@ impl ExchangeId {
     pub(crate) async fn recv<'a>(&self, transport: &'a Transport) -> Result<RxMessage<'a>, Error> {
         self.check_no_pending_retrans(transport)?;
 
-        // Fixed once: the loop below goes round each time any session of the
-        // node is removed, and a node that keeps removing sessions would
-        // otherwise never time out
+        // The loop below is re-entered whenever any session for this node is removed.
+        // Keep a fixed deadline so repeated session churn cannot indefinitely postpone the timeout.
         let timeout_ms = self.with_sessions(transport, |sessions| {
             Ok(self.session(sessions).rx_timeout_ms(transport.sai()))
         })?;
