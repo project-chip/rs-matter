@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: an exchange waiting for its peer's answer times out even while other sessions of the node keep being removed. Each removal restarted the timeout, so a subscription report whose `StatusResponse` was lost could hold up all reporting for good (#674)
 * Fix: a stack without TCP no longer carries the code that chains TCP with UDP, and `Bump` keeps one copy of its allocation code for all types, which saves 3 to 5 KB of flash on thumbv6m and thumbv7em (#672)
   * New: `NoTcpNetwork`, which `NoTcp` binds to, and the provided methods `NetTcp::chain_send` and `NetTcp::chain_recv` (#672)
 * Fix: with a `large-buffers-*` feature, IM reports and BDX blocks over UDP and BTP stay within the UDP packet size; only TCP exchanges send larger messages (#673)
