@@ -186,7 +186,7 @@ impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<
                 if claimed {
                     Some(socket)
                 } else {
-                    let _ = socket.close().await;
+                    close_socket(&mut socket, config).await;
                     socket_cell.lock(|cell| cell.borrow_mut().take())
                 }
             }
@@ -273,12 +273,12 @@ impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<
                 AssignOutcome::WaitEviction(evict_idx) => {
                     self.slots[evict_idx].tx_changed.notify();
                     if with_timeout(config.send_timeout, freed_wait).await.is_err() {
-                        let _ = socket.close().await;
+                        close_socket(&mut socket, config).await;
                         return;
                     }
                 }
                 AssignOutcome::Reject => {
-                    let _ = socket.close().await;
+                    close_socket(&mut socket, config).await;
                     return;
                 }
             }
@@ -335,7 +335,7 @@ impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<
                 self.send_message_too_large(&mut socket, config).await;
             }
 
-            let _ = socket.close().await;
+            close_socket(&mut socket, config).await;
             drop(socket);
 
             self.reset_slot(slot_idx, true).await;
@@ -757,6 +757,16 @@ impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<
     #[inline]
     fn with_state_mut<R>(&self, f: impl FnOnce(&mut SharedState<SLOTS>) -> R) -> R {
         self.state.lock(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
+/// Close `socket` gracefully, and reset it if the peer does not acknowledge in time
+async fn close_socket<S: TcpNetworkSocket>(socket: &mut S, config: &TcpConfig) {
+    if with_timeout(config.close_timeout, socket.close())
+        .await
+        .is_err()
+    {
+        let _ = with_timeout(config.close_timeout, socket.abort()).await;
     }
 }
 
