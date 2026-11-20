@@ -29,21 +29,25 @@ pub type TlvError = Error2<TlvErrorCode>;
 /// The errors raised when reading or writing Matter TLV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
 pub enum TlvErrorCode {
+    // TODO: Drop the explicit values together with the bridge below. Until then
+    // each code has the value of the legacy `ErrorCode` it maps to, so that the
+    // bridge compiles to nothing.
     /// The byte stream is not well-formed TLV.
-    Malformed,
+    Malformed = ErrorCode::InvalidData as u8,
     /// The element is well-formed but not of the requested type.
-    TypeMismatch,
+    TypeMismatch = ErrorCode::TLVTypeMismatch as u8,
     /// A required element or context tag is absent.
-    NotFound,
+    NotFound = ErrorCode::NotFound as u8,
     /// The element has the right type, but the value is not an acceptable one.
-    InvalidValue,
+    InvalidValue = ErrorCode::Invalid as u8,
     /// The destination container could not hold the decoded data.
-    CapacityExceeded,
-    /// The value is the reserved null sentinel where null is not permitted.
-    UnexpectedNull,
+    CapacityExceeded = ErrorCode::ConstraintError as u8,
     /// The TLV writer ran out of room.
-    NoSpace,
+    NoSpace = ErrorCode::NoSpace as u8,
+    /// The value is the reserved null sentinel where null is not permitted.
+    UnexpectedNull = ErrorCode::TLVUnexpectedNull as u8,
 }
 
 // TODO: Remove this bridge once all dependent crates have been refactored to
@@ -51,14 +55,34 @@ pub enum TlvErrorCode {
 impl From<TlvErrorCode> for Error {
     fn from(value: TlvErrorCode) -> Self {
         match value {
-            TlvErrorCode::Malformed => ErrorCode::InvalidData.into(),
-            TlvErrorCode::TypeMismatch => ErrorCode::TLVTypeMismatch.into(),
-            TlvErrorCode::NotFound => ErrorCode::NotFound.into(),
-            TlvErrorCode::InvalidValue => ErrorCode::Invalid.into(),
-            TlvErrorCode::CapacityExceeded | TlvErrorCode::UnexpectedNull => {
-                ErrorCode::ConstraintError.into()
-            }
-            TlvErrorCode::NoSpace => ErrorCode::NoSpace.into(),
+            TlvErrorCode::Malformed => ErrorCode::InvalidData,
+            TlvErrorCode::TypeMismatch => ErrorCode::TLVTypeMismatch,
+            TlvErrorCode::NotFound => ErrorCode::NotFound,
+            TlvErrorCode::InvalidValue => ErrorCode::Invalid,
+            TlvErrorCode::CapacityExceeded => ErrorCode::ConstraintError,
+            TlvErrorCode::UnexpectedNull => ErrorCode::TLVUnexpectedNull,
+            TlvErrorCode::NoSpace => ErrorCode::NoSpace,
+        }
+        .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_keeps_the_value() {
+        for code in [
+            TlvErrorCode::Malformed,
+            TlvErrorCode::TypeMismatch,
+            TlvErrorCode::NotFound,
+            TlvErrorCode::InvalidValue,
+            TlvErrorCode::CapacityExceeded,
+            TlvErrorCode::NoSpace,
+            TlvErrorCode::UnexpectedNull,
+        ] {
+            assert_eq!(Error::from(code).code() as u8, code as u8);
         }
     }
 }

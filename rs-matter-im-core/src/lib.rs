@@ -150,7 +150,9 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
             ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
             ErrorCode::NeedsTimedInteraction => IMStatusCode::NeedsTimedInteraction,
-            ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
+            ErrorCode::ConstraintError | ErrorCode::TLVUnexpectedNull => {
+                IMStatusCode::ConstraintError
+            }
             ErrorCode::DynamicConstraintError => IMStatusCode::DynamicConstraintError,
             ErrorCode::NotFound => IMStatusCode::NotFound,
             ErrorCode::AlreadyExists => IMStatusCode::AlreadyExists,

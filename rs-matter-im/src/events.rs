@@ -23,7 +23,8 @@ use crate::dm::{ClusterId, DynEventWriter, EndptId, EventId, EventTLVWrite, Node
 use crate::error::{Error, ErrorCode};
 use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
 use crate::tlv::{
-    FromTLV, TLVArray, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
+    FromTLV, TLVArray, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType,
+    TlvError, TlvErrorCode, ToTLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -482,7 +483,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
     }
 
     /// Write a byte to the current buffer, evicting and promoting events as needed to make space for the new byte.
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         if N == 0 {
             // Events are disabled, we should never write anything to the buffer and should always succeed.
             return Ok(());
@@ -492,7 +493,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
             // This event is larger than the buffer, the client needs to change the buffer size for this to work
             self.event_too_large = true;
 
-            return Err(Error::new(ErrorCode::ResourceExhausted));
+            return Err(TlvErrorCode::NoSpace.into());
         }
 
         while self.events.buf_mut(Self::OPER_BUF).append(byte).is_err() {
@@ -559,7 +560,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
 }
 
 impl<'a, const N: usize> DynEventWriter for EventWriter<'a, N> {
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         EventWriter::write(self, byte)
     }
 
