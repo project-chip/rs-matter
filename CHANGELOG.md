@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a subscription keeps its request in a buffer of its own, of `SUBSCRIPTION_BUFFER_SIZE` (256 bytes), rather than in one of the IM buffers for its whole life. A larger request is kept without its data version filters, which only matter for the priming report (#677)
+  * The default `CapabilityMinima::subscribe_paths_supported` is `SUBSCRIBE_PATHS_SUPPORTED` (5 rather than 3): the paths that fit in `SUBSCRIPTION_BUFFER_SIZE` at their largest encoding
+  * New: `SubscribeReq::write_without_dataver_filters`, `SubscribeReq::MAX_PATH_LEN` and `SubscribeReq::MAX_FIXED_LEN`
+  * `DEFAULT_BUFFER_POOL_SIZE`, the default size of `MatterBuffers`, is 9 rather than 10, and `rs-matter-stack` without a `max-im-buffers-*` feature has two IM buffers for each responder and one more (9 by default) rather than 10
+* Fix: `TcpNetwork` resets a TCP connection whose peer does not acknowledge the close within `TcpConfig::close_timeout` (2 s by default). Before, a silent peer could keep a slot, or the listener, waiting forever (#676)
+  * New: `TcpNetworkSocket::abort`, which resets the stream; the default does nothing
+* Fix: when a server answers a read, a subscribe, a write or the next invoke chunk with a `StatusResponse`, the IM client returns its status (e.g. `ResourceExhausted` for a subscription it has no room for), rather than `InvalidOpcode` (#675)
+* Fix: an exchange waiting for its peer's answer times out even while other sessions of the node keep being removed. Each removal restarted the timeout, so a subscription report whose `StatusResponse` was lost could hold up all reporting for good (#674)
+* Fix: a stack without TCP no longer carries the code that chains TCP with UDP, and `Bump` keeps one copy of its allocation code for all types, which saves 3 to 5 KB of flash on thumbv6m and thumbv7em (#672)
+  * New: `NoTcpNetwork`, which `NoTcp` binds to, and the provided methods `NetTcp::chain_send` and `NetTcp::chain_recv` (#672)
+* Fix: with a `large-buffers-*` feature, IM reports and BDX blocks over UDP and BTP stay within the UDP packet size; only TCP exchanges send larger messages (#673)
+  * Fix: TCP messages stay within the `MAX_TCP_MESSAGE_SIZE` the peer advertised, or 64000 bytes if it advertised none
+  * New: `Exchange::max_tx_payload_size`, the largest payload of one message on an exchange
+* Fix: a BTP peripheral starts a new session on every handshake request, so that a central can unsubscribe from `C2` and start a new session over the same connection (#670)
+* Fix: a bad segment closes a BTP peripheral's session, rather than failing the GATT peripheral and with it the stack (#670)
+* Fix: a BTP central skips a data segment that comes before the handshake response, which BlueZ hands over as the last value of an earlier session (#670)
+* New: operational Matter-over-TCP transport and stack integration, supporting large-message framing, multiple concurrent peer slots, and client/server connections (#658)
+  * Breaking: `BasicInfoConfig::tcp_supported` is removed; the mDNS `T` TXT key and TCP session parameters now follow `Transport::tcp_capability`, which the stack runner sets once the listener is bound
+  * Breaking: `large-buffers` now means 64 KB rather than 1 MB, and the new `large-buffers-*` features (`4096`..`1048576`) select other sizes
+  * Breaking: the std `TcpNetwork<N>` is replaced by `TcpNetwork` over `TcpNetworkSockets` and `TcpNetworkBuffers`
+  * Breaking: `StdNetStack` has a type parameter for TCP, which defaults to `NoTcp`; `StdNetStack::with_tcp(&buffers, &config)` enables operational TCP
 * Fix: when `BasicInfoConfig::unique_id` is empty (the default), `rs-matter` serves its own random and persisted ID (#669)
 * New: the `Commissioner` reports its steps and can be cancelled through `CommissionHooks`; a cancel rolls the device back by disarming its fail-safe, and returns the new `ErrorCode::Cancelled` (#668)
   * Breaking: `Commissioner::commission`, `commission_over_pase` and `complete_via_case` take an `impl CommissionHooks` (`()` for none)

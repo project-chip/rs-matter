@@ -418,11 +418,13 @@ async fn process_c2_indications(
     while let Some(change) = value_changed.next().await {
         let value = change.get().await?;
 
-        // BlueZ emits the characteristic's *current* `Value` (initially empty) as
-        // the first property change right after `start_notify()`, before any real
-        // indication has arrived. It also may re-deliver an unchanged value. An
-        // empty payload is never a valid BTP frame, so skip it rather than feeding
-        // it to the BTP layer (which would reject it as invalid).
+        // BlueZ emits the characteristic's *current* `Value` as the first property
+        // change right after `start_notify()`, before any real indication has
+        // arrived: empty on a fresh device object, else the last value of an
+        // earlier session, which the BTP session skips as it comes before the
+        // handshake response. It also may re-deliver an unchanged value. An empty
+        // payload is never a valid BTP frame, so skip it rather than feeding it
+        // to the BTP layer (which would reject it as invalid).
         if value.is_empty() {
             continue;
         }

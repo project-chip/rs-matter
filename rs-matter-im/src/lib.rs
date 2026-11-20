@@ -57,7 +57,7 @@ use crate::subscriptions::{
 use crate::tlv::{
     get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, TlvErrorCode, ToTLV,
 };
-use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
+use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::utils::epoch::UtcTime;
 use crate::utils::futures::{select, select3, Coalesce};
 use crate::utils::init::{init, Init};
@@ -76,6 +76,7 @@ use rs_matter_dm_core::persist;
 use rs_matter_node::groupcast;
 use rs_matter_node::transport;
 use rs_matter_node::{acl, Matter};
+use rs_matter_node_core::basic_info;
 use rs_matter_node_core::fabric;
 use rs_matter_sc::ExchangeInitiator as _;
 use rs_matter_tlv as tlv;
@@ -234,7 +235,7 @@ pub struct InteractionModel<
     crypto: C,
     buffers: &'a B,
     kv: K,
-    subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
+    subscriptions_buffers: SubscriptionsBuffers<'a, NS>,
     state: &'a InteractionModelState<NS, NE>,
     handler: T,
     /// The controller-side `ReportData` consumer. Defaults to `()`, which
@@ -886,11 +887,14 @@ where
             min_int_secs,
             max_int_secs,
             self.state.events.watermark(),
-            rx,
+            &rx,
             &self.subscriptions_buffers,
         ) else {
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
+
+        // The subscription keeps a copy of the request
+        drop(rx);
 
         let primed = self
             .report_data(&mut rctx, &mut tx, exchange, true, true)
@@ -1136,7 +1140,6 @@ where
 
         self.kv.access(|store, buf| {
             self.state.subscriptions.load_persist(
-                self.buffers,
                 &self.subscriptions_buffers,
                 store,
                 buf,
@@ -1351,7 +1354,7 @@ where
     async fn process_subscription(
         &self,
         matter: &Matter<'_>,
-        rctx: &mut SubscriptionReport<'_, '_, B, NS>,
+        rctx: &mut SubscriptionReport<'_, '_, NS>,
         send_if_empty: bool,
     ) -> Result<bool, Error> {
         // Route the report by the subscriber's `(fabric, node)`: reuse the best
@@ -1366,8 +1369,9 @@ where
             Exchange::initiate(matter, crypto, ids.fab_idx, ids.peer_node_id).await?;
 
         if let Some(mut tx) = self.buffers.get().await {
-            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-            unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+            // Always safe as `IMBuffer` is `MAX_EXCHANGE_RX_BUF_SIZE` >= `max_tx_payload_size()`.
+            let max_tx = exchange.max_tx_payload_size()?;
+            unwrap!(tx.resize_default(max_tx));
 
             let primed = self
                 .report_data(rctx, &mut tx, &mut exchange, false, send_if_empty)
@@ -1441,7 +1445,7 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn report_data(
         &self,
-        rctx: &mut SubscriptionReport<'_, '_, B, NS>,
+        rctx: &mut SubscriptionReport<'_, '_, NS>,
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
         with_dataver: bool,
@@ -1503,7 +1507,7 @@ where
     ///
     /// Upon returning:
     /// - The RX buffer will contain the payload of the received Interaction Model request
-    /// - The TX buffer will be resized to `MAX_EXCHANGE_TX_BUF_SIZE` and will be ready to be written to
+    /// - The TX buffer will be resized to `exchange.max_tx_payload_size()` and will be ready to be written to
     ///
     /// Returns:
     /// - `Ok(Some((tx, rx)))` - if both TX and RX buffers are available
@@ -1554,7 +1558,7 @@ where
     ///
     /// If there are no free buffers available, this method will send a `Busy` status response to the peer.
     ///
-    /// Upon returning, the TX buffer will be resized to `MAX_EXCHANGE_TX_BUF_SIZE` and will be ready to be written to.
+    /// Upon returning, the TX buffer will be resized to `exchange.max_tx_payload_size()` and will be ready to be written to.
     ///
     /// Returns:
     /// - `Ok(Some(tx))` - if a TX buffer is available
@@ -1562,8 +1566,9 @@ where
     /// - `Err(Error)` - if an error occurred while fetching the buffer or sending the status response
     async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
         if let Some(mut buffer) = self.buffer(exchange).await? {
-            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-            unwrap!(buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+            // Always safe as `IMBuffer` is `MAX_EXCHANGE_RX_BUF_SIZE` >= `max_tx_payload_size()`.
+            let max_tx = exchange.max_tx_payload_size()?;
+            unwrap!(buffer.resize_default(max_tx));
 
             Ok(Some(buffer))
         } else {

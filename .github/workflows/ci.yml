@@ -145,7 +145,16 @@ jobs:
 
       - name: Test - Stack Send Sync
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cd rs-matter-stack; cargo test --features send-sync --test drivers
+        run: cd rs-matter-stack; cargo test --features send-sync,async-io
+
+      - name: Test - Large Buffers
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: |
+          cd rs-matter
+          cargo test --features async-io,large-buffers --test commissioning
+          # 4 KB, as these tests keep their `Matter` on the stack
+          cargo test --features async-io,large-buffers-4096 --test im_tests --test bdx --test diag_logs
+          cargo test -p rs-matter-transport --lib --features large-buffers-4096
 
       - name: Examples - WebRTC Camera
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'

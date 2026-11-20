@@ -23,7 +23,7 @@ use rs_matter_utils::sync::MaybeSend;
 
 #[cfg(all(target_os = "linux", feature = "bluer"))]
 pub use bluer::*;
-#[cfg(feature = "zbus")]
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 pub use bluez::*;
 #[cfg(all(windows, feature = "std"))]
 pub use win32::*;
@@ -96,7 +96,7 @@ mod bluer {
     }
 }
 
-#[cfg(feature = "zbus")]
+#[cfg(all(target_os = "linux", feature = "zbus"))]
 #[allow(clippy::large_futures)]
 mod bluez {
     use rs_matter_transport::network::btp::{AdvData, Btp};

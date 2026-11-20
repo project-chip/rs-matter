@@ -58,6 +58,8 @@ pub const MDNS_PORT: u16 = 5353;
 pub const MDNS_SOCKET_DEFAULT_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, 0));
 
+use super::tcp::TcpCapability;
+
 impl MatterLocalService {
     /// Build a full mDNS service description for this Matter service, including
     /// the service name, type, protocol, port, subtypes, and TXT records.
@@ -86,6 +88,7 @@ impl MatterLocalService {
             node.dev_det(),
             node.port(),
             node.icd_advertisement(),
+            node.transport().tcp_capability(),
             buf,
         )
     }
@@ -99,6 +102,7 @@ fn local_service_internal<'a>(
     dev_det: &BasicInfoConfig<'_>,
     matter_port: u16,
     icd: Option<IcdAdvertisement>,
+    tcp_capability: TcpCapability,
     buf: &'a mut [u8],
 ) -> Result<
     (
@@ -149,7 +153,7 @@ fn local_service_internal<'a>(
                 ("SAI", txt_sai),
                 ("SII", txt_sii),
                 ("SAT", txt_sat),
-                ("T", if dev_det.tcp_supported { "6" } else { "" }),
+                ("T", tcp_capability.as_txt_value()),
                 ("ICD", txt_icd),
                 // Some mDNS responders do not accept empty TXT records
                 ("DUMMY", "DUMMY"),
@@ -207,12 +211,7 @@ fn local_service_internal<'a>(
             let (txt_dn, mut wb) = write_split!(wb, "{}", dev_det.device_name)?;
             let (txt_pi, wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
             let (txt_ph, wb) = write_txt_num(wb, Some(dev_det.pairing_hint.bits()))?;
-            let (txt_dt, mut wb) = write_txt_num(wb, dev_det.device_type.map(u32::from))?;
-            let (txt_tcp, wb) = if dev_det.tcp_supported {
-                write_split!(wb, "6")?
-            } else {
-                ("", wb)
-            };
+            let (txt_dt, wb) = write_txt_num(wb, dev_det.device_type.map(u32::from))?;
 
             let txt_kvs = [
                 ("D", txt_discr),
@@ -225,7 +224,7 @@ fn local_service_internal<'a>(
                 ("PI", txt_pi),
                 ("PH", txt_ph),
                 ("DT", txt_dt),
-                ("T", txt_tcp),
+                ("T", tcp_capability.as_txt_value()),
                 ("ICD", txt_icd),
             ]
             .into_iter()
@@ -1317,7 +1316,8 @@ mod tests {
                 node_id: 2,
             };
             let (service, _) =
-                local_service_internal(&service, dev_det, 5540, icd, &mut buf).unwrap();
+                local_service_internal(&service, dev_det, 5540, icd, TcpCapability::None, &mut buf)
+                    .unwrap();
 
             service
                 .txt_kvs
@@ -1414,8 +1414,15 @@ mod tests {
                 idle_mode_duration_s: 300,
             });
 
-            let (service, _) =
-                local_service_internal(&service, &TEST_DEV_DET, 5540, icd, &mut buf).unwrap();
+            let (service, _) = local_service_internal(
+                &service,
+                &TEST_DEV_DET,
+                5540,
+                icd,
+                TcpCapability::None,
+                &mut buf,
+            )
+            .unwrap();
 
             service
                 .txt_kvs

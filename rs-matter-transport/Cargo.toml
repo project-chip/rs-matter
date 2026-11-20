@@ -60,12 +60,21 @@ zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel", "rs-m
 bluer = ["dep:bluer", "dep:tokio", "dep:tokio-stream", "os", "rs-matter-utils/bluer"]
 # Umbrella set of features for typical OS-based non-baremetal deployments.
 os = ["std", "async-io", "rs-matter-utils/backtrace", "rs-matter-utils/os", "rs-matter-node-core/os"]
-std = ["alloc", "dep:windows", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-node-core/std"]
+std = ["alloc", "dep:socket2", "dep:windows", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/std", "rs-matter-pairing/std", "rs-matter-im-core/std", "rs-matter-dm-core/std", "rs-matter-node-core/std"]
 alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-pairing/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-node-core/alloc"]
 # Multicast groups support.
 groups = ["rs-matter-crypto/groups", "rs-matter-node-core/groups"]
-# Extends the transport and the IM buffers to 1MB (from 1500 B), for Matter over TCP.
-large-buffers = ["rs-matter-dm-core/large-buffers"]
+# Extends the transport and the IM buffers to 64 KiB (from 1583 B), matching the Matter spec default MAX_TCP_MESSAGE_SIZE.
+large-buffers = ["large-buffers-65536"]
+large-buffers-1048576 = ["rs-matter-dm-core/large-buffers-1048576"]
+large-buffers-524288 = ["rs-matter-dm-core/large-buffers-524288"]
+large-buffers-262144 = ["rs-matter-dm-core/large-buffers-262144"]
+large-buffers-131072 = ["rs-matter-dm-core/large-buffers-131072"]
+large-buffers-65536 = ["rs-matter-dm-core/large-buffers-65536"]
+large-buffers-32768 = ["rs-matter-dm-core/large-buffers-32768"]
+large-buffers-16384 = ["rs-matter-dm-core/large-buffers-16384"]
+large-buffers-8192 = ["rs-matter-dm-core/large-buffers-8192"]
+large-buffers-4096 = ["rs-matter-dm-core/large-buffers-4096"]
 # CASE session resumption (Sigma2-Resume fast-path + its persisted cache).
 case-resumption = []
 # Never initiate a new CASE session. Keeps no state for the CASE setups in progress.
@@ -98,6 +107,7 @@ defmt = { workspace = true, optional = true }
 
 # STD
 async-io = { workspace = true, optional = true }
+socket2 = { workspace = true, optional = true, features = ["all"] }
 
 # OS
 zbus = { workspace = true, optional = true }

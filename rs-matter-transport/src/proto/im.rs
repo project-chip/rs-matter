@@ -344,10 +344,7 @@ pub struct ReadRespChunk<'a> {
 impl<'a> ReadRespChunk<'a> {
     async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
         exchange.recv_fetch().await?;
-        {
-            let rx = exchange.rx()?;
-            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
-        }
+        check_response(&mut exchange, OpCode::ReportData).await?;
         Ok(Self { exchange })
     }
 
@@ -380,10 +377,7 @@ impl<'a> ReadRespChunk<'a> {
                 .await?;
 
             self.exchange.recv_fetch().await?;
-            {
-                let rx = self.exchange.rx()?;
-                check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
-            }
+            check_response(&mut self.exchange, OpCode::ReportData).await?;
 
             Ok(Some(self))
         } else {
@@ -538,10 +532,7 @@ pub struct WriteRespHandle<'a> {
 impl<'a> WriteRespHandle<'a> {
     async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
         exchange.recv_fetch().await?;
-        {
-            let rx = exchange.rx()?;
-            check_opcode(rx.meta().proto_opcode, OpCode::WriteResponse)?;
-        }
+        check_response(&mut exchange, OpCode::WriteResponse).await?;
         // ACK here (via standalone `acknowledge()`, not `send_with`)
         // because `send_with` would clear the RX buffer and break
         // zero-copy access from `response()` below.
@@ -882,10 +873,7 @@ impl<'a> InvokeRespChunk<'a> {
                 .await?;
 
             self.exchange.recv_fetch().await?;
-            {
-                let rx = self.exchange.rx()?;
-                check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
-            }
+            check_response(&mut self.exchange, OpCode::InvokeResponse).await?;
 
             Ok(Some(self))
         } else {
@@ -1062,10 +1050,7 @@ impl<'a> defmt::Format for SubscribePrimingChunk<'a> {
 impl<'a> SubscribePrimingChunk<'a> {
     async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
         exchange.recv_fetch().await?;
-        {
-            let rx = exchange.rx()?;
-            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
-        }
+        check_response(&mut exchange, OpCode::ReportData).await?;
         Ok(Self { exchange })
     }
 
@@ -1116,10 +1101,7 @@ impl<'a> SubscribePrimingChunk<'a> {
                 .await?;
 
             self.exchange.recv_fetch().await?;
-            {
-                let rx = self.exchange.rx()?;
-                check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
-            }
+            check_response(&mut self.exchange, OpCode::ReportData).await?;
 
             Ok(SubscribeOutcome::NextChunk(self))
         } else {
@@ -1375,6 +1357,34 @@ async fn send_abort(exchange: &mut Exchange<'_>) -> Result<(), Error> {
             Ok(Some(OpCode::StatusResponse.into()))
         })
         .await
+}
+
+/// Check that the message received on `exchange` is the `expected` response.
+///
+/// A server may refuse an action with a `StatusResponse` instead, e.g. with
+/// `ResourceExhausted` when it has no room for another subscription. That
+/// status is acknowledged and returned as the error.
+async fn check_response(exchange: &mut Exchange<'_>, expected: OpCode) -> Result<(), Error> {
+    let opcode = exchange.rx()?.meta().proto_opcode;
+
+    if opcode != OpCode::StatusResponse as u8 || expected == OpCode::StatusResponse {
+        return check_opcode(opcode, expected);
+    }
+
+    let status = {
+        let rx = exchange.rx()?;
+        StatusResp::from_tlv(&TLVElement::new(rx.payload()))?.status
+    };
+
+    exchange.acknowledge().await?;
+
+    error!("Expected {:?}, got StatusResponse({:?})", expected, status);
+
+    // A success status is no answer to a request
+    Err(status
+        .to_error_code()
+        .unwrap_or(ErrorCode::InvalidOpcode)
+        .into())
 }
 
 /// Check that the received opcode matches the expected one.

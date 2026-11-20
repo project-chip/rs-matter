@@ -151,7 +151,17 @@ pub enum GeneralCode {
     AlreadyExists = 14,
     PermissionDenied = 15,
     DataLoss = 16,
+    MessageTooLarge = 17,
 }
+
+/// `SUPPORTED_TRANSPORTS` bit indicating TCP client support (Matter Core Spec 4.14.1.2).
+pub const SUPPORTED_TRANSPORTS_TCP_CLIENT: u16 = 0x0002;
+
+/// `SUPPORTED_TRANSPORTS` bit indicating TCP server support (Matter Core Spec 4.14.1.2).
+pub const SUPPORTED_TRANSPORTS_TCP_SERVER: u16 = 0x0004;
+
+/// The `MAX_TCP_MESSAGE_SIZE` of a peer that does not advertise one.
+pub const DEFAULT_MAX_TCP_MESSAGE_SIZE: u32 = 64000;
 
 /// Represents the session parameters
 /// that might present in a "PBKDFParamRequest"/"PBKDFParamResponse" or "CASE-Sigma1"/"CASE-Sigma2" message
@@ -173,6 +183,10 @@ pub struct SessionParameters {
     pub spec_version: Option<u32>,
     /// Maximum number of paths per invoke
     pub max_paths_per_invoke: Option<u16>,
+    /// Bitmap of supported transports beyond UDP/MRP (Tag 8)
+    pub supported_transports: Option<u16>,
+    /// The largest message, without its length field, the node receives over TCP (Tag 9)
+    pub max_tcp_message_size: Option<u32>,
 }
 
 /// Represents a Status Report message, as per "Appendix D: Status Report Messages" of the Matter Spec.

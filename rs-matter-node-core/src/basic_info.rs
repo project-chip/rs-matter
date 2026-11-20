@@ -23,6 +23,7 @@ use core::str::FromStr;
 
 use crate::dm::{AttrId, ClusterId};
 use crate::error::Error;
+use crate::im::SubscribeReq;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::session::CASE_SESSIONS_PER_FABRIC;
 use crate::tlv::{FromTLV, Nullable, TLVElement, ToTLV};
@@ -240,13 +241,6 @@ pub struct BasicInfoConfig<'a> {
     ///
     /// Not a real attribute, just used to configure the session timeouts
     pub sii: Option<u32>,
-    /// Whether the device supports TCP transport.
-    ///
-    /// Not a real attribute; advertised via the `T` TXT record key in mDNS.
-    /// Per the Matter Core Spec, `T` is a bitmap: bit 2 (value 4)
-    /// indicates TCP server support. Required for large payloads such as WebRTC SDP
-    /// exchanges and camera snapshots.
-    pub tcp_supported: bool,
     /// The least max interval granted to a subscription, in seconds: what the
     /// subscriber asks for, but no less than this. A subscription with nothing to
     /// report keeps alive halfway through its max interval, so this bounds how
@@ -302,7 +296,6 @@ impl BasicInfoConfig<'_> {
             pairing_instruction: "",
             sai: None,
             sii: None,
-            tcp_supported: false,
             min_subscription_max_interval_secs: DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS,
             max_subscription_max_interval_secs: DEFAULT_MAX_SUBSCRIPTION_MAX_INTERVAL_SECS,
         }
@@ -348,8 +341,19 @@ const SIMULTANEOUS_INVOCATIONS_SUPPORTED: u16 = 1;
 const SIMULTANEOUS_WRITES_SUPPORTED: u16 = 1;
 /// Constraint is `9 to 10000`; see Core spec 2.11.2.1 "Read Interaction Limits".
 const READ_PATHS_SUPPORTED: u16 = 9;
-/// Constraint is `3 to 10000`; see Core spec 2.11.2.2 "Subscribe Interaction Limits".
-const SUBSCRIBE_PATHS_SUPPORTED: u16 = 3;
+
+/// The size of the buffer which keeps the request of a subscription.
+///
+/// A larger request is kept without its data version filters, which only matter
+/// for the priming report.
+pub const SUBSCRIPTION_BUFFER_SIZE: usize = 256;
+
+/// The default `SubscribePathsSupported` of the Basic Information cluster: the paths which
+/// fit in [`SUBSCRIPTION_BUFFER_SIZE`] at their largest encoding. Constraint is `3 to 10000`.
+pub const SUBSCRIBE_PATHS_SUPPORTED: u16 =
+    ((SUBSCRIPTION_BUFFER_SIZE - SubscribeReq::MAX_FIXED_LEN) / SubscribeReq::MAX_PATH_LEN) as u16;
+
+const _: () = ::core::assert!(SUBSCRIBE_PATHS_SUPPORTED >= 3);
 
 impl CapabilityMinima {
     /// Create a default instance of `CapabilityMinima`, with the CASE sessions

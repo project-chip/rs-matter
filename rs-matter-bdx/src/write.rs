@@ -266,8 +266,8 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
             return Err(ErrorCode::Invalid.into());
         }
 
-        // We can never send a block larger than our staging buffer or our TX buffer.
-        let pmbs = buf.len().min(MAX_TX_BLOCK_SIZE as usize) as u16;
+        // We can never send a block larger than our staging buffer or one message.
+        let pmbs = buf.len().min(max_tx_block_size(&self)? as usize) as u16;
         send_init(&mut self, OpCode::SendInit, pmbs, offset, file_designator).await?;
 
         match recv_accept(&mut self, false).await? {
@@ -278,7 +278,8 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
                 } else {
                     Drive::Follower
                 };
-                Ok(BdxWriter::new(self, drive, buf, mbs))
+                // The receiver may only lower the block size we proposed.
+                Ok(BdxWriter::new(self, drive, buf, mbs.min(pmbs)))
             }
             None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
         }
@@ -353,8 +354,8 @@ impl<'a> BdxDownloadResponder<'a> {
             return abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported).await;
         };
 
-        // Cap the receiver's proposed block size by our staging buffer and TX buffer.
-        let cap = buf.len().min(MAX_TX_BLOCK_SIZE as usize) as u16;
+        // Cap the receiver's proposed block size by our staging buffer and one message.
+        let cap = buf.len().min(max_tx_block_size(&self.exchange)? as usize) as u16;
         let mbs = self.max_block_size.clamp(1, cap);
 
         self.exchange.rx_done()?;
