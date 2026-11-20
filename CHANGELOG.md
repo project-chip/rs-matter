@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: a subscription keeps its request in a buffer of its own, of `SUBSCRIPTION_BUFFER_SIZE` (256 bytes), rather than in one of the IM buffers for its whole life. A larger request is kept without its data version filters, which only matter for the priming report (#677)
+  * The default `CapabilityMinima::subscribe_paths_supported` is `SUBSCRIBE_PATHS_SUPPORTED` (5 rather than 3): the paths that fit in `SUBSCRIPTION_BUFFER_SIZE` at their largest encoding
+  * New: `SubscribeReq::write_without_dataver_filters`, `SubscribeReq::MAX_PATH_LEN` and `SubscribeReq::MAX_FIXED_LEN`
+  * `DEFAULT_BUFFER_POOL_SIZE`, the default size of `MatterBuffers`, is 9 rather than 10, and `rs-matter-stack` without a `max-im-buffers-*` feature has two IM buffers for each responder and one more (9 by default) rather than 10
 * Fix: `TcpNetwork` resets a TCP connection whose peer does not acknowledge the close within `TcpConfig::close_timeout` (2 s by default). Before, a silent peer could keep a slot, or the listener, waiting forever (#676)
   * New: `TcpNetworkSocket::abort`, which resets the stream; the default does nothing
 * Fix: when a server answers a read, a subscribe, a write or the next invoke chunk with a `StatusResponse`, the IM client returns its status (e.g. `ResourceExhausted` for a subscription it has no room for), rather than `InvalidOpcode` (#675)

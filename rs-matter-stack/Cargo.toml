@@ -38,10 +38,10 @@ events-ringbuf-size-64 = []
 events-ringbuf-size-0 = []
 
 # Number of IM buffers.
+# Without one of these, two for each responder and one more (9 by default).
 max-im-buffers-64 = []
 max-im-buffers-32 = []
 max-im-buffers-16 = []
-# Default number of IM buffers.
 max-im-buffers-10 = []
 max-im-buffers-9 = []
 max-im-buffers-8 = []

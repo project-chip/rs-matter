@@ -18,7 +18,7 @@
 use core::fmt;
 
 use crate::error::Error;
-use crate::tlv::{FromTLV, TLVArray, TLVElement, TagType, ToTLV};
+use crate::tlv::{FromTLV, TLVArray, TLVElement, TLVSequence, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::utils::storage::WriteBuf;
 use crate::{AttrPath, DataVersionFilter, EventFilter, EventPath, IM_REVISION};
 
@@ -30,6 +30,14 @@ use crate::{AttrPath, DataVersionFilter, EventFilter, EventPath, IM_REVISION};
 pub struct SubscribeReq<'a>(TLVElement<'a>);
 
 impl<'a> SubscribeReq<'a> {
+    /// The largest encoding of one path of a subscription request: an `AttributePathIB`
+    /// with all of its fields. An `EventPathIB` takes at most 30 bytes.
+    pub const MAX_PATH_LEN: usize = 40;
+
+    /// The largest encoding of a subscription request without its paths and its data
+    /// version filters, and with one event filter.
+    pub const MAX_FIXED_LEN: usize = 48;
+
     /// Create a new `SubscribeReq` from a `TLVElement`.
     pub const fn new(element: TLVElement<'a>) -> Self {
         Self(element)
@@ -73,6 +81,22 @@ impl<'a> SubscribeReq<'a> {
     /// Return the data version filters in this subscription request, if any.
     pub fn dataver_filters(&self) -> Result<Option<TLVArray<'a, DataVersionFilter>>, Error> {
         Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)
+    }
+
+    /// Write this subscription request to `wb` without its data version filters.
+    pub fn write_without_dataver_filters(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        wb.start_struct(&TLVTag::Anonymous)?;
+
+        for elem in self.0.r#struct()?.iter() {
+            let elem = elem?;
+
+            if elem.try_ctx()? != Some(SubscribeReqTag::DataVersionFilters as u8) {
+                let len = TLVSequence(elem.raw_data()).container_len()?;
+                wb.append(&elem.raw_data()[..len])?;
+            }
+        }
+
+        wb.end_container()
     }
 }
 
