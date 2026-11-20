@@ -499,7 +499,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
     ) -> Result<P, Error> {
         match self.cumulative_imported() {
             Some(reading) => write_energy(builder.non_null()?, &reading),
-            None => builder.null(),
+            None => builder.null().map_err(Into::into),
         }
     }
 
@@ -511,7 +511,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
     ) -> Result<P, Error> {
         match self.periodic_imported() {
             Some(reading) => write_energy(builder.non_null()?, &reading),
-            None => builder.null(),
+            None => builder.null().map_err(Into::into),
         }
     }
 
@@ -525,7 +525,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
         builder: NullableBuilder<P, CumulativeEnergyResetStructBuilder<P>>,
     ) -> Result<P, Error> {
         let Some(reset) = self.hooks.cumulative_energy_reset() else {
-            return builder.null();
+            return builder.null().map_err(Into::into);
         };
 
         builder

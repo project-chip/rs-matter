@@ -72,7 +72,7 @@
 //!                 .data(|w| {
 //!                     // Toggle's request body is empty:
 //!                     w.start_struct(&TLVTag::Context(CmdDataTag::Data as u8))?;
-//!                     w.end_container()
+//!                     Ok(w.end_container()?)
 //!                 })?
 //!             .end()?
 //!         .end()?
@@ -84,7 +84,7 @@
 use core::marker::PhantomData;
 
 use crate::error::Error;
-use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, TlvError, ToTLV};
 use crate::{ClusterId, CmdId, EndptId};
 use crate::{CmdDataTag, CmdPathTag, InvReqTag, IM_REVISION};
 
@@ -120,7 +120,7 @@ where
     /// Begin a new `InvokeRequestMessage` — opens a struct at the
     /// given tag. For top-level use (the usual case) pass
     /// `&TLVTag::Anonymous`.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_struct(tag)?;
         Ok(Self { p })
     }
@@ -130,7 +130,7 @@ impl<P> TLVBuilder<P> for InvReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -233,10 +233,10 @@ where
     /// [`CmdDataBuilder`]; close with `.end()` to return to the
     /// message builder.
     pub fn invoke_requests(self) -> Result<CmdDataArrayBuilder<InvReqBuilder<P, 3>>, Error> {
-        CmdDataArrayBuilder::new(
+        Ok(CmdDataArrayBuilder::new(
             InvReqBuilder { p: self.p },
             &TLVTag::Context(InvReqTag::InvokeRequests as u8),
-        )
+        )?)
     }
 }
 
@@ -320,7 +320,7 @@ where
     P: TLVBuilderParent,
 {
     /// Begin a new `CmdData` array — opens an array at the given tag.
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_array(tag)?;
         Ok(Self { p })
     }
@@ -328,7 +328,7 @@ where
     /// Start a new `CmdData` entry. The returned [`CmdDataBuilder`]
     /// terminates with `.end()` which returns this array builder.
     pub fn push(self) -> Result<CmdDataBuilder<Self, 0>, Error> {
-        CmdDataBuilder::new(self, &TLVTag::Anonymous)
+        Ok(CmdDataBuilder::new(self, &TLVTag::Anonymous)?)
     }
 
     /// Close the array and return the message builder.
@@ -342,7 +342,7 @@ impl<P> TLVBuilder<P> for CmdDataArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -405,7 +405,7 @@ where
     /// Begin a new `CmdData` entry — opens a struct at the given tag.
     /// Use `&TLVTag::Anonymous` when pushed into an `InvokeRequests`
     /// array (the typical case).
-    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, TlvError> {
         p.writer().start_struct(tag)?;
         Ok(Self { p, _f: PhantomData })
     }
@@ -415,7 +415,7 @@ impl<P> TLVBuilder<P> for CmdDataBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, TlvError> {
         Self::new(parent, tag)
     }
 
@@ -527,7 +527,7 @@ where
             p: self.p,
             _f: PhantomData,
         };
-        B::new(advanced, &TLVTag::Context(CmdDataTag::Data as u8))
+        Ok(B::new(advanced, &TLVTag::Context(CmdDataTag::Data as u8))?)
     }
 }
 
@@ -648,7 +648,7 @@ mod tests {
             .unwrap()
             .data(|w| {
                 w.start_struct(&TLVTag::Context(1))?;
-                w.end_container()
+                Ok(w.end_container()?)
             })
             .unwrap()
             .end()
@@ -735,6 +735,7 @@ mod tests {
                     transition_time: 300,
                 }
                 .to_tlv(&TLVTag::Context(1), w)
+                .map_err(Into::into)
             })
             .unwrap()
             .command_ref(7)
@@ -832,7 +833,7 @@ mod tests {
             .path(1, 6, 2)?
             .data(|w| {
                 w.start_struct(&TLVTag::Context(1))?;
-                w.end_container()
+                Ok(w.end_container()?)
             })?
             .command_ref(command_ref)?
             .end()

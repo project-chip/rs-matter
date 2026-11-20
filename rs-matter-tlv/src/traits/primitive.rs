@@ -17,13 +17,13 @@
 
 //! TLV support for Rust primitive types.
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 
 macro_rules! fromtlv_for {
     ($($t:ident)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
-                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     element.$t()
                 }
             }
@@ -35,11 +35,11 @@ macro_rules! fromtlv_for_num {
     ($($t:ident)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $t {
-                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     element.$t()
                 }
 
-                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     let value = element.$t()?;
 
                     let in_range = if $t::MIN == 0 {
@@ -51,7 +51,7 @@ macro_rules! fromtlv_for_num {
                     if in_range {
                         Ok(value)
                     } else {
-                        Err(ErrorCode::ConstraintError.into())
+                        Err(TlvErrorCode::UnexpectedNull.into())
                     }
                 }
             }
@@ -63,11 +63,11 @@ macro_rules! fromtlv_for_nonzero {
     ($($t:ident:$n:ty)*) => {
         $(
             impl<'a> $crate::FromTLV<'a> for $n {
-                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
-                    <$n>::new(element.$t()?).ok_or_else(|| ErrorCode::Invalid.into())
+                fn from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
+                    <$n>::new(element.$t()?).ok_or_else(|| TlvErrorCode::InvalidValue.into())
                 }
 
-                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, Error> {
+                fn nullable_from_tlv(element: &$crate::TLVElement<'a>) -> Result<Self, TlvError> {
                     let value = element.$t()?;
 
                     let in_range = if $t::MIN == 0 {
@@ -77,9 +77,9 @@ macro_rules! fromtlv_for_nonzero {
                     };
 
                     if in_range {
-                        <$n>::new(value).ok_or_else(|| ErrorCode::Invalid.into())
+                        <$n>::new(value).ok_or_else(|| TlvErrorCode::InvalidValue.into())
                     } else {
-                        Err(ErrorCode::ConstraintError.into())
+                        Err(TlvErrorCode::UnexpectedNull.into())
                     }
                 }
             }
@@ -91,11 +91,11 @@ macro_rules! totlv_for {
     ($($t:ident)*) => {
         $(
             impl $crate::ToTLV for $t {
-                fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
+                fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), TlvError> {
                     tw.$t(tag, *self)
                 }
 
-                fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
+                fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, TlvError>> {
                     $crate::TLV::$t(tag, *self).into_tlv_iter()
                 }
             }
@@ -107,15 +107,15 @@ macro_rules! totlv_for_num {
     ($($t:ident)*) => {
         $(
             impl $crate::ToTLV for $t {
-                fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
+                fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), TlvError> {
                     tw.$t(tag, *self)
                 }
 
-                fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
+                fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, TlvError>> {
                     $crate::TLV::$t(tag, *self).into_tlv_iter()
                 }
 
-                fn nullable_to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
+                fn nullable_to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), TlvError> {
                     let in_range = if $t::MIN == 0 {
                         *self != $t::MAX
                     } else {
@@ -123,13 +123,13 @@ macro_rules! totlv_for_num {
                     };
 
                     if in_range {
-                        tw.$t(tag, *self)
+                        Ok(tw.$t(tag, *self)?)
                     } else {
-                        Err(ErrorCode::ConstraintError.into())
+                        Err(TlvErrorCode::UnexpectedNull.into())
                     }
                 }
 
-                fn nullable_tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
+                fn nullable_tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, TlvError>> {
                     let in_range = if $t::MIN == 0 {
                         *self != $t::MAX
                     } else {
@@ -139,7 +139,7 @@ macro_rules! totlv_for_num {
                     if in_range {
                         $crate::EitherIter::First($crate::TLV::$t(tag, *self).into_tlv_iter())
                     } else {
-                        $crate::EitherIter::Second(core::iter::once(Err(ErrorCode::ConstraintError.into())))
+                        $crate::EitherIter::Second(core::iter::once(Err(TlvErrorCode::UnexpectedNull.into())))
                     }
                 }
             }
@@ -151,15 +151,15 @@ macro_rules! totlv_for_nonzero {
     ($($t:ident:$n:ty)*) => {
         $(
             impl $crate::ToTLV for $n {
-                fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
+                fn to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), TlvError> {
                     tw.$t(tag, self.get())
                 }
 
-                fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
+                fn tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, TlvError>> {
                     $crate::TLV::$t(tag, self.get()).into_tlv_iter()
                 }
 
-                fn nullable_to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), Error> {
+                fn nullable_to_tlv<W: $crate::TLVWrite>(&self, tag: &$crate::TLVTag, mut tw: W) -> Result<(), TlvError> {
                     let in_range = if $t::MIN == 0 {
                         self.get() != $t::MAX
                     } else {
@@ -167,13 +167,13 @@ macro_rules! totlv_for_nonzero {
                     };
 
                     if in_range {
-                        tw.$t(tag, self.get())
+                        Ok(tw.$t(tag, self.get())?)
                     } else {
-                        Err(ErrorCode::ConstraintError.into())
+                        Err(TlvErrorCode::UnexpectedNull.into())
                     }
                 }
 
-                fn nullable_tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, Error>> {
+                fn nullable_tlv_iter(&self, tag: $crate::TLVTag) -> impl Iterator<Item = Result<$crate::TLV<'_>, TlvError>> {
                     let in_range = if $t::MIN == 0 {
                         self.get() != $t::MAX
                     } else {
@@ -183,7 +183,7 @@ macro_rules! totlv_for_nonzero {
                     if in_range {
                         $crate::EitherIter::First($crate::TLV::$t(tag, self.get()).into_tlv_iter())
                     } else {
-                        $crate::EitherIter::Second(core::iter::once(Err(ErrorCode::ConstraintError.into())))
+                        $crate::EitherIter::Second(core::iter::once(Err(TlvErrorCode::UnexpectedNull.into())))
                     }
                 }
             }

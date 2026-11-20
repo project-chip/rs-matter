@@ -850,7 +850,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                 .flags(security_policy.flags)?
                 .end()
         } else {
-            builder.null()
+            Ok(builder.null()?)
         }
     }
 
@@ -914,7 +914,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                     Ok(())
                 })?;
 
-                unwrap!(builder.take()).end()
+                Ok(unwrap!(builder.take()).end()?)
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let mut builder = Some(builder);
@@ -937,7 +937,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                     Err(ErrorCode::ConstraintError.into())
                 }
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            ArrayAttributeRead::ReadNone(builder) => builder.end().map_err(Into::into),
         }
     }
     fn ext_address(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {

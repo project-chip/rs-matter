@@ -731,7 +731,7 @@ where
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.hooks.description())
+        Ok(builder.set(self.hooks.description())?)
     }
 
     fn standard_namespace(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {

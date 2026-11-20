@@ -31,7 +31,9 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 use crate::im::GenericPath;
 use crate::session::{SessionMode, MAX_CAT_IDS_PER_NOC};
-use crate::tlv::{FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::tlv::{
+    FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, TlvError, TlvErrorCode, ToTLV, TLV,
+};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 
@@ -163,20 +165,20 @@ pub enum AuthMode {
 }
 
 impl FromTLV<'_> for AuthMode {
-    fn from_tlv(t: &TLVElement) -> Result<Self, Error>
+    fn from_tlv(t: &TLVElement) -> Result<Self, TlvError>
     where
         Self: Sized,
     {
-        Self::from_u8(t.u8()?).ok_or(ErrorCode::Invalid.into())
+        Self::from_u8(t.u8()?).ok_or(TlvErrorCode::InvalidValue.into())
     }
 }
 
 impl ToTLV for AuthMode {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.u8(tag, *self as _)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::u8(tag, *self as _).into_tlv_iter()
     }
 }
@@ -196,20 +198,20 @@ pub enum AuxiliaryType {
 }
 
 impl FromTLV<'_> for AuxiliaryType {
-    fn from_tlv(t: &TLVElement) -> Result<Self, Error>
+    fn from_tlv(t: &TLVElement) -> Result<Self, TlvError>
     where
         Self: Sized,
     {
-        Self::from_u8(t.u8()?).ok_or(ErrorCode::Invalid.into())
+        Self::from_u8(t.u8()?).ok_or(TlvErrorCode::InvalidValue.into())
     }
 }
 
 impl ToTLV for AuxiliaryType {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.u8(tag, *self as _)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::u8(tag, *self as _).into_tlv_iter()
     }
 }

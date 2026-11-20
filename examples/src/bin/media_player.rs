@@ -484,7 +484,7 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
                     builder = builder.push(header)?;
                 }
 
-                builder.end()
+                Ok(builder.end()?)
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let index = index as usize;
@@ -493,9 +493,9 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                builder.set(RANDOM_MEDIA_HEADERS[index])
+                Ok(builder.set(RANDOM_MEDIA_HEADERS[index])?)
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            ArrayAttributeRead::ReadNone(builder) => Ok(builder.end()?),
         }
     }
 

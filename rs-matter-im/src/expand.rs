@@ -62,11 +62,13 @@ where
         false,
         req.attr_requests()?.map(|reqs| {
             reqs.into_iter().map(move |path_result| {
-                path_result.map(|path| AttrReadPath {
-                    path,
-                    dataver_filters: dataver_filters.clone(),
-                    fabric_filtered,
-                })
+                path_result
+                    .map(|path| AttrReadPath {
+                        path,
+                        dataver_filters: dataver_filters.clone(),
+                        fabric_filtered,
+                    })
+                    .map_err(Into::into)
             })
         }),
         filter,
@@ -96,7 +98,11 @@ where
         accessor,
         req.timed_request()?,
         false,
-        Some(req.write_requests()?.into_iter()),
+        Some(
+            req.write_requests()?
+                .into_iter()
+                .map(|req| req.map_err(Into::into)),
+        ),
         |_, _, _| true,
     ))
 }
@@ -127,7 +133,8 @@ where
         accessor,
         req.timed_request()?,
         large_messages,
-        req.inv_requests()?.map(move |reqs| reqs.into_iter()),
+        req.inv_requests()?
+            .map(move |reqs| reqs.into_iter().map(|req| req.map_err(Into::into))),
         |_, _, _| true,
     ))
 }

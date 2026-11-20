@@ -54,7 +54,9 @@ use crate::subscriptions::{
     icd_max_int_secs, subscription_max_int_secs, KeepAlive, ReportContext as SubscriptionReport,
     Subscriptions, SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
 };
-use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{
+    get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, TlvErrorCode, ToTLV,
+};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::MAX_TX_UDP_PAYLOAD_SIZE;
 use crate::utils::epoch::UtcTime;
@@ -489,7 +491,7 @@ where
             EventPriority::Critical,
             |mut tw| {
                 tw.start_struct(&EVENT_DATA_TAG)?;
-                tw.end_container()
+                Ok(tw.end_container()?)
             },
         )?;
 
@@ -1807,7 +1809,7 @@ where
         let result = self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
             tw.start_struct(&EVENT_DATA_TAG)?;
             tw.u32(&TLVTag::Context(0), value)?;
-            tw.end_container()
+            Ok(tw.end_container()?)
         });
 
         if let Err(e) = &result {
@@ -2028,7 +2030,7 @@ where
                         let mut result = resp.to_tlv(&TLVTag::Anonymous, &mut *wb);
 
                         if let Err(e) = &result {
-                            if e.code() == ErrorCode::NoSpace {
+                            if e.code() == TlvErrorCode::NoSpace {
                                 debug!("<<< No TX space, chunking >>>");
                                 if !self
                                     .send(ReportDataChunkState::ChunkingEvents, false, &mut *wb)

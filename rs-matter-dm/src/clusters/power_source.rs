@@ -160,7 +160,7 @@ impl ClusterHandler for PowerSourceHandler<'_> {
         _ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(self.config.description)
+        Ok(out.set(self.config.description)?)
     }
 
     fn wired_current_type(&self, _ctx: impl ReadContext) -> Result<WiredCurrentTypeEnum, Error> {
@@ -178,7 +178,7 @@ impl ClusterHandler for PowerSourceHandler<'_> {
                     builder = builder.push(endpoint)?;
                 }
 
-                builder.end()
+                Ok(builder.end()?)
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some(endpoint) = self.config.endpoint_list.get(index as usize) else {
@@ -187,9 +187,9 @@ impl ClusterHandler for PowerSourceHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 };
 
-                builder.set(endpoint)
+                Ok(builder.set(endpoint)?)
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            ArrayAttributeRead::ReadNone(builder) => builder.end().map_err(Into::into),
         }
     }
 }

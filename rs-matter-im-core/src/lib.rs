@@ -37,7 +37,7 @@ use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvError, TlvErrorCode, ToTLV, TLV};
 
 // The dependencies, under the names the code uses for them
 use rs_matter_tlv as tlv;
@@ -201,17 +201,17 @@ impl IMStatusCode {
 }
 
 impl FromTLV<'_> for IMStatusCode {
-    fn from_tlv(t: &TLVElement) -> Result<Self, Error> {
-        FromPrimitive::from_u16(t.u16()?).ok_or_else(|| ErrorCode::Invalid.into())
+    fn from_tlv(t: &TLVElement) -> Result<Self, TlvError> {
+        FromPrimitive::from_u16(t.u16()?).ok_or_else(|| TlvErrorCode::InvalidValue.into())
     }
 }
 
 impl ToTLV for IMStatusCode {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.u16(tag, *self as _)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::u16(tag, *self as _).into_tlv_iter()
     }
 }

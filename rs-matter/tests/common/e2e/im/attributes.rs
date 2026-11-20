@@ -220,7 +220,7 @@ impl TestToTLV for TestAttrResp<'_> {
             TestAttrResp::AttrData(data) => data.test_to_tlv(&TLVTag::Context(1), tw),
         }?;
 
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 }
 

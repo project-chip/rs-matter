@@ -142,7 +142,7 @@ impl TestToTLV for TestCmdResp<'_> {
             TestCmdResp::Status(status) => status.test_to_tlv(&TLVTag::Context(1), tw),
         }?;
 
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 }
 

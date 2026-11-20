@@ -477,7 +477,9 @@ where
     where
         T: for<'a> FromTLV<'a>,
     {
-        self.load(key, |data| T::from_tlv(&TLVElement::new(data)))
+        self.load(key, |data| {
+            T::from_tlv(&TLVElement::new(data)).map_err(Into::into)
+        })
     }
 
     /// Remove the value with the specified key from the storage.
