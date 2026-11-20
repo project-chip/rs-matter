@@ -48,6 +48,11 @@ max-group-keys-per-fabric-3 = ["rs-matter-node-core/max-group-keys-per-fabric-3"
 max-group-keys-per-fabric-2 = ["rs-matter-node-core/max-group-keys-per-fabric-2"]
 
 # Number of endpoints that can be members of a group (per fabric).
+# The sizes from 8 up are checked at build time against `kv-blob-store-*`.
+max-group-endpoints-per-fabric-64 = ["rs-matter-node-core/max-group-endpoints-per-fabric-64"]
+max-group-endpoints-per-fabric-32 = ["rs-matter-node-core/max-group-endpoints-per-fabric-32"]
+max-group-endpoints-per-fabric-16 = ["rs-matter-node-core/max-group-endpoints-per-fabric-16"]
+max-group-endpoints-per-fabric-8 = ["rs-matter-node-core/max-group-endpoints-per-fabric-8"]
 max-group-endpoints-per-fabric-5 = ["rs-matter-node-core/max-group-endpoints-per-fabric-5"]
 max-group-endpoints-per-fabric-4 = ["rs-matter-node-core/max-group-endpoints-per-fabric-4"]
 # Default number of endpoints that can be members of a group (per fabric).

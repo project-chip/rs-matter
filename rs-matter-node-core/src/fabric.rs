@@ -115,7 +115,19 @@ mod groups {
     }
 
     cfg_if! {
-        if #[cfg(feature = "max-group-endpoints-per-fabric-5")] {
+        if #[cfg(feature = "max-group-endpoints-per-fabric-64")] {
+            /// Max number of endpoints per group entry.
+            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 64;
+        } else if #[cfg(feature = "max-group-endpoints-per-fabric-32")] {
+            /// Max number of endpoints per group entry.
+            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 32;
+        } else if #[cfg(feature = "max-group-endpoints-per-fabric-16")] {
+            /// Max number of endpoints per group entry.
+            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 16;
+        } else if #[cfg(feature = "max-group-endpoints-per-fabric-8")] {
+            /// Max number of endpoints per group entry.
+            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 8;
+        } else if #[cfg(feature = "max-group-endpoints-per-fabric-5")] {
             /// Max number of endpoints per group entry.
             pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 5;
         } else if #[cfg(feature = "max-group-endpoints-per-fabric-4")] {
@@ -135,6 +147,42 @@ mod groups {
             pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 3;
         }
     }
+
+    /// An upper bound of the TLV-encoded size of a fabric's group state
+    /// ([`Groups`]: key sets, key map and group table) when it is filled to
+    /// the configured capacity.
+    ///
+    /// The group state is persisted as part of the fabric's blob, which is
+    /// (de)serialized in the `Matter`-owned scratch buffer of
+    /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE) bytes.
+    pub const MAX_GROUPS_TLV_LEN: usize = {
+        // Every field: control byte + 1-byte context tag + widest payload
+        const U8: usize = 3;
+        const U16: usize = 4;
+        const U64: usize = 10;
+        const BOOL: usize = 2;
+        // Structure / array: start (control byte + tag) + end-of-container
+        const CONTAINER: usize = 3;
+        // Octet / UTF-8 strings: control byte + tag + 1-byte length + data
+        const KEY: usize = 3 + crate::crypto::AEAD_CANON_KEY_LEN;
+        const NAME: usize = 3 + MAX_GROUP_NAME_LEN;
+
+        const EPOCH_KEY: usize = CONTAINER + KEY + U64;
+        const KEY_SET: usize =
+            CONTAINER + U16 + U8 + CONTAINER + crate::group_keys::GROUP_MAX_EPOCH_KEYS * EPOCH_KEY;
+        const KEY_MAPPING: usize = CONTAINER + U16 + U16;
+        // Endpoints are anonymous array elements: control byte + `u16`
+        const ENTRY: usize =
+            CONTAINER + U16 + CONTAINER + GROUP_ENDPOINTS_PER_FABRIC * 3 + NAME + BOOL + U8;
+
+        CONTAINER
+            + CONTAINER
+            + MAX_GROUP_KEYS_PER_FABRIC * KEY_SET
+            + CONTAINER
+            + MAX_GROUPS_PER_FABRIC * KEY_MAPPING
+            + CONTAINER
+            + MAX_GROUPS_PER_FABRIC * ENTRY
+    };
 
     /// A group table entry mapping a group ID to its endpoints and name.
     #[derive(Debug, FromTLV, ToTLV)]
@@ -543,6 +591,25 @@ mod groups {
 
 #[cfg(feature = "groups")]
 pub use groups::*;
+
+/// Room reserved in the persistence scratch buffer for everything in a
+/// fabric's blob other than its group state: certificates, keys, label, VID
+/// verification data and a small ACL.
+#[cfg(feature = "groups")]
+const FABRIC_NON_GROUP_TLV_RESERVE: usize = 2048;
+
+// A group table that does not fit the persistence scratch buffer fails at
+// runtime, when the fabric is stored after a membership change. Catch it at
+// build time for the larger `max-group-endpoints-per-fabric-*` sizes (8 and
+// up); the pre-existing sizes (up to 5) are not checked, to keep configurations
+// that build today building.
+#[cfg(feature = "groups")]
+const _: () = assert!(
+    GROUP_ENDPOINTS_PER_FABRIC <= 5
+        || MAX_GROUPS_TLV_LEN + FABRIC_NON_GROUP_TLV_RESERVE <= crate::persist::KV_BUF_SIZE,
+    "the configured `max-group-endpoints-per-fabric-*` / `max-groups-per-fabric-*` / \
+     `max-group-keys-per-fabric-*` sizes need a larger `kv-blob-store-*` feature"
+);
 
 /// Fabric type
 #[derive(Debug, ToTLV, FromTLV)]
@@ -2978,6 +3045,138 @@ pub(crate) mod tests {
 
         // Removing a blob that is not there is not an error
         FabricPersist::new(&kv).remove(idx(1)).unwrap();
+    }
+
+    /// A fabric whose group state is filled to the configured capacity
+    /// (`max-group-keys-per-fabric-*`, `max-groups-per-fabric-*`,
+    /// `max-group-endpoints-per-fabric-*`) stays within the bounds the
+    /// build-time `kv-blob-store-*` check relies on, persists, and loads back.
+    #[cfg(feature = "groups")]
+    #[test]
+    fn full_group_table_stays_within_its_persistence_bound() {
+        use crate::crypto::{CanonAeadKey, AEAD_CANON_KEY_LEN};
+        use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet, GROUP_MAX_EPOCH_KEYS};
+        use crate::persist::KV_BUF_SIZE;
+        use crate::tlv::{TLVTag, ToTLV};
+        use crate::utils::storage::WriteBuf;
+
+        use super::{
+            MulticastAddrPolicy, GROUP_ENDPOINTS_PER_FABRIC, MAX_GROUPS_PER_FABRIC,
+            MAX_GROUPS_TLV_LEN, MAX_GROUP_KEYS_PER_FABRIC, MAX_GROUP_NAME_LEN,
+        };
+
+        let crypto = test_only_crypto();
+        let mut fabrics = Fabrics::new();
+
+        // An ICAC-chained fabric with a VID verification statement, so that
+        // the certificate part of the blob is as large as it gets
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let icac = mint_icac(&crypto, &rcac);
+        let noc = mint_noc(&crypto, &icac, false, 0x1234);
+        let fab_idx = fabrics
+            .add(
+                &crypto,
+                noc.key.reference(),
+                &rcac.cert,
+                &noc.cert,
+                &icac.cert,
+                Some(CanonAeadKeyRef::new(&TEST_IPK)),
+                0xfff1,
+                0x1234,
+            )
+            .unwrap()
+            .fab_idx();
+
+        let name = "n".repeat(MAX_GROUP_NAME_LEN);
+        // Endpoint and group IDs that need the widest TLV integer encoding
+        let endpoints: std::vec::Vec<u16> = (0..GROUP_ENDPOINTS_PER_FABRIC as u16)
+            .map(|i| 0xff00 + i)
+            .collect();
+
+        fabrics.update_label(fab_idx, &"l".repeat(32)).unwrap();
+
+        {
+            let fabric = fabrics.get_mut(fab_idx).unwrap();
+            fabric
+                .set_vid_verification(
+                    Some(0x4321),
+                    Some(&[0x11; VID_VERIFICATION_STATEMENT_LEN]),
+                    None,
+                )
+                .unwrap();
+
+            let groups = fabric.groups_mut();
+
+            for k in 0..MAX_GROUP_KEYS_PER_FABRIC as u16 {
+                let mut key_set = GroupKeySet {
+                    group_key_set_id: 0xff00 + k,
+                    group_key_security_policy: 1,
+                    epoch_keys: crate::utils::storage::Vec::new(),
+                };
+                for e in 0..GROUP_MAX_EPOCH_KEYS as u64 {
+                    key_set
+                        .epoch_keys
+                        .push(GroupEpochKeyEntry {
+                            epoch_key: CanonAeadKey::new_from_ref(CanonAeadKeyRef::new(
+                                &[0x77; AEAD_CANON_KEY_LEN],
+                            )),
+                            epoch_start_time: u64::MAX - e,
+                        })
+                        .unwrap();
+                }
+                groups.key_set_add(key_set).unwrap();
+            }
+
+            for g in 0..MAX_GROUPS_PER_FABRIC as u16 {
+                let group_id = 0xff00 + g;
+                groups.key_map_set_group(group_id, 0xff00).unwrap();
+                groups.add(endpoints[0], group_id, &name).unwrap();
+                groups
+                    .groupcast_join(
+                        group_id,
+                        &endpoints,
+                        false,
+                        Some(MulticastAddrPolicy::PerGroup),
+                    )
+                    .unwrap();
+                groups.set_has_aux_acl(group_id, true);
+                assert_eq!(
+                    groups.get(group_id).unwrap().endpoints.len(),
+                    GROUP_ENDPOINTS_PER_FABRIC
+                );
+            }
+            assert_eq!(groups.group_count(), MAX_GROUPS_PER_FABRIC);
+        }
+
+        let store = MemKvBlobStore::default();
+        let kv = MemKv::with_buf_len(store.clone(), KV_BUF_SIZE.max(65536));
+        store_all(&fabrics, &kv);
+
+        let fabric = fabrics.get(fab_idx).unwrap();
+        let mut buf = std::vec![0; 65536];
+
+        // The persisted blob is the fabric's anonymous-tagged TLV
+        let mut wb = WriteBuf::new(&mut buf);
+        fabric.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        let blob_len = wb.get_tail();
+
+        let mut wb = WriteBuf::new(&mut buf);
+        fabric.groups().to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        let groups_len = wb.get_tail();
+
+        // The group state alone stays within its documented upper bound, and
+        // the rest of the fabric within the reserve the build-time check
+        // assumes
+        assert!(groups_len <= MAX_GROUPS_TLV_LEN);
+        assert!(blob_len - groups_len <= super::FABRIC_NON_GROUP_TLV_RESERVE);
+
+        // Where the build-time check applies, the blob fits the real buffer
+        if GROUP_ENDPOINTS_PER_FABRIC > 5 {
+            assert!(blob_len <= KV_BUF_SIZE);
+        }
+
+        let loaded = load_all(&kv);
+        assert_same_fabric(fabrics.get(fab_idx).unwrap(), loaded.get(fab_idx).unwrap());
     }
 
     #[test]
