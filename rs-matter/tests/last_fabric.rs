@@ -38,7 +38,7 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::persist::{KvBlobStoreAccess, NETWORKS_KEY};
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::MatterBuffers;
 use rs_matter::{Matter, MATTER_PORT};
 
 use crate::common::{init_env_logger, MemKvBlobStore};

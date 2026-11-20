@@ -94,8 +94,9 @@ use rs_matter::sc::case::CaseInitiator;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::tlv::{Nullable, OctetStr, TLVTag, TLVWrite};
-use rs_matter::transport::exchange::{Exchange, MatterBuffers};
+use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
+use rs_matter::transport::MatterBuffers;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 

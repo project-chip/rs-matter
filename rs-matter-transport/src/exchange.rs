@@ -29,7 +29,6 @@ use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::session::Sessions;
 use crate::utils::futures::{select, select3, Either, Either3};
-use crate::utils::storage::pooled::{PooledBuffers, DEFAULT_BUFFER_POOL_SIZE};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::timers::{Duration, Instant, Timer};
 use crate::{Transport, TransportHost, TxPayloadState};
@@ -65,11 +64,6 @@ pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
 /// [`PooledBuffers`](crate::utils::storage::pooled::PooledBuffers) pool can be
 /// shared across the data model and BDX.
 pub type Buffer = crate::dm::IMBuffer;
-
-/// A [`PooledBuffers`] pool pre-configured with Matter defaults: it holds
-/// [`Buffer`]s (the central exchange-sized buffer) and [`DEFAULT_BUFFER_POOL_SIZE`]
-/// of them, behind the default Matter raw mutex.
-pub type MatterBuffers<const N: usize = DEFAULT_BUFFER_POOL_SIZE> = PooledBuffers<Buffer, N>;
 
 /// An exchange identifier, uniquely identifying a session and an exchange within that session for a given Matter stack.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

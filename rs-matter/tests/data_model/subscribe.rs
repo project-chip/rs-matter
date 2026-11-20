@@ -15,11 +15,14 @@
  *    limitations under the License.
  */
 
+use rs_matter::basic_info::SUBSCRIPTION_BUFFER_SIZE;
 use rs_matter::dm::clusters::app::on_off;
-use rs_matter::im::{AttrPath, AttrStatus, EventPath, GenericPath};
+use rs_matter::im::{AttrPath, AttrStatus, ClusterPath, DataVersionFilter, EventPath, GenericPath};
 use rs_matter::im::{IMStatusCode, OpCode, PROTO_ID_INTERACTION_MODEL};
 use rs_matter::im::{StatusResp, SubscribeResp};
+use rs_matter::tlv::{TLVTag, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
+use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::im::attributes::TestAttrData;
 use crate::common::e2e::im::{
@@ -29,7 +32,7 @@ use crate::common::e2e::new_default_runner;
 use crate::common::e2e::test::{E2eTest, E2eTestDirection};
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::init_env_logger;
-use crate::{attr_data_path, attr_read_status_resp};
+use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
 const EP1_ON_TIME: GenericPath = GenericPath::new(
     Some(1),
@@ -133,6 +136,88 @@ fn test_subscribe_mixed_paths() {
                     ..Default::default()
                 },
             ),
+        ],
+    );
+}
+
+#[test]
+fn test_subscribe_large_req_dataver_filters() {
+    // A subscription keeps a request too large for its buffer without its data
+    // version filters. The priming report still honours them.
+    init_env_logger();
+
+    let im = new_default_runner();
+    let handler = im.handler();
+
+    im.add_default_acl();
+
+    let wc_ep_att1 = GenericPath::new(
+        None,
+        Some(echo_cluster::ID),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
+    );
+    let input = &[AttrPath::from_gp(&wc_ep_att1)];
+
+    // The current version of the echo cluster on endpoint 0, and then the versions
+    // of clusters the node does not have, as a controller with a stale cache sends
+    let mut dataver_filters = vec![DataVersionFilter {
+        path: ClusterPath {
+            node: None,
+            endpoint: 0,
+            cluster: echo_cluster::ID,
+        },
+        data_ver: handler.echo_cluster(0).data_ver.get(),
+    }];
+    dataver_filters.extend((0x1000..0x1010).map(|cluster| DataVersionFilter {
+        path: ClusterPath {
+            node: None,
+            endpoint: 0,
+            cluster,
+        },
+        data_ver: 0x1234_5678,
+    }));
+
+    let req = TestSubscribeReq {
+        min_int_floor: 0,
+        max_int_ceil: 1,
+        dataver_filters: Some(&dataver_filters),
+        ..TestSubscribeReq::reqs(input)
+    };
+
+    let mut buf = [0; 1024];
+    let mut wb = WriteBuf::new(&mut buf);
+    req.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+    assert!(wb.as_slice().len() > SUBSCRIPTION_BUFFER_SIZE);
+
+    im.test_all(
+        &handler,
+        [
+            &TLVTest::subscribe(
+                req,
+                // The echo cluster on endpoint 0 is filtered out
+                TestReportDataMsg {
+                    subscription_id: Some(1),
+                    attr_reports: Some(&[attr_data!(
+                        1,
+                        echo_cluster::ID,
+                        echo_cluster::AttributesDiscriminants::Att1,
+                        Some(&0x1234u16)
+                    )]),
+                    ..Default::default()
+                },
+                ReplyProcessor::remove_attr_dataver,
+            ) as &dyn E2eTest,
+            &TLVTest {
+                delay_ms: Some(1),
+                ..TLVTest::subscribe_final(
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                        ..Default::default()
+                    },
+                    SubscribeResp::new(1, 40),
+                    ReplyProcessor::none,
+                )
+            },
         ],
     );
 }

@@ -326,6 +326,15 @@ impl<'a> BdxDownloadResponder<'a> {
         self.start_offset
     }
 
+    /// The largest block of this transfer: the one the receiver asked for, bounded by
+    /// what one message of the exchange carries. A [`reply`](Self::reply) staging
+    /// buffer of this length holds every block.
+    pub fn max_block_size(&self) -> Result<usize, Error> {
+        Ok(self
+            .max_block_size
+            .clamp(1, max_tx_block_size(&self.exchange)?.max(1)) as usize)
+    }
+
     /// Accept the transfer and start sending, staging blocks in the (non-empty)
     /// caller-provided buffer `buf` (its length bounds the block size). `length`
     /// advertises a definite transfer length (enabling the receiver's progress

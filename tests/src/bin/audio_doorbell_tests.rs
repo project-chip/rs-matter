@@ -55,7 +55,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::MatterBuffers;
 use rs_matter::utils::futures::{select3, Coalesce};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::{clusters, devices, Matter};

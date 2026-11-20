@@ -39,11 +39,14 @@ pub(crate) trait ClusterAccess {
     ) -> Result<(), IMStatusCode>;
 
     /// Check if the accessor has the required permissions to access the command
-    /// designated by the provided path.
+    /// designated by the provided path, over a session which carries large
+    /// messages if `large_messages`.
+    #[allow(clippy::too_many_arguments)]
     fn check_cmd_access(
         &self,
         accessor: &Accessor,
         timed: bool,
+        large_messages: bool,
         path: GenericPath,
         device_types: &[DeviceType],
         cmd_id: CmdId,
@@ -117,6 +120,7 @@ impl ClusterAccess for Cluster<'_> {
         &self,
         accessor: &Accessor,
         timed: bool,
+        large_messages: bool,
         path: GenericPath,
         device_types: &[DeviceType],
         cmd_id: CmdId,
@@ -145,11 +149,15 @@ impl ClusterAccess for Cluster<'_> {
         }
 
         access_req.set_target_perms(target_perms);
-        if accessor.allow(&access_req) {
-            Ok(())
-        } else {
-            Err(IMStatusCode::UnsupportedAccess)
+        if !accessor.allow(&access_req) {
+            Err(IMStatusCode::UnsupportedAccess)?;
         }
+
+        if !large_messages && target_perms.contains(Access::LARGE_MESSAGE) {
+            Err(IMStatusCode::InvalidTransportType)?;
+        }
+
+        Ok(())
     }
 
     /// Check if the accessor has the required permissions to access the event

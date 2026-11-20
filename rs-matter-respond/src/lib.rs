@@ -32,7 +32,7 @@ use core::pin::{pin, Pin};
 use rs_matter_bdx::{Bdx, BdxHandler};
 use rs_matter_crypto::Crypto;
 use rs_matter_dm_core::persist::KvBlobStoreAccess;
-use rs_matter_dm_core::{AttrChangeNotifier, DataModel, IMBuffer};
+use rs_matter_dm_core::{AttrChangeNotifier, DataModel};
 use rs_matter_im::busy::BusyInteractionModel;
 use rs_matter_im::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use rs_matter_im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
@@ -43,7 +43,7 @@ use rs_matter_sc::busy::BusySecureChannel;
 use rs_matter_sc::{AsyncScHandler, ScHost, SecureChannel};
 use rs_matter_utils::error::Error;
 use rs_matter_utils::futures::{select, select_slice, Coalesce};
-use rs_matter_utils::storage::pooled::Buffers;
+use rs_matter_utils::storage::pooled::ByteBuffers;
 use rs_matter_utils::storage::Vec;
 use rs_matter_utils::sync::{MaybeSend, MaybeSendSync};
 
@@ -76,7 +76,7 @@ impl<C, B, T, K, R, const NS: usize, const NE: usize> ExchangeHandler
     for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
     R: ReportDataHandler,
@@ -343,7 +343,7 @@ pub type DefaultExchangeHandler<
 impl<'d, 'a, C, B, T, K, R, const NS: usize, const NE: usize>
     Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, K, R, NS, NE>>
 where
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
 {
     /// Creates a "default" responder. This is a responder that composes and uses the `rs-matter`-provided `ExchangeHandler` implementations
     /// (`SecureChannel` and `InteractionModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
@@ -405,7 +405,7 @@ pub struct DefaultResponder<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > where
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
 {
     responder: Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, K, R, NS, NE>>,
     busy_responder: Responder<'a, BusyExchangeHandler>,
@@ -415,7 +415,7 @@ impl<'d, 'a, C, B, T, K, R, const NS: usize, const NE: usize>
     DefaultResponder<'d, 'a, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
     R: ReportDataHandler,

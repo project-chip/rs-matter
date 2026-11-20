@@ -43,7 +43,7 @@ use crate::crypto::Crypto;
 use crate::dm::AuxAclCheck as _;
 use crate::dm::{
     AsyncHandler, AttrChangeNotifier, AttrDetails, Attribute, DataModel, DeviceLoad, EventEmitter,
-    EventTLVWrite, HandlerContext, IMBuffer, ImStats, LifecycleOp, MatchContextInstance, Metadata,
+    EventTLVWrite, HandlerContext, ImStats, LifecycleOp, MatchContextInstance, Metadata,
     EVENT_DATA_TAG,
 };
 use crate::error::{Error, ErrorCode};
@@ -56,10 +56,11 @@ use crate::subscriptions::{
 };
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
+use crate::transport::MAX_TX_UDP_PAYLOAD_SIZE;
 use crate::utils::epoch::UtcTime;
 use crate::utils::futures::{select, select3, Coalesce};
 use crate::utils::init::{init, Init};
-use crate::utils::storage::pooled::Buffers;
+use crate::utils::storage::pooled::ByteBuffers;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync};
@@ -227,7 +228,7 @@ pub struct InteractionModel<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > where
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
 {
     matter: &'a Matter<'a>,
     crypto: C,
@@ -245,7 +246,7 @@ pub struct InteractionModel<
 impl<'a, C, B, T, K, const NS: usize, const NE: usize> InteractionModel<'a, C, B, T, K, (), NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
 {
@@ -253,7 +254,7 @@ where
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
-    /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
+    /// - `buffers` - a reference to an implementation of `ByteBuffers` which is used for allocating RX and TX buffers on the fly, when necessary
     /// - `handler` - an instance of type `T` which implements the `DataModel` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods.
@@ -280,7 +281,7 @@ impl<'a, C, B, T, K, R, const NS: usize, const NE: usize>
     InteractionModel<'a, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
     R: ReportDataHandler,
@@ -657,7 +658,7 @@ where
 
     /// Respond to a `ReadReq` request.
     async fn read(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let Some((mut tx, rx)) = self.buffers(exchange).await? else {
+        let Some((mut tx, rx)) = self.buffers(exchange, false).await? else {
             return Ok(());
         };
 
@@ -736,7 +737,7 @@ where
         while exchange.rx().is_ok() {
             // Loop while there are more write request chunks to process
 
-            let Some((mut tx, rx)) = self.buffers(exchange).await? else {
+            let Some((mut tx, rx)) = self.buffers(exchange, true).await? else {
                 break;
             };
 
@@ -777,7 +778,7 @@ where
         timeout_instant: Option<Instant>,
         is_groupcast: bool,
     ) -> Result<(), Error> {
-        let Some((mut tx, rx)) = self.buffers(exchange).await? else {
+        let Some((mut tx, rx)) = self.buffers(exchange, false).await? else {
             return Ok(());
         };
 
@@ -835,7 +836,7 @@ where
     /// and if the priming is successful, sending a `SubscribeResp` response to the peer and registering
     /// the subscription details in the `Subscriptions` instance.
     async fn subscribe(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let Some((mut tx, rx)) = self.buffers(exchange).await? else {
+        let Some((mut tx, rx)) = self.buffers(exchange, false).await? else {
             return Ok(());
         };
 
@@ -891,12 +892,12 @@ where
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
 
+        let primed = self
+            .report_data(&mut rctx, &mut tx, exchange, Some(&rx), true)
+            .await?;
+
         // The subscription keeps a copy of the request
         drop(rx);
-
-        let primed = self
-            .report_data(&mut rctx, &mut tx, exchange, true, true)
-            .await?;
 
         if primed {
             exchange
@@ -1366,26 +1367,20 @@ where
         let mut exchange =
             Exchange::initiate(matter, crypto, ids.fab_idx, ids.peer_node_id).await?;
 
-        if let Some(mut tx) = self.buffers.get().await {
-            // Always safe as `IMBuffer` is `MAX_EXCHANGE_RX_BUF_SIZE` >= `max_tx_payload_size()`.
-            let max_tx = exchange.max_tx_payload_size()?;
-            unwrap!(tx.resize_default(max_tx));
+        let max_tx = exchange.max_tx_payload_size()?;
 
-            let primed = self
-                .report_data(rctx, &mut tx, &mut exchange, false, send_if_empty)
-                .await?;
+        // Without a buffer, the report fails like any other, and is retried
+        let Some(mut tx) = self.buffers.get(max_tx).await else {
+            return Err(ErrorCode::ResourceExhausted.into());
+        };
 
-            exchange.acknowledge().await?;
+        let primed = self
+            .report_data(rctx, &mut tx, &mut exchange, None, send_if_empty)
+            .await?;
 
-            Ok(primed)
-        } else {
-            error!(
-                "No TX buffer available for processing subscription {:?}",
-                rctx.subscription().ids(),
-            );
+        exchange.acknowledge().await?;
 
-            Ok(false)
-        }
+        Ok(primed)
     }
 
     /// Process a `TimedReq` request, which is used to set a timeout for the following Write/Invoke request.
@@ -1432,21 +1427,18 @@ where
     /// A utility to respond with a `ReportData` response to a subscription request, which is used to report data to the peer.
     ///
     /// Arguments:
-    /// - `id` - the subscription ID
-    /// - `fabric_idx` - the fabric index of the peer
-    /// - `peer_node_id` - the node ID of the peer
-    /// - `min_event_number` - the minimum event number to report
-    /// - `rx` - the received data for the subscription, when the subscription was primed
+    /// - `rctx` - the subscription to report on
     /// - `tx` - the TX buffer to write the response to
     /// - `exchange` - the exchange to respond to
-    /// - `with_dataver` - whether to include the data version in the response
-    #[allow(clippy::too_many_arguments)]
+    /// - `priming_req` - the subscribe request, for the priming report. The subscription
+    ///   keeps a copy of it, but possibly without its data version filters
+    /// - `send_if_empty` - whether to send the report even if it has no data
     async fn report_data(
         &self,
         rctx: &mut SubscriptionReport<'_, '_, NS>,
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
-        with_dataver: bool,
+        priming_req: Option<&[u8]>,
         send_if_empty: bool,
     ) -> Result<bool, Error>
     where
@@ -1454,8 +1446,8 @@ where
     {
         let mut wb = WriteBuf::new(tx);
 
-        let sub_req = SubscribeReq::new(TLVElement::new(rctx.rx()));
-        let req = if with_dataver {
+        let sub_req = SubscribeReq::new(TLVElement::new(priming_req.unwrap_or(rctx.rx())));
+        let req = if priming_req.is_some() {
             ReportDataReq::Subscribe(&sub_req)
         } else {
             ReportDataReq::SubscribeReport(&sub_req)
@@ -1505,7 +1497,11 @@ where
     ///
     /// Upon returning:
     /// - The RX buffer will contain the payload of the received Interaction Model request
-    /// - The TX buffer will be resized to `exchange.max_tx_payload_size()` and will be ready to be written to
+    /// - The TX buffer will be ready to be written to; see `small_tx` for its length
+    ///
+    /// Arguments:
+    /// - `small_tx` - whether the response always fits a UDP message, even on a session
+    ///   which carries larger ones. Write responses do: they are statuses, which are chunked
     ///
     /// Returns:
     /// - `Ok(Some((tx, rx)))` - if both TX and RX buffers are available
@@ -1514,8 +1510,9 @@ where
     async fn buffers(
         &self,
         exchange: &mut Exchange<'_>,
+        small_tx: bool,
     ) -> Result<Option<(B::Buffer<'a>, B::Buffer<'a>)>, Error> {
-        if let Some(tx) = self.tx_buffer(exchange).await? {
+        if let Some(tx) = self.tx_buffer(exchange, small_tx).await? {
             if let Some(rx) = self.rx_buffer(exchange).await? {
                 return Ok(Some((tx, rx)));
             }
@@ -1535,14 +1532,10 @@ where
     /// - `Ok(None)` - if no RX buffer is available, and a `Busy` status response has been sent
     /// - `Err(Error)` - if an error occurred while fetching the buffer or sending the status response
     async fn rx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
-        if let Some(mut buffer) = self.buffer(exchange).await? {
-            let rx = exchange.rx()?;
+        let len = exchange.rx()?.payload().len();
 
-            buffer.clear();
-
-            // Safe to unwrap, as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, i.e. it cannot be overflown
-            // by the payload of the received exchange.
-            unwrap!(buffer.extend_from_slice(rx.payload()));
+        if let Some(mut buffer) = self.buffer(exchange, len).await? {
+            buffer.copy_from_slice(exchange.rx()?.payload());
 
             exchange.rx_done()?;
 
@@ -1556,37 +1549,42 @@ where
     ///
     /// If there are no free buffers available, this method will send a `Busy` status response to the peer.
     ///
-    /// Upon returning, the TX buffer will be resized to `exchange.max_tx_payload_size()` and will be ready to be written to.
+    /// Upon returning, the TX buffer will be `exchange.max_tx_payload_size()` long - but
+    /// no longer than a UDP message if `small` - and will be ready to be written to.
     ///
     /// Returns:
     /// - `Ok(Some(tx))` - if a TX buffer is available
     /// - `Ok(None)` - if no TX buffer is available, and a `Busy` status response has been sent
     /// - `Err(Error)` - if an error occurred while fetching the buffer or sending the status response
-    async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
-        if let Some(mut buffer) = self.buffer(exchange).await? {
-            // Always safe as `IMBuffer` is `MAX_EXCHANGE_RX_BUF_SIZE` >= `max_tx_payload_size()`.
-            let max_tx = exchange.max_tx_payload_size()?;
-            unwrap!(buffer.resize_default(max_tx));
-
-            Ok(Some(buffer))
-        } else {
-            Ok(None)
+    async fn tx_buffer(
+        &self,
+        exchange: &mut Exchange<'_>,
+        small: bool,
+    ) -> Result<Option<B::Buffer<'a>>, Error> {
+        let mut len = exchange.max_tx_payload_size()?;
+        if small {
+            len = len.min(MAX_TX_UDP_PAYLOAD_SIZE);
         }
+
+        self.buffer(exchange, len).await
     }
 
-    /// A utility to fetch a buffer for processing an Interaction Model request.
+    /// A utility to fetch a buffer of `len` bytes for processing an Interaction Model request.
     ///
     /// If there are no free buffers available, this method will send a `Busy` status response to the peer.
     ///
-    /// Upon returning, the buffer will be UNINITIALIZED. I.e. it is up to the user to resize it appropriately
-    /// if it is to be used for sending a response, or to fill it with data, if it is to be used for receiving data.
+    /// Upon returning, the contents of the buffer are unspecified.
     ///
     /// Returns:
     /// - `Ok(Some(buffer))` - if a buffer is available
     /// - `Ok(None)` - if no buffer is available, and a `Busy` status response has been sent
     /// - `Err(Error)` - if an error occurred while fetching the buffer or sending the status response
-    async fn buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
-        if let Some(buffer) = self.buffers.get().await {
+    async fn buffer(
+        &self,
+        exchange: &mut Exchange<'_>,
+        len: usize,
+    ) -> Result<Option<B::Buffer<'a>>, Error> {
+        if let Some(buffer) = self.buffers.get(len).await {
             Ok(Some(buffer))
         } else {
             Self::send_status(exchange, IMStatusCode::Busy).await?;
@@ -1610,7 +1608,7 @@ where
 impl<C, B, T, K, R, const NS: usize, const NE: usize> InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
 {
@@ -1643,7 +1641,7 @@ impl<C, B, T, K, R, const NS: usize, const NE: usize> ImStats
 where
     R: MaybeSendSync,
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
 {
@@ -1670,7 +1668,7 @@ impl<C, B, T, K, R, const NS: usize, const NE: usize> HandlerContext
     for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
     R: MaybeSendSync,
@@ -1695,7 +1693,7 @@ where
         &self.handler
     }
 
-    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
+    fn buffers(&self) -> impl ByteBuffers + '_ {
         self.buffers
     }
 
@@ -1726,7 +1724,7 @@ impl<C, B, T, K, R, const NS: usize, const NE: usize> AttrChangeNotifier
     for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
 {
@@ -1768,7 +1766,7 @@ impl<C, B, T, K, R, const NS: usize, const NE: usize> EventEmitter
     for InteractionModel<'_, C, B, T, K, R, NS, NE>
 where
     C: Crypto,
-    B: Buffers<IMBuffer>,
+    B: ByteBuffers,
     T: DataModel,
     K: KvBlobStoreAccess,
 {
@@ -2513,7 +2511,9 @@ where
         #[cfg(feature = "groups")]
         let mut any_invoked = false;
 
-        for item in expand_invoke(metadata, self.req, &accessor)? {
+        let large_messages = self.invoker.exchange().supports_large_payload()?;
+
+        for item in expand_invoke(metadata, self.req, &accessor, large_messages)? {
             let item = item?;
             #[cfg_attr(not(feature = "groups"), allow(unused_variables))]
             let invoked = self.invoker.process_invoke(&item, &mut *wb).await?;

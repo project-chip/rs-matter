@@ -18,7 +18,7 @@
 use core::fmt;
 
 use crate::error::Error;
-use crate::tlv::{FromTLV, TLVArray, TLVElement, TLVSequence, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{FromTLV, TLVArray, TLVElement, TLVSequence, TagType, ToTLV};
 use crate::utils::storage::WriteBuf;
 use crate::{AttrPath, DataVersionFilter, EventFilter, EventPath, IM_REVISION};
 
@@ -83,20 +83,25 @@ impl<'a> SubscribeReq<'a> {
         Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)
     }
 
-    /// Write this subscription request to `wb` without its data version filters.
-    pub fn write_without_dataver_filters(&self, wb: &mut WriteBuf) -> Result<(), Error> {
-        wb.start_struct(&TLVTag::Anonymous)?;
+    /// Split the TLV of this subscription request around its data version filters:
+    /// the bytes before and after them, which together are the request without them.
+    pub fn split_dataver_filters(&self) -> Result<(&'a [u8], &'a [u8]), Error> {
+        let raw = self.0.raw_data();
+        let filters = self
+            .0
+            .r#struct()?
+            .find_ctx(SubscribeReqTag::DataVersionFilters as _)?
+            .raw_data();
 
-        for elem in self.0.r#struct()?.iter() {
-            let elem = elem?;
-
-            if elem.try_ctx()? != Some(SubscribeReqTag::DataVersionFilters as u8) {
-                let len = TLVSequence(elem.raw_data()).container_len()?;
-                wb.append(&elem.raw_data()[..len])?;
-            }
+        if filters.is_empty() {
+            return Ok((raw, &[]));
         }
 
-        wb.end_container()
+        // The filters run to the end of the request, like each element read from it
+        let start = raw.len() - filters.len();
+        let end = start + TLVSequence(filters).container_len()?;
+
+        Ok((&raw[..start], &raw[end..]))
     }
 }
 

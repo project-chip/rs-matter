@@ -42,7 +42,7 @@ use rs_matter::error::Error;
 use rs_matter::im::InteractionModel;
 use rs_matter::im::InteractionModelState;
 use rs_matter::persist::{NETWORKS_KEY, VENDOR_KEYS_START};
-use rs_matter::transport::exchange::MatterBuffers;
+use rs_matter::transport::MatterBuffers;
 use rs_matter::utils::sync::MaybeSend;
 use rs_matter::{Matter, MATTER_PORT};
 

@@ -70,10 +70,10 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::ExchangeInitiator as _;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::tcp::{TcpConfig, TcpNetwork, TcpNetworkBuffers};
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::session::{Session, SessionMode};
+use rs_matter::transport::MatterBuffers;
 use rs_matter::transport::{TransportPreference, MATTER_SOCKET_BIND_ADDR};
 use rs_matter::utils::futures::{join, select, select4, Coalesce, Either};
 use rs_matter::utils::init::InitMaybeUninit;
@@ -150,8 +150,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ///
 /// Each invocation produces its own async function and `#[test]` entry point,
 /// so that the Rust compiler generates a **separate** future state-machine for
-/// each transport type (keeping the future small enough for the default 2 MiB
-/// thread stack).
+/// each transport type, which keeps each future smaller.
 macro_rules! commissioning_test {
     (
         test_name: $test_name:ident,
@@ -166,10 +165,19 @@ macro_rules! commissioning_test {
     ) => {
         #[test]
         fn $test_name() {
-            init_env_logger();
-            futures_lite::future::block_on(async {
-                $run_name().await.unwrap();
-            });
+            // In debug builds, the future barely fits the default 2 MiB
+            // test-thread stack, if at all.
+            std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(|| {
+                    init_env_logger();
+                    futures_lite::future::block_on(async {
+                        $run_name().await.unwrap();
+                    });
+                })
+                .unwrap()
+                .join()
+                .unwrap();
         }
 
         async fn $run_name() -> Result<(), Error> {

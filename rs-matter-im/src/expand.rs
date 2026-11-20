@@ -59,6 +59,7 @@ where
         metadata,
         accessor,
         false,
+        false,
         req.attr_requests()?.map(|reqs| {
             reqs.into_iter().map(move |path_result| {
                 path_result.map(|path| AttrReadPath {
@@ -94,6 +95,7 @@ where
         metadata,
         accessor,
         req.timed_request()?,
+        false,
         Some(req.write_requests()?.into_iter()),
         |_, _, _| true,
     ))
@@ -105,11 +107,14 @@ where
 /// As part of the expansion, the method will check whether the commands are
 /// accessible by the accessor and filter out the inaccessible ones (wildcard invocations)
 /// or report an error status for the non-wildcard ones.
+///
+/// `large_messages` tells whether the session of the request carries large messages.
 #[allow(clippy::type_complexity)]
 pub fn expand_invoke<'m, M>(
     metadata: M,
     req: &'m InvReq,
     accessor: &'m Accessor<'m>,
+    large_messages: bool,
 ) -> Result<
     impl Iterator<Item = Result<Result<(CmdDetails, TLVElement<'m>), CmdStatus>, Error>> + 'm,
     Error,
@@ -121,6 +126,7 @@ where
         metadata,
         accessor,
         req.timed_request()?,
+        large_messages,
         req.inv_requests()?.map(move |reqs| reqs.into_iter()),
         |_, _, _| true,
     ))
@@ -315,6 +321,8 @@ struct PathExpander<'a, T, I, F> {
     accessor: &'a Accessor<'a>,
     /// Where the paths are part of a timed interaction
     timed: bool,
+    /// Whether the session of the paths carries large messages
+    large_messages: bool,
     /// The paths to expand.
     items: Option<I>,
     /// The current path item being expanded.
@@ -387,10 +395,17 @@ where
     F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
     /// Create a new path expander with the given accessor and paths.
-    pub const fn new(accessor: &'a Accessor<'a>, timed: bool, paths: Option<I>, filter: F) -> Self {
+    pub const fn new(
+        accessor: &'a Accessor<'a>,
+        timed: bool,
+        large_messages: bool,
+        paths: Option<I>,
+        filter: F,
+    ) -> Self {
         Self {
             accessor,
             timed,
+            large_messages,
             items: paths,
             item: None,
             endpoint_id: None,
@@ -550,6 +565,7 @@ where
                                             .check_cmd_access(
                                                 self.accessor,
                                                 self.timed,
+                                                self.large_messages,
                                                 GenericPath::new(
                                                     Some(endpoint.id),
                                                     Some(cluster.id),
@@ -739,12 +755,13 @@ where
         metadata: M,
         accessor: &'a Accessor<'a>,
         timed: bool,
+        large_messages: bool,
         paths: Option<I>,
         filter: F,
     ) -> Self {
         Self {
             metadata,
-            expander: PathExpander::new(accessor, timed, paths, filter),
+            expander: PathExpander::new(accessor, timed, large_messages, paths, filter),
         }
     }
 }
@@ -840,6 +857,75 @@ mod test {
         }
     }
 
+    /// A command path, for the tests of command expansion.
+    #[derive(Clone)]
+    struct CmdPath(GenericPath);
+
+    impl<'a> PathExpansionItem<'a> for CmdPath {
+        const OPERATION: Operation = Operation::Invoke;
+
+        type Expanded<'n> = GenericPath;
+        type Status = IMStatusCode;
+
+        fn path(&self) -> GenericPath {
+            self.0.clone()
+        }
+
+        fn expand(
+            &self,
+            _accessor: &Accessor<'_>,
+            endpoint_id: EndptId,
+            cluster_id: ClusterId,
+            leaf_id: u32,
+            _array: bool,
+        ) -> Result<Self::Expanded<'a>, Error> {
+            Ok(GenericPath::new(
+                Some(endpoint_id),
+                Some(cluster_id),
+                Some(leaf_id),
+            ))
+        }
+
+        fn into_status(self, status: IMStatusCode) -> Self::Status {
+            status
+        }
+    }
+
+    /// Compare an input of command paths against their expanded expectations, over a
+    /// session which carries large messages if `large_messages`.
+    fn test_cmd(
+        node: &Node,
+        input: &[GenericPath],
+        large_messages: bool,
+        expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
+    ) {
+        let matter = test_matter();
+        let accessor = Accessor::new(
+            0,
+            false,
+            AccessorSubjects::new(0),
+            Some(AuthMode::Pase),
+            &matter,
+        );
+
+        let expander = PathExpanderIterator::new(
+            node,
+            &accessor,
+            false,
+            large_messages,
+            Some(input.iter().cloned().map(CmdPath).map(Ok)),
+            |_, _, _| true,
+        );
+
+        assert_eq!(
+            expander
+                .map(|r| r.map_err(|e| e.code()))
+                .collect::<alloc::vec::Vec<_>>()
+                .as_slice(),
+            expected
+        );
+    }
+
     /// Compare an input of paths against their expanded expectations.
     fn test(
         node: &Node,
@@ -869,6 +955,7 @@ mod test {
         let expander = PathExpanderIterator::new(
             node,
             &accessor,
+            false,
             false,
             Some(input.iter().cloned().map(Ok)),
             filter,
@@ -901,6 +988,56 @@ mod test {
             &NODE,
             &[GenericPath::new(Some(0), Some(0), Some(0))],
             &[Ok(Err(IMStatusCode::UnsupportedEndpoint))],
+        );
+    }
+
+    #[test]
+    fn test_large_message_command() {
+        static NODE: Node = Node::new(&[Endpoint::new(
+            0,
+            &[DeviceType { dtype: 0, drev: 0 }],
+            &[Cluster::new(
+                0,
+                1,
+                0,
+                &[],
+                &[
+                    Command::new(0, None, Access::WO),
+                    Command::new(1, None, Access::WO.union(Access::LARGE_MESSAGE)),
+                ],
+                &[],
+                |_, _, _| true,
+                |_, _, _| true,
+                |_, _, _| true,
+            )],
+        )]);
+
+        let large_cmd = GenericPath::new(Some(0), Some(0), Some(1));
+
+        // Over a session which carries large messages
+        test_cmd(
+            &NODE,
+            core::slice::from_ref(&large_cmd),
+            true,
+            &[Ok(Ok(large_cmd.clone()))],
+        );
+
+        // Over one which does not
+        test_cmd(
+            &NODE,
+            &[large_cmd],
+            false,
+            &[Ok(Err(IMStatusCode::InvalidTransportType))],
+        );
+
+        // A wildcard endpoint skips the command
+        let wildcard = GenericPath::new(None, Some(0), Some(1));
+        test_cmd(&NODE, core::slice::from_ref(&wildcard), false, &[]);
+        test_cmd(
+            &NODE,
+            &[wildcard],
+            true,
+            &[Ok(Ok(GenericPath::new(Some(0), Some(0), Some(1))))],
         );
     }
 
@@ -1311,6 +1448,7 @@ mod test {
         let expander = PathExpanderIterator::new(
             &metadata,
             &accessor,
+            false,
             false,
             Some(input.iter().cloned().map(Ok::<_, Error>)),
             |_, _, _| true,
