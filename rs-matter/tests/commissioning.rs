@@ -150,8 +150,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ///
 /// Each invocation produces its own async function and `#[test]` entry point,
 /// so that the Rust compiler generates a **separate** future state-machine for
-/// each transport type (keeping the future small enough for the default 2 MiB
-/// thread stack).
+/// each transport type, which keeps each future smaller.
 macro_rules! commissioning_test {
     (
         test_name: $test_name:ident,
@@ -166,10 +165,19 @@ macro_rules! commissioning_test {
     ) => {
         #[test]
         fn $test_name() {
-            init_env_logger();
-            futures_lite::future::block_on(async {
-                $run_name().await.unwrap();
-            });
+            // In debug builds, the future barely fits the default 2 MiB
+            // test-thread stack, if at all.
+            std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(|| {
+                    init_env_logger();
+                    futures_lite::future::block_on(async {
+                        $run_name().await.unwrap();
+                    });
+                })
+                .unwrap()
+                .join()
+                .unwrap();
         }
 
         async fn $run_name() -> Result<(), Error> {
