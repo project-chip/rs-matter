@@ -227,27 +227,29 @@ impl<'a> InvReq<'a> {
 
     /// Return `true` if the request indicates that the response should be suppressed.
     pub fn suppress_response(&self) -> Result<bool, Error> {
-        self.0
+        Ok(self
+            .0
             .r#struct()?
             .find_ctx(0)?
             .non_empty()
             .map(|t| t.bool())
-            .unwrap_or(Ok(false))
+            .unwrap_or(Ok(false))?)
     }
 
     /// Return `true` if the request indicates that it is a timed request.
     pub fn timed_request(&self) -> Result<bool, Error> {
-        self.0
+        Ok(self
+            .0
             .r#struct()?
             .find_ctx(1)?
             .non_empty()
             .map(|t| t.bool())
-            .unwrap_or(Ok(false))
+            .unwrap_or(Ok(false))?)
     }
 
     /// Return the invocation requests contained in this request.
     pub fn inv_requests(&self) -> Result<Option<TLVArray<'a, CmdData<'a>>>, Error> {
-        Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?)
+        Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?).map_err(Into::into)
     }
 }
 
@@ -438,7 +440,7 @@ where
                 return None;
             }
             let endpoint = data.path.endpoint?;
-            Some((endpoint, R::from_tlv(&data.data)))
+            Some((endpoint, R::from_tlv(&data.data).map_err(Into::into)))
         }
         CmdResp::Status(s) => {
             if s.path.cluster != Some(cluster) || s.path.cmd != Some(cmd) {

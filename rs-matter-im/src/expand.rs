@@ -32,7 +32,7 @@ use crate::encoding::{
     IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::error::Error;
-use crate::tlv::{TLVArray, TLVElement};
+use crate::tlv::{TLVArray, TLVElement, TlvError};
 use crate::utils::sync::blocking::Mutex;
 
 /// Expand (potentially wildcard) read requests into concrete attribute details
@@ -390,7 +390,7 @@ struct PathExpander<'a, T, I, F> {
 
 impl<'a, T, I, F> PathExpander<'a, T, I, F>
 where
-    I: Iterator<Item = Result<T, Error>>,
+    I: Iterator<Item = Result<T, TlvError>>,
     T: PathExpansionItem<'a>,
     F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
@@ -427,7 +427,7 @@ where
                 let item = self.items.as_mut().and_then(|items| items.next())?;
 
                 match item {
-                    Err(err) => break Some(Err(err)),
+                    Err(err) => break Some(Err(err.into())),
                     Ok(item) => self.item = Some(item),
                 }
 
@@ -746,7 +746,7 @@ struct PathExpanderIterator<'a, M, T, I, F> {
 impl<'a, M, T, I, F> PathExpanderIterator<'a, M, T, I, F>
 where
     M: Metadata,
-    I: Iterator<Item = Result<T, Error>>,
+    I: Iterator<Item = Result<T, TlvError>>,
     T: PathExpansionItem<'a>,
     F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
@@ -769,7 +769,7 @@ where
 impl<'a, M, T, I, F> Iterator for PathExpanderIterator<'a, M, T, I, F>
 where
     M: Metadata,
-    I: Iterator<Item = Result<T, Error>>,
+    I: Iterator<Item = Result<T, TlvError>>,
     T: PathExpansionItem<'a>,
     F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
@@ -1450,7 +1450,7 @@ mod test {
             &accessor,
             false,
             false,
-            Some(input.iter().cloned().map(Ok::<_, Error>)),
+            Some(input.iter().cloned().map(Ok::<_, crate::tlv::TlvError>)),
             |_, _, _| true,
         );
 

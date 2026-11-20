@@ -1010,7 +1010,7 @@ impl ClusterHandler for LitIcdMgmtHandler<'_> {
         _ctx: impl ReadContext,
         builder: crate::tlv::Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.lit.icd.mode.user_active_mode_trigger_instruction)
+        Ok(builder.set(self.lit.icd.mode.user_active_mode_trigger_instruction)?)
     }
 
     fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {

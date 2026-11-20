@@ -29,7 +29,7 @@
 //! traversing the array is tolerable (i.e. `T` is small enough), prefer `TLVArray`, which operates
 //! directly on the borrowed, encoded TLV representation of the whole array.
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::init::{self, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
@@ -39,22 +39,23 @@ impl<'a, T, const N: usize> FromTLV<'a> for Vec<T, N>
 where
     T: FromTLV<'a> + 'a,
 {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let mut vec = Vec::<T, N>::new();
 
         for item in TLVArray::new(element.clone())? {
-            vec.push(item?).map_err(|_| ErrorCode::ConstraintError)?;
+            vec.push(item?)
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?;
         }
 
         Ok(vec)
     }
 
-    fn init_from_tlv(tlv: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_from_tlv(tlv: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         init::Init::chain(Vec::<T, N>::init().into_fallible(), move |vec| {
             let mut iter = TLVArray::new(tlv)?.iter();
 
             while let Some(item) = iter.try_next_init() {
-                vec.push_init(item?, || ErrorCode::ConstraintError.into())?;
+                vec.push_init(item?, || TlvErrorCode::CapacityExceeded.into())?;
             }
 
             Ok(())
@@ -66,11 +67,11 @@ impl<T, const N: usize> ToTLV for Vec<T, N>
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.as_slice().to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         tlv_array_iter(tag, self.iter())
     }
 }
@@ -82,7 +83,7 @@ impl<'a, T> FromTLV<'a> for alloc::vec::Vec<T>
 where
     T: FromTLV<'a> + 'a,
 {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let mut vec = alloc::vec::Vec::new();
 
         for item in TLVArray::new(element.clone())? {
@@ -98,11 +99,11 @@ impl<T> ToTLV for alloc::vec::Vec<T>
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.as_slice().to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         tlv_array_iter(tag, self.iter())
     }
 }

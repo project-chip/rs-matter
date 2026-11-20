@@ -1081,9 +1081,9 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H
         }
 
         let effect_variant = match request.effect_identifier() {
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
             Ok(EffectIdentifierEnum::DelayedAllOff) => match request.effect_variant() {
-                Err(e) => return Err(e),
+                Err(e) => return Err(e.into()),
                 // todo Impl TryFrom for DelayedAllOffEffectVariantEnum and remove this match.
                 Ok(0) => EffectVariantEnum::DelayedAllOff(
                     DelayedAllOffEffectVariantEnum::DelayedOffFastFade,
@@ -1095,7 +1095,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H
                 Ok(_) => return Err(ErrorCode::Failure.into()),
             },
             Ok(EffectIdentifierEnum::DyingLight) => match request.effect_variant() {
-                Err(e) => return Err(e),
+                Err(e) => return Err(e.into()),
                 // todo Impl TryFrom for DyingLightEffectVariantEnum and remove this match.
                 Ok(0) => {
                     EffectVariantEnum::DyingLight(DyingLightEffectVariantEnum::DyingLightFadeOff)
@@ -1137,7 +1137,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H
         request: OnWithTimedOffRequest<'_>,
     ) -> Result<(), Error> {
         match request.on_off_control() {
-            Err(e) => Err(e),
+            Err(e) => Err(e.into()),
             // Effect on Receipt
             // On receipt of this command, if the AcceptOnlyWhenOn sub-field of the OnOffControl field is set to 1,
             // and the value of the OnOff attribute is equal to FALSE, the command SHALL be discarded.

@@ -23,7 +23,8 @@ use crate::dm::{ClusterId, DynEventWriter, EndptId, EventId, EventTLVWrite, Node
 use crate::error::{Error, ErrorCode};
 use crate::persist::{load_logged, KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
 use crate::tlv::{
-    FromTLV, TLVArray, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
+    FromTLV, TLVArray, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType,
+    TlvError, TlvErrorCode, ToTLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -272,7 +273,9 @@ impl<const N: usize> EventsInner<N> {
     ) -> Result<(), Error> {
         self.reset();
 
-        match load_logged(kv, EVENT_EPOCH_KEY, buf, |data| TLVElement::new(data).u64()) {
+        match load_logged(kv, EVENT_EPOCH_KEY, buf, |data| {
+            Ok(TLVElement::new(data).u64()?)
+        }) {
             Ok(Some(epoch)) => {
                 self.next_event_number = epoch;
 
@@ -304,7 +307,7 @@ impl<const N: usize> EventsInner<N> {
 
         let pos = event_writer.get_tail();
 
-        let result = (|| {
+        let result = (|| -> Result<(), Error> {
             EventData {
                 path: EventPath {
                     endpoint: Some(endpoint_id),
@@ -321,13 +324,13 @@ impl<const N: usize> EventsInner<N> {
 
             f(event_writer.tw())?;
 
-            event_writer.tw().end_container()
+            Ok(event_writer.tw().end_container()?)
         })();
 
-        if let Err(e) = &result {
+        if result.is_err() {
             event_writer.rewind_to(pos);
 
-            if e.code() == ErrorCode::ResourceExhausted {
+            if event_writer.event_too_large {
                 // The event did not fit in an *empty* ring, so no amount of
                 // eviction would have helped. This is a build-time sizing
                 // mistake rather than a runtime condition, and the bare
@@ -339,6 +342,8 @@ impl<const N: usize> EventsInner<N> {
                      pick a larger `events-ringbuf-size-*` feature",
                     endpoint_id, cluster_id, event_id, N
                 );
+
+                return Err(ErrorCode::ResourceExhausted.into());
             }
         }
 
@@ -447,6 +452,12 @@ impl<'a, const N: usize> Iterator for EventsIter<'a, N> {
 struct EventWriter<'a, const N: usize> {
     events: &'a mut EventsInner<N>,
     bytes_written: usize,
+    /// Set when a single event outgrew the whole ring.
+    ///
+    /// `TLVWrite::write` can only report that it ran out of space, and the
+    /// writer is rewound on the way out, so neither the error nor the position
+    /// survives to tell `push` that no amount of eviction would have helped.
+    event_too_large: bool,
 }
 
 impl<'a, const N: usize> EventWriter<'a, N> {
@@ -460,6 +471,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
         Self {
             events,
             bytes_written: 0,
+            event_too_large: false,
         }
     }
 
@@ -471,7 +483,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
     }
 
     /// Write a byte to the current buffer, evicting and promoting events as needed to make space for the new byte.
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         if N == 0 {
             // Events are disabled, we should never write anything to the buffer and should always succeed.
             return Ok(());
@@ -479,7 +491,9 @@ impl<'a, const N: usize> EventWriter<'a, N> {
 
         if self.bytes_written == N {
             // This event is larger than the buffer, the client needs to change the buffer size for this to work
-            return Err(Error::new(ErrorCode::ResourceExhausted));
+            self.event_too_large = true;
+
+            return Err(TlvErrorCode::NoSpace.into());
         }
 
         while self.events.buf_mut(Self::OPER_BUF).append(byte).is_err() {
@@ -546,7 +560,7 @@ impl<'a, const N: usize> EventWriter<'a, N> {
 }
 
 impl<'a, const N: usize> DynEventWriter for EventWriter<'a, N> {
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         EventWriter::write(self, byte)
     }
 
@@ -987,7 +1001,7 @@ mod tests {
                 self.event_number,
                 self.priority,
                 self.timestamp.clone(),
-                |tw| self.data.to_tlv(&EVENT_DATA_TAG, tw),
+                |tw| self.data.to_tlv(&EVENT_DATA_TAG, tw).map_err(Into::into),
             )
         }
     }

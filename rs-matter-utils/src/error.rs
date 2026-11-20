@@ -192,8 +192,16 @@ impl From<BufferErrorCode> for Error {
     }
 }
 
-impl From<BufferError> for Error {
-    fn from(value: BufferError) -> Self {
+/// Bridge any `Error2` to the legacy `Error`, given a conversion for its code.
+///
+/// A crate defining its own error code only needs `impl From<ItsCode> for Error`,
+/// which the orphan rule does allow it - unlike an impl over `Error2<ItsCode>`,
+/// where neither type is local to it.
+impl<T> From<Error2<T>> for Error
+where
+    T: MatterError + Into<Error>,
+{
+    fn from(value: Error2<T>) -> Self {
         value.code().into()
     }
 }
@@ -220,6 +228,24 @@ use crate::io;
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ErrorCode {
+    // The codes `TlvErrorCode` maps to come first and in its order, so that
+    // `From<TlvErrorCode> for Error` compiles to nothing.
+    InvalidData,
+    TLVTypeMismatch,
+    NotFound,
+    Invalid,
+    ConstraintError,
+    /// `TlvErrorCode::UnexpectedNull`; reported as a constraint error
+    TLVUnexpectedNull,
+    // TODO: Rename to `TLVNoWriteSpace` or similar, so that it is clear
+    // that this error code should _only_ be used when writing a TLV using
+    // a `TLVWrite` instance which happens to run out of space
+    //
+    // All other cases of running out of space should use the generic:
+    // - `ResourceExhausted` (when number of fabrics, ACLs, sessions or exchanges becomes too big)
+    // - `BufferTooSmall` or `ConstraintError` when other internal buffers don't fit the data
+    // - ... or use-case-specific error codes like `NoSpaceExchanges` and `NoSpaceSessions`.
+    NoSpace,
     AlreadyExists,
     AttributeNotFound,
     AttributeIsCustom,
@@ -234,7 +260,6 @@ pub enum ErrorCode {
     InvalidCommand,
     FailSafeRequired,
     NeedsTimedInteraction,
-    ConstraintError,
     DynamicConstraintError,
     InvalidDataType,
     UnsupportedAccess,
@@ -256,27 +281,15 @@ pub enum ErrorCode {
     /// The CASE responder has no fabric and node ID matching our Sigma1, e.g. because it is
     /// no longer on our fabric, or because it is not the node we asked for.
     NoSharedTrustRoots,
-    // TODO: Rename to `TLVNoWriteSpace` or similar, so that it is clear
-    // that this error code should _only_ be used when writing a TLV using
-    // a `TLVWrite` instance which happens to run out of space
-    //
-    // All other cases of running out of space should use the generic:
-    // - `ResourceExhausted` (when number of fabrics, ACLs, sessions or exchanges becomes too big)
-    // - `BufferTooSmall` or `ConstraintError` when other internal buffers don't fit the data
-    // - ... or use-case-specific error codes like `NoSpaceExchanges` and `NoSpaceSessions`.
-    NoSpace,
     NoSpaceExchanges,
     NoSpaceSessions,
     TxTimeout,
     RxTimeout,
     NoTagFound,
-    NotFound,
     PacketPoolExhaust,
     StdIoError,
     SysTimeFail,
-    Invalid,
     InvalidAAD,
-    InvalidData,
     /// An element was received on a transport that cannot carry it - a command
     /// with the `L` (Large Message) quality over a transport that is not
     /// large-message capable. Maps to `IMStatusCode::InvalidTransportType`.
@@ -298,7 +311,6 @@ pub enum ErrorCode {
     InvalidArgument,
     RwLock,
     TLVNotFound,
-    TLVTypeMismatch,
     TruncatedPacket,
     Utf8Fail,
     GennCommInvalidAuthentication,

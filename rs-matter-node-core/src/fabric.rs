@@ -34,7 +34,7 @@ use crate::persist::{
 };
 #[cfg(feature = "groups")]
 use crate::tlv::Skippable;
-use crate::tlv::{FromTLV, TLVElement, ToTLV};
+use crate::tlv::{FromTLV, TLVElement, TlvError, TlvErrorCode, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{String, Vec};
 
@@ -1251,8 +1251,9 @@ impl Fabrics {
             |data| {
                 self.fabrics
                     .push_init(Fabric::init_from_tlv(TLVElement::new(data)), || {
-                        ErrorCode::ResourceExhausted.into()
+                        TlvErrorCode::CapacityExceeded.into()
                     })
+                    .map_err(Into::into)
             },
         );
 
@@ -1372,7 +1373,7 @@ impl Fabrics {
     ) -> Result<&mut Fabric, Error>
     where
         C: Crypto,
-        I: IntoIterator<Item = Result<AclEntry, Error>>,
+        I: IntoIterator<Item = Result<AclEntry, TlvError>>,
     {
         self.add_with_post_init(|fabric| {
             fabric.update(

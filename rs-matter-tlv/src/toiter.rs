@@ -17,20 +17,20 @@
 
 use core::iter::{Chain, Once};
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 
 use super::{OnceTLVIter, TLVTag, TLVValue, TLVValueType, TLV};
 
-type TLVResult<'a> = Result<TLV<'a>, Error>;
+type TLVResult<'a> = Result<TLV<'a>, TlvError>;
 type ChainedTLVIter<'a, C> = Chain<C, OnceTLVIter<'a>>;
 
 /// A decorator trait for serializing data as TLV in the form of an
-/// `Iterator` of `Result<TLV<'a>, Error>` bytes.
+/// `Iterator` of `Result<TLV<'a>, TlvError>` bytes.
 ///
 /// The trait provides additional combinators on top of the standard `Iterator`
 /// trait combinators (e.g. `map`, `filter`, `flat_map`, etc.) that allow for serializing TLV elements.
 ///
-/// The trait is already implemented for any `Iterator` that yields items of type `Result<TLV<'a>, Error>`,
+/// The trait is already implemented for any `Iterator` that yields items of type `Result<TLV<'a>, TlvError>`,
 /// so users are not expected to provide implementations of it.
 ///
 /// Using an Iterator approach to TLV serialization is useful when the data is not serialized to its
@@ -54,7 +54,7 @@ type ChainedTLVIter<'a, C> = Chain<C, OnceTLVIter<'a>>;
 /// in less memory overhead (and better performance when reading the raw serialized TLV data) by the code that
 /// operates on it.
 pub trait TLVIter<'a>: Iterator<Item = TLVResult<'a>> + Sized {
-    fn flatten(value: Result<Self, Error>) -> EitherIter<Self, Once<TLVResult<'a>>> {
+    fn flatten(value: Result<Self, TlvError>) -> EitherIter<Self, Once<TLVResult<'a>>> {
         match value {
             Ok(value) => EitherIter::First(value),
             Err(err) => EitherIter::Second(core::iter::once(Err(err))),
@@ -231,7 +231,7 @@ pub trait TLVIter<'a>: Iterator<Item = TLVResult<'a>> + Sized {
             TLVValueType::Struct => self.start_struct(tag),
             TLVValueType::Array => self.start_array(tag),
             TLVValueType::List => self.start_list(tag),
-            _ => self.chain(core::iter::once(Err(ErrorCode::TLVTypeMismatch.into()))),
+            _ => self.chain(core::iter::once(Err(TlvErrorCode::TypeMismatch.into()))),
         }
     }
 

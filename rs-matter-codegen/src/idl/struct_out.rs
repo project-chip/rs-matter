@@ -97,7 +97,7 @@ pub fn struct_builder<S: StructLike>(
             P: #krate::tlv::TLVBuilderParent,
         {
             #[doc="Create a new instance"]
-            pub fn new(mut parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+            pub fn new(mut parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::tlv::TlvError> {
                 use #krate::tlv::TLVWrite;
 
                 parent.writer().start_struct(tag)?;
@@ -156,7 +156,7 @@ pub fn struct_builder<S: StructLike>(
         where
             P: #krate::tlv::TLVBuilderParent,
         {
-            fn new(parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+            fn new(parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::tlv::TlvError> {
                 Self::new(parent, tag)
             }
 
@@ -172,7 +172,7 @@ pub fn struct_builder<S: StructLike>(
             P: #krate::tlv::TLVBuilderParent,
         {
             #[doc="Create a new instance"]
-            pub fn new(mut parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+            pub fn new(mut parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::tlv::TlvError> {
                 use #krate::tlv::TLVWrite;
 
                 parent.writer().start_array(tag)?;
@@ -183,6 +183,7 @@ pub fn struct_builder<S: StructLike>(
             #[doc="Push a new element into the array"]
             pub fn push(self) -> Result<#name<#name_array<P>>, #krate::error::Error> {
                 #krate::tlv::TLVBuilder::new(#name_array(self.0), &#krate::tlv::TLVTag::Anonymous)
+                    .map_err(Into::into)
             }
 
             #[doc="Finish the array and return the parent"]
@@ -229,7 +230,7 @@ pub fn struct_builder<S: StructLike>(
         where
             P: #krate::tlv::TLVBuilderParent,
         {
-            fn new(parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+            fn new(parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::tlv::TlvError> {
                 Self::new(parent, tag)
             }
 
@@ -289,6 +290,7 @@ fn struct_field_builder(
                         #parent_name(self.0),
                         &#krate::tlv::TLVTag::Context(#code),
                     )
+                    .map_err(Into::into)
                 }
             }
         )
@@ -386,7 +388,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -497,7 +499,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -513,7 +515,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -529,6 +531,7 @@ mod tests {
                             NetworkInfoStructArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -575,7 +578,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -591,7 +594,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -660,7 +663,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -676,7 +679,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -692,6 +695,7 @@ mod tests {
                             IdentifyRequestArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -738,7 +742,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -754,7 +758,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -823,7 +827,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -839,7 +843,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -855,6 +859,7 @@ mod tests {
                             SomeRequestArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -901,7 +906,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -917,7 +922,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -986,7 +991,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1002,7 +1007,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -1018,6 +1023,7 @@ mod tests {
                             TestResponseArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -1064,7 +1070,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1080,7 +1086,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -1163,7 +1169,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1179,7 +1185,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -1195,6 +1201,7 @@ mod tests {
                             AnotherResponseArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -1241,7 +1248,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1294,7 +1301,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -1378,7 +1385,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1394,7 +1401,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -1410,6 +1417,7 @@ mod tests {
                             OffWithEffectRequestArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -1456,7 +1464,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1472,7 +1480,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -1577,7 +1585,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1593,7 +1601,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -1609,6 +1617,7 @@ mod tests {
                             OnWithTimedOffRequestArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -1655,7 +1664,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1702,7 +1711,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -1815,7 +1824,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1831,7 +1840,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -1847,6 +1856,7 @@ mod tests {
                             WithStringMemberArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -1893,7 +1903,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -1940,7 +1950,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_struct(tag)?;
                         Ok(Self(parent))
@@ -2053,7 +2063,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {
@@ -2069,7 +2079,7 @@ mod tests {
                     pub fn new(
                         mut parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         use rs_matter_crate::tlv::TLVWrite;
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
@@ -2085,6 +2095,7 @@ mod tests {
                             WithStringMemberArrayBuilder(self.0),
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
+                        .map_err(Into::into)
                     }
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
@@ -2131,7 +2142,7 @@ mod tests {
                     fn new(
                         parent: P,
                         tag: &rs_matter_crate::tlv::TLVTag,
-                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                    ) -> Result<Self, rs_matter_crate::tlv::TlvError> {
                         Self::new(parent, tag)
                     }
                     fn unchecked_into_parent(self) -> P {

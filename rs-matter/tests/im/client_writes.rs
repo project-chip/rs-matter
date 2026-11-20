@@ -59,7 +59,11 @@ fn test_client_write_sender() {
                                 echo_cluster::ID,
                                 echo_cluster::AttributesDiscriminants::AttWrite as u32,
                             )?
-                            .data(|w| value.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
+                            .data(|w| {
+                                value
+                                    .to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w)
+                                    .map_err(Into::into)
+                            })?
                             .end()?; // close AttrData → AttrDataArrayBuilder
                         sender = entry.end()?.end()?; // close array, close msg
                     }

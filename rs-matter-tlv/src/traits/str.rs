@@ -23,7 +23,7 @@
 //! Note that (for now) `String<N>` has no efficient in-place initialization, so it should not be used for
 //! holding large strings, or else a stack overflow might occur.
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::storage::String;
 
 use super::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -44,53 +44,54 @@ pub type UtfStr<'a> = Utf8Str<'a>;
 pub type Utf8Str<'a> = &'a str;
 
 impl<'a> FromTLV<'a> for &'a str {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         element.utf8()
     }
 }
 
 impl ToTLV for &str {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.utf8(tag, self)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::utf8(tag, self).into_tlv_iter()
     }
 }
 
 impl<'a, const N: usize> FromTLV<'a> for String<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<String<N>, Error> {
-        element
-            .utf8()
-            .and_then(|s| s.try_into().map_err(|_| ErrorCode::ConstraintError.into()))
+    fn from_tlv(element: &TLVElement<'a>) -> Result<String<N>, TlvError> {
+        element.utf8().and_then(|s| {
+            s.try_into()
+                .map_err(|_| TlvErrorCode::CapacityExceeded.into())
+        })
     }
 }
 
 impl<const N: usize> ToTLV for String<N> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.utf8(tag, self)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::utf8(tag, self.as_str()).into_tlv_iter()
     }
 }
 
 #[cfg(feature = "alloc")]
 impl<'a> FromTLV<'a> for alloc::string::String {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<alloc::string::String, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<alloc::string::String, TlvError> {
         element.utf8().map(alloc::string::String::from)
     }
 }
 
 #[cfg(feature = "alloc")]
 impl ToTLV for alloc::string::String {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.utf8(tag, self)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::utf8(tag, self.as_str()).into_tlv_iter()
     }
 }

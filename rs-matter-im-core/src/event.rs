@@ -19,8 +19,9 @@ use core::num::NonZeroU8;
 
 use num_enum::TryFromPrimitive;
 
-use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV, TLV};
+use crate::tlv::{
+    FromTLV, TLVElement, TLVTag, TLVWrite, TagType, TlvError, TlvErrorCode, ToTLV, TLV,
+};
 
 use super::{ClusterId, EndptId, EventId, EventNumber, GenericPath, IMStatusCode, NodeId, Status};
 
@@ -191,7 +192,7 @@ impl<'a> EventData<'a> {
         }
     }
 
-    pub fn write_preamble<T: TLVWrite>(&self, tag: &TLVTag, mut tw: T) -> Result<(), Error> {
+    pub fn write_preamble<T: TLVWrite>(&self, tag: &TLVTag, mut tw: T) -> Result<(), TlvError> {
         tw.start_struct(tag)?;
 
         self.path
@@ -230,7 +231,7 @@ impl<'a> EventData<'a> {
 
 // Manually implemented because of the tagged union used for the timestamp
 impl<'a> ToTLV for EventData<'a> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         self.write_preamble(tag, &mut tw)?;
 
         self.data
@@ -239,7 +240,7 @@ impl<'a> ToTLV for EventData<'a> {
         tw.end_container()
     }
 
-    fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         let (timestamp_tag, timestamp_val) = match self.timestamp {
             EventDataTimestamp::EpochTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
             EventDataTimestamp::SystemTimestamp(ts) => (EventDataTag::SystemTimestamp, ts),
@@ -273,7 +274,7 @@ impl<'a> ToTLV for EventData<'a> {
 }
 
 impl<'a> FromTLV<'a> for EventData<'a> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let mut path = None;
         let mut event_number = None;
         let mut priority = None;
@@ -284,34 +285,36 @@ impl<'a> FromTLV<'a> for EventData<'a> {
             let el = field?;
 
             match el.tag()? {
-                TLVTag::Context(tag) => match EventDataTag::try_from(tag)? {
-                    EventDataTag::Path => path = Some(EventPath::from_tlv(&el)?),
-                    EventDataTag::EventNumber => event_number = Some(el.u64()?),
-                    EventDataTag::Priority => priority = Some(EventPriority::from_tlv(&el)?),
-                    EventDataTag::EpochTimestamp => {
-                        timestamp = Some(EventDataTimestamp::EpochTimestamp(el.u64()?))
+                TLVTag::Context(tag) => {
+                    match EventDataTag::try_from(tag).map_err(|_| TlvErrorCode::InvalidValue)? {
+                        EventDataTag::Path => path = Some(EventPath::from_tlv(&el)?),
+                        EventDataTag::EventNumber => event_number = Some(el.u64()?),
+                        EventDataTag::Priority => priority = Some(EventPriority::from_tlv(&el)?),
+                        EventDataTag::EpochTimestamp => {
+                            timestamp = Some(EventDataTimestamp::EpochTimestamp(el.u64()?))
+                        }
+                        EventDataTag::SystemTimestamp => {
+                            timestamp = Some(EventDataTimestamp::SystemTimestamp(el.u64()?))
+                        }
+                        EventDataTag::DeltaEpochTimestamp => {
+                            timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(el.u64()?))
+                        }
+                        EventDataTag::DeltaSystemTimestamp => {
+                            timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(el.u64()?))
+                        }
+                        EventDataTag::Data => data = Some(el),
                     }
-                    EventDataTag::SystemTimestamp => {
-                        timestamp = Some(EventDataTimestamp::SystemTimestamp(el.u64()?))
-                    }
-                    EventDataTag::DeltaEpochTimestamp => {
-                        timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(el.u64()?))
-                    }
-                    EventDataTag::DeltaSystemTimestamp => {
-                        timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(el.u64()?))
-                    }
-                    EventDataTag::Data => data = Some(el),
-                },
-                _ => return Err(Error::new(ErrorCode::Invalid)),
+                }
+                _ => return Err(TlvErrorCode::TypeMismatch.into()),
             }
         }
 
         Ok(EventData::new(
-            path.ok_or(Error::new(ErrorCode::Invalid))?,
-            event_number.ok_or(Error::new(ErrorCode::Invalid))?,
-            priority.ok_or(Error::new(ErrorCode::Invalid))?,
-            timestamp.ok_or(Error::new(ErrorCode::Invalid))?,
-            data.ok_or(Error::new(ErrorCode::Invalid))?,
+            path.ok_or(TlvErrorCode::NotFound)?,
+            event_number.ok_or(TlvErrorCode::NotFound)?,
+            priority.ok_or(TlvErrorCode::NotFound)?,
+            timestamp.ok_or(TlvErrorCode::NotFound)?,
+            data.ok_or(TlvErrorCode::NotFound)?,
         ))
     }
 }

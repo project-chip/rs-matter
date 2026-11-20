@@ -34,7 +34,7 @@ use core::fmt::Debug;
 use core::hash::Hash;
 use core::ops::{Deref, DerefMut};
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{TlvError, TlvErrorCode};
 use crate::utils::init::{self, init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
@@ -69,17 +69,17 @@ impl Deref for Octets<'_> {
 }
 
 impl<'a> FromTLV<'a> for Octets<'a> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Octets(element.str()?))
     }
 }
 
 impl ToTLV for Octets<'_> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.str(tag, self.0)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.0).into_tlv_iter()
     }
 }
@@ -142,21 +142,21 @@ impl<const N: usize> DerefMut for OctetsOwned<N> {
 }
 
 impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self {
             vec: element
                 .str()?
                 .try_into()
-                .map_err(|_| ErrorCode::ConstraintError)?,
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?,
         })
     }
 
-    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, TlvError> {
         init::Init::chain(OctetsOwned::init().into_fallible(), move |bytes| {
             bytes
                 .vec
                 .extend_from_slice(element.str()?)
-                .map_err(|_| ErrorCode::ConstraintError)?;
+                .map_err(|_| TlvErrorCode::CapacityExceeded)?;
 
             Ok(())
         })
@@ -164,11 +164,11 @@ impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
 }
 
 impl<const N: usize> ToTLV for OctetsOwned<N> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.str(tag, &self.vec)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.vec.as_slice()).into_tlv_iter()
     }
 }
@@ -234,7 +234,7 @@ impl DerefMut for OctetsVec {
 
 #[cfg(feature = "alloc")]
 impl<'a> FromTLV<'a> for OctetsVec {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         Ok(Self {
             vec: element.str()?.into(),
         })
@@ -243,11 +243,11 @@ impl<'a> FromTLV<'a> for OctetsVec {
 
 #[cfg(feature = "alloc")]
 impl ToTLV for OctetsVec {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.str(tag, &self.vec)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         TLV::str(tag, self.vec.as_slice()).into_tlv_iter()
     }
 }
