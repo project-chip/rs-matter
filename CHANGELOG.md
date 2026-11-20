@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * New: the `max-large-im-buffers-*` features of `rs-matter-stack` (`stack-max-large-im-buffers-*` in `rs-matter`), the number of its large IM buffers; 2 by default
   * The OTA provider and the Diagnostic Logs handler take buffers as large as their largest BDX block, UDP-sized except over TCP. New: `BdxDownloadResponder::max_block_size` and `max_tx_block_size`
 * Fix: a subscription keeps its request in a buffer of its own, of `SUBSCRIPTION_BUFFER_SIZE` (256 bytes), rather than in one of the IM buffers for its whole life. A larger request is kept without its data version filters, which only matter for the priming report (#677)
+  * Fix: the priming report of a larger request honours its data version filters too, as it reads the request as received rather than the kept copy
   * Fix: a subscription report which finds no free buffer is retried later, like any other failed report, rather than dropping the subscription
   * New: a command with the Large Message quality (`CaptureSnapshot`, the WebRTC, Push AV and TLS commands) is answered `INVALID_TRANSPORT_TYPE` over a session that does not carry large messages; `Access::LARGE_MESSAGE` marks such commands
   * Breaking: `expand_invoke` takes whether the session carries large messages

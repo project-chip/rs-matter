@@ -892,12 +892,12 @@ where
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
 
+        let primed = self
+            .report_data(&mut rctx, &mut tx, exchange, Some(&rx), true)
+            .await?;
+
         // The subscription keeps a copy of the request
         drop(rx);
-
-        let primed = self
-            .report_data(&mut rctx, &mut tx, exchange, true, true)
-            .await?;
 
         if primed {
             exchange
@@ -1375,7 +1375,7 @@ where
         };
 
         let primed = self
-            .report_data(rctx, &mut tx, &mut exchange, false, send_if_empty)
+            .report_data(rctx, &mut tx, &mut exchange, None, send_if_empty)
             .await?;
 
         exchange.acknowledge().await?;
@@ -1427,21 +1427,18 @@ where
     /// A utility to respond with a `ReportData` response to a subscription request, which is used to report data to the peer.
     ///
     /// Arguments:
-    /// - `id` - the subscription ID
-    /// - `fabric_idx` - the fabric index of the peer
-    /// - `peer_node_id` - the node ID of the peer
-    /// - `min_event_number` - the minimum event number to report
-    /// - `rx` - the received data for the subscription, when the subscription was primed
+    /// - `rctx` - the subscription to report on
     /// - `tx` - the TX buffer to write the response to
     /// - `exchange` - the exchange to respond to
-    /// - `with_dataver` - whether to include the data version in the response
-    #[allow(clippy::too_many_arguments)]
+    /// - `priming_req` - the subscribe request, for the priming report. The subscription
+    ///   keeps a copy of it, but possibly without its data version filters
+    /// - `send_if_empty` - whether to send the report even if it has no data
     async fn report_data(
         &self,
         rctx: &mut SubscriptionReport<'_, '_, NS>,
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
-        with_dataver: bool,
+        priming_req: Option<&[u8]>,
         send_if_empty: bool,
     ) -> Result<bool, Error>
     where
@@ -1449,8 +1446,8 @@ where
     {
         let mut wb = WriteBuf::new(tx);
 
-        let sub_req = SubscribeReq::new(TLVElement::new(rctx.rx()));
-        let req = if with_dataver {
+        let sub_req = SubscribeReq::new(TLVElement::new(priming_req.unwrap_or(rctx.rx())));
+        let req = if priming_req.is_some() {
             ReportDataReq::Subscribe(&sub_req)
         } else {
             ReportDataReq::SubscribeReport(&sub_req)
