@@ -115,10 +115,7 @@ mod groups {
     }
 
     cfg_if! {
-        if #[cfg(feature = "max-group-endpoints-per-fabric-64")] {
-            /// Max number of endpoints per group entry.
-            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 64;
-        } else if #[cfg(feature = "max-group-endpoints-per-fabric-32")] {
+        if #[cfg(feature = "max-group-endpoints-per-fabric-32")] {
             /// Max number of endpoints per group entry.
             pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 32;
         } else if #[cfg(feature = "max-group-endpoints-per-fabric-16")] {

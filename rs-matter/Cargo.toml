@@ -48,7 +48,6 @@ max-group-keys-per-fabric-3 = ["rs-matter-node-core/max-group-keys-per-fabric-3"
 max-group-keys-per-fabric-2 = ["rs-matter-node-core/max-group-keys-per-fabric-2"]
 
 # Number of endpoints that can be members of a group (per fabric).
-max-group-endpoints-per-fabric-64 = ["rs-matter-node-core/max-group-endpoints-per-fabric-64"]
 max-group-endpoints-per-fabric-32 = ["rs-matter-node-core/max-group-endpoints-per-fabric-32"]
 max-group-endpoints-per-fabric-16 = ["rs-matter-node-core/max-group-endpoints-per-fabric-16"]
 max-group-endpoints-per-fabric-8 = ["rs-matter-node-core/max-group-endpoints-per-fabric-8"]

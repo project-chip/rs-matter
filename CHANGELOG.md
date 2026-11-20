@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* New: the `max-group-endpoints-per-fabric-8`, `-16`, `-32` and `-64` features, for group table entries with more than 5 endpoints (#680)
+* New: the `max-group-endpoints-per-fabric-8`, `-16` and `-32` features, for group table entries with more than 5 endpoints (#680)
 * New: with a `large-buffers-*` feature, `MatterBuffers` holds a few large buffers next to the UDP-sized ones, and only TCP exchanges take a large one: for their reports and invoke responses, and for a request larger than a UDP message (#678)
   * Breaking: the Interaction Model and the BDX handlers take a `ByteBuffers` pool, which hands out buffers of the length asked for, rather than a `Buffers<IMBuffer>`; `ChainedBuffers` makes one pool of two
   * Breaking: `MatterBuffers<N, NL>` moved from `transport::exchange` to the root of `transport`, and is a struct of `N` UDP-sized buffers (`UdpBuffer`) and, with a `large-buffers-*` feature, `NL` large ones (`DEFAULT_LARGE_BUFFER_POOL_SIZE`, 2, by default), rather than an alias of `PooledBuffers`
