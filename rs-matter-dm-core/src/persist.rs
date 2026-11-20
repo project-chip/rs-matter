@@ -915,15 +915,9 @@ mod mem {
     impl MemKv {
         /// Create a new access over `store`.
         pub fn new(store: MemKvBlobStore) -> Self {
-            Self::with_buf_len(store, 8192)
-        }
-
-        /// Create a new access over `store`, with a scratch buffer of `len`
-        /// bytes.
-        pub fn with_buf_len(store: MemKvBlobStore, len: usize) -> Self {
             Self {
                 store: Mutex::new(store),
-                buf: Mutex::new(std::vec![0; len]),
+                buf: Mutex::new(std::vec![0; 8192]),
             }
         }
     }

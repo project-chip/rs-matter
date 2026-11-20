@@ -48,8 +48,6 @@ max-group-keys-per-fabric-3 = []
 max-group-keys-per-fabric-2 = []
 
 # Number of endpoints that can be members of a group (per fabric).
-# The sizes from 8 up are checked at build time against the persistence buffer
-# (`kv-blob-store-*` of `rs-matter-dm-core`), which holds the whole fabric.
 max-group-endpoints-per-fabric-64 = []
 max-group-endpoints-per-fabric-32 = []
 max-group-endpoints-per-fabric-16 = []
