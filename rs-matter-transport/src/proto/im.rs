@@ -39,7 +39,9 @@ use crate::exchange::MessageMeta;
 use crate::exchange::{Exchange, OwnedSender, OwnedSenderTx};
 #[cfg(feature = "groups")]
 use crate::tlv::TLVWriteParent;
-use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{
+    FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, TlvError, TlvErrorCode, ToTLV,
+};
 #[cfg(feature = "groups")]
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::MaybeSend;
@@ -297,10 +299,10 @@ impl<'a> ReadSenderSlot<'a> {
 impl<'a> TLVWrite for ReadSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -350,7 +352,7 @@ impl<'a> ReadRespChunk<'a> {
     pub fn response(&self) -> Result<ReportDataResp<'_>, Error> {
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        ReportDataResp::from_tlv(&element)
+        Ok(ReportDataResp::from_tlv(&element)?)
     }
 
     /// ACK the current chunk; if `more_chunks=true`, fetch + parse
@@ -483,10 +485,10 @@ impl<'a> WriteSenderSlot<'a> {
 impl<'a> TLVWrite for WriteSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -543,7 +545,7 @@ impl<'a> WriteRespHandle<'a> {
     /// this handle is dropped.
     pub fn response(&self) -> Result<WriteResp<'_>, Error> {
         let rx = self.exchange.rx()?;
-        WriteResp::from_tlv(&TLVElement::new(rx.payload()))
+        Ok(WriteResp::from_tlv(&TLVElement::new(rx.payload()))?)
     }
 }
 
@@ -700,10 +702,10 @@ impl<'a> InvokeSenderSlot<'a> {
 impl<'a> TLVWrite for InvokeSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -816,7 +818,7 @@ impl<'a> InvokeRespChunk<'a> {
         }
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        InvokeResp::from_tlv(&element).map(Some)
+        Ok(Some(InvokeResp::from_tlv(&element)?))
     }
 
     /// ACK the current chunk and, if the server signalled
@@ -989,10 +991,10 @@ impl<'a> SubscribeSenderSlot<'a> {
 impl<'a> TLVWrite for SubscribeSenderSlot<'a> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         let payload = self.tx.payload();
         if self.cursor >= payload.len() {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(TlvErrorCode::NoSpace.into());
         }
         payload[self.cursor] = byte;
         self.cursor += 1;
@@ -1058,7 +1060,7 @@ impl<'a> SubscribePrimingChunk<'a> {
     pub fn response(&self) -> Result<ReportDataResp<'_>, Error> {
         let rx = self.exchange.rx()?;
         let element = TLVElement::new(rx.payload());
-        ReportDataResp::from_tlv(&element)
+        Ok(ReportDataResp::from_tlv(&element)?)
     }
 
     /// ACK the current priming chunk and advance to the next stage:

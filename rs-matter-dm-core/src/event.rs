@@ -17,9 +17,8 @@
 
 use core::fmt;
 
-use crate::error::Error;
 use crate::im::EventDataTag;
-use crate::tlv::{TLVBuilderParent, TLVTag, TLVWrite};
+use crate::tlv::{TLVBuilderParent, TLVTag, TLVWrite, TlvError};
 use crate::utils::sync::MaybeSendSync;
 
 use super::{Access, EventId};
@@ -80,7 +79,7 @@ macro_rules! event_enum {
 /// Necessary so that we can implement `EventTLVWrite`, which is a `TLVWrite` with an erased `const N: usize` generic
 pub trait DynEventWriter: MaybeSendSync {
     /// Write a byte.
-    fn write(&mut self, byte: u8) -> Result<(), Error>;
+    fn write(&mut self, byte: u8) -> Result<(), TlvError>;
 
     /// The position after the last written byte.
     fn get_tail(&self) -> usize;
@@ -116,7 +115,7 @@ impl defmt::Format for EventTLVWrite<'_> {
 impl TLVWrite for EventTLVWrite<'_> {
     type Position = usize;
 
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, byte: u8) -> Result<(), TlvError> {
         self.0.write(byte)
     }
 

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Breaking: `rs-matter-tlv` reports the crate-local `TlvError` rather than the global `Error`, including in `FromTLV`, `ToTLV`, `TLVWrite` and `TLVBuilder`. It converts to `Error`, so `?` into a `Result<_, Error>` still compiles. The second step of the error refactor (#679)
+  * Breaking: code that returns the result of a TLV call where a `Result<_, Error>` is expected converts it, e.g. `Ok(tw.end_container()?)` in the closures given to `data` and `emit_event`, or `Ok(builder.set(value)?)` at the end of an attribute read
+  * `TLVWrite::str_cb`, `TLVWrite::utf8_cb` and the `with*` methods of the TLV builders are generic over the error of their closure
+  * With `alloc` and `backtrace`, an error converted into `Error` is kept as its source unless backtraces are disabled at run time, and `Debug` prints the code and the backtrace of both
 * New: with a `large-buffers-*` feature, `MatterBuffers` holds a few large buffers next to the UDP-sized ones, and only TCP exchanges take a large one: for their reports and invoke responses, and for a request larger than a UDP message (#678)
   * Breaking: the Interaction Model and the BDX handlers take a `ByteBuffers` pool, which hands out buffers of the length asked for, rather than a `Buffers<IMBuffer>`; `ChainedBuffers` makes one pool of two
   * Breaking: `MatterBuffers<N, NL>` moved from `transport::exchange` to the root of `transport`, and is a struct of `N` UDP-sized buffers (`UdpBuffer`) and, with a `large-buffers-*` feature, `NL` large ones (`DEFAULT_LARGE_BUFFER_POOL_SIZE`, 2, by default), rather than an alias of `PooledBuffers`

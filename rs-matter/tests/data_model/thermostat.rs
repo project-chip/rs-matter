@@ -93,7 +93,7 @@ impl crate::common::e2e::tlv::TestToTLV for TestSetpointChange {
         tw.u8(&TLVTag::Context(0), self.system_mode as u8)?;
         tw.i16(&TLVTag::Context(2), self.previous_setpoint)?;
         tw.i16(&TLVTag::Context(3), self.current_setpoint)?;
-        tw.end_container()
+        Ok(tw.end_container()?)
     }
 }
 

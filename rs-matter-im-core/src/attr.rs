@@ -369,7 +369,7 @@ where
                 return None;
             }
             let endpoint = data.path.endpoint?;
-            Some((endpoint, T::from_tlv(&data.data)))
+            Some((endpoint, T::from_tlv(&data.data).map_err(Into::into)))
         }
         AttrResp::Status(s) => {
             if s.path.cluster != Some(cluster) || s.path.attr != Some(attr) {
@@ -408,7 +408,7 @@ mod tests {
     use core::num::NonZeroU8;
 
     use crate::error::ErrorCode;
-    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
+    use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvErrorCode, ToTLV};
     use crate::utils::storage::WriteBuf;
     use crate::{IMStatusCode, IM_REVISION};
 
@@ -647,7 +647,7 @@ mod tests {
             match resp.to_tlv(&TLVTag::Anonymous, &mut wb) {
                 Ok(()) => written += 1,
                 Err(e) => {
-                    assert_eq!(e.code(), ErrorCode::NoSpace);
+                    assert_eq!(e.code(), TlvErrorCode::NoSpace);
                     assert_eq!(wb.get_tail(), tail);
                     break;
                 }

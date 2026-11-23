@@ -31,23 +31,21 @@ macro_rules! bitflags_tlv {
         impl<'a> $crate::FromTLV<'a> for $enum_name {
             fn from_tlv(
                 element: &$crate::TLVElement<'a>,
-            ) -> Result<Self, $crate::__private::Error> {
-                Self::from_bits($crate::TLVElement::$type(element)?).ok_or_else(|| {
-                    $crate::__private::Error::from($crate::__private::ErrorCode::InvalidData)
-                })
+            ) -> Result<Self, $crate::__private::TlvError> {
+                Self::from_bits($crate::TLVElement::$type(element)?)
+                    .ok_or_else(|| $crate::__private::TlvErrorCode::InvalidValue.into())
             }
 
             fn nullable_from_tlv(
                 element: &$crate::TLVElement<'a>,
-            ) -> Result<Self, $crate::__private::Error> {
+            ) -> Result<Self, $crate::__private::TlvError> {
                 let value = $crate::TLVElement::$type(element)?;
 
                 if value != $type::MAX {
-                    Self::from_bits(value).ok_or_else(|| {
-                        $crate::__private::Error::from($crate::__private::ErrorCode::InvalidData)
-                    })
+                    Self::from_bits(value)
+                        .ok_or_else(|| $crate::__private::TlvErrorCode::InvalidValue.into())
                 } else {
-                    Err($crate::__private::ErrorCode::ConstraintError.into())
+                    Err($crate::__private::TlvErrorCode::UnexpectedNull.into())
                 }
             }
         }
@@ -57,14 +55,14 @@ macro_rules! bitflags_tlv {
                 &self,
                 tag: &$crate::TLVTag,
                 mut tw: W,
-            ) -> Result<(), $crate::__private::Error> {
+            ) -> Result<(), $crate::__private::TlvError> {
                 tw.$type(tag, self.bits())
             }
 
             fn tlv_iter(
                 &self,
                 tag: $crate::TLVTag,
-            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::Error>> {
+            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::TlvError>> {
                 $crate::TLV::$type(tag, self.bits()).into_tlv_iter()
             }
 
@@ -72,23 +70,23 @@ macro_rules! bitflags_tlv {
                 &self,
                 tag: &$crate::TLVTag,
                 mut tw: W,
-            ) -> Result<(), $crate::__private::Error> {
+            ) -> Result<(), $crate::__private::TlvError> {
                 if self.bits() != $type::MAX {
                     tw.$type(tag, self.bits())
                 } else {
-                    Err($crate::__private::ErrorCode::ConstraintError.into())
+                    Err($crate::__private::TlvErrorCode::UnexpectedNull.into())
                 }
             }
 
             fn nullable_tlv_iter(
                 &self,
                 tag: $crate::TLVTag,
-            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::Error>> {
+            ) -> impl Iterator<Item = Result<$crate::TLV<'_>, $crate::__private::TlvError>> {
                 if self.bits() != $type::MAX {
                     $crate::EitherIter::First($crate::TLV::$type(tag, self.bits()).into_tlv_iter())
                 } else {
                     $crate::EitherIter::Second(core::iter::once(Err(
-                        $crate::__private::ErrorCode::ConstraintError.into(),
+                        $crate::__private::TlvErrorCode::UnexpectedNull.into(),
                     )))
                 }
             }

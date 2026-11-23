@@ -20,6 +20,8 @@
 
 use core::fmt;
 
+use rs_matter_tlv::TlvError;
+
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStoreAccess, Persist};
 use crate::utils::sync::MaybeSendSync;
@@ -114,6 +116,13 @@ pub enum NetworksError {
 impl From<Error> for NetworksError {
     fn from(err: Error) -> Self {
         NetworksError::Other(err)
+    }
+}
+
+// TODO: Remove once network errors are refactored.
+impl From<TlvError> for NetworksError {
+    fn from(err: TlvError) -> Self {
+        NetworksError::Other(err.into())
     }
 }
 

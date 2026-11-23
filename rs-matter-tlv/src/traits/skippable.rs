@@ -17,7 +17,7 @@
 
 use pinned_init::init_from_closure;
 
-use crate::error::Error;
+use crate::error::TlvError;
 use crate::utils::init::{try_init, Init, InitDefault, IntoFallibleInit};
 use crate::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 
@@ -107,7 +107,7 @@ impl<'a, T> FromTLV<'a> for Skippable<T>
 where
     T: FromTLV<'a> + Default + InitDefault,
 {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         if element.is_empty() {
             Ok(Self::new_default())
         } else {
@@ -115,7 +115,7 @@ where
         }
     }
 
-    fn init_from_tlv(element: TLVElement<'a>) -> impl Init<Self, Error> {
+    fn init_from_tlv(element: TLVElement<'a>) -> impl Init<Self, TlvError> {
         unsafe {
             init_from_closure(move |slot| {
                 if element.is_empty() {
@@ -132,11 +132,11 @@ impl<T> ToTLV for Skippable<T>
 where
     T: ToTLV,
 {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), TlvError> {
         self.value.to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         self.value.tlv_iter(tag)
     }
 }

@@ -447,9 +447,11 @@ where
                 .find(|c| c.connection_id == connection_id)
                 .ok_or(ErrorCode::NotFound)?;
 
-            TransportOptionsStruct::new(TLVElement::new(&connection.transport_options))
-                .container_options()?
-                .container_type()
+            Ok(
+                TransportOptionsStruct::new(TLVElement::new(&connection.transport_options))
+                    .container_options()?
+                    .container_type()?,
+            )
         })
     }
 

@@ -199,7 +199,7 @@ pub trait EventEmitter {
         self.emit_event(endpoint_id, cluster_id, event_id, priority, |mut tw| {
             tw.start_struct(&EVENT_DATA_TAG)?;
             tw.u32(&TLVTag::Context(0), value)?;
-            tw.end_container()
+            Ok(tw.end_container()?)
         })
     }
 }

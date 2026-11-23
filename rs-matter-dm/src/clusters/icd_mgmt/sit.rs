@@ -119,7 +119,7 @@ impl ClusterHandler for SitIcdMgmtHandler<'_> {
         _ctx: impl ReadContext,
         builder: crate::tlv::Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        builder.set(self.icd.mode.user_active_mode_trigger_instruction)
+        Ok(builder.set(self.icd.mode.user_active_mode_trigger_instruction)?)
     }
 
     // A SIT-only device has nothing to register for and no StayActiveRequest

@@ -646,7 +646,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: OctetsBuilder<P>,
     ) -> Result<P, Error> {
-        self.with(|data| builder.set(Octets(data.octet_string.as_slice())))
+        Ok(self.with(|data| builder.set(Octets(data.octet_string.as_slice())))?)
     }
 
     fn list_int_8_u<P: TLVBuilderParent>(
@@ -654,23 +654,23 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u8>, ToTLVBuilder<P, u8>>,
     ) -> Result<P, Error> {
-        match builder {
+        Ok(match builder {
             ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_int_8_u.len() as u16 {
-                    builder.set(&data.list_int_8_u[index as usize])
+                    Ok::<_, Error>(builder.set(&data.list_int_8_u[index as usize])?)
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }),
+            })?,
             ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for i in &data.list_int_8_u {
                     builder = builder.push(i)?;
                 }
 
-                builder.end()
-            }),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+                Ok::<_, Error>(builder.end()?)
+            })?,
+            ArrayAttributeRead::ReadNone(builder) => builder.end()?,
+        })
     }
 
     fn list_octet_string<P: TLVBuilderParent>(
@@ -678,23 +678,25 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
-        match builder {
+        Ok(match builder {
             ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_octet_string.len() as u16 {
-                    builder.set(Octets(data.list_octet_string[index as usize].as_slice()))
+                    Ok::<_, Error>(
+                        builder.set(Octets(data.list_octet_string[index as usize].as_slice()))?,
+                    )
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }),
+            })?,
             ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for i in &data.list_octet_string {
                     builder = builder.push(Octets(i.as_slice()))?;
                 }
 
-                builder.end()
-            }),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+                Ok::<_, Error>(builder.end()?)
+            })?,
+            ArrayAttributeRead::ReadNone(builder) => builder.end()?,
+        })
     }
 
     fn list_struct_octet_string<P: TLVBuilderParent>(
@@ -705,19 +707,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             TestListStructOctetBuilder<P>,
         >,
     ) -> Result<P, Error> {
-        match builder {
+        Ok(match builder {
             ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_struct_octet_string.len() as u16 {
                     let s = &data.list_struct_octet_string[index as usize];
 
-                    builder
-                        .member_1(s.member_1)?
-                        .member_2(Octets(&s.member_2))?
-                        .end()
+                    Ok::<_, Error>(
+                        builder
+                            .member_1(s.member_1)?
+                            .member_2(Octets(&s.member_2))?
+                            .end()?,
+                    )
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }),
+            })?,
             ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for s in &data.list_struct_octet_string {
                     builder = builder
@@ -728,9 +732,9 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 }
 
                 builder.end()
-            }),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+            })?,
+            ArrayAttributeRead::ReadNone(builder) => builder.end()?,
+        })
     }
 
     fn long_octet_string<P: TLVBuilderParent>(
@@ -738,7 +742,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: OctetsBuilder<P>,
     ) -> Result<P, Error> {
-        self.with(|data| builder.set(Octets(data.long_octet_string.as_slice())))
+        Ok(self.with(|data| builder.set(Octets(data.long_octet_string.as_slice())))?)
     }
 
     fn char_string<P: TLVBuilderParent>(
@@ -746,7 +750,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        self.with(|data| builder.set(data.char_string.as_str()))
+        Ok(self.with(|data| builder.set(data.char_string.as_str()))?)
     }
 
     fn long_char_string<P: TLVBuilderParent>(
@@ -754,7 +758,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        self.with(|data| builder.set(data.long_char_string.as_str()))
+        Ok(self.with(|data| builder.set(data.long_char_string.as_str()))?)
     }
 
     fn epoch_us(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
@@ -863,25 +867,25 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 .end()
         }
 
-        match builder {
+        Ok(match builder {
             ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_nullables_and_optionals_struct.len() as u16 {
                     let s = &data.list_nullables_and_optionals_struct[index as usize];
 
-                    read_one(builder, s)
+                    Ok::<_, Error>(read_one(builder, s)?)
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }),
+            })?,
             ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for s in &data.list_nullables_and_optionals_struct {
                     builder = read_one(builder.push()?, s)?;
                 }
 
                 builder.end()
-            }),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+            })?,
+            ArrayAttributeRead::ReadNone(builder) => builder.end()?,
+        })
     }
 
     fn enum_attr(&self, _ctx: impl ReadContext) -> Result<SimpleEnum, Error> {
@@ -931,25 +935,25 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
-        match builder {
+        Ok(match builder {
             ArrayAttributeRead::ReadOne(index, builder) => self.with(|data| {
                 if index < data.list_long_octet_string.len() as u16 {
-                    builder.set(Octets(
+                    Ok::<_, Error>(builder.set(Octets(
                         data.list_long_octet_string[index as usize].as_slice(),
-                    ))
+                    ))?)
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
-            }),
+            })?,
             ArrayAttributeRead::ReadAll(mut builder) => self.with(|data| {
                 for i in &data.list_long_octet_string {
                     builder = builder.push(Octets(i.as_slice()))?;
                 }
 
-                builder.end()
-            }),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+                Ok::<_, Error>(builder.end()?)
+            })?,
+            ArrayAttributeRead::ReadNone(builder) => builder.end()?,
+        })
     }
 
     fn list_fabric_scoped<P: TLVBuilderParent>(
@@ -1161,11 +1165,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         builder: NullableBuilder<P, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         self.with(|data| {
-            if let Some(o) = data.nullable_octet_string.as_opt_deref() {
+            Ok(if let Some(o) = data.nullable_octet_string.as_opt_deref() {
                 builder.non_null()?.set(Octets(o))
             } else {
                 builder.null()
-            }
+            }?)
         })
     }
 
@@ -1175,11 +1179,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         builder: NullableBuilder<P, Utf8StrBuilder<P>>,
     ) -> Result<P, Error> {
         self.with(|data| {
-            if let Some(o) = data.nullable_char_string.as_opt_deref() {
+            Ok(if let Some(o) = data.nullable_char_string.as_opt_deref() {
                 builder.non_null()?.set(o)
             } else {
                 builder.null()
-            }
+            }?)
         })
     }
 
@@ -1208,7 +1212,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     .i(s.i)?
                     .end()
             } else {
-                builder.null()
+                Ok(builder.null()?)
             }
         })
     }
@@ -1282,7 +1286,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     .my_enum(s.my_enum.clone())?
                     .end()
             } else {
-                builder.null()
+                Ok(builder.null()?)
             }
         })
     }

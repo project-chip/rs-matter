@@ -197,15 +197,15 @@ pub(crate) fn read_enum_array<P: TLVBuilderParent>(
             for item in items {
                 b = b.push(item)?;
             }
-            b.end()
+            Ok(b.end()?)
         }
         ArrayAttributeRead::ReadOne(idx, b) => {
             let Some(item) = items.get(idx as usize) else {
                 return Err(ErrorCode::ConstraintError.into());
             };
-            b.set(item)
+            Ok(b.set(item)?)
         }
-        ArrayAttributeRead::ReadNone(b) => b.end(),
+        ArrayAttributeRead::ReadNone(b) => b.end().map_err(Into::into),
     }
 }
 

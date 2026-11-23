@@ -54,7 +54,9 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
-use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::tlv::{
+    FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TlvError, ToTLV, TLV,
+};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{String, Vec};
@@ -112,14 +114,14 @@ struct EndpointLabels<const N: usize> {
 }
 
 impl<const N: usize> ToTLV for EndpointLabels<N> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), TlvError> {
         tw.start_struct(tag)?;
         self.endpoint_id.to_tlv(&TLVTag::Context(0), &mut tw)?;
         self.entries.to_tlv(&TLVTag::Context(1), &mut tw)?;
         tw.end_container()
     }
 
-    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, TlvError>> {
         // Not used by `Persist::store_tlv` — that goes through
         // `to_tlv` above. Returning an empty iterator keeps the trait
         // bound satisfied without dragging in extra machinery.
@@ -128,7 +130,7 @@ impl<const N: usize> ToTLV for EndpointLabels<N> {
 }
 
 impl<'a, const N: usize> FromTLV<'a> for EndpointLabels<N> {
-    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
         let s = element.structure()?;
         Ok(Self {
             endpoint_id: EndptId::from_tlv(&s.ctx(0)?)?,

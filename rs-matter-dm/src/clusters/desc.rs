@@ -229,16 +229,16 @@ impl ClusterHandler for DescHandler<'_> {
                     builder = builder.push(&cluster.id)?;
                 }
 
-                builder.end()
+                Ok(builder.end()?)
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some(cluster) = endpoint.clusters.get(index as usize) else {
                     return Err(ErrorCode::ConstraintError.into());
                 };
 
-                builder.set(&cluster.id)
+                Ok(builder.set(&cluster.id)?)
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            ArrayAttributeRead::ReadNone(builder) => builder.end().map_err(Into::into),
         })
     }
 
@@ -252,15 +252,15 @@ impl ClusterHandler for DescHandler<'_> {
                 for client_id in endpoint.client_clusters {
                     builder = builder.push(client_id)?;
                 }
-                builder.end()
+                Ok(builder.end()?)
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some(client_id) = endpoint.client_clusters.get(index as usize) else {
                     return Err(ErrorCode::ConstraintError.into());
                 };
-                builder.set(client_id)
+                Ok(builder.set(client_id)?)
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            ArrayAttributeRead::ReadNone(builder) => builder.end().map_err(Into::into),
         })
     }
 
@@ -304,7 +304,7 @@ impl ClusterHandler for DescHandler<'_> {
                 .unique_id
                 .ok_or_else(|| Error::new(ErrorCode::AttributeNotFound))?;
 
-            builder.set(unique_id)
+            Ok(builder.set(unique_id)?)
         })
     }
 
@@ -322,23 +322,23 @@ impl ClusterHandler for DescHandler<'_> {
                 .map(|e| e.id)
                 .filter(|e| self.matcher.matches(ctx.attr().endpoint_id, *e));
 
-            match builder {
+            Ok(match builder {
                 ArrayAttributeRead::ReadAll(mut builder) => {
                     for id in ep_ids {
                         builder = builder.push(&id)?;
                     }
 
-                    builder.end()
+                    builder.end()?
                 }
                 ArrayAttributeRead::ReadOne(index, builder) => {
                     let Some(ep_id) = ep_ids.nth(index as usize) else {
                         return Err(ErrorCode::ConstraintError.into());
                     };
 
-                    builder.set(&ep_id)
+                    builder.set(&ep_id)?
                 }
-                ArrayAttributeRead::ReadNone(builder) => builder.end(),
-            }
+                ArrayAttributeRead::ReadNone(builder) => builder.end()?,
+            })
         })
     }
 }
