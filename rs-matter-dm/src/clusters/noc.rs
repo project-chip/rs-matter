@@ -26,9 +26,7 @@ use crate::attest::DeviceAttestation;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::dm::clusters::acl::{emit_acl_entry_changed, ChangeTypeEnum};
-use crate::dm::clusters::adm_comm;
 use crate::dm::clusters::gen_comm::GenCommHandler;
-use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, MAX_FABRICS};
@@ -708,131 +706,27 @@ impl ClusterHandler for NocHandler<'_> {
 
         let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
-        let notify_mdns = || self.matter.transport().notify_comm_window_changed();
+        // If our own session is running on the fabric being removed, it is
+        // expired rather than removed at once, so that the response can be
+        // sent back over it
+        let removed = self.matter.remove_fabric(
+            fab_idx,
+            Some(ctx.transaction_id().session_id()),
+            ctx.kv(),
+            &ctx,
+            &ctx,
+        )?;
 
-        // The removal is reported as failed if the fabric stays in storage
-        let mut persist = FabricPersist::strict(ctx.kv());
-
-        let (status, opener_fabric_removed, persisted) =
-            ctx.transaction_id().with_state(self.matter, |state| {
-                let sess = ctx.transaction_id().session(state.sessions);
-
-                if state.fabrics.remove(fab_idx).is_ok() {
-                    // If our own session is running on the fabric being removed,
-                    // we need to expire it rather than immediately remove it, so that
-                    // the response can be sent back properly
-                    let expire_sess_id =
-                        (sess.get_local_fabric_idx() == fab_idx.get()).then_some(sess.id());
-
-                    // Remove all sessions related to the fabric being removed
-                    // If `expire_sess_id` is Some, the session will be expired instead of removed.
-                    state.sessions.remove_for_fabric(fab_idx, expire_sess_id);
-
-                    // Drop any CASE session resumption records that were
-                    // scoped to this fabric so a subsequent CASE handshake
-                    // to any peer that used to belong to it starts fresh.
-                    #[cfg(feature = "case-resumption")]
-                    state.resumption.remove_for_fabric(fab_idx);
-
-                    // Notify that a session was removed
-                    self.matter.transport().notify_session_removed();
-
-                    // The resumption cache was just mutated — wake the
-                    // background persist task so the on-disk copy sheds
-                    // the removed fabric's records too.
-                    #[cfg(feature = "case-resumption")]
-                    self.matter.transport().notify_resumption_dirty();
-
-                    // Notify that our mDNS records might have changed
-                    notify_mdns();
-
-                    // Note that since we might have removed our own session, the exchange
-                    // will terminate with a "NoSession" error, but that's OK and handled properly
-
-                    // The fabric is gone from memory already, so a failure to remove
-                    // it from storage too is reported only once the removal is complete.
-                    // The next fabric index is saved too, so that the removed one is not reused
-                    let mut persisted = persist
-                        .store_next_fab_idx(state.fabrics.next_fab_idx())
-                        .and(persist.remove(fab_idx));
-
-                    // Matter Core spec: if the removed fabric is the
-                    // one that installed the TrustedTimeSource, the device SHALL
-                    // clear the attribute (and emit `MissingTrustedTimeSource`).
-                    if state.rtc.trusted_time_source().map(|tts| tts.fab_idx) == Some(fab_idx) {
-                        persisted = persisted.and(state.rtc.set_trusted_time_source_persist(
-                            None,
-                            persist.persist_mut(),
-                            &ctx,
-                            &ctx,
-                        ));
-
-                        self.matter.notify_trusted_time_source_changed();
-                    }
-
-                    info!("Removed operational fabric with local index {}", fab_idx);
-
-                    // If the removed fabric was the one that opened the current
-                    // commissioning window, `AdminFabricIndex` (and `AdminVendorId`)
-                    // transition to null and subscribers must be notified — see
-                    // Matter Core spec.
-                    let opener_fabric_removed = state
-                        .pase
-                        .comm_window()
-                        .and_then(|w| w.opener())
-                        .map(|opener| opener.fab_idx == fab_idx)
-                        .unwrap_or(false);
-
-                    Ok::<_, Error>((
-                        NodeOperationalCertStatusEnum::OK,
-                        opener_fabric_removed,
-                        persisted,
-                    ))
-                } else {
-                    Ok((
-                        NodeOperationalCertStatusEnum::InvalidFabricIndex,
-                        false,
-                        Ok(()),
-                    ))
-                }
-            })?;
-
-        persist.run()?;
-
-        if matches!(status, NodeOperationalCertStatusEnum::OK) {
-            // Matter Core spec: the node emits `BasicInformation::Leave` for a
-            // fabric that is about to be removed. Emitted through the generic
-            // cross-cluster path (this is the NOC handler, the event belongs
-            // to BasicInformation on EP0) - `TC_BINFO_2_2` step 5 reads it and
-            // checks its `fabricIndex` matches the fabric just removed.
-            //
-            // Best-effort: a missing diagnostic event must not fail the
-            // (already-committed) fabric removal.
-            let emitted = crate::dm::clusters::decl::basic_information::Leave::emit_for(
-                &ctx,
-                ROOT_ENDPOINT_ID,
-                |event| event.fabric_index(fab_idx.get())?.end(),
-            );
-
-            if let Err(e) = emitted {
-                warn!("Failed to emit the Leave event: {:?}", e);
-            }
-
+        let status = if removed {
             // Broadcast `LifecycleOp::FabricRemoval`, so handlers owning
             // fabric-scoped state outside the fabric table (bindings, scenes,
-            // ...) drop the removed fabric's entries. Outside `with_state`,
-            // since the broadcast runs the handlers inline.
+            // ...) drop the removed fabric's entries
             ctx.notify_fabric_removed(fab_idx);
-        }
 
-        // RemoveFabric mutates NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts
-        ctx.notify_own_cluster_changed();
-
-        if opener_fabric_removed {
-            ctx.notify_cluster_changed(ROOT_ENDPOINT_ID, adm_comm::FULL_CLUSTER.id);
-        }
-
-        persisted?;
+            NodeOperationalCertStatusEnum::OK
+        } else {
+            NodeOperationalCertStatusEnum::InvalidFabricIndex
+        };
 
         response
             .status_code(status)?
