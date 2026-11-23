@@ -339,13 +339,7 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
                         return Ok(SCStatusCodes::InvalidParameter);
                     }
                 };
-                let encrypted = match req
-                    .structure()
-                    .and_then(|s| s.ctx(1))
-                    .and_then(|c| c.str())
-                    // the `match` below pins no type, so the target is named here
-                    .map_err(Error::from)
-                {
+                let encrypted = match req.structure().and_then(|s| s.ctx(1)).and_then(|c| c.str()) {
                     Ok(s) => s,
                     Err(e) => {
                         error!("Sigma3 encrypted field parse failed: {}", e);
@@ -379,8 +373,6 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
                 let decrypted = &decrypted[..len];
                 let decrypted_req: Sigma3Decrypt<'_> = match get_root_node_struct(decrypted)
                     .and_then(|n| Sigma3Decrypt::from_tlv(&n))
-                    // the `match` below pins no type, so the target is named here
-                    .map_err(Error::from)
                 {
                     Ok(req) => req,
                     Err(e) => {

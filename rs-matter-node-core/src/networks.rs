@@ -125,6 +125,7 @@ impl From<TlvError> for NetworksError {
         NetworksError::Other(err.into())
     }
 }
+
 /// Trait for managing networks' credentials storage
 pub trait Networks: MaybeSendSync {
     /// Return the maximum number of networks supported by the implementation

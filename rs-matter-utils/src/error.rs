@@ -82,8 +82,26 @@ impl<T: MatterError> Error2<T> {
     }
 
     #[cfg(all(feature = "alloc", feature = "backtrace"))]
-    pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync)> {
+    pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync + 'static)> {
         self.inner.as_ref().map(|err| err.as_ref())
+    }
+
+    /// Whether a conversion into another error keeps this one as its source.
+    ///
+    /// Not when backtraces are disabled at run time and this error has no source
+    /// of its own: it would add only its code, at the cost of an allocation.
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    fn keep_as_source(&self) -> bool {
+        #[cfg(feature = "std")]
+        {
+            self.inner.is_some()
+                || self.backtrace.status() == std::backtrace::BacktraceStatus::Captured
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            true
+        }
     }
 }
 
@@ -95,17 +113,21 @@ impl<T: MatterError> From<T> for Error2<T> {
 
 impl<T: MatterError> core::fmt::Debug for Error2<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        #[cfg(not(all(feature = "std", feature = "backtrace")))]
-        {
-            // TODO: Does this show the error type?
-            write!(f, "Error::{}", self)?;
-        }
+        // TODO: Does this show the error type?
+        write!(f, "Error::{:?}", self.code)?;
 
         #[cfg(all(feature = "std", feature = "backtrace"))]
         {
-            writeln!(f, "Error::{} {{", self)?;
-            write!(f, "{}", self.backtrace())?;
-            writeln!(f, "}}")?;
+            if self.backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+                write!(f, "\n{}", self.backtrace)?;
+            }
+        }
+
+        #[cfg(all(feature = "alloc", feature = "backtrace"))]
+        {
+            if let Some(inner) = &self.inner {
+                write!(f, "\nCaused by: {:?}", inner)?;
+            }
         }
 
         Ok(())
@@ -183,26 +205,43 @@ pub enum Base38ErrorCode {
 // `Base38Error` needs no bridge: its only consumer (`rs-matter-pairing`) already
 // converts it explicitly at the call site.
 
-impl From<BufferErrorCode> for Error {
+impl From<BufferErrorCode> for ErrorCode {
     fn from(value: BufferErrorCode) -> Self {
         match value {
-            BufferErrorCode::BufferTooSmall => ErrorCode::BufferTooSmall.into(),
-            BufferErrorCode::UnexpectedEof => ErrorCode::TruncatedPacket.into(),
+            BufferErrorCode::BufferTooSmall => ErrorCode::BufferTooSmall,
+            BufferErrorCode::UnexpectedEof => ErrorCode::TruncatedPacket,
         }
+    }
+}
+
+impl From<BufferErrorCode> for Error {
+    fn from(value: BufferErrorCode) -> Self {
+        ErrorCode::from(value).into()
     }
 }
 
 /// Bridge any `Error2` to the legacy `Error`, given a conversion for its code.
 ///
-/// A crate defining its own error code only needs `impl From<ItsCode> for Error`,
+/// With `alloc` and `backtrace`, the new error captures its own backtrace and
+/// keeps the `Error2` - with its code and backtrace - as its source, unless
+/// backtraces are disabled at run time (see `Error2::keep_as_source`).
+///
+/// A crate defining its own error code only needs `impl From<ItsCode> for ErrorCode`,
 /// which the orphan rule does allow it - unlike an impl over `Error2<ItsCode>`,
 /// where neither type is local to it.
 impl<T> From<Error2<T>> for Error
 where
-    T: MatterError + Into<Error>,
+    T: MatterError + Into<ErrorCode> + Send + Sync + 'static,
 {
     fn from(value: Error2<T>) -> Self {
-        value.code().into()
+        #[cfg(all(feature = "alloc", feature = "backtrace"))]
+        {
+            if value.keep_as_source() {
+                return Self::new_with_details(value.code().into(), Box::new(value));
+            }
+        }
+
+        Self::new(value.code().into())
     }
 }
 
@@ -387,7 +426,7 @@ impl Error {
     }
 
     #[cfg(all(feature = "alloc", feature = "backtrace"))]
-    pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync)> {
+    pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync + 'static)> {
         self.inner.as_ref().map(|err| err.as_ref())
     }
 }
@@ -508,16 +547,20 @@ impl<T: num_enum::TryFromPrimitive> From<num_enum::TryFromPrimitiveError<T>> for
 
 impl core::fmt::Debug for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        #[cfg(not(all(feature = "std", feature = "backtrace")))]
-        {
-            write!(f, "Error::{}", self)?;
-        }
+        write!(f, "Error::{:?}", self.code)?;
 
         #[cfg(all(feature = "std", feature = "backtrace"))]
         {
-            writeln!(f, "Error::{} {{", self)?;
-            write!(f, "{}", self.backtrace())?;
-            writeln!(f, "}}")?;
+            if self.backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+                write!(f, "\n{}", self.backtrace)?;
+            }
+        }
+
+        #[cfg(all(feature = "alloc", feature = "backtrace"))]
+        {
+            if let Some(inner) = &self.inner {
+                write!(f, "\nCaused by: {:?}", inner)?;
+            }
         }
 
         Ok(())
@@ -758,9 +801,66 @@ mod tests {
         let _ = err.backtrace().status();
         let _ = format!("{}", err.backtrace());
 
-        // Debug embeds the backtrace block
+        // Debug shows the code, then the backtrace if one was captured
         let debug = format!("{err:?}");
-        assert!(debug.starts_with("Error::Failure {"));
-        assert!(debug.trim_end().ends_with('}'));
+        assert!(debug.starts_with("Error::Failure"));
+        if err.backtrace().status() != std::backtrace::BacktraceStatus::Captured {
+            assert_eq!(debug, "Error::Failure");
+        }
+    }
+
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    #[test]
+    fn converted_error_is_kept_as_source() {
+        use super::{BufferError, BufferErrorCode};
+
+        // An error with a source of its own is always kept
+        let err = Error::from(BufferError::new_with_details(
+            BufferErrorCode::UnexpectedEof,
+            Box::new(std::io::Error::other("short read")),
+        ));
+        assert_eq!(err.code(), ErrorCode::TruncatedPacket);
+
+        let source = core::error::Error::source(&err).unwrap();
+        let source = source.downcast_ref::<BufferError>().unwrap();
+        assert_eq!(source.code(), BufferErrorCode::UnexpectedEof);
+
+        assert_eq!(
+            format!("{err}"),
+            "TruncatedPacket: UnexpectedEof: short read"
+        );
+
+        let debug = format!("{err:?}");
+        assert!(debug.starts_with("Error::TruncatedPacket"));
+        assert!(debug.contains("\nCaused by: Error::UnexpectedEof"));
+        assert!(debug.contains("short read"));
+
+        // Otherwise only when backtraces are enabled at run time
+        #[cfg(feature = "std")]
+        {
+            let source = BufferError::new(BufferErrorCode::UnexpectedEof);
+            let captured = source.backtrace().status() == std::backtrace::BacktraceStatus::Captured;
+
+            assert_eq!(Error::from(source).details().is_some(), captured);
+        }
+    }
+
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    #[test]
+    fn details_can_be_downcast() {
+        use super::{BufferError, BufferErrorCode};
+
+        let err = Error::from(BufferError::new_with_details(
+            BufferErrorCode::UnexpectedEof,
+            Box::new(std::io::Error::other("short read")),
+        ));
+
+        // `Error::details` is the converted `Error2`, and its `details` the I/O error
+        let source = err.details().unwrap().downcast_ref::<BufferError>();
+        let source = source.unwrap();
+        assert_eq!(source.code(), BufferErrorCode::UnexpectedEof);
+
+        let io = source.details().unwrap().downcast_ref::<std::io::Error>();
+        assert_eq!(io.unwrap().to_string(), "short read");
     }
 }

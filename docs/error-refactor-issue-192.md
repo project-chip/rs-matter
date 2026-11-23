@@ -12,7 +12,9 @@ cheap to implement it pollutes APIs and makes it difficult to distinguish errors
 ![](assets/rs-matter-microcrates-errors-current.svg)
 
 Our target error system defines at least one error type per crate with clear boundaries
-and explicit conversions between errors. Below is the final proposed design.
+and explicit conversions between errors. Below is the final proposed design. Most errors
+are handled close to where they happen, so few of these conversions are needed in the
+end; see "Where errors are handled" below.
 
 ![](assets/rs-matter-microcrates-errors-target.svg)
 
@@ -164,6 +166,45 @@ re-litigated in every PR unless a rule is agreed first.
 The rule is: **collapse at the layer where the distinction stops being
 actionable.** If a caller could plausibly branch on the difference, keep it; if no
 caller could, collapse it and log.
+
+With `alloc` and `backtrace`, a conversion keeps the error it converts as the
+source of the new one (`new_with_details`): the new error captures its own
+backtrace, and `Debug` prints its code and backtrace, then those of the source.
+The bridge from `Error2` to `Error` does this, and a conversion between two
+`Error2` types should do the same. When backtraces are disabled at run time (e.g.
+`RUST_BACKTRACE` is not set) and the error has no source of its own, it is not
+kept, as it would add only its code at the cost of an allocation. Without these
+features, only the code is converted.
+
+## Where errors are handled
+
+A `From` conversion is needed only where an error is passed up into a crate with a
+different error type. The aim is to need few of them:
+
+- An error is handled by the first caller that can turn it into something for the
+  peer. Until then it is passed up unchanged.
+- An error that corresponds to an IM status is handled inside `rs-matter-im` and
+  written into the reply. A request that cannot be parsed is answered with a Status
+  Response carrying `INVALID_ACTION`, and the interaction ends. Data that cannot be
+  decoded inside an otherwise valid request is answered per path:
+  `INVALID_COMMAND` for a command field, `CONSTRAINT_ERROR` for an attribute value
+  outside its constraints.
+- `InteractionModel::handle` returns only the errors of the `Exchange` itself: a
+  send or receive that failed, a timeout, a session that is gone.
+
+The Matter spec asks for this, and the CHIP SDK works this way: its
+`InteractionModelEngine::OnMessageReceived` turns the status of each request
+handler into a Status Response, and returns only the error of sending it. In
+rs-matter today, a TLV error while parsing a request (e.g. in `req.inv_requests()?`)
+is still returned from `handle` as an error, and the exchange is dropped without a
+reply.
+
+With errors handled this way, the one large boundary left is from `TlvError` to the
+error of the cluster handlers in `rs-matter-dm-core`. The generated cluster code and
+the handlers cross it at a great many `?`, so this conversion should compile to
+nothing: either the handler error embeds `TlvErrorCode`, or its codes have the same
+numeric values as the `TlvErrorCode` ones. The bridge from `TlvErrorCode` to the
+legacy `ErrorCode` already works like that.
 
 ## A note for the `dm-core` step: not every error is a status
 
@@ -454,7 +495,10 @@ tlv's type, reached through `rs_matter_tlv::__private`.
 
 `Error` and `ErrorCode` are gone from both crates. What remains is the bridge in
 `rs-matter-tlv/src/error.rs`, which lets unconverted crates keep using `?`; it
-goes when the last of them is converted.
+goes when the last of them is converted. Each `TlvErrorCode` has the numeric value
+of the legacy `ErrorCode` it maps to, so the bridge compiles to nothing. This
+needed one more legacy code, `ErrorCode::TLVUnexpectedNull`, which is reported as
+`CONSTRAINT_ERROR`.
 
 ### The codes
 
@@ -512,10 +556,15 @@ spreading `TlvError` through the crate. In order of preference:
 5. **Otherwise `Ok(expr?)`**, or `.map_err(Into::into)` where `?` does not fit -
    a match arm or a `return`.
 
-Note that the `Ok(expr?)` wrappers are **not** temporary scaffolding. A `From`
-impl is what makes the `?` legal; it does not make a tail expression's type
-match. They stay when the crate gets its own error - only the name of the error
-changes.
+Note that the `Ok(expr?)` and `.map_err(Into::into)` wrappers are not free. Even
+where the conversion of the error compiles to nothing, each of them copies the
+`Ok` value - often a builder of several words - from one `Result` into another,
+and at `opt-level = "z"` that copy stays. On thumbv7em they account for about
+1.4 KB of flash in this step. They go away when a function returns the same error
+type as the call it forwards. So when a crate is converted, a function whose only
+failures are TLV failures should return `TlvError` rather than wrap it - for
+example the request accessors of `rs-matter-im-core`, such as
+`ReadReq::attr_requests`.
 
 Where an API forces a closure's error type and the closure needs to report
 something that type cannot express, carry the fact out of band rather than
