@@ -36,6 +36,10 @@ The per-crate process is:
 7. Repeat.
 8. When every crate is done, delete `Error` and `ErrorCode` from `rs-matter-utils`.
 
+**Open, to settle before the `im-core` step:** how an error is traced back to
+where it happened on targets without `backtrace`, and where it is logged. See
+"Tracing an error back to where it happened" below.
+
 **TODO**: Once this work is complete, replace this documentation with descriptions of
 the latest design, usages and conventions for future work to follow.
 
@@ -127,8 +131,8 @@ Once the signature is `Result<(), TlvError>` the template body becomes
 **Unit B — `codegen` + `dm-core` + `dm-clusters`.** `rs-matter-codegen` is depended
 on by `rs-matter-dm-clusters` alone, and is run from its `build.rs` into `OUT_DIR`.
 Its templates emit cluster *handler* impls, so the error type they must name is
-fixed by `dm-core`'s handler trait signatures — not by TLV. These three sit at
-positions 9–10 in the order, already adjacent.
+fixed by `dm-core`'s handler trait signatures — not by TLV. They are one step,
+#7 in the order.
 
 **The derive ripple is one impl, not thirteen.** Changing the TLV trait error type
 touches derive-generated code in 13 crates — `im-core` (9 derive files, 40 call
@@ -145,7 +149,7 @@ signature churn is not. It is also the home of `IMStatusCode`, so this is where
 
 **`dm` is the largest single step**: 624 mentions, 31 distinct variants, 62
 signatures — but only 2 dependents (`rs-matter`, `stack`), so it ripples almost
-nowhere. It lands at #19 because it depends on nearly everything.
+nowhere. It lands at #16 because it depends on nearly everything.
 
 ## Naming and conversion convention
 
@@ -176,6 +180,38 @@ The bridge from `Error2` to `Error` does this, and a conversion between two
 kept, as it would add only its code at the cost of an allocation. Without these
 features, only the code is converted.
 
+A code says what happened, not who caused it. A crate often cannot tell
+whether an input came from the peer, from storage or from the node's own code;
+the caller can, and it decides how to answer.
+
+A failure that is impossible unless the code is wrong, e.g. on a length fixed by
+a type or a constant, gets no code: it is an `unwrap!`. Never panic on data that
+comes from storage or that a peer can reach: a wrong guess becomes a boot loop
+or a remote reboot.
+
+Each crate defines its error with `error_type!` from `rs-matter-utils`: a newtype
+over `Error2` with the crate's code. The orphan rule forbids
+`impl From<OtherError> for ItsError` when both are `Error2` types, but allows it
+for the newtype. So a crate implements `From` for the errors of the crates below
+it, and `?` converts them. The `From` uses `Error2::convert`, which, with `alloc`
+and `backtrace`, keeps the converted error as the source:
+
+```rust
+rs_matter_utils::error_type!(
+    /// The error of `rs-matter-cert`.
+    pub CertError, CertErrorCode
+);
+
+impl From<TlvError> for CertError {
+    fn from(err: TlvError) -> Self {
+        let code = err.code().into();
+        err.convert(code).into()
+    }
+}
+```
+
+The newtype dereferences to the `Error2`, e.g. for its `details` and `backtrace`.
+
 ## Where errors are handled
 
 A `From` conversion is needed only where an error is passed up into a crate with a
@@ -205,6 +241,102 @@ the handlers cross it at a great many `?`, so this conversion should compile to
 nothing: either the handler error embeds `TlvErrorCode`, or its codes have the same
 numeric values as the `TlvErrorCode` ones. The bridge from `TlvErrorCode` to the
 legacy `ErrorCode` already works like that.
+
+## Tracing an error back to where it happened (an idea, not implemented)
+
+With `alloc` and `backtrace`, a converted error keeps the original as its source,
+so `Debug` shows where each error in the chain happened. Without them, as on most
+embedded targets, a conversion keeps only the new code. A log then shows e.g. that
+a certificate was rejected with `InvalidFormat`, but not which TLV read failed.
+Three things pull against each other: the information, the flash it costs, and
+logs that stay readable.
+
+What others do:
+
+- OpenThread passes errors up as plain codes (`SuccessOrExit`, about 1,850 uses in
+  its core) without logging them, and logs once where an error is handled
+  (`LogWarnOnError(error, "send petition response")`, about 50 uses).
+- CHIP does the same by default. With `CHIP_CONFIG_ERROR_SOURCE`, which is off by
+  default, every `CHIP_ERROR` also carries the file and line where it was
+  created, and its `LogErrorOnFailure` macros print them.
+
+### Recording where an error happened
+
+A cargo feature, e.g. `error-location`, makes `Error2` hold a
+`&'static core::panic::Location`. It is set with `#[track_caller]` on
+`Error2::new`, on the `From` of a code, and on the `From` impls between the
+crates. A `#[track_caller]` `From::from` sees the `?` that calls it, so the
+recorded place is the line of that `?`. `convert` keeps the location of the error
+it converts, so the location is the place where the error first happened.
+
+Recording writes no log line. It costs 4 bytes per error value on 32-bit targets,
+16 bytes of `.rodata` for every place that creates or converts an error, and the
+file names. That is why it is a feature, off by default.
+
+### Is one location enough?
+
+Maybe not. The location of a generic error is often in generic code: a
+`TlvError` would point at a line in `rs-matter-tlv`'s `read.rs`, which does not
+say whether the certificate code or the IM was reading. Three ways to get more,
+none of which adds log lines:
+
+- `#[track_caller]` on the public fallible functions of the low-level crates,
+  e.g. the TLV accessors and `WriteBuf`/`ReadBuf`, only with `error-location`. The
+  recorded location is then the line that called them, e.g. in `rs-matter-cert`.
+  Without the feature they stay as they are, since `#[track_caller]` passes a
+  hidden argument at every call.
+- A short chain of locations rather than one: where the error was created, and
+  each conversion after it, e.g. up to four. The handler's line then shows the
+  path of the error through the crates, like a small backtrace. Each slot costs 4
+  bytes in every error value, and so in every `Result` and future that holds one.
+- A `debug!` at each conversion, as a verbose mode that is filtered per module,
+  e.g. `DEFMT_LOG=rs_matter_cert=debug`, for when someone chases one problem.
+
+This is worth settling soon: every crate step adds `From` impls between the
+errors. If they come from a macro in `rs-matter-utils`, e.g.
+`error_from!(TlvError => CertError, ..)`, rather than being written by hand, the
+`#[track_caller]` and the recording can be added in one place, chosen by the
+features of `rs-matter-utils` like the `defmt` impl of `error_type!`. The
+`im-core` and `dm-core` steps add the most of these conversions, so before them.
+
+### Where to log
+
+An error is logged once, where it is handled: where it ends as a status, a
+dropped message or a failed step. Turning on `error-location` then adds the
+origin to those lines, and never adds lines of its own. The places:
+
+1. The responder loop, when it abandons an exchange (`respond_once`).
+2. The IM, where an error becomes a status.
+3. CASE and PASE, where a handshake fails.
+4. The transport, where it drops a message.
+5. A background task that gives up or retries, e.g. persisting or reporting.
+6. The commissioner, where a step fails.
+
+The level depends on who caused the failure:
+
+- The node itself, e.g. `NoMemory`, `BufferTooSmall` or a bug: `warn!` or
+  `error!`. It is rare, and it needs fixing.
+- A peer: `warn!` once when it ends a handshake or a commissioning, which is rare
+  and matters when two products do not work together. `debug!` for each failed
+  path of a request and for each dropped message, as a peer decides how often
+  these happen.
+- An ordinary outcome, e.g. `NoSpace` when a report is split into chunks, the end
+  of a list, a lookup that finds nothing, or `Busy`: no log.
+
+Never at each `?`, at each conversion between the crates' errors, or for each item
+of a request.
+
+One more kind of place logs on its own: a conversion that drops information that
+the error cannot carry, e.g. an mbedtls, openssl, `der` or I/O error mapped to a
+code. There, a `debug!` with the original error. With `defmt`, the format string
+costs no flash, and the file and line come from the debug info
+(`defmt-print --show-location`). Below the `debug` level it compiles to nothing.
+
+Today's code differs from this in a few places, to be changed when the crates are
+converted: the IM invoker logs every failed path with `error!`, also for ordinary
+answers such as an unsupported attribute; the transport logs every dropped message
+with `error!`; and the crypto backends log input that a peer can send with
+`error!`.
 
 ## A note for the `dm-core` step: not every error is a status
 
@@ -255,6 +387,9 @@ whatever `dm-core` ends up with has to implement `From<TlvError>`.
 ---
 
 # Appendix A - ErrorCode / IMStatusCode usage by crate (production code only)
+
+These counts are from before the `tlv` step and are not updated as the crates are
+converted.
 
 Generated from source. Counts qualified-path mentions (`ErrorCode::X`, `IMStatusCode::X`) in each crate's `src/`, with **line comments and every `#[cfg(test)]` item removed**, and the `tests/` and `examples/` workspace members excluded. Blank cells are zero.
 
@@ -573,3 +708,104 @@ a store read that fails, and `EventWriter` in `rs-matter-im` does it for an even
 larger than the whole ring buffer - in both cases the error is logged before the
 information is lost.
 
+## `rs-matter-crypto`
+
+The crate raised three legacy codes: `InvalidData` (35 times), `BufferTooSmall`
+(3) and `NoSpace` (1). Three codes replace them. Each has the value of the legacy
+code in the last column, so the bridge to `Error` compiles to nothing.
+
+| Code | Means | Legacy code |
+|---|---|---|
+| `InvalidInput` | An input cannot be used: wrong length, not a valid key, point, scalar or signature encoding, or a message that fails authenticated decryption. | `InvalidData` |
+| `NoMemory` | The backend could not allocate memory. | `NoMemory` |
+| `BufferTooSmall` | A buffer supplied by the caller is too small: for an encrypted message and its tag, or for a CSR. | `BufferTooSmall` |
+
+How the failures were sorted:
+
+- Keys, points, scalars, signatures and ciphertexts can come from a peer or from
+  storage, so a failure to use them is `InvalidInput`, never a panic. This
+  includes the errors that mbedtls reports from deep inside a computation: its
+  scalar multiplication, ECDSA and ECDH check their keys and points, and
+  `merr_check!` reports `MBEDTLS_ERR_ECP_INVALID_KEY` as `InvalidInput`.
+- All backends reject the same inputs on import: a scalar that is not below the
+  group order, and a secret key that is also zero. A computation on a peer's
+  point can give the point at infinity, which has no canonical form; writing it
+  is `InvalidInput` too.
+- A failure on a length fixed by a type or a constant (the HKDF and PBKDF2
+  output, the CCM key and nonce) is an `unwrap!`. The mbedtls and openssl
+  backends already panicked on any other error of their libraries, in
+  `merr_check!` and `openssl_check!`.
+- Any mbedtls module can allocate, also behind the pointers of a context that
+  lives in place. `merr_check!` reports every `*_ALLOC_FAILED` code as
+  `NoMemory`, and the contexts on the stack are freed on every path.
+- openssl still panics when it cannot allocate: its error stack has no reason
+  code for that which works across OpenSSL versions, and it runs only on hosts.
+- RustCrypto no longer allocates. In Rust, a failed allocation stops the program
+  rather than returning an error, so the CSR is written from a fixed template
+  rather than with `x509-cert`, whose types need the heap. All backends use the
+  template, with the key's `pub_key` and `sign`, so mbedtls and openssl no longer
+  need their X.509 writers either.
+- No code was left for other backend failures, as nothing produces one.
+
+How callers answer:
+
+- In the IM, an input that cannot be used is answered per command, in the
+  handler: `INVALID_COMMAND` for AddTrustedRootCertificate, the `InvalidNOC` or
+  `InvalidPublicKey` NOCResponse for AddNOC, the `PAKEParameterError` cluster
+  status for OpenCommissioningWindow. Not with `INVALID_ACTION`, which is for a
+  request that cannot be parsed. `NoMemory` is answered `RESOURCE_EXHAUSTED`.
+- In CASE and PASE, any failure is answered `INVALID_PARAMETER`, as CHIP does.
+- A message that fails decryption is dropped without an answer, as nothing can
+  be sent safely.
+
+## `rs-matter-pairing`
+
+The crate raised `InvalidData` (22 times), `BufferTooSmall` (7), `NotFound` (2)
+and `NoSpace` (1). Two codes are left, as no caller needs more: the node prints
+its codes, and a commissioner turns any parse failure into "not a valid code".
+CHIP reports a wrong check digit apart (`CHIP_ERROR_INTEGRITY_CHECK_FAILED`),
+but nothing in CHIP acts on it, so here it is logged where it happens.
+
+| Code | Means | Legacy code |
+|---|---|---|
+| `InvalidInput` | Not a valid onboarding payload, manual pairing code or verifier: a wrong prefix, character, length or check digit, or a field out of range. Also a payload too long for an NDEF short record. | `InvalidData` |
+| `BufferTooSmall` | A buffer supplied by the caller is too small. | `BufferTooSmall` |
+
+Finding no QR code in a camera frame is not an error, so `QrLuma::scan` returns
+an `Option` rather than `NotFound`.
+
+## `rs-matter-cert`
+
+The crate raised 16 legacy codes, 96 times. Ten codes are left, chosen by what
+two kinds of caller need:
+
+- On the device (CASE, AddNOC, AddTrustedRootCertificate), any failure ends the
+  same way, with `INVALID_PARAMETER`, the `InvalidNOC` NOCResponse or
+  `INVALID_COMMAND`. Only `NoMemory` is answered differently, as it is not the
+  peer's fault.
+- A commissioner verifying the attestation of a device reports why it failed. In
+  CHIP, the verifier maps each step to an `AttestationVerificationResult`, e.g.
+  `kDacFormatInvalid`, `kPaiSignatureInvalid`, `kPaaNotFound` or
+  `kCertificationDeclarationInvalidVendorId`. The verifier knows which object it
+  checks at each step, so the codes say only what happened.
+
+| Code | Means | Legacy code |
+|---|---|---|
+| `InvalidFormat` | A certificate, a CSR or a certification declaration cannot be decoded, or breaks the format that Matter requires for it, e.g. the basic constraints or the key usage for its place in the chain. CHIP's "format invalid". | `InvalidData` |
+| `WrongIssuer` | The certificate was not issued by the one given as its issuer: their key identifiers differ. CHIP's "authority not found". | `InvalidAuthKey` |
+| `InvalidSignature` | A signature does not verify. | `InvalidSignature` |
+| `OutsideValidityPeriod` | The certificate has expired, or is not valid yet. CHIP's verifier reports both as "expired". | `InvalidTime` |
+| `NotFound` | What was looked up is not there: a PAA in a trust store, the key that signed a certification declaration, or an attribute of a certificate. | `NotFound` |
+| `VendorIdMismatch` | A vendor ID does not match, e.g. the one of a certification declaration. | `CdInvalidVendorId` |
+| `ProductIdMismatch` | A product ID does not match, e.g. the ones of a certification declaration. | `CdInvalidProductId` |
+| `PaaNotAuthorized` | The certification declaration does not authorize the PAA. | `CdInvalidPaa` |
+| `BufferTooSmall` | A buffer supplied by the caller is too small. | `BufferTooSmall` |
+| `NoMemory` | The crypto backend could not allocate memory. | `NoMemory` |
+
+Each code has the value of the legacy code in the last column, so the bridge
+compiles to nothing. A TLV error converts to `InvalidFormat`, or to
+`BufferTooSmall` for `NoSpace`; a crypto error to `InvalidFormat`, `NoMemory` or
+`BufferTooSmall`.
+
+`FileAttestationTrustStore::from_directory` skips the files it cannot use, so
+reading the directory is its only failure, and it returns a `std::io::Error`.

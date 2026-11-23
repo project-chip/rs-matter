@@ -22,7 +22,7 @@
 //! raw (r || s) format used by Matter for signature verification.
 
 use crate::crypto::{PKC_CANON_SECRET_KEY_LEN, PKC_SIGNATURE_LEN};
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 use der::asn1::AnyRef;
 use der::{Decode, Header, SliceReader, Tag, Tagged};
 
@@ -51,30 +51,34 @@ const RAW_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
 ///
 /// # Errors
 ///
-/// Returns `ErrorCode::Invalid` if:
+/// Returns `CertErrorCode::InvalidFormat` if:
 /// - The DER structure is malformed
 /// - The signature components are not the expected size for P-256
 /// - The encoding does not follow the expected SEQUENCE { INTEGER, INTEGER } format
-pub fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; RAW_SIGNATURE_LEN], Error> {
-    let mut reader = SliceReader::new(der).map_err(|_| Error::from(ErrorCode::Invalid))?;
+pub fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; RAW_SIGNATURE_LEN], CertError> {
+    let mut reader =
+        SliceReader::new(der).map_err(|_| CertError::from(CertErrorCode::InvalidFormat))?;
 
     // Read the SEQUENCE header
-    let seq_header = Header::decode(&mut reader).map_err(|_| Error::from(ErrorCode::Invalid))?;
+    let seq_header =
+        Header::decode(&mut reader).map_err(|_| CertError::from(CertErrorCode::InvalidFormat))?;
 
     if seq_header.tag() != Tag::Sequence {
-        return Err(ErrorCode::Invalid.into());
+        return Err(CertErrorCode::InvalidFormat.into());
     }
 
     // Read INTEGER r
-    let r_any = AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::Invalid))?;
+    let r_any =
+        AnyRef::decode(&mut reader).map_err(|_| CertError::from(CertErrorCode::InvalidFormat))?;
     if r_any.tag() != Tag::Integer {
-        return Err(ErrorCode::Invalid.into());
+        return Err(CertErrorCode::InvalidFormat.into());
     }
 
     // Read INTEGER s
-    let s_any = AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::Invalid))?;
+    let s_any =
+        AnyRef::decode(&mut reader).map_err(|_| CertError::from(CertErrorCode::InvalidFormat))?;
     if s_any.tag() != Tag::Integer {
-        return Err(ErrorCode::Invalid.into());
+        return Err(CertErrorCode::InvalidFormat.into());
     }
 
     // Convert to fixed-length raw format
@@ -102,9 +106,9 @@ pub fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; RAW_SIGNATURE_LEN], Error> {
 ///
 /// # Errors
 ///
-/// Returns `ErrorCode::Invalid` if the integer value (after stripping leading
+/// Returns `CertErrorCode::InvalidFormat` if the integer value (after stripping leading
 /// zeros) is larger than the target buffer.
-pub fn copy_integer_to_fixed(target: &mut [u8], integer: &[u8]) -> Result<(), Error> {
+pub fn copy_integer_to_fixed(target: &mut [u8], integer: &[u8]) -> Result<(), CertError> {
     // Strip leading zeros
     let mut src = integer;
     while src.len() > 1 && src[0] == 0 {
@@ -112,7 +116,7 @@ pub fn copy_integer_to_fixed(target: &mut [u8], integer: &[u8]) -> Result<(), Er
     }
 
     if src.len() > target.len() {
-        return Err(ErrorCode::Invalid.into());
+        return Err(CertErrorCode::InvalidFormat.into());
     }
 
     // Right-align: pad with zeros on the left

@@ -147,7 +147,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::UnsupportedAccess => IMStatusCode::UnsupportedAccess,
             ErrorCode::Busy => IMStatusCode::Busy,
             ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
-            ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
+            ErrorCode::ResourceExhausted | ErrorCode::NoMemory => IMStatusCode::ResourceExhausted,
             ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
             ErrorCode::NeedsTimedInteraction => IMStatusCode::NeedsTimedInteraction,
             ErrorCode::ConstraintError | ErrorCode::TLVUnexpectedNull => {

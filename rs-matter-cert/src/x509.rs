@@ -18,7 +18,7 @@
 //! X.509 DER certificate parsing utilities for extracting Matter-specific data.
 
 use crate::crypto::PKC_CANON_PUBLIC_KEY_LEN;
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 
 use der::asn1::{AnyRef, BitStringRef, GeneralizedTime, ObjectIdentifier, OctetStringRef, UtcTime};
 use der::{Choice, Sequence, Tag};
@@ -237,12 +237,12 @@ struct Validity {
 }
 
 /// Parse a hex character (0-9, A-F, a-f) into its numeric value.
-fn hex_digit(b: u8) -> Result<u8, Error> {
+fn hex_digit(b: u8) -> Result<u8, CertError> {
     match b {
         b'0'..=b'9' => Ok(b - b'0'),
         b'A'..=b'F' => Ok(b - b'A' + 10),
         b'a'..=b'f' => Ok(b - b'a' + 10),
-        _ => Err(ErrorCode::InvalidData.into()),
+        _ => Err(CertErrorCode::InvalidFormat.into()),
     }
 }
 
@@ -250,9 +250,9 @@ fn hex_digit(b: u8) -> Result<u8, Error> {
 ///
 /// Used for Vendor ID and Product ID which are stored as UTF8String
 /// hex values in the Subject DN.
-fn parse_hex_u16(s: &[u8]) -> Result<u16, Error> {
+fn parse_hex_u16(s: &[u8]) -> Result<u16, CertError> {
     if s.len() != 4 {
-        return Err(ErrorCode::InvalidData.into());
+        return Err(CertErrorCode::InvalidFormat.into());
     }
 
     let mut val: u16 = 0;
@@ -267,7 +267,7 @@ fn parse_hex_u16(s: &[u8]) -> Result<u16, Error> {
 ///
 /// For GeneralizedTime with year 9999 (DateTime::INFINITY), returns `u64::MAX`
 /// to indicate no expiry.
-fn time_to_unix_secs(time: &Time) -> Result<u64, Error> {
+fn time_to_unix_secs(time: &Time) -> Result<u64, CertError> {
     let dt = match time {
         Time::Utc(utc) => utc.to_date_time(),
         Time::General(gt) => gt.to_date_time(),

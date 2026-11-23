@@ -19,7 +19,7 @@
 
 use core::fmt::Debug;
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{CryptoError, CryptoErrorCode};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TlvError, TlvErrorCode, ToTLV, TLV};
 use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 
@@ -250,9 +250,9 @@ impl<const N: usize> CryptoSensitive<N> {
     /// Try to load data from a byte slice.
     ///
     /// Returns an error if the slice length does not match the expected length.
-    pub fn try_load_from_slice(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub fn try_load_from_slice(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         if data.len() != N {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(CryptoErrorCode::InvalidInput.into());
         }
 
         self.data.copy_from_slice(data);
@@ -331,7 +331,7 @@ impl<const N: usize> From<[u8; N]> for CryptoSensitive<N> {
 }
 
 impl<const N: usize> TryFrom<&[u8]> for CryptoSensitive<N> {
-    type Error = Error;
+    type Error = CryptoError;
 
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
         let mut material = CryptoSensitive::new();
@@ -404,9 +404,9 @@ impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
     ///
     /// Returns an error if the slice length does not match the expected length.
     #[inline(always)]
-    pub fn try_new(material: &'a [u8]) -> Result<Self, Error> {
+    pub fn try_new(material: &'a [u8]) -> Result<Self, CryptoError> {
         if material.len() != N {
-            Err(ErrorCode::InvalidData)?;
+            Err(CryptoErrorCode::InvalidInput)?;
         }
 
         Ok(Self::new(Self::as_array(material).unwrap())) // TODO
@@ -473,7 +473,7 @@ impl<'a, const N: usize> From<&'a [u8; N]> for CryptoSensitiveRef<'a, N> {
 }
 
 impl<'a, const N: usize> TryFrom<&'a [u8]> for CryptoSensitiveRef<'a, N> {
-    type Error = Error;
+    type Error = CryptoError;
 
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
         Self::try_new(data)
@@ -487,7 +487,7 @@ mod tests {
 
     use rs_matter_tlv::TlvErrorCode;
 
-    use crate::error::ErrorCode;
+    use crate::error::CryptoErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVValue, ToTLV};
     use crate::utils::init::InitMaybeUninit;
     use crate::utils::storage::WriteBuf;
@@ -550,11 +550,11 @@ mod tests {
         // Too short and too long both fail and leave the contents untouched
         assert_eq!(
             a.try_load_from_slice(&[7, 7, 7]).unwrap_err().code(),
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         );
         assert_eq!(
             a.try_load_from_slice(&[7, 7, 7, 7, 7]).unwrap_err().code(),
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         );
         assert_eq!(a.access(), &[1, 2, 3, 4]);
 
@@ -622,11 +622,11 @@ mod tests {
 
         assert_eq!(
             CryptoSensitiveRef::<4>::try_new(&data).unwrap_err().code(),
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         );
         assert_eq!(
             CryptoSensitiveRef::<6>::try_new(&data).unwrap_err().code(),
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         );
 
         assert!(CryptoSensitiveRef::<2>::try_from(&data[..]).is_err());

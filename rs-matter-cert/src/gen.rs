@@ -26,7 +26,7 @@
 
 use crate::attest::trust_store::{compute_key_id, KeyId};
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignature, Crypto, PKC_CANON_PUBLIC_KEY_LEN};
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::CertRef;
@@ -150,7 +150,7 @@ impl<'a> CertGenerator<'a> {
         subject_pubkey: CanonPkcPublicKeyRef<'_>,
         issuer_pubkey: Option<CanonPkcPublicKeyRef<'_>>,
         signing_key: &C::SecretKey<'_>,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, CertError> {
         Self::validate_serial_number(serial_number)?;
 
         let subject_key_id = compute_key_id(&crypto, subject_pubkey)?;
@@ -202,7 +202,7 @@ impl<'a> CertGenerator<'a> {
         cert_type: CertType,
         subject: SubjectDN,
         issuer: IssuerDN,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, CertError> {
         let mut tw = WriteBuf::new(self.buf);
 
         tw.start_struct(&TLVTag::Anonymous)?;
@@ -315,7 +315,7 @@ impl<'a> CertGenerator<'a> {
         cert_type: CertType,
         subject_key_id: &KeyId,
         authority_key_id: &KeyId,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CertError> {
         // 1. Basic Constraints — per Matter Spec:
         //   RCAC: cA = TRUE,  pathLenConstraint shall NOT be present
         //   ICAC: cA = TRUE,  pathLenConstraint = 0
@@ -366,7 +366,7 @@ impl<'a> CertGenerator<'a> {
     fn sign_tbs<C: Crypto>(
         tbs_data: &[u8],
         signing_key: &C::SecretKey<'_>,
-    ) -> Result<CanonPkcSignature, Error> {
+    ) -> Result<CanonPkcSignature, CertError> {
         use crate::crypto::SigningSecretKey;
 
         let mut signature = CanonPkcSignature::new();
@@ -382,9 +382,9 @@ impl<'a> CertGenerator<'a> {
         &mut self,
         signature: &CanonPkcSignature,
         tbs_len: usize,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, CertError> {
         if tbs_len == 0 || self.buf[tbs_len - 1] != 0x18 {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(CertErrorCode::InvalidFormat.into());
         }
 
         let insert_pos = tbs_len - 1;
@@ -401,18 +401,18 @@ impl<'a> CertGenerator<'a> {
     }
 
     /// Validate serial number format.
-    fn validate_serial_number(serial: &[u8]) -> Result<(), Error> {
+    fn validate_serial_number(serial: &[u8]) -> Result<(), CertError> {
         if serial.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(CertErrorCode::InvalidFormat.into());
         }
         // Check for unnecessary leading zeros (except one needed for positive sign)
         if serial.len() > 1 && serial[0] == 0 && (serial[1] & 0x80) == 0 {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(CertErrorCode::InvalidFormat.into());
         }
         // Same rule for the other sign: X.690 8.3.2 forbids the first nine bits
         // being all ones, i.e. a redundant leading 0xFF on a negative value
         if serial.len() > 1 && serial[0] == 0xFF && (serial[1] & 0x80) != 0 {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(CertErrorCode::InvalidFormat.into());
         }
         Ok(())
     }

@@ -17,6 +17,122 @@
 
 //! The error type of `rs-matter`.
 
+#[doc(hidden)]
+pub mod __private {
+    #[cfg(feature = "defmt")]
+    pub use defmt;
+}
+
+/// Define the error type of a crate: a newtype over [`Error2`] with the given code.
+///
+/// The type is local to the crate, so the crate can implement `From` for the
+/// errors of the crates below it, and `?` converts them. It dereferences to the
+/// `Error2` inside, e.g. for its `details` and `backtrace`.
+///
+/// The code needs `impl From<Code> for ErrorCode`, for the bridge to the legacy
+/// `Error`.
+#[macro_export]
+macro_rules! error_type {
+    ($(#[$meta:meta])* $vis:vis $name:ident, $code:ty) => {
+        $(#[$meta])*
+        $vis struct $name($crate::error::Error2<$code>);
+
+        impl $name {
+            /// Create an error with the given code.
+            pub fn new(code: $code) -> Self {
+                Self($crate::error::Error2::new(code))
+            }
+
+            /// The code of the error.
+            pub const fn code(&self) -> $code {
+                self.0.code()
+            }
+
+            /// Convert into an error with the given code, see `Error2::convert`.
+            pub fn convert<U: $crate::error::MatterError>(
+                self,
+                code: U,
+            ) -> $crate::error::Error2<U> {
+                self.0.convert(code)
+            }
+
+            /// The `Error2` inside.
+            pub fn into_inner(self) -> $crate::error::Error2<$code> {
+                self.0
+            }
+        }
+
+        impl core::ops::Deref for $name {
+            type Target = $crate::error::Error2<$code>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl From<$code> for $name {
+            fn from(code: $code) -> Self {
+                Self::new(code)
+            }
+        }
+
+        impl From<$crate::error::Error2<$code>> for $name {
+            fn from(err: $crate::error::Error2<$code>) -> Self {
+                Self(err)
+            }
+        }
+
+        impl core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                core::fmt::Debug::fmt(&self.0, f)
+            }
+        }
+
+        impl core::fmt::Display for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                core::fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl core::error::Error for $name {
+            fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                core::error::Error::source(&self.0)
+            }
+        }
+
+        $crate::__error_type_defmt!($name);
+
+        // TODO: Remove together with the legacy `Error`
+        impl From<$name> for $crate::error::Error {
+            fn from(err: $name) -> Self {
+                err.0.into()
+            }
+        }
+    };
+}
+
+// Chosen by the `defmt` feature of this crate rather than of the crate that
+// expands `error_type!`, like the `defmt::Format` of `Error2`
+#[cfg(feature = "defmt")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __error_type_defmt {
+    ($name:ident) => {
+        impl $crate::error::__private::defmt::Format for $name {
+            fn format(&self, f: $crate::error::__private::defmt::Formatter<'_>) {
+                $crate::error::__private::defmt::Format::format(&self.0, f)
+            }
+        }
+    };
+}
+
+#[cfg(not(feature = "defmt"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __error_type_defmt {
+    ($name:ident) => {};
+}
+
 /// The bounds that every error code type must satisfy in order to be used as the
 /// code of an [`Error2`].
 ///
@@ -84,6 +200,25 @@ impl<T: MatterError> Error2<T> {
     #[cfg(all(feature = "alloc", feature = "backtrace"))]
     pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync + 'static)> {
         self.inner.as_ref().map(|err| err.as_ref())
+    }
+
+    /// Convert into an error with the given code.
+    ///
+    /// With `alloc` and `backtrace`, the new error captures its own backtrace and
+    /// keeps this one as its source, like the bridge to the legacy `Error` does.
+    /// Otherwise only the code is kept.
+    pub fn convert<U: MatterError>(self, code: U) -> Error2<U>
+    where
+        T: Send + Sync + 'static,
+    {
+        #[cfg(all(feature = "alloc", feature = "backtrace"))]
+        {
+            if self.keep_as_source() {
+                return Error2::new_with_details(code, Box::new(self));
+            }
+        }
+
+        Error2::new(code)
     }
 
     /// Whether a conversion into another error keeps this one as its source.
@@ -862,5 +997,104 @@ mod tests {
 
         let io = source.details().unwrap().downcast_ref::<std::io::Error>();
         assert_eq!(io.unwrap().to_string(), "short read");
+    }
+
+    mod newtype {
+        use super::super::ErrorCode;
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        pub enum TestErrorCode {
+            Busy,
+            Other,
+        }
+
+        impl From<TestErrorCode> for ErrorCode {
+            fn from(value: TestErrorCode) -> Self {
+                match value {
+                    TestErrorCode::Busy => ErrorCode::Busy,
+                    TestErrorCode::Other => ErrorCode::Failure,
+                }
+            }
+        }
+
+        crate::error_type!(pub TestError, TestErrorCode);
+
+        // How a crate converts the error of a crate below it
+        impl From<super::super::BufferError> for TestError {
+            fn from(err: super::super::BufferError) -> Self {
+                err.convert(TestErrorCode::Other).into()
+            }
+        }
+    }
+
+    #[test]
+    fn error_type_defines_a_newtype() {
+        use super::{Base38ErrorCode, BufferError, BufferErrorCode};
+        use newtype::{TestError, TestErrorCode};
+
+        let err = TestError::new(TestErrorCode::Busy);
+        assert_eq!(err.code(), TestErrorCode::Busy);
+        assert_eq!(format!("{err}"), "Busy");
+        assert!(format!("{err:?}").starts_with("Error::Busy"));
+
+        // `?` from its code and from the other error
+        let res: Result<(), TestError> = (|| {
+            Err(TestErrorCode::Other)?;
+            Ok(())
+        })();
+        assert_eq!(res.unwrap_err().code(), TestErrorCode::Other);
+
+        let res: Result<(), TestError> = (|| {
+            Err(BufferError::new(BufferErrorCode::BufferTooSmall))?;
+            Ok(())
+        })();
+        assert_eq!(res.unwrap_err().code(), TestErrorCode::Other);
+
+        // The bridge to the legacy `Error`
+        assert_eq!(
+            Error::from(TestError::new(TestErrorCode::Busy)).code(),
+            ErrorCode::Busy
+        );
+
+        let err = err.convert(Base38ErrorCode::OutputTooSmall);
+        assert_eq!(err.code(), Base38ErrorCode::OutputTooSmall);
+    }
+
+    #[test]
+    fn convert_sets_the_code() {
+        use super::{Base38ErrorCode, BufferError, BufferErrorCode};
+
+        let err = BufferError::new(BufferErrorCode::BufferTooSmall)
+            .convert(Base38ErrorCode::OutputTooSmall);
+        assert_eq!(err.code(), Base38ErrorCode::OutputTooSmall);
+    }
+
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
+    #[test]
+    fn converted_error2_is_kept_as_source() {
+        use super::{Base38Error, Base38ErrorCode, BufferError, BufferErrorCode};
+
+        // An error with a source of its own is always kept
+        let err = BufferError::new_with_details(
+            BufferErrorCode::BufferTooSmall,
+            Box::new(std::io::Error::other("full")),
+        )
+        .convert(Base38ErrorCode::OutputTooSmall);
+
+        let source = err.details().unwrap().downcast_ref::<BufferError>();
+        assert_eq!(source.unwrap().code(), BufferErrorCode::BufferTooSmall);
+        assert_eq!(format!("{err}"), "OutputTooSmall: BufferTooSmall: full");
+        assert!(format!("{err:?}").contains("\nCaused by: Error::BufferTooSmall"));
+
+        // Otherwise only when backtraces are enabled at run time
+        #[cfg(feature = "std")]
+        {
+            let source = BufferError::new(BufferErrorCode::BufferTooSmall);
+            let captured = source.backtrace().status() == std::backtrace::BacktraceStatus::Captured;
+
+            let err: Base38Error = source.convert(Base38ErrorCode::OutputTooSmall);
+            assert_eq!(err.details().is_some(), captured);
+        }
     }
 }

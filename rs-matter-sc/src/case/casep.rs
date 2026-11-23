@@ -298,11 +298,11 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     }
 
     pub fn update_tt(&mut self, data: &[u8]) -> Result<(), Error> {
-        unwrap!(self.tt.as_opt_mut()).update(data)
+        Ok(unwrap!(self.tt.as_opt_mut()).update(data)?)
     }
 
     pub fn current_tt_hash(&mut self, out: &mut Hash) -> Result<(), Error> {
-        unwrap!(self.tt.as_opt_mut()).finish_current(out)
+        Ok(unwrap!(self.tt.as_opt_mut()).finish_current(out)?)
     }
 
     /// Get the Sigma2 encrypted data

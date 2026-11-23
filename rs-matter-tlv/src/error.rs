@@ -17,12 +17,13 @@
 
 //! The error type of `rs-matter-tlv`.
 
-use rs_matter_utils::error::Error2;
-
 // Only for the bridge to the legacy `Error` below
 use rs_matter_utils::error::{Error, ErrorCode};
 
-pub type TlvError = Error2<TlvErrorCode>;
+rs_matter_utils::error_type!(
+    /// The error of `rs-matter-tlv`.
+    pub TlvError, TlvErrorCode
+);
 
 /// The errors raised when reading or writing Matter TLV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

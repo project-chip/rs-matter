@@ -30,13 +30,14 @@
 //! // `img` is whatever the caller already has - here, via the `image` crate.
 //! let luma = image::open("qr.png")?.to_luma8();
 //!
-//! let text = QrLuma::new(&luma, luma.width() as _).scan()?;
+//! let Some(text) = QrLuma::new(&luma, luma.width() as _).scan() else {
+//!     // No Matter QR code in this image
+//!     return Ok(());
+//! };
 //!
 //! let mut buf = [0; 128];
 //! let payload = QrPayload::parse(&text, &mut buf)?;
 //! ```
-
-use crate::error::{Error, ErrorCode};
 
 use rqrr::{BitGrid, Grid, MetaData, Point, PreparedImage, SimpleGrid};
 
@@ -109,18 +110,17 @@ impl<'a> QrLuma<'a> {
     /// the recognizer estimates that one, and a module off garbles that quarter of
     /// the code.
     ///
-    /// # Errors
-    /// [`ErrorCode::NotFound`] if the image contains no readable Matter QR code.
-    pub fn scan(&self) -> Result<String, Error> {
+    /// Returns `None` if the image contains no readable Matter QR code.
+    pub fn scan(&self) -> Option<String> {
         if self.height() == 0 {
-            return Err(ErrorCode::NotFound.into());
+            return None;
         }
 
-        self.scan_once().or_else(|_| self.scan_binarised())
+        self.scan_once().or_else(|| self.scan_binarised())
     }
 
     /// Scan the image once, binarised by the recognizer.
-    fn scan_once(&self) -> Result<String, Error> {
+    fn scan_once(&self) -> Option<String> {
         let mut img =
             PreparedImage::prepare_from_greyscale(self.width, self.height(), |x, y| self.at(x, y));
 
@@ -131,7 +131,7 @@ impl<'a> QrLuma<'a> {
     /// each pixel black where darker than the mean around it (see
     /// [`THRESHOLD_SHARE`]). In sums, not means: a code of a dozen levels of
     /// contrast reads or not by a fraction of one.
-    fn scan_binarised(&self) -> Result<String, Error> {
+    fn scan_binarised(&self) -> Option<String> {
         let (width, height) = (self.width, self.height());
 
         let mut smooth = vec![0u32; width * height];
@@ -164,7 +164,7 @@ impl<'a> QrLuma<'a> {
     /// again (see [`Self::refit`]), and else skipped likewise (partially occluded,
     /// too blurry), so one bad symbol does not mask a good one elsewhere in the
     /// frame.
-    fn first_matter_qr<G>(&self, grids: Vec<Grid<G>>) -> Result<String, Error>
+    fn first_matter_qr<G>(&self, grids: Vec<Grid<G>>) -> Option<String>
     where
         G: BitGrid,
     {
@@ -178,11 +178,11 @@ impl<'a> QrLuma<'a> {
             };
 
             if content.starts_with(QR_PREFIX) {
-                return Ok(content);
+                return Some(content);
             }
         }
 
-        Err(ErrorCode::NotFound.into())
+        None
     }
 
     /// Read a code of `size` modules found at `bounds` (top-left, top-right,
@@ -500,7 +500,7 @@ mod tests {
             .collect();
 
         let image = QrLuma::new(&luma, side);
-        assert!(image.scan_once().is_err());
+        assert!(image.scan_once().is_none());
         assert_eq!(unwrap!(image.scan_binarised(), "Failed to scan"), text);
     }
 
@@ -533,16 +533,13 @@ mod tests {
         let corners = bounds.map(|p| (f64::from(p.x), f64::from(p.y)));
         assert!(image.read_modules(corners, size).decode().is_err());
 
-        let refitted = unwrap!(
-            image.refit(&bounds, size).ok_or(ErrorCode::NotFound),
-            "Failed to refit"
-        );
+        let refitted = unwrap!(image.refit(&bounds, size), "Failed to refit");
         assert_eq!(refitted.1, text);
     }
 
     #[test]
     fn scan_finds_nothing_in_a_blank_image() {
-        assert!(QrLuma::new(&[255; 64 * 64], 64).scan().is_err());
+        assert!(QrLuma::new(&[255; 64 * 64], 64).scan().is_none());
     }
 
     /// The image is the whole rows of its pixels; with none, there is nothing to
@@ -552,6 +549,6 @@ mod tests {
         assert_eq!(QrLuma::new(&[255; 64 * 3 + 16], 64).height(), 3);
         assert_eq!(QrLuma::new(&[255; 16], 64).height(), 0);
         assert_eq!(QrLuma::new(&[255; 16], 0).height(), 0);
-        assert!(QrLuma::new(&[255; 16], 64).scan().is_err());
+        assert!(QrLuma::new(&[255; 16], 64).scan().is_none());
     }
 }

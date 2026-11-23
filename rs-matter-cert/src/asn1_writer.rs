@@ -20,7 +20,7 @@ use core::fmt::Write;
 use time::OffsetDateTime;
 
 use super::{CertConsumer, MAX_DEPTH};
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 use crate::utils::epoch::MATTER_EPOCH_SECS;
 use crate::utils::storage::String;
 
@@ -49,7 +49,7 @@ impl<'a> ASN1Writer<'a> {
         }
     }
 
-    pub fn append_with<F>(&mut self, size: usize, f: F) -> Result<(), Error>
+    pub fn append_with<F>(&mut self, size: usize, f: F) -> Result<(), CertError>
     where
         F: FnOnce(&mut Self),
     {
@@ -58,10 +58,10 @@ impl<'a> ASN1Writer<'a> {
             self.offset += size;
             return Ok(());
         }
-        Err(ErrorCode::BufferTooSmall.into())
+        Err(CertErrorCode::BufferTooSmall.into())
     }
 
-    pub fn append_tlv<F>(&mut self, tag: u8, len: usize, f: F) -> Result<(), Error>
+    pub fn append_tlv<F>(&mut self, tag: u8, len: usize, f: F) -> Result<(), CertError>
     where
         F: FnOnce(&mut Self),
     {
@@ -74,23 +74,23 @@ impl<'a> ASN1Writer<'a> {
             self.offset += len;
             return Ok(());
         }
-        Err(ErrorCode::BufferTooSmall.into())
+        Err(CertErrorCode::BufferTooSmall.into())
     }
 
-    fn add_compound(&mut self, val: u8) -> Result<(), Error> {
+    fn add_compound(&mut self, val: u8) -> Result<(), CertError> {
         // We reserve 3 bytes for encoding the length
         // If a shorter length is actually required, we will move everything back
         self.append_with(1 + RESERVE_LEN_BYTES, |t| t.buf[t.offset] = val)?;
         self.depth[self.current_depth] = self.offset;
         self.current_depth += 1;
         if self.current_depth >= MAX_DEPTH {
-            Err(ErrorCode::BufferTooSmall.into())
+            Err(CertErrorCode::BufferTooSmall.into())
         } else {
             Ok(())
         }
     }
 
-    fn encode_len(&mut self, mut at_offset: usize, len: usize) -> Result<usize, Error> {
+    fn encode_len(&mut self, mut at_offset: usize, len: usize) -> Result<usize, CertError> {
         let mut bytes_of_len = ASN1Writer::bytes_to_encode_len(len)?;
         if bytes_of_len > 1 {
             self.buf[at_offset] = (0x80 | (bytes_of_len - 1)) as u8;
@@ -115,9 +115,9 @@ impl<'a> ASN1Writer<'a> {
         Ok(at_offset)
     }
 
-    fn end_compound(&mut self) -> Result<(), Error> {
+    fn end_compound(&mut self) -> Result<(), CertError> {
         if self.current_depth == 0 {
-            Err(ErrorCode::Invalid)?;
+            Err(CertErrorCode::InvalidFormat)?;
         }
         let seq_len = self.get_compound_len();
         let write_offset = self.get_length_encoding_offset();
@@ -141,7 +141,7 @@ impl<'a> ASN1Writer<'a> {
         self.offset - self.depth[self.current_depth - 1]
     }
 
-    fn bytes_to_encode_len(len: usize) -> Result<usize, Error> {
+    fn bytes_to_encode_len(len: usize) -> Result<usize, CertError> {
         let len = if len < 128 {
             // This is directly encoded
             1
@@ -152,7 +152,7 @@ impl<'a> ASN1Writer<'a> {
             // This is done with an 0xA2 followed by 2 bytes of actual len
             3
         } else {
-            Err(ErrorCode::BufferTooSmall)?
+            Err(CertErrorCode::BufferTooSmall)?
         };
         Ok(len)
     }
@@ -165,7 +165,7 @@ impl<'a> ASN1Writer<'a> {
         &self.buf[..self.offset]
     }
 
-    fn write_str(&mut self, vtype: u8, s: &[u8]) -> Result<(), Error> {
+    fn write_str(&mut self, vtype: u8, s: &[u8]) -> Result<(), CertError> {
         self.append_tlv(vtype, s.len(), |t| {
             let end_offset = t.offset + s.len();
             t.buf[t.offset..end_offset].copy_from_slice(s);
@@ -174,29 +174,29 @@ impl<'a> ASN1Writer<'a> {
 }
 
 impl CertConsumer for ASN1Writer<'_> {
-    fn start_seq(&mut self, _tag: &str) -> Result<(), Error> {
+    fn start_seq(&mut self, _tag: &str) -> Result<(), CertError> {
         self.add_compound(0x30)
     }
 
-    fn end_seq(&mut self) -> Result<(), Error> {
+    fn end_seq(&mut self) -> Result<(), CertError> {
         self.end_compound()
     }
 
-    fn integer(&mut self, _tag: &str, i: &[u8]) -> Result<(), Error> {
+    fn integer(&mut self, _tag: &str, i: &[u8]) -> Result<(), CertError> {
         self.write_str(0x02, i)
     }
 
-    fn printstr(&mut self, _tag: &str, s: &str) -> Result<(), Error> {
+    fn printstr(&mut self, _tag: &str, s: &str) -> Result<(), CertError> {
         // Note: ASN1 has multiple strings, this is PrintableString
         self.write_str(0x13, s.as_bytes())
     }
 
-    fn utf8str(&mut self, _tag: &str, s: &str) -> Result<(), Error> {
+    fn utf8str(&mut self, _tag: &str, s: &str) -> Result<(), CertError> {
         // Note: ASN1 has multiple strings, this is UTF8String
         self.write_str(0x0c, s.as_bytes())
     }
 
-    fn bitstr(&mut self, _tag: &str, truncate: bool, s: &[u8]) -> Result<(), Error> {
+    fn bitstr(&mut self, _tag: &str, truncate: bool, s: &[u8]) -> Result<(), CertError> {
         // Note: ASN1 has multiple strings, this is BIT String
 
         // With `truncate`, strip off the zero bytes at the end, and count the
@@ -221,21 +221,21 @@ impl CertConsumer for ASN1Writer<'_> {
         })
     }
 
-    fn ostr(&mut self, _tag: &str, s: &[u8]) -> Result<(), Error> {
+    fn ostr(&mut self, _tag: &str, s: &[u8]) -> Result<(), CertError> {
         // Note: ASN1 has multiple strings, this is Octet String
         self.write_str(0x04, s)
     }
 
-    fn start_compound_ostr(&mut self, _tag: &str) -> Result<(), Error> {
+    fn start_compound_ostr(&mut self, _tag: &str) -> Result<(), CertError> {
         // Note: ASN1 has 3 string, this is compound Octet String
         self.add_compound(0x04)
     }
 
-    fn end_compound_ostr(&mut self) -> Result<(), Error> {
+    fn end_compound_ostr(&mut self) -> Result<(), CertError> {
         self.end_compound()
     }
 
-    fn bool(&mut self, _tag: &str, b: bool) -> Result<(), Error> {
+    fn bool(&mut self, _tag: &str, b: bool) -> Result<(), CertError> {
         self.append_tlv(0x01, 1, |t| {
             if b {
                 t.buf[t.offset] = 0xFF;
@@ -245,31 +245,31 @@ impl CertConsumer for ASN1Writer<'_> {
         })
     }
 
-    fn start_set(&mut self, _tag: &str) -> Result<(), Error> {
+    fn start_set(&mut self, _tag: &str) -> Result<(), CertError> {
         self.add_compound(0x31)
     }
 
-    fn end_set(&mut self) -> Result<(), Error> {
+    fn end_set(&mut self) -> Result<(), CertError> {
         self.end_compound()
     }
 
-    fn ctx(&mut self, _tag: &str, id: u8, val: &[u8]) -> Result<(), Error> {
+    fn ctx(&mut self, _tag: &str, id: u8, val: &[u8]) -> Result<(), CertError> {
         self.write_str(0x80 | id, val)
     }
 
-    fn start_ctx(&mut self, _tag: &str, val: u8) -> Result<(), Error> {
+    fn start_ctx(&mut self, _tag: &str, val: u8) -> Result<(), CertError> {
         self.add_compound(0xA0 | val)
     }
 
-    fn end_ctx(&mut self) -> Result<(), Error> {
+    fn end_ctx(&mut self) -> Result<(), CertError> {
         self.end_compound()
     }
 
-    fn oid(&mut self, _tag: &str, oid: &[u8]) -> Result<(), Error> {
+    fn oid(&mut self, _tag: &str, oid: &[u8]) -> Result<(), CertError> {
         self.write_str(0x06, oid)
     }
 
-    fn utctime(&mut self, _tag: &str, epoch: u64) -> Result<(), Error> {
+    fn utctime(&mut self, _tag: &str, epoch: u64) -> Result<(), CertError> {
         let matter_epoch = MATTER_EPOCH_SECS + epoch;
 
         let dt = unwrap!(
@@ -307,7 +307,7 @@ impl CertConsumer for ASN1Writer<'_> {
         }
     }
 
-    fn raw(&mut self, _tag: &str, data: &[u8]) -> Result<(), Error> {
+    fn raw(&mut self, _tag: &str, data: &[u8]) -> Result<(), CertError> {
         self.append_with(data.len(), |t| {
             let end_offset = t.offset + data.len();
             t.buf[t.offset..end_offset].copy_from_slice(data);

@@ -26,12 +26,9 @@
 // the test modules are then excluded from the coverage report
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
-use crate::error::Error;
-
 // The dependencies, under the names the code uses for them
 use rs_matter_tlv as tlv;
 use rs_matter_utils as utils;
-use rs_matter_utils::error;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -44,11 +41,13 @@ pub use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
 pub use canon::*;
 pub use csr::CSR_MAX_LEN;
+pub use error::*;
 pub use rand::*;
 
 pub mod backend;
 mod canon;
 mod csr;
+pub mod error;
 pub mod group_keys;
 mod rand;
 
@@ -186,60 +185,62 @@ pub trait Crypto: MaybeSendSync {
         Self: 'a;
 
     /// Create a new, cryptographically secure, random number generator instance.
-    fn rand(&self) -> Result<Self::Rand<'_>, Error>;
+    fn rand(&self) -> Result<Self::Rand<'_>, CryptoError>;
 
     /// Create a new NON-cryptographically secure (but potentially faster), random number generator instance.
-    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error>;
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, CryptoError>;
 
     /// Create a new hasher instance.
-    fn hash(&self) -> Result<Self::Hash<'_>, Error>;
+    fn hash(&self) -> Result<Self::Hash<'_>, CryptoError>;
 
     /// Create a new SHA-1 hasher instance.
-    fn hash1(&self) -> Result<Self::Hash1<'_>, Error>;
+    fn hash1(&self) -> Result<Self::Hash1<'_>, CryptoError>;
 
     /// Create a new HMAC hasher instance with the given key.
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
-    ) -> Result<Self::Hmac<'_>, Error>;
+    ) -> Result<Self::Hmac<'_>, CryptoError>;
 
     /// Create a new KDF instance.
-    fn kdf(&self) -> Result<Self::Kdf<'_>, Error>;
+    fn kdf(&self) -> Result<Self::Kdf<'_>, CryptoError>;
 
     /// Create a new PBKDF instance.
-    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error>;
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, CryptoError>;
 
     /// Create a new AEAD instance.
-    fn aead(&self) -> Result<Self::Aead<'_>, Error>;
+    fn aead(&self) -> Result<Self::Aead<'_>, CryptoError>;
 
     /// Create a public key instance from its canonical representation.
-    fn pub_key(&self, key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error>;
+    fn pub_key(&self, key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, CryptoError>;
 
     /// Create a secret key instance from its canonical representation.
-    fn secret_key(&self, key: CanonPkcSecretKeyRef<'_>) -> Result<Self::SecretKey<'_>, Error>;
+    fn secret_key(&self, key: CanonPkcSecretKeyRef<'_>)
+        -> Result<Self::SecretKey<'_>, CryptoError>;
 
     /// Generate a new secret key instance.
-    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error>;
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, CryptoError>;
 
     /// Get the singleton signing secret key instance.
     ///
     /// This is used for device attestation.
-    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error>;
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, CryptoError>;
 
     /// Create an EC scalar instance from its canonical representation.
-    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error>;
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, CryptoError>;
 
     /// Create an EC scalar instance from a 320-bit unsigned integer modulo the EC prime modulus.
-    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error>;
+    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>)
+        -> Result<Self::EcScalar<'_>, CryptoError>;
 
     /// Generate a new random EC scalar instance.
-    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error>;
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, CryptoError>;
 
     /// Create an EC point instance from its canonical representation.
-    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error>;
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, CryptoError>;
 
     /// Get the EC Generator point.
-    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error>;
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, CryptoError>;
 }
 
 impl<T> Crypto for &T
@@ -311,74 +312,80 @@ where
     where
         Self: 'a;
 
-    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+    fn rand(&self) -> Result<Self::Rand<'_>, CryptoError> {
         (*self).rand()
     }
 
-    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, CryptoError> {
         (*self).weak_rand()
     }
 
-    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, CryptoError> {
         (*self).hash()
     }
 
-    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+    fn hash1(&self) -> Result<Self::Hash1<'_>, CryptoError> {
         (*self).hash1()
     }
 
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
-    ) -> Result<Self::Hmac<'_>, Error> {
+    ) -> Result<Self::Hmac<'_>, CryptoError> {
         (*self).hmac(key)
     }
 
-    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, CryptoError> {
         (*self).kdf()
     }
 
-    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, CryptoError> {
         (*self).pbkdf()
     }
 
-    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, CryptoError> {
         (*self).aead()
     }
 
-    fn pub_key(&self, key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(&self, key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, CryptoError> {
         (*self).pub_key(key)
     }
 
-    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, CryptoError> {
         (*self).generate_secret_key()
     }
 
-    fn secret_key(&self, key: CanonPkcSecretKeyRef<'_>) -> Result<Self::SecretKey<'_>, Error> {
+    fn secret_key(
+        &self,
+        key: CanonPkcSecretKeyRef<'_>,
+    ) -> Result<Self::SecretKey<'_>, CryptoError> {
         (*self).secret_key(key)
     }
 
-    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, CryptoError> {
         (*self).singleton_singing_secret_key()
     }
 
-    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, CryptoError> {
         (*self).ec_scalar(scalar)
     }
 
-    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar_mod_p(
+        &self,
+        uint: CanonUint320Ref<'_>,
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         (*self).ec_scalar_mod_p(uint)
     }
 
-    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, CryptoError> {
         (*self).generate_ec_scalar()
     }
 
-    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, CryptoError> {
         (*self).ec_point(point)
     }
 
-    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, CryptoError> {
         (*self).ec_generator_point()
     }
 }
@@ -390,14 +397,14 @@ where
 /// Used for both hashing and HMAC.
 pub trait Digest<const HASH_LEN: usize> {
     /// Update the digest with the given data.
-    fn update(&mut self, data: &[u8]) -> Result<(), Error>;
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError>;
 
     /// Finish the digest and write the result into the given buffer,
     /// without consuming the hasher instance, allowing for further updates and finalizations.
-    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error>;
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError>;
 
     /// Finish the digest and write the result into the given buffer.
-    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error>;
+    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError>;
 }
 
 /// Trait representing a Key Derivation Function (KDF).
@@ -410,7 +417,7 @@ pub trait Kdf {
         ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), CryptoError>;
 }
 
 /// Trait representing a Password-Based Key Derivation Function (PBKDF).
@@ -423,7 +430,7 @@ pub trait PbKdf {
         iter: usize,
         salt: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), CryptoError>;
 }
 
 /// Trait representing an Authenticated Encryption with Associated Data (AEAD) algorithm.
@@ -439,7 +446,7 @@ pub trait Aead<const KEY_LEN: usize, const NONCE_LEN: usize> {
     ///
     /// # Returns
     /// - On success, returns a slice containing the ciphertext and tag.
-    /// - On failure, returns an `Error`.
+    /// - On failure, returns a `CryptoError`.
     fn encrypt_in_place<'a>(
         &mut self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
@@ -447,7 +454,7 @@ pub trait Aead<const KEY_LEN: usize, const NONCE_LEN: usize> {
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
-    ) -> Result<&'a [u8], Error>;
+    ) -> Result<&'a [u8], CryptoError>;
 
     /// Decrypt the given data in place, using the given key, nonce and additional authenticated data (AAD).
     ///
@@ -459,14 +466,14 @@ pub trait Aead<const KEY_LEN: usize, const NONCE_LEN: usize> {
     ///
     /// # Returns
     /// - On success, returns a slice containing the plaintext.
-    /// - On failure, returns an `Error`.
+    /// - On failure, returns a `CryptoError`.
     fn decrypt_in_place<'a>(
         &mut self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
         nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
-    ) -> Result<&'a [u8], Error>;
+    ) -> Result<&'a [u8], CryptoError>;
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, T> Aead<KEY_LEN, NONCE_LEN> for &mut T
@@ -480,7 +487,7 @@ where
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         (*self).encrypt_in_place(key, nonce, aad, data, data_len)
     }
 
@@ -490,7 +497,7 @@ where
         nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         (*self).decrypt_in_place(key, nonce, aad, data)
     }
 }
@@ -512,7 +519,7 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
         Self: 's;
 
     /// Get the public key corresponding to this secret key.
-    fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error>;
+    fn pub_key(&self) -> Result<Self::PublicKey<'a>, CryptoError>;
 
     /// Generate a Certificate Signing Request (CSR) using this secret key.
     ///
@@ -521,10 +528,10 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     ///
     /// # Returns
     /// - On success, returns a slice containing the CSR, in DER format.
-    /// - On failure, returns an `Error`.
+    /// - On failure, returns a `CryptoError`.
     ///
     /// The default writes the CSR from a template, with `pub_key` and `sign`.
-    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error>
+    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], CryptoError>
     where
         Self: 'a,
     {
@@ -540,7 +547,7 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
         &self,
         data: &[u8],
         signature: &mut CryptoSensitive<SIGNATURE_LEN>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), CryptoError>;
 }
 
 /// Trait representing a secret key.
@@ -564,10 +571,10 @@ pub trait SecretKey<
         &self,
         peer_pub_key: &Self::PublicKey<'a>,
         shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), CryptoError>;
 
     /// Write the canonical representation of this secret key into the given buffer.
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error>;
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError>;
 }
 
 /// Trait representing a public key.
@@ -584,10 +591,10 @@ pub trait PublicKey<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
         &self,
         data: &[u8],
         signature: CryptoSensitiveRef<SIGNATURE_LEN>,
-    ) -> Result<bool, Error>;
+    ) -> Result<bool, CryptoError>;
 
     /// Write the canonical representation of this public key into the given buffer.
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error>;
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError>;
 }
 
 impl<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
@@ -599,11 +606,11 @@ where
         &self,
         data: &[u8],
         signature: CryptoSensitiveRef<SIGNATURE_LEN>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, CryptoError> {
         (*self).verify(data, signature)
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         (*self).write_canon(key)
     }
 }
@@ -617,12 +624,12 @@ pub trait EcScalar<'a, const LEN: usize> {
     ///
     /// # Returns
     /// - The result of the multiplication.
-    fn mul(&self, other: &Self) -> Result<Self, Error>
+    fn mul(&self, other: &Self) -> Result<Self, CryptoError>
     where
         Self: Sized;
 
     /// Write the canonical representation of this scalar into the given buffer.
-    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error>;
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError>;
 }
 
 /// Trait representing an Elliptic Curve (EC) point.
@@ -641,15 +648,15 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
     /// verifier side, `Y` on the prover side); an unchecked identity/invalid
     /// point lets a peer force the shared secret and break the protocol's
     /// guarantees.
-    fn is_valid_pubkey(&self) -> Result<bool, Error>;
+    fn is_valid_pubkey(&self) -> Result<bool, CryptoError>;
 
     /// Negate this EC point.
-    fn neg(&self) -> Result<Self, Error>
+    fn neg(&self) -> Result<Self, CryptoError>
     where
         Self: Sized;
 
     /// Multiply this EC point by the given scalar.
-    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, Error>
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, CryptoError>
     where
         Self: Sized;
 
@@ -668,12 +675,12 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
         s1: &Self::Scalar<'a>,
         p2: &Self,
         s2: &Self::Scalar<'a>,
-    ) -> Result<Self, Error>
+    ) -> Result<Self, CryptoError>
     where
         Self: Sized;
 
     /// Write the canonical representation of this EC point into the given buffer.
-    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error>;
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError>;
 }
 
 #[allow(unused)]
@@ -715,13 +722,12 @@ pub fn test_only_crypto() -> impl Crypto {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::error::ErrorCode;
     use crate::{
-        test_only_crypto, Aead, CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey,
-        CanonPkcSecretKeyRef, CanonPkcSharedSecret, CanonPkcSignature, CanonPkcSignatureRef,
-        Crypto, CryptoSensitive, CryptoSensitiveRef, Digest, Kdf, PbKdf, PublicKey, Rng, SecretKey,
-        SigningSecretKey, AEAD_TAG_LEN, CSR_MAX_LEN, HASH_LEN, PKC_CANON_PUBLIC_KEY_LEN,
-        SHA1_HASH_LEN,
+        test_only_crypto, Aead, CanonEcPoint, CanonPkcPublicKey, CanonPkcPublicKeyRef,
+        CanonPkcSecretKey, CanonPkcSecretKeyRef, CanonPkcSharedSecret, CanonPkcSignature,
+        CanonPkcSignatureRef, Crypto, CryptoErrorCode, CryptoSensitive, CryptoSensitiveRef, Digest,
+        EcPoint, Kdf, PbKdf, PublicKey, Rng, SecretKey, SigningSecretKey, AEAD_TAG_LEN,
+        CSR_MAX_LEN, HASH_LEN, PKC_CANON_PUBLIC_KEY_LEN, SHA1_HASH_LEN,
     };
 
     /// One-shot SHA-256 over `data` via the `Crypto` trait.
@@ -802,9 +808,14 @@ mod tests {
         out.to_vec()
     }
 
-    /// AES-128-CCM decrypt of `ciphertext || tag`: returns the plaintext, or `None`
-    /// if authentication failed.
-    fn ccm_decrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], ct_tag: &[u8]) -> Option<Vec<u8>> {
+    /// AES-128-CCM decrypt of `ciphertext || tag`: returns the plaintext, or the
+    /// error code if authentication failed.
+    fn ccm_decrypt(
+        key: &[u8; 16],
+        nonce: &[u8; 13],
+        aad: &[u8],
+        ct_tag: &[u8],
+    ) -> Result<Vec<u8>, CryptoErrorCode> {
         let crypto = test_only_crypto();
         let mut aead = unwrap!(crypto.aead());
 
@@ -816,8 +827,8 @@ mod tests {
             aad,
             &mut buf,
         )
-        .ok()
         .map(|pt| pt.to_vec())
+        .map_err(|err| err.code())
     }
 
     // Vectors from connectedhomeip src/crypto/tests/Hash_SHA256_test_vectors.h (v01, v02, v07, v08)
@@ -1106,7 +1117,7 @@ mod tests {
 
             assert_eq!(
                 ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag).as_deref(),
-                Some(v.pt)
+                Ok(v.pt)
             );
         }
     }
@@ -1120,7 +1131,10 @@ mod tests {
         let last = ct_tag.len() - 1;
         ct_tag[last] ^= 0x01;
 
-        assert!(ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag).is_none());
+        assert_eq!(
+            ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag),
+            Err(CryptoErrorCode::InvalidInput)
+        );
     }
 
     #[test]
@@ -1131,7 +1145,10 @@ mod tests {
         ct_tag.extend_from_slice(&v.tag);
         ct_tag[0] ^= 0x80;
 
-        assert!(ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag).is_none());
+        assert_eq!(
+            ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag),
+            Err(CryptoErrorCode::InvalidInput)
+        );
     }
 
     #[test]
@@ -1143,17 +1160,26 @@ mod tests {
 
         let mut aad = v.aad.to_vec();
         aad[3] ^= 0x01;
-        assert!(ccm_decrypt(&v.key, &v.nonce, &aad, &ct_tag).is_none());
+        assert_eq!(
+            ccm_decrypt(&v.key, &v.nonce, &aad, &ct_tag),
+            Err(CryptoErrorCode::InvalidInput)
+        );
 
         // Dropping the AAD entirely must also fail
-        assert!(ccm_decrypt(&v.key, &v.nonce, &[], &ct_tag).is_none());
+        assert_eq!(
+            ccm_decrypt(&v.key, &v.nonce, &[], &ct_tag),
+            Err(CryptoErrorCode::InvalidInput)
+        );
 
         let mut nonce = v.nonce;
         nonce[12] ^= 0x01;
-        assert!(ccm_decrypt(&v.key, &nonce, v.aad, &ct_tag).is_none());
+        assert_eq!(
+            ccm_decrypt(&v.key, &nonce, v.aad, &ct_tag),
+            Err(CryptoErrorCode::InvalidInput)
+        );
 
         // Sanity: the untouched inputs still decrypt
-        assert!(ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag).is_some());
+        assert!(ccm_decrypt(&v.key, &v.nonce, v.aad, &ct_tag).is_ok());
     }
 
     /// A ciphertext shorter than the tag cannot be authenticated.
@@ -1161,7 +1187,32 @@ mod tests {
     fn aes_ccm_decrypt_too_short_fails() {
         let v = &CCM_VECTORS[0];
 
-        assert!(ccm_decrypt(&v.key, &v.nonce, v.aad, &v.tag[..AEAD_TAG_LEN - 1]).is_none());
+        assert_eq!(
+            ccm_decrypt(&v.key, &v.nonce, v.aad, &v.tag[..AEAD_TAG_LEN - 1]),
+            Err(CryptoErrorCode::InvalidInput)
+        );
+    }
+
+    /// The buffer must have room for the tag after the plaintext.
+    #[test]
+    fn aes_ccm_encrypt_without_room_for_the_tag_fails() {
+        let v = &CCM_VECTORS[1];
+
+        let crypto = test_only_crypto();
+        let mut aead = unwrap!(crypto.aead());
+
+        let mut buf = vec![0u8; v.pt.len() + AEAD_TAG_LEN - 1];
+        buf[..v.pt.len()].copy_from_slice(v.pt);
+
+        let result = aead.encrypt_in_place(
+            CryptoSensitiveRef::new(&v.key),
+            CryptoSensitiveRef::new(&v.nonce),
+            v.aad,
+            &mut buf,
+            v.pt.len(),
+        );
+
+        assert_eq!(result.unwrap_err().code(), CryptoErrorCode::BufferTooSmall);
     }
 
     /// The RFC 6979 P-256 key shared by all vectors in
@@ -1455,7 +1506,100 @@ mod tests {
         let mut bad = *PUB_KEY1.access();
         bad[64] ^= 0x01;
 
-        assert!(crypto.pub_key(CryptoSensitiveRef::new(&bad)).is_err());
+        let result = crypto.pub_key(CryptoSensitiveRef::new(&bad));
+        assert_eq!(
+            result.err().map(|e| e.code()),
+            Some(CryptoErrorCode::InvalidInput)
+        );
+    }
+
+    /// The same for an EC point.
+    #[test]
+    fn ec_point_import_rejects_invalid_point() {
+        let crypto = test_only_crypto();
+
+        let mut bad = *PUB_KEY1.access();
+        bad[64] ^= 0x01;
+
+        let result = crypto.ec_point(CryptoSensitiveRef::new(&bad));
+        assert_eq!(
+            result.err().map(|e| e.code()),
+            Some(CryptoErrorCode::InvalidInput)
+        );
+    }
+
+    /// The order of the P-256 group
+    const P256_ORDER: [u8; 32] = [
+        0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63,
+        0x25, 0x51,
+    ];
+
+    /// A scalar must be below the group order.
+    #[test]
+    fn ec_scalar_import_rejects_out_of_range() {
+        let crypto = test_only_crypto();
+
+        let result = crypto.ec_scalar(CryptoSensitiveRef::new(&P256_ORDER));
+        assert_eq!(
+            result.err().map(|e| e.code()),
+            Some(CryptoErrorCode::InvalidInput)
+        );
+
+        let mut below = P256_ORDER;
+        below[31] -= 1;
+        assert!(crypto.ec_scalar(CryptoSensitiveRef::new(&below)).is_ok());
+        assert!(crypto.ec_scalar(CryptoSensitiveRef::new(&[0; 32])).is_ok());
+    }
+
+    /// A secret key must also not be zero.
+    #[test]
+    fn secret_key_import_rejects_invalid_key() {
+        let crypto = test_only_crypto();
+
+        for key in [[0; 32], P256_ORDER] {
+            let result = crypto.secret_key(CryptoSensitiveRef::new(&key));
+            assert_eq!(
+                result.err().map(|e| e.code()),
+                Some(CryptoErrorCode::InvalidInput)
+            );
+        }
+    }
+
+    /// `s * G + s * -G` is the point at infinity, which has no canonical form.
+    #[test]
+    fn point_at_infinity_cannot_be_written() {
+        let crypto = test_only_crypto();
+
+        let mut two = [0; 32];
+        two[31] = 2;
+        let s = unwrap!(crypto.ec_scalar(CryptoSensitiveRef::new(&two)));
+
+        let g = unwrap!(crypto.ec_generator_point());
+        let infinity = unwrap!(g.add_mul(&s, &unwrap!(g.neg()), &s));
+
+        let mut canon = CanonEcPoint::new();
+        let result = infinity.write_canon(&mut canon);
+        assert_eq!(
+            result.err().map(|e| e.code()),
+            Some(CryptoErrorCode::InvalidInput)
+        );
+    }
+
+    /// A signature that is not a valid encoding never verifies, and is at most
+    /// reported as an input that cannot be used.
+    #[test]
+    fn verify_rejects_malformed_signature() {
+        let crypto = test_only_crypto();
+        let key = unwrap!(crypto.pub_key(PUB_KEY1));
+
+        // `r` and `s` must be in `1..n`
+        for sig in [[0u8; 64], [0xff; 64]] {
+            match key.verify(MSG1_SUCCESS, CryptoSensitiveRef::new(&sig)) {
+                Ok(valid) => assert!(!valid),
+                Err(err) => assert_eq!(err.code(), CryptoErrorCode::InvalidInput),
+            }
+        }
     }
 
     /// A buffer shorter than the longest CSR.
@@ -1468,7 +1612,7 @@ mod tests {
         let result = key.csr(&mut buf);
         assert_eq!(
             result.err().map(|e| e.code()),
-            Some(ErrorCode::BufferTooSmall)
+            Some(CryptoErrorCode::BufferTooSmall)
         );
     }
 

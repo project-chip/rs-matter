@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::{Error, ErrorCode};
+use crate::error::CryptoError;
 use crate::tlv::{FromTLV, ToTLV};
 use crate::utils::init::{init, Init};
 #[cfg(feature = "groups")]
@@ -71,20 +71,17 @@ impl KeySet {
         crypto: C,
         epoch_key: CanonAeadKeyRef<'_>,
         compressed_fabric_id: &u64,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         const GRP_KEY_INFO: &[u8] = &[
             0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x20, 0x76, 0x31, 0x2e, 0x30,
         ];
 
-        crypto
-            .kdf()?
-            .expand(
-                &compressed_fabric_id.to_be_bytes(),
-                epoch_key,
-                GRP_KEY_INFO,
-                &mut self.op_key,
-            )
-            .map_err(|_| ErrorCode::InvalidData)?;
+        crypto.kdf()?.expand(
+            &compressed_fabric_id.to_be_bytes(),
+            epoch_key,
+            GRP_KEY_INFO,
+            &mut self.op_key,
+        )?;
 
         self.epoch_key.load(epoch_key);
 

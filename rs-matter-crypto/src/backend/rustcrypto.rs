@@ -59,7 +59,7 @@ use rand_core::CryptoRng;
 
 use sec1::point::ModulusSize;
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{CryptoError, CryptoErrorCode};
 use crate::utils::sync::MaybeSend;
 use crate::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
@@ -182,26 +182,26 @@ where
     where
         Self: 'a;
 
-    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+    fn rand(&self) -> Result<Self::Rand<'_>, CryptoError> {
         Ok(&self.rng)
     }
 
-    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, CryptoError> {
         Ok(&self.rng)
     }
 
-    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, CryptoError> {
         Ok(unsafe { Digest::new(sha2::Sha256::new()) })
     }
 
-    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+    fn hash1(&self) -> Result<Self::Hash1<'_>, CryptoError> {
         Ok(unsafe { Digest::new(sha1::Sha1::new()) })
     }
 
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
-    ) -> Result<Self::Hmac<'_>, Error> {
+    ) -> Result<Self::Hmac<'_>, CryptoError> {
         use hmac::KeyInit;
 
         Ok(unsafe {
@@ -212,42 +212,48 @@ where
         })
     }
 
-    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, CryptoError> {
         Ok(HkdfSha256(()))
     }
 
-    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, CryptoError> {
         Ok(Pbkdf2::new())
     }
 
-    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, CryptoError> {
         Ok(unsafe { AeadCcm::new() })
     }
 
-    fn pub_key(&self, pub_key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        pub_key: CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, CryptoError> {
         unsafe { ECPublicKey::new(pub_key) }
     }
 
     fn secret_key(
         &self,
         secret_key: CanonPkcSecretKeyRef<'_>,
-    ) -> Result<Self::SecretKey<'_>, Error> {
+    ) -> Result<Self::SecretKey<'_>, CryptoError> {
         unsafe { ECSecretKey::new(secret_key) }
     }
 
-    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, CryptoError> {
         Ok(unsafe { ECSecretKey::new_random(&mut &self.rng) })
     }
 
-    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, CryptoError> {
         unsafe { ECSecretKey::new(self.singleton_secret_key) }
     }
 
-    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, CryptoError> {
         unsafe { ECScalar::new(scalar) }
     }
 
-    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar_mod_p(
+        &self,
+        uint: CanonUint320Ref<'_>,
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         // TODO: Un-hardcode for other curves
         const NISTP256R1_MODULUS: crypto_bigint::U320 = crypto_bigint::U320::from_be_slice(&[
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00,
@@ -265,15 +271,15 @@ where
         ))
     }
 
-    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, CryptoError> {
         Ok(unsafe { ECScalar::new_random(&mut &self.rng) })
     }
 
-    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, CryptoError> {
         unsafe { ECPoint::new(point) }
     }
 
-    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, CryptoError> {
         Ok(unsafe { ECPoint::generator() })
     }
 }
@@ -300,18 +306,18 @@ impl<const HASH_LEN: usize, T> crate::Digest<HASH_LEN> for Digest<HASH_LEN, T>
 where
     T: digest::Update + digest::FixedOutput + Clone,
 {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         digest::Update::update(&mut self.0, data);
 
         Ok(())
     }
 
-    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         let clone = self.clone();
         clone.finish(hash)
     }
 
-    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         let output = digest::FixedOutput::finalize_fixed(self.0);
         hash.access_mut().copy_from_slice(output.as_slice());
 
@@ -330,14 +336,16 @@ impl crate::Kdf for HkdfSha256 {
         ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.access());
 
-        hkdf.expand(info, key.access_mut()).map_err(|_| {
-            error!("HKDF expand failed - invalid input or output key length");
+        // Fails only for an output longer than 255 hashes, i.e. a wrong `KEY_LEN`
+        unwrap!(
+            hkdf.expand(info, key.access_mut()).ok(),
+            "HKDF output too long"
+        );
 
-            ErrorCode::InvalidData.into()
-        })
+        Ok(())
     }
 }
 
@@ -364,12 +372,14 @@ where
         iter: usize,
         salt: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
-        pbkdf2::pbkdf2::<T>(pass.access(), salt, iter as u32, key.access_mut()).map_err(|_| {
-            error!("PBKDF2 derive failed - invalid output key length");
+    ) -> Result<(), CryptoError> {
+        // Fails only for a key that the HMAC does not accept, and HMAC accepts any
+        unwrap!(
+            pbkdf2::pbkdf2::<T>(pass.access(), salt, iter as u32, key.access_mut()).ok(),
+            "PBKDF2 failed"
+        );
 
-            ErrorCode::InvalidData.into()
-        })
+        Ok(())
     }
 }
 
@@ -411,21 +421,18 @@ where
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         use ccm::{AeadInOut, KeyInit};
 
-        let cipher =
-            Ccm::<C, M, N>::new_from_slice(key.access()).map_err(|_| ErrorCode::InvalidData)?;
-        let nonce: &ccm::aead::Nonce<Ccm<C, M, N>> = nonce
-            .access()
-            .as_slice()
-            .try_into()
-            .map_err(|_| ErrorCode::InvalidData)?;
+        // The lengths match, as `new` requires
+        let cipher = unwrap!(Ccm::<C, M, N>::new_from_slice(key.access()).ok());
+        let nonce: &ccm::aead::Nonce<Ccm<C, M, N>> =
+            unwrap!(nonce.access().as_slice().try_into().ok());
 
         let mut buffer = SliceBuffer::new(data, data_len);
         cipher
             .encrypt_in_place(nonce, aad, &mut buffer)
-            .map_err(|_| ErrorCode::BufferTooSmall)?;
+            .map_err(|_| CryptoErrorCode::BufferTooSmall)?;
 
         let len = buffer.len();
 
@@ -438,23 +445,19 @@ where
         nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         use ccm::{AeadInOut, KeyInit};
 
-        let cipher =
-            Ccm::<C, M, N>::new_from_slice(key.access()).map_err(|_| ErrorCode::InvalidData)?;
-        let nonce: &ccm::aead::Nonce<Ccm<C, M, N>> = nonce
-            .access()
-            .as_slice()
-            .try_into()
-            .map_err(|_| ErrorCode::InvalidData)?;
+        // The lengths match, as `new` requires
+        let cipher = unwrap!(Ccm::<C, M, N>::new_from_slice(key.access()).ok());
+        let nonce: &ccm::aead::Nonce<Ccm<C, M, N>> =
+            unwrap!(nonce.access().as_slice().try_into().ok());
 
         let mut buffer = SliceBuffer::new(data, data.len());
         cipher
             .decrypt_in_place(nonce, aad, &mut buffer)
-            // `aead::Error` is opaque and only ever means invalid input here (bad tag
-            // / malformed ciphertext), not a programming error -> `InvalidData`.
-            .map_err(|_| ErrorCode::InvalidData)?;
+            // A bad tag or a message shorter than the tag
+            .map_err(|_| CryptoErrorCode::InvalidInput)?;
 
         let len = buffer.len();
 
@@ -481,11 +484,11 @@ where
     /// # Safety
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN` and `SIGNATURE_LEN` const generics.
-    unsafe fn new(pub_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, Error> {
+    unsafe fn new(pub_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, CryptoError> {
         let encoded_point = Sec1Point::<C>::from_bytes(pub_key.access()).map_err(|_| {
             error!("PublicKey creation failed - invalid key format");
 
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         })?;
 
         PublicKey::<C>::from_sec1_point(&encoded_point)
@@ -494,7 +497,7 @@ where
             .ok_or_else(|| {
                 error!("PublicKey creation failed - invalid key format");
 
-                ErrorCode::InvalidData.into()
+                CryptoErrorCode::InvalidInput.into()
             })
     }
 }
@@ -510,23 +513,23 @@ where
         &self,
         data: &[u8],
         signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, CryptoError> {
         let verifying_key = VerifyingKey::<C>::from_affine(*self.0.as_affine()).map_err(|_| {
             error!("VerifyingKey creation failed - invalid key format");
 
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         })?;
 
         let signature = Signature::<C>::from_slice(signature.access()).map_err(|_| {
             error!("Signature creation failed - invalid format");
 
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         })?;
 
         Ok(ecdsa::signature::Verifier::verify(&verifying_key, data, &signature).is_ok())
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         let point = self.0.as_affine().to_sec1_point(false);
         let slice = point.as_bytes();
 
@@ -570,13 +573,13 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
     /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
-    unsafe fn new(secret_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, Error> {
+    unsafe fn new(secret_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, CryptoError> {
         SecretKey::<C>::from_slice(secret_key.access())
             .map(Self)
             .map_err(|_| {
                 error!("SecretKey creation failed - invalid key format");
 
-                ErrorCode::InvalidData.into()
+                CryptoErrorCode::InvalidInput.into()
             })
     }
 
@@ -613,7 +616,7 @@ where
     where
         Self: 's;
 
-    fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error> {
+    fn pub_key(&self) -> Result<Self::PublicKey<'a>, CryptoError> {
         Ok(ECPublicKey(self.0.public_key()))
     }
 
@@ -621,7 +624,7 @@ where
         &self,
         data: &[u8],
         signature: &mut CryptoSensitive<SIGNATURE_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         use ecdsa::signature::Signer;
 
         let signing_key = SigningKey::<C>::from(&self.0);
@@ -656,7 +659,7 @@ where
         &self,
         peer_pub_key: &Self::PublicKey<'_>,
         shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let secret = elliptic_curve::ecdh::diffie_hellman(
             self.0.to_nonzero_scalar(),
             peer_pub_key.0.as_affine(),
@@ -671,7 +674,7 @@ where
         Ok(())
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         let bytes = self.0.to_bytes();
         let slice = bytes.as_slice();
 
@@ -698,10 +701,10 @@ where
     /// # Safety
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
-    unsafe fn new(scalar: CryptoSensitiveRef<'_, LEN>) -> Result<Self, Error> {
+    unsafe fn new(scalar: CryptoSensitiveRef<'_, LEN>) -> Result<Self, CryptoError> {
         let repr = FieldBytes::<C>::try_from(scalar.access().as_slice()).map_err(|_| {
             error!("EC Scalar creation failed - invalid format");
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         })?;
 
         Scalar::<C>::from_repr(repr)
@@ -710,7 +713,7 @@ where
             .ok_or_else(|| {
                 error!("EC Scalar creation failed - invalid format");
 
-                ErrorCode::InvalidData.into()
+                CryptoErrorCode::InvalidInput.into()
             })
     }
 
@@ -729,11 +732,11 @@ where
     C: CurveArithmetic,
     Scalar<C>: Mul<Output = C::Scalar> + Clone,
 {
-    fn mul(&self, other: &Self) -> Result<Self, Error> {
+    fn mul(&self, other: &Self) -> Result<Self, CryptoError> {
         Ok(Self(self.0.mul(other.0)))
     }
 
-    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         scalar
             .access_mut()
             .copy_from_slice(self.0.to_repr().as_slice());
@@ -768,19 +771,19 @@ where
     /// the curve `C` corresponds to the `LEN` and `SCALAR_LEN` const generics.
     /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
     /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
-    unsafe fn new(point: CryptoSensitiveRef<'_, LEN>) -> Result<Self, Error> {
+    unsafe fn new(point: CryptoSensitiveRef<'_, LEN>) -> Result<Self, CryptoError> {
         let affine_point = AffinePoint::<C>::from_sec1_point(
             &Sec1Point::<C>::from_bytes(point.access()).map_err(|_| {
                 error!("EC Point creation failed - invalid format");
 
-                ErrorCode::InvalidData
+                CryptoErrorCode::InvalidInput
             })?,
         )
         .into_option()
         .ok_or_else(|| {
             error!("EC Point creation failed - invalid format");
 
-            ErrorCode::InvalidData
+            CryptoErrorCode::InvalidInput
         })?;
 
         Ok(Self(affine_point.into()))
@@ -812,7 +815,7 @@ where
 {
     type Scalar<'s> = ECScalar<SCALAR_LEN, C>;
 
-    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+    fn is_valid_pubkey(&self) -> Result<bool, CryptoError> {
         // The point was produced by `ECPoint::new` via
         // `AffinePoint::from_encoded_point`, which already rejects points that
         // are not on the curve (and out-of-range coordinates). The only
@@ -822,11 +825,11 @@ where
         Ok(!bool::from(self.0.is_identity()))
     }
 
-    fn neg(&self) -> Result<Self, Error> {
+    fn neg(&self) -> Result<Self, CryptoError> {
         Ok(Self(self.0.neg()))
     }
 
-    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, Error> {
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, CryptoError> {
         Ok(Self(self.0.mul(scalar.0)))
     }
 
@@ -835,17 +838,21 @@ where
         s1: &Self::Scalar<'a>,
         p2: &Self,
         s2: &Self::Scalar<'a>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, CryptoError> {
         let a = self.0.mul(s1.0);
         let b = p2.0.mul(s2.0);
         Ok(Self(a.add(b)))
     }
 
-    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         let encoded_point = self.0.to_affine().to_sec1_point(false);
         let slice = encoded_point.as_bytes();
 
-        assert_eq!(slice.len(), LEN);
+        // Only the point at infinity is shorter, and it has no canonical form
+        if slice.len() != LEN {
+            Err(CryptoErrorCode::InvalidInput)?;
+        }
+
         point.access_mut().copy_from_slice(slice);
 
         Ok(())
