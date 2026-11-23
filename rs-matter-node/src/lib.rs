@@ -44,12 +44,13 @@ use crate::basic_info::{
 };
 use crate::crypto::Crypto;
 use crate::dm::ROOT_ENDPOINT_ID;
-use crate::dm::{AttrChangeNotifier, EndptId, GroupMembership};
+use crate::dm::{AttrChangeNotifier, ClusterId, EndptId, EventEmitter, EventId, GroupMembership};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::Fabrics;
+use crate::fabric::{FabricPersist, Fabrics};
 use crate::failsafe::{FailSafe, DEFAULT_FAILSAFE_EXPIRY_SECS};
 use crate::handover::{CommissioningHandover, HandoverRegulatory};
 use crate::icd::IcdAdvertisement;
+use crate::im::EventPriority;
 use crate::networks::{load_networks, Networks};
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
@@ -106,6 +107,15 @@ pub mod acl;
 #[cfg(feature = "pics")]
 pub mod pics;
 mod transaction;
+
+/// The ID of the `Leave` event of the Basic Information cluster.
+const LEAVE_EVENT_ID: EventId = 0x02;
+
+/// The ID of the Operational Credentials cluster.
+const OPERATIONAL_CREDENTIALS_CLUSTER_ID: ClusterId = 0x003E;
+
+/// The ID of the Administrator Commissioning cluster.
+const ADMIN_COMMISSIONING_CLUSTER_ID: ClusterId = 0x003C;
 
 /// The reason for the latest boot of the node.
 ///
@@ -704,6 +714,143 @@ impl<'a> Matter<'a> {
         persist.run()?;
 
         Ok(new_version)
+    }
+
+    /// Remove the fabric `fab_idx` from the node, as the `RemoveFabric` command
+    /// does: with its sessions and everything else the node keeps of it, from
+    /// `kv` too. `notify` is told about the attributes that change, and `events`
+    /// gets the `Leave` event.
+    ///
+    /// `expire_sess_id` is a session to expire rather than remove at once if it
+    /// is one of the fabric's: the one a `RemoveFabric` request came over, so
+    /// that the response can still be sent over it. A node that removes a
+    /// fabric by itself, such as when its user asks for it on the node's own
+    /// user interface, gives `None`.
+    ///
+    /// Return `false` if the node has no fabric `fab_idx`. Otherwise the caller
+    /// then tells the handlers of the data model, with
+    /// `HandlerContext::notify_fabric_removed`, so that they drop what they keep
+    /// of the fabric.
+    pub fn remove_fabric<S: KvBlobStoreAccess, E: EventEmitter>(
+        &self,
+        fab_idx: NonZeroU8,
+        expire_sess_id: Option<u32>,
+        kv: S,
+        notify: &dyn AttrChangeNotifier,
+        events: &E,
+    ) -> Result<bool, Error> {
+        // The removal is reported as failed if the fabric stays in storage
+        let mut persist = FabricPersist::strict(kv);
+
+        let removed = self.with_state(|state| {
+            if state.fabrics.remove(fab_idx).is_err() {
+                return None;
+            }
+
+            // Only a session of the fabric is expired rather than removed
+            let expire_sess_id = expire_sess_id.filter(|&id| {
+                state
+                    .sessions
+                    .get(id)
+                    .is_some_and(|sess| sess.get_local_fabric_idx() == fab_idx.get())
+            });
+
+            // Remove all sessions related to the fabric being removed
+            // If `expire_sess_id` is Some, the session will be expired instead of removed.
+            state.sessions.remove_for_fabric(fab_idx, expire_sess_id);
+
+            // Drop any CASE session resumption records that were
+            // scoped to this fabric so a subsequent CASE handshake
+            // to any peer that used to belong to it starts fresh.
+            #[cfg(feature = "case-resumption")]
+            state.resumption.remove_for_fabric(fab_idx);
+
+            // Notify that a session was removed
+            self.transport().notify_session_removed();
+
+            // The resumption cache was just mutated — wake the
+            // background persist task so the on-disk copy sheds
+            // the removed fabric's records too.
+            #[cfg(feature = "case-resumption")]
+            self.transport().notify_resumption_dirty();
+
+            // Notify that our mDNS records might have changed
+            self.transport().notify_comm_window_changed();
+
+            // Note that since we might have removed our own session, the exchange
+            // will terminate with a "NoSession" error, but that's OK and handled properly
+
+            // The fabric is gone from memory already, so a failure to remove
+            // it from storage too is reported only once the removal is complete.
+            // The next fabric index is saved too, so that the removed one is not reused
+            let mut persisted = persist
+                .store_next_fab_idx(state.fabrics.next_fab_idx())
+                .and(persist.remove(fab_idx));
+
+            // Matter Core spec: if the removed fabric is the
+            // one that installed the TrustedTimeSource, the device SHALL
+            // clear the attribute (and emit `MissingTrustedTimeSource`).
+            if state.rtc.trusted_time_source().map(|tts| tts.fab_idx) == Some(fab_idx) {
+                persisted = persisted.and(state.rtc.set_trusted_time_source_persist(
+                    None,
+                    persist.persist_mut(),
+                    notify,
+                    events,
+                ));
+
+                self.notify_trusted_time_source_changed();
+            }
+
+            info!("Removed operational fabric with local index {}", fab_idx);
+
+            // If the removed fabric was the one that opened the current
+            // commissioning window, `AdminFabricIndex` (and `AdminVendorId`)
+            // transition to null and subscribers must be notified — see
+            // Matter Core spec.
+            let opener_fabric_removed = state
+                .pase
+                .comm_window()
+                .and_then(|w| w.opener())
+                .map(|opener| opener.fab_idx == fab_idx)
+                .unwrap_or(false);
+
+            Some((opener_fabric_removed, persisted))
+        });
+
+        let Some((opener_fabric_removed, persisted)) = removed else {
+            return Ok(false);
+        };
+
+        persist.run()?;
+
+        // Matter Core spec: the node emits `BasicInformation::Leave` for a
+        // fabric that is about to be removed. `TC_BINFO_2_2` step 5 reads it
+        // and checks its `fabricIndex` matches the fabric just removed.
+        //
+        // Best-effort: a missing diagnostic event must not fail the
+        // (already-committed) fabric removal.
+        let emitted = events.emit_u32_event(
+            ROOT_ENDPOINT_ID,
+            BASIC_INFO_CLUSTER_ID,
+            LEAVE_EVENT_ID,
+            EventPriority::Info,
+            fab_idx.get() as _,
+        );
+
+        if let Err(e) = emitted {
+            warn!("Failed to emit the Leave event: {:?}", e);
+        }
+
+        // The removal changes NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts
+        notify.notify_cluster_changed(ROOT_ENDPOINT_ID, OPERATIONAL_CREDENTIALS_CLUSTER_ID);
+
+        if opener_fabric_removed {
+            notify.notify_cluster_changed(ROOT_ENDPOINT_ID, ADMIN_COMMISSIONING_CLUSTER_ID);
+        }
+
+        persisted?;
+
+        Ok(true)
     }
 
     /// Create a new transport runner instance

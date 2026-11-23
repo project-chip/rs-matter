@@ -66,12 +66,12 @@ fn last_fabric_removes_the_networks_by_default() -> Result<(), Error> {
     let second = add_fabric(&matter);
 
     // Another fabric is left, so the networks stay
-    remove_fabric(&matter, &kv, &false, &mut wifi, first)?;
+    assert!(remove_fabric(&matter, &kv, &false, &mut wifi, first)?);
 
     assert_eq!(network_ids(&wifi)?, [b"Home".to_vec()]);
 
     // The last fabric takes them along, from storage too
-    remove_fabric(&matter, &kv, &false, &mut wifi, second)?;
+    assert!(remove_fabric(&matter, &kv, &false, &mut wifi, second)?);
 
     assert!(network_ids(&wifi)?.is_empty());
     assert!(network_ids(&load(&matter, &kv, &false)?)?.is_empty());
@@ -98,7 +98,7 @@ fn last_fabric_follows_the_policy() -> Result<(), Error> {
 
     let fabric = add_fabric(&matter);
 
-    remove_fabric(&matter, &kv, &policy, &mut wifi, fabric)?;
+    assert!(remove_fabric(&matter, &kv, &policy, &mut wifi, fabric)?);
 
     assert_eq!(network_ids(&wifi)?, [b"Home".to_vec()]);
 
@@ -108,9 +108,30 @@ fn last_fabric_follows_the_policy() -> Result<(), Error> {
     // A window that is open already is not an error
     let fabric = add_fabric(&matter);
 
-    remove_fabric(&matter, &kv, &policy, &mut wifi, fabric)?;
+    assert!(remove_fabric(&matter, &kv, &policy, &mut wifi, fabric)?);
 
     assert!(matter.comm_window_state().is_open_on_all_transports());
+
+    Ok(())
+}
+
+#[test]
+fn an_unknown_fabric_is_not_removed() -> Result<(), Error> {
+    init_env_logger();
+
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let kv = matter.kv(MemKvBlobStore::default());
+
+    let mut wifi = commissioned(&matter, &kv, &false)?;
+
+    let fabric = add_fabric(&matter);
+    let unknown = NonZeroU8::new(fabric.get() + 1).unwrap();
+
+    assert!(!remove_fabric(&matter, &kv, &false, &mut wifi, unknown)?);
+
+    // The fabric stays, and the networks with it
+    assert!(matter.has_fabrics());
+    assert_eq!(network_ids(&wifi)?, [b"Home".to_vec()]);
 
     Ok(())
 }
@@ -198,23 +219,32 @@ fn add_fabric(matter: &Matter<'_>) -> NonZeroU8 {
     })
 }
 
-/// Remove a fabric, as `RemoveFabric` does, and tell the handlers about it.
+/// Remove a fabric as the node itself would, with `Matter::remove_fabric`,
+/// and tell the handlers about it.
+///
+/// Return `false` if there is no such fabric.
 fn remove_fabric(
     matter: &Matter<'_>,
     kv: impl KvBlobStoreAccess,
     policy: &dyn CommPolicy,
     wifi: &mut WifiNetworks<2>,
     fab_idx: NonZeroU8,
-) -> Result<(), Error> {
-    matter.with_state(|state| state.fabrics.remove(fab_idx))?;
+) -> Result<bool, Error> {
+    let crypto = test_only_crypto();
+    let mut rand = crypto.rand()?;
+    let buffers: MatterBuffers = MatterBuffers::new();
+    let state = InteractionModelState::<3, 0>::new();
 
-    lifecycle(
-        matter,
-        kv,
-        policy,
-        wifi,
-        LifecycleOp::FabricRemoval { fab_idx },
-    )
+    let dm = data_model(matter, policy, &mut rand, wifi);
+    let im = InteractionModel::new(matter, &crypto, &buffers, &dm, kv, &state);
+
+    let removed = matter.remove_fabric(fab_idx, None, im.kv(), &im, &im)?;
+
+    if removed {
+        im.notify_fabric_removed(fab_idx);
+    }
+
+    Ok(removed)
 }
 
 /// Broadcast `op` to a data model with the General and the Network Commissioning handlers.
