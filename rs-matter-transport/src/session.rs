@@ -48,7 +48,7 @@ pub use rs_matter_node_core::session::*;
 use super::dedup::GroupCtrStore;
 use super::dedup::RxCtrState;
 use super::exchange::{ExchangeState, MessageMeta, Role};
-use super::mrp::{mrp_log, RetransEntry};
+use super::mrp::mrp_log;
 use super::network::Address;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
@@ -436,17 +436,7 @@ impl Session {
         }
     }
 
-    /// Allocate the counter for an outgoing message.
-    ///
-    /// The counter is taken when the message is encoded, not when it is
-    /// handed to the network, so two messages can leave in the opposite
-    /// order of their counters when they are encoded concurrently (an
-    /// exchange handler's reply and a standalone ack from the transport
-    /// loop, say). Within an established session the peer's replay window
-    /// absorbs that, but on a session which has not received anything from
-    /// us yet the first message seeds the window with every earlier counter
-    /// marked as seen, and an older message overtaken by a newer one is then
-    /// dropped as a duplicate.
+    /// Allocate the counter for an outgoing message (see `assign_msg_ctr`).
     fn get_msg_ctr(&mut self) -> u32 {
         let ctr = self.msg_ctr;
         self.msg_ctr += 1;
@@ -780,14 +770,71 @@ impl Session {
         }
     }
 
+    /// Prepare a message which is sent right away: as `pre_send_queued`, and the message
+    /// is numbered too.
+    ///
+    /// Returns the peer's address and whether the message is a retransmission.
     pub(crate) fn pre_send(
         &mut self,
         exch_index: Option<usize>,
         tx_header: &mut PacketHdr,
     ) -> Result<(Address, bool), Error> {
+        let (peer, retransmission, numbered) = self.pre_send_queued(exch_index, tx_header)?;
+
+        if !numbered {
+            self.assign_msg_ctr(exch_index, tx_header);
+        }
+
+        Ok((peer, retransmission))
+    }
+
+    /// Whether a duplicate of the peer's message `rx_header` needs a standalone ack.
+    ///
+    /// Not while our reply on its exchange, which acknowledged it, waits to be
+    /// retransmitted: the retransmissions acknowledge it again. Were the reply lost, a
+    /// standalone ack would be the first message the peer gets from us, and a peer which
+    /// takes every earlier counter as seen would drop the reply's retransmissions.
+    pub(crate) fn needs_dup_ack(&self, rx_header: &PacketHdr) -> bool {
+        !self.exchanges.iter().flatten().any(|exchange| {
+            exchange.is_for_rx(&rx_header.proto) && exchange.mrp.retrans_acks(rx_header.plain.ctr)
+        })
+    }
+
+    /// Give a message prepared with `pre_send_queued` its counter.
+    ///
+    /// Messages have to leave in the order of their counters: the peer may synchronize its
+    /// replay window to the first message it receives from us, and take every earlier
+    /// counter as seen, as the spec says. So the caller numbers a message right before
+    /// handing it to the network, under the lock which serializes the sends.
+    pub(crate) fn assign_msg_ctr(&mut self, exch_index: Option<usize>, tx_header: &mut PacketHdr) {
+        let ctr = self.get_msg_ctr();
+
+        tx_header.plain.ctr = ctr;
+
+        if let Some(exchange) = exch_index.and_then(|index| self.exchanges[index].as_mut()) {
+            exchange.mrp.update_msg_ctr(ctr);
+        }
+    }
+
+    /// Prepare a message to be sent, but leave a new message without its counter: it is
+    /// numbered with `assign_msg_ctr` right before it is sent.
+    ///
+    /// Returns the peer's address, whether the message is a retransmission, and whether
+    /// it is numbered already (a retransmission, or a group data message).
+    pub(crate) fn pre_send_queued(
+        &mut self,
+        exch_index: Option<usize>,
+        tx_header: &mut PacketHdr,
+    ) -> Result<(Address, bool, bool), Error> {
         let ctr = if let Some(exchange_index) = exch_index {
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
-            exchange.mrp.retrans.as_ref().map(RetransEntry::get_msg_ctr)
+            exchange
+                .mrp
+                .retrans
+                .as_ref()
+                // A retransmission: the message was numbered when it was first sent
+                .map(|retrans| retrans.get_msg_ctr().ok_or(ErrorCode::InvalidState))
+                .transpose()?
         } else {
             None
         };
@@ -816,8 +863,8 @@ impl Session {
         // group key (see `get_or_create_for_group_rx`) — so this line
         // works uniformly for unicast replies and group control messages.
         tx_header.plain.sess_id = self.get_peer_sess_id();
-        tx_header.plain.ctr = if let Some(ctr) = ctr {
-            ctr
+        let ctr = if let Some(ctr) = ctr {
+            Some(ctr)
         } else if is_group && !is_control {
             // Group data messages carry the Global Group Encrypted Data
             // Message Counter — one counter across all groups, so the
@@ -827,7 +874,7 @@ impl Session {
             // covering it durable before this send could happen.
             #[cfg(feature = "groups")]
             {
-                group_data_ctr.ok_or(ErrorCode::InvalidState)?
+                Some(group_data_ctr.ok_or(ErrorCode::InvalidState)?)
             }
             // Group sessions are never created without the `groups` feature.
             #[cfg(not(feature = "groups"))]
@@ -835,8 +882,10 @@ impl Session {
                 Err(ErrorCode::InvalidState)?
             }
         } else {
-            self.get_msg_ctr()
+            None
         };
+
+        tx_header.plain.ctr = ctr.unwrap_or(0);
 
         // Include the Source Node ID for:
         // - Unsecured initiator sessions (spec).
@@ -886,8 +935,12 @@ impl Session {
             let retry_interval_ms = self.peer_retry_interval_ms();
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
 
-            let result =
-                exchange.pre_send(&tx_header.plain, &mut tx_header.proto, retry_interval_ms);
+            let result = exchange.pre_send(
+                &tx_header.plain,
+                &mut tx_header.proto,
+                ctr,
+                retry_interval_ms,
+            );
 
             if matches!(
                 result.as_ref().map_err(Error::code),
@@ -925,7 +978,7 @@ impl Session {
             result?;
         }
 
-        Ok((self.peer_addr, retransmission))
+        Ok((self.peer_addr, retransmission, ctr.is_some()))
     }
 
     /// Decode the remaining part of the packet after the plain header and then consume the `ParseBuf`
@@ -3778,6 +3831,98 @@ mod tests {
         assert!(addr.is_tcp());
         assert!(!tx.proto.is_reliable());
         assert!(tx.proto.get_ack().is_none());
+    }
+
+    /// A queued message is numbered when it is sent, so that a message sent right away
+    /// in the meantime - a standalone ack from the transport loop, say - does not leave
+    /// ahead of it with a higher counter. Its retransmission entry gets the counter too,
+    /// and a retransmission reuses it.
+    #[test]
+    fn queued_message_is_numbered_when_sent() {
+        use crate::exchange::InitiatorState;
+
+        let mut sess = Session::new(1, 100, false, udp(5540), Some(0x22), 300, 5000, 4000);
+        sess.set_local_nodeid(0x11);
+        unwrap!(sess.add_exch(2, Role::Initiator(InitiatorState::Owned)));
+
+        // A reliable message is queued: no counter yet, but its retransmission is armed
+        let mut msg = PacketHdr::new();
+        msg.proto.set_reliable();
+        let (_, retransmission, numbered) = unwrap!(sess.pre_send_queued(Some(0), &mut msg));
+        assert!(!retransmission);
+        assert!(!numbered);
+        let exch = unwrap!(sess.exchanges[0].as_ref());
+        assert_eq!(unwrap!(exch.mrp.retrans.as_ref()).get_msg_ctr(), None);
+
+        // A standalone ack is sent before it, and takes the next counter
+        let mut ack = PacketHdr::new();
+        unwrap!(sess.pre_send(None, &mut ack));
+        assert_eq!(ack.plain.ctr, 100);
+
+        // The queued message is numbered when it is sent: after the ack
+        sess.assign_msg_ctr(Some(0), &mut msg);
+        assert_eq!(msg.plain.ctr, 101);
+        let exch = unwrap!(sess.exchanges[0].as_ref());
+        assert_eq!(unwrap!(exch.mrp.retrans.as_ref()).get_msg_ctr(), Some(101));
+
+        // Its retransmission reuses the counter
+        let mut retrans = PacketHdr::new();
+        retrans.proto.set_reliable();
+        let (_, retransmission, numbered) = unwrap!(sess.pre_send_queued(Some(0), &mut retrans));
+        assert!(retransmission);
+        assert!(numbered);
+        assert_eq!(retrans.plain.ctr, 101);
+    }
+
+    /// A duplicate of the peer's message needs a standalone ack until our reply
+    /// acknowledges it, and again once the peer has acknowledged the reply; not while
+    /// the reply waits to be retransmitted.
+    #[test]
+    fn duplicate_needs_no_ack_while_the_reply_acks_it() {
+        use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+
+        let mut sess = Session::new(
+            1,
+            100,
+            false,
+            Address::default(),
+            Some(0x22),
+            300,
+            5000,
+            4000,
+        );
+        sess.set_local_nodeid(0x11);
+
+        let mut rx = PacketHdr::new();
+        rx.plain.ctr = 1;
+        rx.proto.exch_id = 7;
+        rx.proto.proto_id = PROTO_ID_SECURE_CHANNEL;
+        rx.proto.proto_opcode = sc::OpCode::CASESigma1 as u8;
+        rx.proto.set_initiator();
+        rx.proto.set_reliable();
+        assert!(unwrap!(sess.post_recv(&Address::default(), &rx)));
+
+        // No reply yet
+        assert!(sess.needs_dup_ack(&rx));
+
+        // The reply acknowledges the message, and waits to be retransmitted
+        let mut reply = PacketHdr::new();
+        reply.proto.set_reliable();
+        unwrap!(sess.pre_send_queued(Some(0), &mut reply));
+        assert_eq!(reply.proto.get_ack(), Some(1));
+        assert!(!sess.needs_dup_ack(&rx));
+        sess.assign_msg_ctr(Some(0), &mut reply);
+
+        // The peer acknowledges the reply
+        let mut ack = PacketHdr::new();
+        ack.plain.ctr = 2;
+        ack.proto.exch_id = 7;
+        ack.proto.proto_id = PROTO_ID_SECURE_CHANNEL;
+        ack.proto.proto_opcode = sc::OpCode::MRPStandAloneAck as u8;
+        ack.proto.set_initiator();
+        ack.proto.set_ack(Some(reply.plain.ctr));
+        unwrap!(sess.post_recv(&Address::default(), &ack));
+        assert!(sess.needs_dup_ack(&rx));
     }
 
     #[test]

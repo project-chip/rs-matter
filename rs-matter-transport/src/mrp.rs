@@ -136,14 +136,15 @@ pub fn advertised_sai(dev_det: &BasicInfoConfig<'_>) -> u32 {
 pub struct RetransEntry {
     /// The retransmission delay interval in milliseconds
     base_delay_interval_ms: u32,
-    // The msg counter that we are waiting to be acknowledged
-    msg_ctr: u32,
-    // The retransmission counter
+    /// The msg counter that we are waiting to be acknowledged;
+    /// `None` until the message is numbered, right before it is sent (see `Session::assign_msg_ctr`)
+    msg_ctr: Option<u32>,
+    /// The retransmission counter
     counter: u16,
 }
 
 impl RetransEntry {
-    pub fn new(base_delay_interval_ms: Option<u32>, msg_ctr: u32) -> Self {
+    pub fn new(base_delay_interval_ms: Option<u32>, msg_ctr: Option<u32>) -> Self {
         Self {
             base_delay_interval_ms: Self::base_interval_ms(base_delay_interval_ms),
             msg_ctr,
@@ -161,7 +162,7 @@ impl RetransEntry {
             .unwrap_or(MRP_BASE_RETRY_INTERVAL_MS)
     }
 
-    pub fn get_msg_ctr(&self) -> u32 {
+    pub fn get_msg_ctr(&self) -> Option<u32> {
         self.msg_ctr
     }
 
@@ -186,7 +187,7 @@ impl RetransEntry {
     /// `base_delay_interval_ms` - the peer's retry interval at the time of the
     /// retransmission, as it may have gone idle or become active since.
     pub fn pre_send(&mut self, ctr: u32, base_delay_interval_ms: u32) -> Result<(), Error> {
-        if self.msg_ctr == ctr {
+        if self.msg_ctr == Some(ctr) {
             if self.counter < MRP_MAX_TRANSMISSIONS {
                 self.counter += 1;
                 self.base_delay_interval_ms = Self::base_interval_ms(Some(base_delay_interval_ms));
@@ -286,6 +287,16 @@ impl ReliableMessage {
             .unwrap_or(false)
     }
 
+    /// Whether a message waiting to be retransmitted acknowledges the peer's message
+    /// `msg_ctr`, so that its retransmissions acknowledge it again.
+    pub(crate) fn retrans_acks(&self, msg_ctr: u32) -> bool {
+        self.retrans.is_some()
+            && self
+                .ack
+                .as_ref()
+                .is_some_and(|ack| ack.acknowledged && ack.msg_ctr == msg_ctr)
+    }
+
     pub fn has_rx_timed_out(&self, timeout_ms: u64) -> bool {
         self.received_at
             .map(|received_at| {
@@ -299,10 +310,14 @@ impl ReliableMessage {
     /// `retry_interval_ms`, the peer's retry interval for a message sent now
     /// (its active or idle one, see
     /// [`Session::peer_retry_interval_ms`](crate::session::Session::peer_retry_interval_ms)).
+    ///
+    /// `msg_ctr` is the counter of the message, or `None` for a new message which is
+    /// numbered only right before it is sent (see `update_msg_ctr`).
     pub fn pre_send(
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
+        msg_ctr: Option<u32>,
         retry_interval_ms: u32,
     ) -> Result<(), Error> {
         // Check if any acknowledgements are pending for this exchange,
@@ -314,7 +329,10 @@ impl ReliableMessage {
 
         if tx_proto.is_reliable() {
             if let Some(retrans) = &mut self.retrans {
-                if retrans.pre_send(tx_plain.ctr, retry_interval_ms).is_err() {
+                // A retransmission: the message was numbered when it was first sent
+                let msg_ctr = msg_ctr.ok_or(ErrorCode::InvalidState)?;
+
+                if retrans.pre_send(msg_ctr, retry_interval_ms).is_err() {
                     // Too many retransmissions, give up
                     error!(
                         "Packet {}{}: Too many retransmissions. Giving up",
@@ -330,13 +348,25 @@ impl ReliableMessage {
                     Err(ErrorCode::TxTimeout)?;
                 }
             } else {
-                self.retrans = Some(RetransEntry::new(Some(retry_interval_ms), tx_plain.ctr));
+                self.retrans = Some(RetransEntry::new(Some(retry_interval_ms), msg_ctr));
             }
         }
 
         self.received_at = None;
 
         Ok(())
+    }
+
+    /// Set the counter of the message prepared with `pre_send` and no counter, as it
+    /// gets one right before it is sent. Nothing to do if the message is not reliable.
+    pub(crate) fn update_msg_ctr(&mut self, msg_ctr: u32) {
+        if let Some(retrans) = &mut self.retrans {
+            // No other message can be prepared while a retransmission is pending, so the
+            // entry is the one `pre_send` armed for this message
+            assert!(retrans.msg_ctr.is_none());
+
+            retrans.msg_ctr = Some(msg_ctr);
+        }
     }
 
     /// This method will update the state of the rentransmission and ACK tables
@@ -353,8 +383,8 @@ impl ReliableMessage {
         if let Some(ack_msg_ctr) = rx_proto.get_ack() {
             // Handle received Acks
             if let Some(entry) = &self.retrans {
-                if entry.get_msg_ctr() != ack_msg_ctr {
-                    mrp_log!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:x}.", ack_msg_ctr, entry.msg_ctr);
+                if entry.get_msg_ctr() != Some(ack_msg_ctr) {
+                    mrp_log!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:?}.", ack_msg_ctr, entry.msg_ctr);
 
                     // This can actually happen on a noisy channel, where we've just sent a reply to a message
                     // - yet - the other side is still retransmitting the original message and thus acknowledging
@@ -404,7 +434,7 @@ mod tests {
     fn retrans_entry_gives_up_after_max_transmissions() {
         const CTR: u32 = 42;
 
-        let mut entry = RetransEntry::new(Some(300), CTR);
+        let mut entry = RetransEntry::new(Some(300), Some(CTR));
 
         for attempt in 0..MRP_MAX_TRANSMISSIONS {
             assert!(
@@ -497,14 +527,14 @@ mod tests {
         let mut mrp = ReliableMessage::new();
 
         let mut tx_proto = proto(false);
-        unwrap!(mrp.pre_send(&plain(10), &mut tx_proto, 300));
+        unwrap!(mrp.pre_send(&plain(10), &mut tx_proto, Some(10), 300));
         assert!(!mrp.is_retrans_pending());
         assert!(tx_proto.get_ack().is_none());
 
         let mut tx_proto = proto(true);
-        unwrap!(mrp.pre_send(&plain(11), &mut tx_proto, 300));
+        unwrap!(mrp.pre_send(&plain(11), &mut tx_proto, Some(11), 300));
         assert!(mrp.is_retrans_pending());
-        assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), 11);
+        assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), Some(11));
         assert!(tx_proto.is_reliable());
     }
 
@@ -519,12 +549,12 @@ mod tests {
         assert!(mrp.is_ack_pending());
 
         let mut tx_proto = proto(false);
-        unwrap!(mrp.pre_send(&plain(1), &mut tx_proto, 300));
+        unwrap!(mrp.pre_send(&plain(1), &mut tx_proto, Some(1), 300));
         assert_eq!(tx_proto.get_ack(), Some(7));
         assert!(!mrp.is_ack_pending());
 
         let mut tx_proto = proto(false);
-        unwrap!(mrp.pre_send(&plain(2), &mut tx_proto, 300));
+        unwrap!(mrp.pre_send(&plain(2), &mut tx_proto, Some(2), 300));
         assert_eq!(tx_proto.get_ack(), Some(7));
         assert!(!mrp.is_ack_pending());
     }
@@ -540,14 +570,16 @@ mod tests {
         let tx_plain = plain(20);
 
         // The first send arms the entry; each further one is a retransmission.
-        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(tx_plain.ctr), 300));
         for _ in 0..MRP_MAX_TRANSMISSIONS {
-            unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
+            unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(tx_plain.ctr), 300));
             assert!(mrp.is_retrans_pending());
         }
         assert_eq!(unwrap!(mrp.retrans.as_ref()).counter, MRP_MAX_TRANSMISSIONS);
 
-        let err = unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300).err());
+        let err = unwrap!(mrp
+            .pre_send(&tx_plain, &mut proto(true), Some(tx_plain.ctr), 300)
+            .err());
         assert_eq!(err.code(), ErrorCode::TxTimeout);
         assert!(!mrp.is_retrans_pending());
         assert!(mrp.ack.is_none());
@@ -561,13 +593,13 @@ mod tests {
         let mut mrp = ReliableMessage::new();
         let tx_plain = plain(20);
 
-        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 300));
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(tx_plain.ctr), 300));
         assert_eq!(
             unwrap!(mrp.retrans.as_ref()).delay_ms(0, 0),
             RetransEntry::backoff_ms(300, 0, 0)
         );
 
-        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), 15_000));
+        unwrap!(mrp.pre_send(&tx_plain, &mut proto(true), Some(tx_plain.ctr), 15_000));
         assert_eq!(
             unwrap!(mrp.retrans.as_ref()).delay_ms(0, 0),
             RetransEntry::backoff_ms(15_000, 1, 0)
@@ -581,8 +613,8 @@ mod tests {
     #[should_panic(expected = "Previous retrans entry")]
     fn pre_send_different_counter_while_retrans_pending_panics() {
         let mut mrp = ReliableMessage::new();
-        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), 300));
-        let _ = mrp.pre_send(&plain(21), &mut proto(true), 300);
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(20), 300));
+        let _ = mrp.pre_send(&plain(21), &mut proto(true), Some(21), 300);
     }
 
     /// An incoming ACK for the pending counter clears the retransmission (and
@@ -591,7 +623,7 @@ mod tests {
     #[test]
     fn post_recv_ack_must_match_pending_retrans() {
         let mut mrp = ReliableMessage::new();
-        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), 300));
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(20), 300));
 
         let mut rx_proto = proto(false);
         rx_proto.set_ack(Some(19));
@@ -603,6 +635,62 @@ mod tests {
         unwrap!(mrp.post_recv(&plain(6), &rx_proto));
         assert!(!mrp.is_retrans_pending());
         assert!(mrp.ack.is_none());
+    }
+
+    /// A message prepared without its counter is numbered right before it is sent.
+    /// Until then no ACK matches it; once numbered, the ACK for its counter does.
+    #[test]
+    fn unnumbered_retrans_matches_acks_once_numbered() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.pre_send(&plain(0), &mut proto(true), None, 300));
+        assert!(mrp.is_retrans_pending());
+        assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), None);
+
+        let mut rx_proto = proto(false);
+        rx_proto.set_ack(Some(20));
+        let err = unwrap!(mrp.post_recv(&plain(5), &rx_proto).err());
+        assert_eq!(err.code(), ErrorCode::Duplicate);
+        assert!(mrp.is_retrans_pending());
+
+        mrp.update_msg_ctr(20);
+        assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), Some(20));
+
+        unwrap!(mrp.post_recv(&plain(6), &rx_proto));
+        assert!(!mrp.is_retrans_pending());
+    }
+
+    /// Setting the counter of a message which has one already is a caller bug, and panics
+    /// rather than silently leaving the entry to wait for an ACK of the wrong counter.
+    #[test]
+    #[should_panic]
+    fn update_msg_ctr_of_numbered_retrans_panics() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(20), 300));
+        mrp.update_msg_ctr(21);
+    }
+
+    /// A reliable reply which acknowledged the peer's message keeps acknowledging it
+    /// while it waits to be retransmitted, and stops once the peer acknowledges it.
+    #[test]
+    fn retrans_acks_while_the_reply_is_pending() {
+        let mut mrp = ReliableMessage::new();
+
+        let mut rx_proto = proto(true);
+        unwrap!(mrp.post_recv(&plain(5), &rx_proto));
+        assert!(!mrp.retrans_acks(5));
+
+        // An unreliable reply acknowledges it, but is not retransmitted
+        unwrap!(mrp.pre_send(&plain(19), &mut proto(false), Some(19), 300));
+        assert!(!mrp.retrans_acks(5));
+
+        unwrap!(mrp.pre_send(&plain(20), &mut proto(true), Some(20), 300));
+        assert!(mrp.retrans_acks(5));
+        assert!(!mrp.retrans_acks(4));
+
+        rx_proto = proto(false);
+        rx_proto.set_ack(Some(20));
+        unwrap!(mrp.post_recv(&plain(6), &rx_proto));
+        assert!(!mrp.retrans_acks(5));
     }
 
     /// An ACK arriving when nothing is being retransmitted is simply ignored.
@@ -639,7 +727,7 @@ mod tests {
         let mut mrp = ReliableMessage::new();
 
         unwrap!(mrp.post_recv(&plain(6), &proto(true)));
-        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), 300));
+        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(1), 300));
         assert!(!mrp.is_ack_pending());
 
         unwrap!(mrp.post_recv(&plain(6), &proto(true)));
@@ -668,7 +756,7 @@ mod tests {
         mrp.received_at = Some(Instant::from_ticks(0));
         assert!(!mrp.has_rx_timed_out(1 << 40));
 
-        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), 300));
+        unwrap!(mrp.pre_send(&plain(1), &mut proto(false), Some(1), 300));
         assert!(mrp.received_at.is_none());
         assert!(!mrp.has_rx_timed_out(0));
     }
@@ -677,7 +765,7 @@ mod tests {
     /// (`jitter_rand == 255`) of the base delay, and grows with the random.
     #[test]
     fn delay_ms_jitter_stays_within_band() {
-        let entry = RetransEntry::new(Some(300), 1);
+        let entry = RetransEntry::new(Some(300), Some(1));
 
         let no_jitter = entry.delay_ms(0, 0);
         let max_jitter = entry.delay_ms(255, 0);
@@ -697,19 +785,19 @@ mod tests {
     /// zero interval can never collapse the ladder into a tight loop.
     #[test]
     fn retrans_entry_zero_interval_falls_back_to_default() {
-        let default = RetransEntry::new(None, 1).delay_ms(0, 0);
+        let default = RetransEntry::new(None, Some(1)).delay_ms(0, 0);
 
-        assert_eq!(RetransEntry::new(Some(0), 1).delay_ms(0, 0), default);
+        assert_eq!(RetransEntry::new(Some(0), Some(1)).delay_ms(0, 0), default);
         assert_eq!(
-            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), 1).delay_ms(0, 0),
+            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), Some(1)).delay_ms(0, 0),
             default
         );
-        assert!(RetransEntry::new(Some(1000), 1).delay_ms(0, 0) > default);
+        assert!(RetransEntry::new(Some(1000), Some(1)).delay_ms(0, 0) > default);
     }
 
     #[test]
     fn own_active_poll_ms_is_added_flat_across_the_backoff_ladder() {
-        let entry = RetransEntry::new(Some(300), 1);
+        let entry = RetransEntry::new(Some(300), Some(1));
 
         for counter in 0..MRP_MAX_TRANSMISSIONS {
             for jitter in [0u8, 128, 255] {
