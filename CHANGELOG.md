@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: `ScanNetworks` reports only the scan results that fit in its response, rather than failing when there are more. `NetCtl::scan` should report the strongest networks first (#683)
+  * New: `TLVBuilderParent` is implemented for `&mut T`
 * New: `Matter::remove_fabric`, which removes a fabric as the `RemoveFabric` command does, for a node that removes one by itself, such as when its user asks for it on the node's own user interface; the `RemoveFabric` handler uses it too (#681)
 * Breaking: `rs-matter-tlv` reports the crate-local `TlvError` rather than the global `Error`, including in `FromTLV`, `ToTLV`, `TLVWrite` and `TLVBuilder`. It converts to `Error`, so `?` into a `Result<_, Error>` still compiles. The second step of the error refactor (#679)
   * Breaking: code that returns the result of a TLV call where a `Result<_, Error>` is expected converts it, e.g. `Ok(tw.end_container()?)` in the closures given to `data` and `emit_event`, or `Ok(builder.set(value)?)` at the end of an attribute read

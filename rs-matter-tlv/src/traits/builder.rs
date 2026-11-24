@@ -285,6 +285,19 @@ pub trait TLVBuilderParent: Sized + core::fmt::Debug + defmt::Format + MaybeSend
     fn writer(&mut self) -> &mut Self::Write;
 }
 
+/// Allows a builder to be the parent of a nested builder by reference, so that the
+/// builder is not lost if the nested one fails.
+impl<T> TLVBuilderParent for &mut T
+where
+    T: TLVBuilderParent,
+{
+    type Write = T::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        (**self).writer()
+    }
+}
+
 /// A root-level TLV builder parent, that wraps a `TLVWrite` implementation.
 pub struct TLVWriteParent<S, W>(S, W);
 
