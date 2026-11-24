@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: `invoke_cmd`, and the generated client methods for commands without a response, return the command's status as an error rather than `Ok` (#685)
 * Fix: messages get their counter when sent, not when queued, so they leave in counter order (a standalone ack overtook a slow Sigma2, failing CASE) (#684)
   * Fix: no standalone ack for a duplicate while our reply, which acknowledged it, waits to be retransmitted
   * Fix: as with CHIP and matter.js, a unicast window starts empty and is cleared by a jump past it; it holds 32 counters, as the spec says

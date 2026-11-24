@@ -17,6 +17,8 @@
 
 //! Client-side invoke tests exercising the `InvokeSender` API.
 
+use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
+use rs_matter::error::ErrorCode;
 use rs_matter::im::CmdDataTag;
 use rs_matter::im::{ImClient, TxOutcome};
 use rs_matter::tlv::{TLVTag, TLVWrite};
@@ -96,6 +98,87 @@ fn test_client_invoke_sender_non_chunked() {
                 "Non-chunked invoke should have exactly 1 chunk"
             );
             assert!(got_response, "Should have received an invoke response");
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// A command without a response that the peer refuses, as it has no ACL entry for us:
+/// the status of the command (`UnsupportedAccess`) is the error.
+#[test]
+fn test_client_no_data_command_refused() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    // No `add_default_acl()`
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let err = exchange
+                .on_off()
+                .on(1)
+                .await
+                .expect_err("a refused command should be an error");
+            assert_eq!(err.code(), ErrorCode::UnsupportedAccess);
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// A command without a response to an endpoint the peer does not have: the status of
+/// the command (`UnsupportedEndpoint`, i.e. `EndpointNotFound`) is the error.
+#[test]
+fn test_client_no_data_command_missing_endpoint() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let err = exchange
+                .on_off()
+                .on(99)
+                .await
+                .expect_err("a command to a missing endpoint should be an error");
+            assert_eq!(err.code(), ErrorCode::EndpointNotFound);
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Commands without a response that the peer succeeds are `Ok`.
+#[test]
+fn test_client_no_data_command_succeeded() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            exchange.on_off().on(1).await?;
+
+            let exchange = im.initiate_exchange().await?;
+            exchange.on_off().off(1).await?;
+
+            let exchange = im.initiate_exchange().await?;
+            exchange.on_off().toggle(1).await?;
 
             Ok(())
         })

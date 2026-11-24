@@ -28,7 +28,7 @@ use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement};
 use crate::utils::sync::MaybeSend;
 
 use super::{
-    AttrResp, IMStatusCode, InvReqBuilder, InvokeResp, ReadReqBuilder, ReportDataResp,
+    AttrResp, CmdResp, IMStatusCode, InvReqBuilder, InvokeResp, ReadReqBuilder, ReportDataResp,
     SubscribeReqBuilder, WriteReqBuilder, WriteResp,
 };
 
@@ -227,13 +227,21 @@ where
     Ok(())
 }
 
-/// Send an Invoke request for a command without a response, and consume the status reply.
+/// Send an Invoke request for a command without a response, and return an error if the
+/// peer failed the command.
+///
+/// The response is acknowledged in either case.
 pub async fn invoke_cmd<T, B>(tx: T, timed_timeout_ms: Option<u16>, build: B) -> Result<(), Error>
 where
     T: ImClient,
     B: FnMut(InvReqBuilder<T::InvokeSender>) -> Result<T::InvokeSender, Error> + MaybeSend,
 {
-    complete_invoke(tx.invoke_with(timed_timeout_ms, build).await?).await
+    let chunk = tx.invoke_with(timed_timeout_ms, build).await?;
+
+    let status = cmd_status(&chunk);
+    let completed = complete_invoke(chunk).await;
+
+    status.and(completed)
 }
 
 /// Acknowledge the provided chunk and all the chunks following it.
@@ -262,6 +270,33 @@ fn attr_data(resp: ReportDataResp<'_>) -> Result<Result<TLVElement<'_>, Error>, 
         AttrResp::Data(data) => Ok(data.data),
         AttrResp::Status(status) => Err(status_error(status.status.status)),
     })
+}
+
+/// Return the status of the single command without a response in a response to an
+/// Invoke request.
+///
+/// A `StatusResponse(Success)` in place of an `InvokeResponse` means the command succeeded.
+fn cmd_status<C: ImInvokeChunk>(chunk: &C) -> Result<(), Error> {
+    let Some(resp) = chunk.response()? else {
+        return Ok(());
+    };
+
+    let cmd_resp = resp
+        .invoke_responses
+        .as_ref()
+        .ok_or(ErrorCode::InvalidData)?
+        .iter()
+        .next()
+        .ok_or(ErrorCode::InvalidData)?
+        .map_err(|_| ErrorCode::InvalidData)?;
+
+    match cmd_resp {
+        CmdResp::Status(status) if status.status.status != IMStatusCode::Success => {
+            Err(status_error(status.status.status))
+        }
+        // Data for a command that has none still means the peer ran it
+        _ => Ok(()),
+    }
 }
 
 fn status_error(status: IMStatusCode) -> Error {
