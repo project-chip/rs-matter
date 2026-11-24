@@ -33,8 +33,8 @@ use crate::error::{Error, ErrorCode};
 use crate::im::EventPriority;
 use crate::persist::Persist;
 use crate::tlv::{
-    Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,
-    ToTLVArrayBuilder, ToTLVBuilder,
+    Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVTag,
+    TLVWrite, ToTLVArrayBuilder, ToTLVBuilder,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
@@ -47,6 +47,10 @@ pub use rs_matter_node_core::networks::{
     load_networks, remove_networks, store_networks, DummyNetworks, NetworkType, Networks,
     NetworksError, WirelessCreds,
 };
+
+/// The space left free after the last scan result, for the closing TLVs of
+/// the `ScanNetworksResponse` and of the invoke response around it
+const SCAN_RESPONSE_TLV_RESERVE_SIZE: usize = 16;
 
 /// Return an instance of the Network Commissioning cluster meta-data for the given network type.
 pub const fn cluster(net_type: NetworkType) -> Cluster<'static> {
@@ -399,6 +403,9 @@ pub trait NetCtl: MaybeSendSync {
     }
 
     /// Scan for networks and call the provided function for each network found
+    ///
+    /// The networks should be reported in decreasing RSSI order (decreasing LQI order for Thread),
+    /// because the `ScanNetworks` command keeps only the first ones that fit in its response.
     ///
     /// For `NetworkType::Ethernet` this method should always fail with an error.
     fn scan<F>(
@@ -1149,6 +1156,7 @@ where
             NetworkType::Thread => {
                 let mut builder = Some(response);
                 let mut array_builder = None;
+                let mut skipped = 0;
 
                 let (status, _, _) = NetworkCommissioningStatusEnum::map_ctl(
                     self.net_ctl
@@ -1159,7 +1167,7 @@ where
                                 .and_then(|ssid| ssid.as_opt_ref())
                                 .map(|ssid| ssid.0),
                             |network| {
-                                let abuilder = if let Some(builder) = builder.take() {
+                                let mut abuilder = if let Some(builder) = builder.take() {
                                     builder
                                         .networking_status(NetworkCommissioningStatusEnum::Success)?
                                         .debug_text(None)?
@@ -1171,7 +1179,24 @@ where
                                     unwrap!(array_builder.take())
                                 };
 
-                                array_builder = Some(network.thread_read_into(abuilder.push()?)?);
+                                // Skip all results after the first one that does not fit,
+                                // as they are weaker
+                                if skipped > 0
+                                    || !push_scan_result(&mut abuilder, |parent| {
+                                        network.thread_read_into(
+                                            ThreadInterfaceScanResultStructBuilder::new(
+                                                parent,
+                                                &TLVTag::Anonymous,
+                                            )?,
+                                        )?;
+
+                                        Ok(())
+                                    })?
+                                {
+                                    skipped += 1;
+                                }
+
+                                array_builder = Some(abuilder);
 
                                 Ok(())
                             },
@@ -1179,6 +1204,10 @@ where
                         .await
                         .map(|_| 0),
                 )?;
+
+                if skipped > 0 {
+                    info!("{} scan results did not fit in the response", skipped);
+                }
 
                 self.apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
@@ -1198,6 +1227,7 @@ where
             NetworkType::Wifi => {
                 let mut builder = Some(response);
                 let mut array_builder = None;
+                let mut skipped = 0;
 
                 let (status, _, _) = NetworkCommissioningStatusEnum::map_ctl(
                     self.net_ctl
@@ -1208,7 +1238,7 @@ where
                                 .and_then(|ssid| ssid.as_opt_ref())
                                 .map(|ssid| ssid.0),
                             |network| {
-                                let abuilder = if let Some(builder) = builder.take() {
+                                let mut abuilder = if let Some(builder) = builder.take() {
                                     builder
                                         .networking_status(NetworkCommissioningStatusEnum::Success)?
                                         .debug_text(None)?
@@ -1218,7 +1248,24 @@ where
                                     unwrap!(array_builder.take())
                                 };
 
-                                array_builder = Some(network.wifi_read_into(abuilder.push()?)?);
+                                // Skip all results after the first one that does not fit,
+                                // as they are weaker
+                                if skipped > 0
+                                    || !push_scan_result(&mut abuilder, |parent| {
+                                        network.wifi_read_into(
+                                            WiFiInterfaceScanResultStructBuilder::new(
+                                                parent,
+                                                &TLVTag::Anonymous,
+                                            )?,
+                                        )?;
+
+                                        Ok(())
+                                    })?
+                                {
+                                    skipped += 1;
+                                }
+
+                                array_builder = Some(abuilder);
 
                                 Ok(())
                             },
@@ -1226,6 +1273,10 @@ where
                         .await
                         .map(|_| 0),
                 )?;
+
+                if skipped > 0 {
+                    info!("{} scan results did not fit in the response", skipped);
+                }
 
                 self.apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
@@ -1528,5 +1579,115 @@ impl<N, T> defmt::Format for NetCommHandler<'_, N, T> {
             self.endpoint_id,
             self.networks_key
         );
+    }
+}
+
+/// Write one scan result into the array of a `ScanNetworksResponse` with `f`.
+///
+/// If the result does not fit, remove what `f` wrote and return `false`.
+fn push_scan_result<P, F>(parent: &mut P, f: F) -> Result<bool, Error>
+where
+    P: TLVBuilderParent,
+    F: FnOnce(&mut P) -> Result<(), Error>,
+{
+    let pos = parent.writer().get_tail();
+
+    match f(parent) {
+        Ok(()) if parent.writer().available_space().len() >= SCAN_RESPONSE_TLV_RESERVE_SIZE => {
+            Ok(true)
+        }
+        Err(e) if e.code() != ErrorCode::NoSpace => Err(e),
+        _ => {
+            parent.writer().rewind_to(pos);
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tlv::{TLVElement, TLVWriteParent};
+    use crate::utils::storage::WriteBuf;
+
+    use super::*;
+
+    const SSIDS: [&[u8]; 5] = [b"ssid0", b"ssid1", b"ssid2", b"ssid3", b"ssid4"];
+
+    /// Write the `SSIDS` networks as scan results into a buffer of `len` bytes,
+    /// check that the ones written are the first ones and return their number
+    /// and the length of the written array.
+    fn scan_results(len: usize) -> (usize, usize) {
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new(&mut buf[..len]);
+
+        let mut abuilder = unwrap!(WiFiInterfaceScanResultStructArrayBuilder::new(
+            TLVWriteParent::new((), &mut wb),
+            &TLVTag::Anonymous,
+        ));
+
+        let mut count = 0;
+
+        for ssid in SSIDS {
+            let network = NetworkScanInfo::Wifi {
+                security: WiFiSecurityBitmap::WPA_2_PERSONAL,
+                ssid,
+                bssid: &[1, 2, 3, 4, 5, 6],
+                channel: 6,
+                band: WiFiBandEnum::V2G4,
+                rssi: -50,
+            };
+
+            let pushed = unwrap!(push_scan_result(&mut abuilder, |parent| {
+                network.wifi_read_into(WiFiInterfaceScanResultStructBuilder::new(
+                    parent,
+                    &TLVTag::Anonymous,
+                )?)?;
+
+                Ok(())
+            }));
+
+            if !pushed {
+                break;
+            }
+
+            count += 1;
+        }
+
+        unwrap!(abuilder.end());
+
+        let array = unwrap!(TLVElement::new(wb.as_slice()).array());
+
+        let mut decoded = 0;
+        for (element, ssid) in array.iter().zip(SSIDS) {
+            let element = unwrap!(element);
+            assert_eq!(
+                unwrap!(unwrap!(unwrap!(element.r#struct()).ctx(1)).str()),
+                ssid
+            );
+            decoded += 1;
+        }
+
+        assert_eq!(decoded, count);
+
+        (count, wb.as_slice().len())
+    }
+
+    #[test]
+    fn scan_results_that_do_not_fit_are_skipped() {
+        let (count, all_len) = scan_results(256);
+        assert_eq!(count, SSIDS.len());
+
+        // The array start and end take one byte each
+        let entry_len = (all_len - 2) / SSIDS.len();
+        assert!(entry_len > SCAN_RESPONSE_TLV_RESERVE_SIZE);
+
+        let fits = |n: usize| 1 + n * entry_len + SCAN_RESPONSE_TLV_RESERVE_SIZE;
+
+        // The fourth result does not fit at all
+        assert_eq!(scan_results(fits(3)).0, 3);
+        // The fourth result fits, but takes some of the reserved space
+        assert_eq!(scan_results(fits(4) - 1).0, 3);
+        // The third result takes some of the reserved space
+        assert_eq!(scan_results(fits(3) - 1).0, 2);
     }
 }
