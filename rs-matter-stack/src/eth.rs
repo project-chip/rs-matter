@@ -19,6 +19,7 @@ use core::future::Future;
 
 use rs_matter_crypto::Crypto;
 use rs_matter_dm::clusters::eth_diag::EthDiag;
+use rs_matter_dm::clusters::gen_comm::CommPolicy;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::endpoints::eth_net_handler;
 use rs_matter_dm::networks::NetChangeNotif;
@@ -33,7 +34,7 @@ use rs_matter_utils::sync::MaybeSend;
 use crate::mdns::Mdns;
 use crate::net::NetStack;
 use crate::network::{Embedding, EthStackNetwork, StackNetwork};
-use crate::{pin_alloc, MatterStack, RunOptions, UserTask};
+use crate::{pin_alloc, MatterStack, RunOptions, StackCommPolicy, UserTask};
 
 /// A trait representing a task that needs access to the operational Ethernet interface
 /// (Network stack, Netif and Ethernet diagnostics) to perform its work.
@@ -194,16 +195,25 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let net_task = pin_alloc!(
             self.bump,
-            self.run_ethernet(&mut ethernet, crypto, handler, &kv, &gen_diag, user)
+            self.run_ethernet(
+                &mut ethernet,
+                crypto,
+                handler,
+                &kv,
+                &gen_diag,
+                &comm_policy,
+                user
+            )
         );
 
         net_task.await
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_ethernet<'t, N, C, H, K, X>(
         &'t self,
         ethernet: &'t mut N,
@@ -211,6 +221,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         user: X,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -225,6 +236,7 @@ where
             MatterStackEthernetTask {
                 stack: self,
                 gen_diag,
+                comm_policy,
                 crypto,
                 handler,
                 kv,
@@ -245,6 +257,7 @@ where
 {
     stack: &'a MatterStack<'a, B, S, E>,
     gen_diag: &'a dyn GenDiag,
+    comm_policy: &'a dyn CommPolicy,
     crypto: C,
     handler: H,
     kv: K,
@@ -276,13 +289,15 @@ where
     {
         info!("Ethernet driver started");
 
+        let comm_policy = StackCommPolicy::new(self.comm_policy, false);
+
         // The operational network clusters of the root endpoint need the
         // netif, which only exists here; chain them on top of the user's
         // handler, which owns everything else. `&self.handler` doubles as
         // the `Metadata` provider (`(M, H)` form for `InteractionModel::new`).
         let combined = eth_net_handler(
             &self.stack.matter,
-            &false,
+            &comm_policy,
             self.gen_diag,
             &netif,
             &eth_diag,

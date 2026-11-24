@@ -20,6 +20,7 @@ use core::marker::PhantomData;
 use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
+use rs_matter_dm::clusters::gen_comm::CommPolicy;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::clusters::net_comm::{NetCtl, NetworkType};
 use rs_matter_dm::clusters::thread_diag::ThreadDiag;
@@ -43,7 +44,7 @@ use crate::network::{Embedding, StackNetwork, ThreadStackNetwork};
 use crate::wireless::{
     GattPeripheral, GattTask, MatterStackWirelessTask, UntilBleCommWindow, WirelessNetCtl,
 };
-use crate::{alloc_init, pin_alloc, MatterStack, RunOptions, UserTask};
+use crate::{alloc_init, pin_alloc, MatterStack, RunOptions, StackCommPolicy, UserTask};
 
 use super::{GattDriver, PreexistingWireless};
 
@@ -90,7 +91,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let btp = alloc_init!(self.bump, Btp::init());
 
@@ -104,6 +105,7 @@ where
                 handler,
                 kv,
                 &gen_diag,
+                &comm_policy,
                 user
             )
         );
@@ -149,7 +151,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let btp = alloc_init!(self.bump, Btp::init());
 
@@ -163,6 +165,7 @@ where
                 handler,
                 kv,
                 &gen_diag,
+                &comm_policy,
                 user
             )
         );
@@ -218,7 +221,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let net_task = pin_alloc!(
             self.bump,
@@ -229,6 +232,7 @@ where
                 handler,
                 kv,
                 &gen_diag,
+                &comm_policy,
                 user
             )
         );
@@ -245,6 +249,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -260,6 +265,7 @@ where
             MatterStackWirelessTask::<'_, _, _, _, _, _, _, _, _, NoopWirelessNetCtl> {
                 stack: self,
                 gen_diag,
+                comm_policy,
                 networks,
                 crypto,
                 handler,
@@ -283,6 +289,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -299,6 +306,7 @@ where
             MatterStackWirelessTask::<'_, _, _, _, _, _, _, _, _, NoopWirelessNetCtl> {
                 stack: self,
                 gen_diag,
+                comm_policy,
                 networks,
                 crypto,
                 handler,
@@ -322,6 +330,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         mut user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -361,6 +370,7 @@ where
                         > {
                             stack: self,
                             gen_diag,
+                            comm_policy,
                             networks: &mut *networks,
                             crypto: &crypto,
                             handler: &handler,
@@ -393,6 +403,7 @@ where
                         > {
                             stack: self,
                             gen_diag,
+                            comm_policy,
                             networks: &mut *networks,
                             crypto: &crypto,
                             handler: &handler,
@@ -630,13 +641,15 @@ where
             WirelessNetCtl::<Q>::Commissioning(NetworkType::Thread),
         );
 
+        let comm_policy = StackCommPolicy::new(self.comm_policy, false);
+
         // No netif during the BLE phase; the operational network clusters
         // are chained on top of the user's handler with the commissioning
         // net-ctl, and re-chained with the operational one once Wifi/Thread
         // is up (`ThreadTask::run`).
         let combined = thread_net_handler(
             &self.stack.matter,
-            &false,
+            &comm_policy,
             self.gen_diag,
             &(),
             &net_ctl,
@@ -717,14 +730,22 @@ where
 
             let mut buf = [0u8; MAX_CREDS_SIZE];
 
-            connect_once(&mut *self.networks, &net_ctl_s, &network_id, &mut buf).await?;
+            // Then the commissioning cannot complete: the fail-safe expires, and the radio
+            // goes back to BLE
+            if let Err(e) =
+                connect_once(&mut *self.networks, &net_ctl_s, &network_id, &mut buf).await
+            {
+                warn!("Deferred connect failed: {:?}", e);
+            }
         }
+
+        let comm_policy = StackCommPolicy::new(self.comm_policy, false);
 
         // The Network Commissioning handler drives the maintenance `WirelessMgr`
         // with the operational `net_ctl`.
         let combined = thread_net_handler(
             &self.stack.matter,
-            &false,
+            &comm_policy,
             self.gen_diag,
             &netif,
             &net_ctl_s,
@@ -783,15 +804,12 @@ where
 
         let mut task = pin!(self.task.run(net_stack, netif, net_ctl, mdns));
 
-        // Hand the radio back to BLE once a commissioning window that has to be advertised
-        // there appears. The window still open from the commissioning this phase is finishing
-        // is not one of them - non-concurrent commissioning completes over the operational
-        // network, and only then does the window close - so wait for it to go away first, and
-        // only then for the next one to open.
+        // Hand the radio back to BLE once a commissioning window has to be advertised there:
+        // a new one opens, or the commissioning this phase is finishing fails.
         let mut comm_window_task = pin!(async {
-            stack.wait_next_comm_window().await;
+            stack.wait_ble_comm_window().await;
 
-            info!("Commissioning window opened; handing the radio back to BLE");
+            info!("Commissioning window open; handing the radio back to BLE");
 
             Ok(())
         });
@@ -831,12 +849,14 @@ where
         let net_ctl_s =
             NetCtlWithStatusImpl::new(&self.stack.net_state, WirelessNetCtl::Operational(&net_ctl));
 
+        let comm_policy = StackCommPolicy::new(self.comm_policy, true);
+
         // The Network Commissioning handler drives the maintenance `WirelessMgr`
         // with the operational `net_ctl`; `run_net_coex` only runs the BTP coex
         // transport.
         let combined = thread_net_handler(
             &self.stack.matter,
-            &true,
+            &comm_policy,
             self.gen_diag,
             &netif,
             &net_ctl_s,
