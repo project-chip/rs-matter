@@ -482,10 +482,13 @@ impl ExchangeState {
         Ok(())
     }
 
+    /// Prepare the (re)transmission of a message on this exchange; `msg_ctr` is as with
+    /// [`ReliableMessage::pre_send`](crate::mrp::ReliableMessage::pre_send).
     pub fn pre_send(
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
+        msg_ctr: Option<u32>,
         retry_interval_ms: u32,
     ) -> Result<(), Error> {
         if matches!(self.role, Role::Initiator(_)) {
@@ -496,7 +499,8 @@ impl ExchangeState {
 
         tx_proto.exch_id = self.exch_id;
 
-        self.mrp.pre_send(tx_plain, tx_proto, retry_interval_ms)
+        self.mrp
+            .pre_send(tx_plain, tx_proto, msg_ctr, retry_interval_ms)
     }
 
     pub fn retrans_delay_ms(&mut self, jitter_rand: u8, own_active_poll_ms: u32) -> Option<u64> {
@@ -757,10 +761,11 @@ impl TxMessage<'_> {
                 .get(self.exchange_id.session_id())
                 .ok_or(ErrorCode::NoSession)?;
 
-            let (peer, retransmission) = session.pre_send(
-                Some(self.exchange_id.exchange_index()),
-                &mut self.packet.header,
-            )?;
+            let exchange_index = self.exchange_id.exchange_index();
+
+            // Numbered only when the TX loop sends it (see `Session::assign_msg_ctr`)
+            let (peer, retransmission, numbered) =
+                session.pre_send_queued(Some(exchange_index), &mut self.packet.header)?;
 
             self.packet.peer = peer;
             self.packet.payload_start = PacketHdr::HDR_RESERVE + payload_start;
@@ -769,6 +774,8 @@ impl TxMessage<'_> {
                 .truncate(PacketHdr::HDR_RESERVE + payload_end);
             self.packet.tx_info.payload_state = TxPayloadState::NotEncoded {
                 session_id: session.id,
+                exchange_index: Some(exchange_index),
+                numbered,
             };
             self.packet.tx_info.retransmission = retransmission;
             self.packet.clear_on_drop(false);

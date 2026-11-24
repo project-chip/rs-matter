@@ -1398,12 +1398,23 @@ impl Transport {
         if let Some(session) = &mut session {
             packet.header.plain = Default::default();
 
-            let (peer, retransmission) = session.pre_send(exchange_index, &mut packet.header)?;
+            // A packet encoded right away is sent right away too, so it is numbered now;
+            // a queued one is sent when the TX loop sends it
+            let (peer, retransmission, numbered) = if encode {
+                let (peer, retransmission) =
+                    session.pre_send(exchange_index, &mut packet.header)?;
+
+                (peer, retransmission, true)
+            } else {
+                session.pre_send_queued(exchange_index, &mut packet.header)?
+            };
 
             packet.peer = peer;
             packet.tx_info.retransmission = retransmission;
             packet.tx_info.payload_state = TxPayloadState::NotEncoded {
                 session_id: session.id,
+                exchange_index,
+                numbered,
             };
         } else {
             if packet.header.plain.is_encrypted()
@@ -1427,7 +1438,11 @@ impl Transport {
             packet.header.proto.adjust_reliability(false, &packet.peer);
 
             packet.tx_info.retransmission = false;
-            packet.tx_info.payload_state = TxPayloadState::NotEncoded { session_id: 0 };
+            packet.tx_info.payload_state = TxPayloadState::NotEncoded {
+                session_id: 0,
+                exchange_index: None,
+                numbered: true,
+            };
         }
 
         if encode {
@@ -1737,9 +1752,22 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 .await;
             tx.clear_on_drop(true);
 
-            if let TxPayloadState::NotEncoded { session_id } = tx.tx_info.payload_state {
+            // Number, encode and send the packet under the send lock, so that packets
+            // leave in the order of their counters (see `Session::assign_msg_ctr`)
+            let mut send = send.lock().await;
+
+            if let TxPayloadState::NotEncoded {
+                session_id,
+                exchange_index,
+                numbered,
+            } = tx.tx_info.payload_state
+            {
                 let encoded = self.transport.with_sessions(|sessions| {
                     if let Some(session) = sessions.get_for_tx(session_id) {
+                        if !numbered {
+                            session.assign_msg_ctr(exchange_index, &mut tx.header);
+                        }
+
                         self.transport
                             .encode_packet(&self.crypto, &mut tx, Some(session))?;
 
@@ -1759,7 +1787,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 }
             }
 
-            Self::netw_send(send, tx.peer, &tx.buf[tx.payload_start..], false).await?;
+            Self::netw_send(&mut *send, tx.peer, &tx.buf[tx.payload_start..], false).await?;
+
+            drop(send);
 
             if !tx.tx_info.retransmission {
                 self.transport()
@@ -1917,16 +1947,29 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     } else if !packet.peer.is_reliable()
                         && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                     {
-                        mrp_log!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
+                        // Numbered and sent under the send lock, so that the ack does not
+                        // overtake a message numbered before it (see `Session::assign_msg_ctr`)
+                        let mut send = send.lock().await;
 
-                        self.transport.with_sessions(|sessions| {
-                            // `unwrap` is safe because we know we have a session.
-                            // If we didn't have a session, the error code would've been `NoSession`
-                            //
-                            // Also, since the transport code is single threaded, and since we don't `await`
-                            // after decoding the packet, no code can the session
-                            let session =
-                                unwrap!(sessions.get_for_rx(&packet.peer, &packet.header.plain));
+                        let written = self.transport.with_sessions(|sessions| {
+                            // The session may be gone, as the lock was awaited after the
+                            // packet was decoded. Then there is nothing to acknowledge anymore
+                            let Some(session) =
+                                sessions.get_for_rx(&packet.peer, &packet.header.plain)
+                            else {
+                                return Ok(false);
+                            };
+
+                            if !session.needs_dup_ack(&packet.header) {
+                                mrp_log!(
+                                    "\n>>RCV {}\n      => Duplicate, acknowledged by our pending reply",
+                                    packet
+                                );
+
+                                return Ok(false);
+                            }
+
+                            mrp_log!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
                             let ack = packet.header.plain.ctr;
 
@@ -1940,16 +1983,20 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                                 None,
                                 true,
                                 |_| Ok(Some(OpCode::MRPStandAloneAck.into())),
-                            )
+                            )?;
+
+                            Ok::<_, Error>(true)
                         })?;
 
-                        Self::netw_send(
-                            send,
-                            packet.peer,
-                            &packet.buf[packet.payload_start..],
-                            true,
-                        )
-                        .await?;
+                        if written {
+                            Self::netw_send(
+                                &mut *send,
+                                packet.peer,
+                                &packet.buf[packet.payload_start..],
+                                true,
+                            )
+                            .await?;
+                        }
                     } else {
                         mrp_log!("\n>>RCV {}\n      => Duplicate, discarding", packet);
                     }
@@ -1992,7 +2039,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                             )?;
 
                             Self::netw_send(
-                                send,
+                                &mut *send.lock().await,
                                 packet.peer,
                                 &packet.buf[packet.payload_start..],
                                 true,
@@ -2050,8 +2097,13 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         )
                     })?;
 
-                    Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
-                        .await?;
+                    Self::netw_send(
+                        &mut *send.lock().await,
+                        packet.peer,
+                        &packet.buf[packet.payload_start..],
+                        true,
+                    )
+                    .await?;
                 }
                 Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
                     mrp_log!(
@@ -2417,8 +2469,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         }
     }
 
+    /// Send a packet with the locked `send`.
     async fn netw_send<S>(
-        send: &IfMutex<S>,
+        send: &mut S,
         peer: Address,
         data: &[u8],
         system: bool,
@@ -2426,7 +2479,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
     where
         S: NetworkSend,
     {
-        match send.lock().await.send_to(data, peer).await {
+        match send.send_to(data, peer).await {
             Ok(_) => {
                 trace!(
                     "\n<<SND {} {}B{}: {}",
@@ -2479,6 +2532,11 @@ pub(crate) enum TxPayloadState {
     Encoded,
     NotEncoded {
         session_id: u32,
+        /// The index of the message's exchange in its session, if it has one
+        exchange_index: Option<usize>,
+        /// Whether the message has its counter already; if not, it is numbered right
+        /// before it is sent (see `Session::assign_msg_ctr`)
+        numbered: bool,
     },
 }
 
@@ -2978,7 +3036,7 @@ mod tests {
                 .unwrap();
             let exch = sess.exchanges[index].as_mut().unwrap();
 
-            exch.mrp.retrans = Some(mrp::RetransEntry::new(None, 1));
+            exch.mrp.retrans = Some(mrp::RetransEntry::new(None, Some(1)));
             exch.role.set_dropped_state();
         });
 

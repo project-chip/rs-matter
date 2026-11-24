@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: messages get their counter when sent, not when queued, so they leave in counter order (a standalone ack overtook a slow Sigma2, failing CASE) (#684)
+  * Fix: no standalone ack for a duplicate while our reply, which acknowledged it, waits to be retransmitted
+  * Fix: as with CHIP and matter.js, a unicast window starts empty and is cleared by a jump past it; it holds 32 counters, as the spec says
+  * Breaking: `ReliableMessage::pre_send` and `ExchangeState::pre_send` take an `Option` counter; `RetransEntry::get_msg_ctr` returns an `Option`
 * Fix: `ScanNetworks` reports only the scan results that fit in its response, rather than failing when there are more. `NetCtl::scan` should report the strongest networks first (#683)
   * New: `TLVBuilderParent` is implemented for `&mut T`
 * New: `Matter::remove_fabric`, which removes a fabric as the `RemoveFabric` command does, for a node that removes one by itself, such as when its user asks for it on the node's own user interface; the `RemoveFabric` handler uses it too (#681)

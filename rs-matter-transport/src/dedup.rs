@@ -18,13 +18,15 @@
 #[cfg(feature = "groups")]
 use crate::utils::storage::Vec;
 
-const MSG_RX_STATE_BITMAP_LEN: u32 = 16;
+/// How many counters before the maximum one the state keeps track of
+/// (`MSG_COUNTER_WINDOW_SIZE` in the spec)
+const MSG_RX_STATE_BITMAP_LEN: u32 = 32;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxCtrState {
     max_ctr: u32,
-    ctr_bitmap: u16,
+    ctr_bitmap: u32,
     /// Whether `max_ctr` reflects a counter actually received from the peer.
     /// Until then, the first message received seeds the state.
     synced: bool,
@@ -36,17 +38,17 @@ impl RxCtrState {
     pub const fn new(max_ctr: u32) -> Self {
         Self {
             max_ctr,
-            ctr_bitmap: 0xffff,
+            ctr_bitmap: u32::MAX,
             synced: true,
         }
     }
 
     /// Create a state for a peer whose counter is not known yet: the first message
-    /// received is accepted and synchronizes the state to its counter.
+    /// received is accepted and synchronizes the state to its counter (see `post_recv`).
     pub const fn new_unsynced() -> Self {
         Self {
             max_ctr: 0,
-            ctr_bitmap: 0xffff,
+            ctr_bitmap: u32::MAX,
             synced: false,
         }
     }
@@ -57,6 +59,25 @@ impl RxCtrState {
 
     fn insert(&mut self, bit_number: u32) {
         self.ctr_bitmap |= 1 << bit_number;
+    }
+
+    /// The bitmap when `max_ctr` jumps to a counter with no known history before it: the
+    /// first message from the peer, or a jump past the window.
+    ///
+    /// Unicast: no earlier counter counts as seen, as with CHIP and matter.js. A message
+    /// can arrive after one sent after it - reordered by the network, or retransmitted
+    /// after it was lost - and would otherwise be dropped as a duplicate every time. This
+    /// lets no replay through: those counters were never received, and the keys of a new
+    /// secure session are new.
+    ///
+    /// Group (counters with rollover): every earlier counter counts as seen, as the spec
+    /// says.
+    const fn bitmap_after_reset(with_rollover: bool) -> u32 {
+        if with_rollover {
+            u32::MAX
+        } else {
+            0
+        }
     }
 
     /// Receive a message and update RX state accordingly.
@@ -71,10 +92,9 @@ impl RxCtrState {
     ///   iff `(msg_ctr - max_ctr) mod 2^32` falls in `[1, 2^31 - 1]`, otherwise behind.
     pub fn post_recv(&mut self, msg_ctr: u32, is_encrypted: bool, with_rollover: bool) -> bool {
         if !self.synced {
-            // First message from the peer: synchronize to its counter, treating
-            // every earlier counter as already seen
+            // First message from the peer: synchronize to its counter
             self.max_ctr = msg_ctr;
-            self.ctr_bitmap = 0xffff;
+            self.ctr_bitmap = Self::bitmap_after_reset(with_rollover);
             self.synced = true;
 
             return true;
@@ -116,14 +136,14 @@ impl RxCtrState {
                 self.ctr_bitmap <<= udiff;
                 self.insert(udiff - 1);
             } else {
-                self.ctr_bitmap = 0xffff;
+                self.ctr_bitmap = Self::bitmap_after_reset(with_rollover);
             }
             true
         } else if !is_encrypted {
             // This is the case where the peer possibly rebooted and chose a different
             // random counter
             self.max_ctr = msg_ctr;
-            self.ctr_bitmap = 0xffff;
+            self.ctr_bitmap = Self::bitmap_after_reset(with_rollover);
             true
         } else {
             false
@@ -238,9 +258,11 @@ mod tests {
             assert_eq!(s.max_ctr, first);
             assert!(s.synced);
 
-            // Synchronized: the same counter and every earlier one are duplicates
+            // Synchronized: the same counter is a duplicate, and an earlier one in the
+            // window is new - once
             assert_dup(s.post_recv(first, ENCRYPTED, false));
             if first > 0 {
+                assert_ndup(s.post_recv(first - 1, ENCRYPTED, false));
                 assert_dup(s.post_recv(first - 1, ENCRYPTED, false));
             }
             if first < u32::MAX {
@@ -255,6 +277,54 @@ mod tests {
         assert_ndup(s.post_recv(1, NOT_ENCRYPTED, false));
     }
 
+    /// A message which overtook an earlier one from the same peer synchronizes the
+    /// state, but the earlier one is still new when it arrives - once.
+    #[test]
+    fn unsynced_accepts_overtaken_counter() {
+        const W: u32 = super::MSG_RX_STATE_BITMAP_LEN;
+
+        for encrypted in [ENCRYPTED, NOT_ENCRYPTED] {
+            let mut s = RxCtrState::new_unsynced();
+
+            // A standalone ack (101) overtakes the reply sent before it (100)
+            assert_ndup(s.post_recv(101, encrypted, false));
+            assert_ndup(s.post_recv(100, encrypted, false));
+            assert_dup(s.post_recv(100, encrypted, false));
+            assert_dup(s.post_recv(101, encrypted, false));
+
+            // Up to the edge of the window
+            assert_ndup(s.post_recv(101 - W, encrypted, false));
+            assert_dup(s.post_recv(101 - W, encrypted, false));
+        }
+
+        // Behind the window: a duplicate if encrypted, a rebooted peer if not
+        let mut s = RxCtrState::new_unsynced();
+        assert_ndup(s.post_recv(101, ENCRYPTED, false));
+        assert_dup(s.post_recv(100 - W, ENCRYPTED, false));
+
+        let mut s = RxCtrState::new_unsynced();
+        assert_ndup(s.post_recv(101, NOT_ENCRYPTED, false));
+        assert_ndup(s.post_recv(100 - W, NOT_ENCRYPTED, false));
+    }
+
+    /// When a counter jumps past the window - forward, or back as from a rebooted peer -
+    /// the counters in the new window are new.
+    #[test]
+    fn jump_clears_window() {
+        for encrypted in [ENCRYPTED, NOT_ENCRYPTED] {
+            let mut s = RxCtrState::new(100);
+            assert_ndup(s.post_recv(200, encrypted, false));
+            assert_ndup(s.post_recv(199, encrypted, false));
+            assert_dup(s.post_recv(199, encrypted, false));
+        }
+
+        // Back past the window: a rebooted peer
+        let mut s = RxCtrState::new(100);
+        assert_ndup(s.post_recv(10, NOT_ENCRYPTED, false));
+        assert_ndup(s.post_recv(9, NOT_ENCRYPTED, false));
+        assert_dup(s.post_recv(9, NOT_ENCRYPTED, false));
+    }
+
     #[test]
     fn new_msg_ctr() {
         let mut s = RxCtrState::new(101);
@@ -263,13 +333,13 @@ mod tests {
         assert_ndup(s.post_recv(104, ENCRYPTED, false));
         assert_ndup(s.post_recv(106, ENCRYPTED, false));
         assert_eq!(s.max_ctr, 106);
-        assert_eq!(s.ctr_bitmap, 0b1111_1111_1111_0110);
+        assert_eq!(s.ctr_bitmap, 0xffff_fff6);
 
         assert_ndup(s.post_recv(118, NOT_ENCRYPTED, false));
-        assert_eq!(s.ctr_bitmap, 0b0110_1000_0000_0000);
+        assert_eq!(s.ctr_bitmap, 0xffff_6800);
         assert_ndup(s.post_recv(119, NOT_ENCRYPTED, false));
         assert_ndup(s.post_recv(121, NOT_ENCRYPTED, false));
-        assert_eq!(s.ctr_bitmap, 0b0100_0000_0000_0110);
+        assert_eq!(s.ctr_bitmap, 0xfffb_4006);
     }
 
     #[test]
@@ -281,54 +351,54 @@ mod tests {
         assert_dup(s.post_recv(103, NOT_ENCRYPTED, false));
 
         assert_eq!(s.max_ctr, 103);
-        assert_eq!(s.ctr_bitmap, 0b1111_1111_1111_1110);
+        assert_eq!(s.ctr_bitmap, 0xffff_fffe);
     }
 
     #[test]
     fn dup_in_rx_bitmap() {
         let mut ctr = 101;
         let mut s = RxCtrState::new(101);
-        for _ in 1..8 {
+        for _ in 1..16 {
             ctr += 2;
             assert_ndup(s.post_recv(ctr, ENCRYPTED, false));
         }
-        assert_ndup(s.post_recv(116, ENCRYPTED, false));
-        assert_ndup(s.post_recv(117, ENCRYPTED, false));
-        assert_eq!(s.max_ctr, 117);
-        assert_eq!(s.ctr_bitmap, 0b1010_1010_1010_1011);
+        assert_ndup(s.post_recv(132, ENCRYPTED, false));
+        assert_ndup(s.post_recv(133, ENCRYPTED, false));
+        assert_eq!(s.max_ctr, 133);
+        assert_eq!(s.ctr_bitmap, 0xaaaa_aaab);
 
         // duplicate on the left corner
         assert_dup(s.post_recv(101, ENCRYPTED, false));
         assert_dup(s.post_recv(101, NOT_ENCRYPTED, false));
 
         // duplicate on the right corner
-        assert_dup(s.post_recv(116, ENCRYPTED, false));
-        assert_dup(s.post_recv(116, NOT_ENCRYPTED, false));
+        assert_dup(s.post_recv(132, ENCRYPTED, false));
+        assert_dup(s.post_recv(132, NOT_ENCRYPTED, false));
 
         // valid insert
         assert_ndup(s.post_recv(102, ENCRYPTED, false));
         assert_dup(s.post_recv(102, ENCRYPTED, false));
-        assert_eq!(s.ctr_bitmap, 0b1110_1010_1010_1011);
+        assert_eq!(s.ctr_bitmap, 0xeaaa_aaab);
     }
 
     #[test]
     fn valid_corners_in_rx_bitmap() {
         let mut ctr = 102;
         let mut s = RxCtrState::new(101);
-        for _ in 1..9 {
+        for _ in 1..17 {
             ctr += 2;
             assert_ndup(s.post_recv(ctr, ENCRYPTED, false));
         }
-        assert_eq!(s.max_ctr, 118);
-        assert_eq!(s.ctr_bitmap, 0b0010_1010_1010_1010);
+        assert_eq!(s.max_ctr, 134);
+        assert_eq!(s.ctr_bitmap, 0x2aaa_aaaa);
 
         // valid insert on the left corner
         assert_ndup(s.post_recv(102, ENCRYPTED, false));
-        assert_eq!(s.ctr_bitmap, 0b1010_1010_1010_1010);
+        assert_eq!(s.ctr_bitmap, 0xaaaa_aaaa);
 
         // valid insert on the right corner
-        assert_ndup(s.post_recv(117, ENCRYPTED, false));
-        assert_eq!(s.ctr_bitmap, 0b1010_1010_1010_1011);
+        assert_ndup(s.post_recv(133, ENCRYPTED, false));
+        assert_eq!(s.ctr_bitmap, 0xaaaa_aaab);
     }
 
     #[test]
