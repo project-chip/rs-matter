@@ -85,9 +85,9 @@ impl SendWindow {
 
     /// Update the sending window level when a new BTP segment had arrived,
     /// based on the ACK seq num in the incoming packet (if any).
-    fn accept_incoming(&mut self, hdr: &BtpHdr) {
+    fn accept_incoming(&mut self, hdr: &BtpHdr) -> Result<(), Error> {
         let Some(ack_seq_num) = hdr.get_ack() else {
-            return;
+            return Ok(());
         };
 
         if self.last_sent_seq_num == ack_seq_num {
@@ -122,10 +122,20 @@ impl SendWindow {
 
             let unacknowledged = (Wrapping(self.last_sent_seq_num) - Wrapping(ack_seq_num)).0;
 
+            if unacknowledged > self.window_size - self.level {
+                warn!(
+                    "RX data integrity failure: ACK for a packet that was not sent; ack={}, last sent={}",
+                    ack_seq_num, self.last_sent_seq_num
+                );
+                Err(ErrorCode::InvalidData)?;
+            }
+
             // Adjust our "fullness" level with the number of packets that have been acknowledged
             self.level = self.window_size - unacknowledged;
             self.sent_at = Instant::now();
         }
+
+        Ok(())
     }
 
     /// Return true if the sending window is full.
@@ -298,6 +308,11 @@ impl RecvWindow {
                 warn!("RX data integrity failure: Non-final packets should have a size equal to the MTU size");
                 return Err(ErrorCode::InvalidData.into());
             }
+        }
+
+        if self.level == 0 {
+            warn!("RX data integrity failure: The peer sent more packets than our receive window allows");
+            return Err(ErrorCode::InvalidData.into());
         }
 
         if hdr
@@ -561,6 +576,11 @@ impl Session {
 
         if hdr.is_handshake() {
             if self.initiator {
+                if self.is_established() {
+                    warn!("RX handshake integrity failure: A Handshake Response after the session is established");
+                    Err(ErrorCode::InvalidData)?;
+                }
+
                 self.process_rx_handshake_resp(address, data)
             } else {
                 // A client closes its session by unsubscribing from `C2`, and can
@@ -663,6 +683,12 @@ impl Session {
         // TODO: Revisit the mtu and window_size computations
         let window_size = min(req.window_size, Self::initial_window_size(mtu));
 
+        // The peer could not even receive the Handshake Response
+        if window_size == 0 {
+            warn!("RX handshake integrity failure: Window size 0");
+            Err(ErrorCode::InvalidData)?;
+        }
+
         debug!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, req, version, mtu, window_size);
 
         self.setup(address, version, mtu, window_size);
@@ -684,7 +710,23 @@ impl Session {
 
         debug!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE RESP {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, resp, resp.version, resp.mtu, resp.window_size);
 
-        self.setup(address, resp.version, resp.mtu, resp.window_size);
+        if resp.window_size == 0 {
+            warn!("RX handshake integrity failure: Window size 0");
+            Err(ErrorCode::InvalidData)?;
+        }
+
+        // The same payload MTU range as when we are the one that selects it
+        if resp.mtu < MIN_MTU - GATT_HEADER_SIZE as u16 {
+            warn!(
+                "RX handshake integrity failure: MTU {} is too small",
+                resp.mtu
+            );
+            Err(ErrorCode::InvalidData)?;
+        }
+
+        let mtu = min(resp.mtu, MAX_MTU - GATT_HEADER_SIZE as u16);
+
+        self.setup(address, resp.version, mtu, resp.window_size);
 
         Ok(())
     }
@@ -704,7 +746,7 @@ impl Session {
         );
 
         self.recv_window.accept_incoming(&hdr, payload, self.mtu)?;
-        self.send_window.accept_incoming(&hdr);
+        self.send_window.accept_incoming(&hdr)?;
 
         Ok(())
     }

@@ -510,6 +510,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         Ok(())
     }
 
+    /// Runs `f` with the state borrowed, so `f` must not call methods that borrow it too.
     fn with_state<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut LevelControlState) -> R,
@@ -754,9 +755,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 }
             })?;
 
+        // Only the move to the minimum level turns the light off. A light turned on at the
+        // minimum level stays on
         self.move_to_level_blocking(
             &ctx,
-            true,
+            !on,
             target_level,
             Some(transition_time),
             bitmap,
@@ -1077,7 +1080,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     /// Handles Move commands, determining the rate and initiating transitions.
     fn move_command(
         &self,
-        state: &mut LevelControlState,
         with_on_off: bool,
         move_mode: MoveModeEnum,
         rate: Option<u8>,
@@ -1098,8 +1100,8 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             // step 4h asserts `INVALID_COMMAND`).
             Some(0) => return Err(ErrorCode::InvalidCommand.into()),
             Some(val) => val,
-            None => match state.default_move_rate.as_opt_ref() {
-                Some(val) => *val,
+            None => match self.with_state(|state| state.default_move_rate.as_opt_ref().copied()) {
+                Some(val) => val,
                 None => H::FASTEST_RATE,
             },
         };
@@ -1290,13 +1292,13 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     }
 
     fn handle_out_of_band_message(&self, ctx: impl HandlerContext, message: OutOfBandMessage) {
-        self.with_state(|state| {
-            match message {
-                OutOfBandMessage::Update(current_level) => {
-                    self.task_signal.signal(Task::Stop);
+        match message {
+            OutOfBandMessage::Update(current_level) => {
+                self.task_signal.signal(Task::Stop);
 
-                    // OOB "device level changed under us" — genuine
-                    // drift, never a scene apply.
+                // OOB "device level changed under us" — genuine
+                // drift, never a scene apply.
+                self.with_state(|state| {
                     match self.set_level(state, current_level, true, false, false) {
                         Ok((_, should_notify)) => {
                             let remaining_time_reportable = state
@@ -1322,78 +1324,80 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                             error!("OutOfBandMessage::Update failed: set_level failed unexpectedly with set_device == false: {}", e);
                         }
                     }
-                }
-                OutOfBandMessage::MoveToLevel {
+                })
+            }
+            OutOfBandMessage::MoveToLevel {
+                with_on_off,
+                level,
+                transition_time,
+                options_mask,
+                options_override,
+            } => {
+                if let Err(e) = self.move_to_level(
                     with_on_off,
                     level,
                     transition_time,
                     options_mask,
                     options_override,
-                } => {
-                    if let Err(e) = self.move_to_level(
-                        with_on_off,
-                        level,
-                        transition_time,
-                        options_mask,
-                        options_override,
-                        false,
-                    ) {
-                        error!(
-                            "Device initiated MoveToLevel failed: {} | with_on_off: {}, level: {}, transition_time: {:?}, options_mask: {:?}, options_override: {:?}",
-                            e, with_on_off, level, transition_time, options_mask, options_override
-                        );
-                    }
+                    false,
+                ) {
+                    error!(
+                        "Device initiated MoveToLevel failed: {} | with_on_off: {}, level: {}, transition_time: {:?}, options_mask: {:?}, options_override: {:?}",
+                        e, with_on_off, level, transition_time, options_mask, options_override
+                    );
                 }
-                OutOfBandMessage::Move {
-                    with_on_off,
-                    move_mode,
-                    rate,
-                    options_mask,
-                    options_override,
-                } => {
-                    if let Err(e) =
-                        self.move_command(state, with_on_off, move_mode, rate, options_mask, options_override)
-                    {
-                        error!(
-                            "Device initiated Move failed: {} | with_on_off: {}, move_mode: {:?}, rate: {:?}, options_mask: {:?}, options_override: {:?}",
-                            e, with_on_off, move_mode, rate, options_mask, options_override
-                        );
-                    }
+            }
+            OutOfBandMessage::Move {
+                with_on_off,
+                move_mode,
+                rate,
+                options_mask,
+                options_override,
+            } => {
+                if let Err(e) =
+                    self.move_command(with_on_off, move_mode, rate, options_mask, options_override)
+                {
+                    error!(
+                        "Device initiated Move failed: {} | with_on_off: {}, move_mode: {:?}, rate: {:?}, options_mask: {:?}, options_override: {:?}",
+                        e, with_on_off, move_mode, rate, options_mask, options_override
+                    );
                 }
-                OutOfBandMessage::Step {
+            }
+            OutOfBandMessage::Step {
+                with_on_off,
+                step_mode,
+                step_size,
+                transition_time,
+                options_mask,
+                options_override,
+            } => {
+                if let Err(e) = self.step(
                     with_on_off,
                     step_mode,
                     step_size,
                     transition_time,
                     options_mask,
                     options_override,
-                } => {
-                    if let Err(e) = self.step(
-                        with_on_off,
-                        step_mode,
-                        step_size,
-                        transition_time,
-                        options_mask,
-                        options_override,
-                    ) {
-                        error!(
-                            "Device initiated Step failed: {} | with_on_off: {}, step_mode: {:?}, step_size: {}, transition_time: {:?}, options_mask: {:?}, options_override: {:?}",
-                            e, with_on_off, step_mode, step_size, transition_time, options_mask, options_override
-                        );
-                    }
-                }
-                OutOfBandMessage::Stop => {
-                    self.task_signal.signal(Task::Stop);
-                    if state.write_remaining_time_quietly(Duration::from_millis(0), false) {
-                        ctx.notify_attr_changed(
-                            self.endpoint_id,
-                            Self::CLUSTER.id,
-                            AttributeId::RemainingTime as _,
-                        );
-                    }
+                ) {
+                    error!(
+                        "Device initiated Step failed: {} | with_on_off: {}, step_mode: {:?}, step_size: {}, transition_time: {:?}, options_mask: {:?}, options_override: {:?}",
+                        e, with_on_off, step_mode, step_size, transition_time, options_mask, options_override
+                    );
                 }
             }
-        })
+            OutOfBandMessage::Stop => {
+                self.task_signal.signal(Task::Stop);
+                if self.with_state(|state| {
+                    state.write_remaining_time_quietly(Duration::from_millis(0), false)
+                }) {
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::RemainingTime as _,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1598,16 +1602,13 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterHandler for LevelControlHandle
     }
 
     fn handle_move(&self, _ctx: impl InvokeContext, request: MoveRequest<'_>) -> Result<(), Error> {
-        self.with_state(|state| {
-            self.move_command(
-                state,
-                false,
-                request.move_mode()?,
-                request.rate()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
-            )
-        })
+        self.move_command(
+            false,
+            request.move_mode()?,
+            request.rate()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     fn handle_step(&self, _ctx: impl InvokeContext, request: StepRequest<'_>) -> Result<(), Error> {
@@ -1662,16 +1663,13 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterHandler for LevelControlHandle
         _ctx: impl InvokeContext,
         request: MoveWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-        self.with_state(|state| {
-            self.move_command(
-                state,
-                true,
-                request.move_mode()?,
-                request.rate()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
-            )
-        })
+        self.move_command(
+            true,
+            request.move_mode()?,
+            request.rate()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     fn handle_step_with_on_off(
@@ -1946,7 +1944,7 @@ pub mod test {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::test::TestLevelControlDeviceLogic;
-    use super::{LevelControlHandler, NoOnOff, PersistedAttrs};
+    use super::{LevelControlHandler, MoveModeEnum, NoOnOff, OptionsBitmap, PersistedAttrs};
     use crate::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
     use crate::dm::clusters::app::on_off::OnOffHandler;
     use crate::dm::Dataver;
@@ -1968,6 +1966,29 @@ mod tests {
         let on_off = OnOffHandler::new(Dataver::new(2), 1, KV_KEY + 1, &on_off_logic);
         on_off.init(Some(&level));
         level.init(Some(&on_off));
+    }
+
+    /// A Move while the light is off, without `EXECUTE_IF_OFF` in the mask, reads the
+    /// Options attribute, and must not borrow the state twice to do it.
+    #[test]
+    fn move_while_off() {
+        let level_logic = TestLevelControlDeviceLogic::new();
+        let on_off_logic = TestOnOffDeviceLogic::new(false);
+        let level = LevelControlHandler::new(Dataver::new(1), 1, KV_KEY, &level_logic);
+        let on_off = OnOffHandler::new(Dataver::new(2), 1, KV_KEY + 1, &on_off_logic);
+        on_off.init(Some(&level));
+        level.init(Some(&on_off));
+
+        assert!(!on_off.on_off());
+        level
+            .move_command(
+                false,
+                MoveModeEnum::Up,
+                Some(10),
+                OptionsBitmap::empty(),
+                OptionsBitmap::empty(),
+            )
+            .unwrap();
     }
 
     #[test]

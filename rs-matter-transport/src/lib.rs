@@ -102,7 +102,7 @@ use rs_matter_utils::error;
 
 mod buffers;
 mod case_setup;
-mod dedup;
+pub mod dedup;
 
 pub mod exchange;
 #[cfg(feature = "groups")]
@@ -2111,6 +2111,12 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         packet
                     );
                 }
+                Err(e) if matches!(e.code(), ErrorCode::InvalidProto) => {
+                    warn!(
+                        "\n>>RCV {}\n      => Not allowed unencrypted, dropping",
+                        packet
+                    );
+                }
                 Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
                     // A message on a session we don't have (e.g. one we lost to a
                     // reboot) is dropped without an answer: nothing about it can be
@@ -2354,6 +2360,14 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 let payload_range =
                     session.decode_remaining(&self.crypto, &mut packet.header, pb)?;
                 set_payload(packet, payload_range);
+
+                // Only the Secure Channel messages, which set up the sessions, may come
+                // unencrypted
+                if !packet.header.plain.is_encrypted()
+                    && packet.header.proto.proto_id != PROTO_ID_SECURE_CHANNEL
+                {
+                    Err(ErrorCode::InvalidProto)?;
+                }
 
                 return session.post_recv(&packet.peer, &packet.header);
             }
@@ -3050,6 +3064,55 @@ mod tests {
             tx.tx_info.payload_state,
             TxPayloadState::NotEncoded { .. }
         ));
+    }
+
+    /// Encode an unencrypted message from the ephemeral node ID `src`, as a peer sends it.
+    fn plain_rx_packet(src: u64, ctr: u32, proto_id: u16, opcode: u8) -> Packet<256> {
+        let mut buf = [0; 256];
+        let mut wb = WriteBuf::new_with(&mut buf, PacketHdr::HDR_RESERVE, PacketHdr::HDR_RESERVE);
+        unwrap!(wb.append(&[0x15, 0x18]));
+
+        let mut hdr = PacketHdr::new();
+        hdr.plain.ctr = ctr;
+        hdr.plain.set_src_nodeid(Some(src));
+        hdr.proto.exch_id = 1;
+        hdr.proto.proto_id = proto_id;
+        hdr.proto.proto_opcode = opcode;
+        hdr.proto.set_initiator();
+        unwrap!(hdr.encode(test_only_crypto(), None, src, &mut wb));
+
+        let mut packet = Packet::new();
+        unwrap!(packet.buf.extend_from_slice(wb.as_slice()));
+
+        packet
+    }
+
+    /// An unencrypted message of a protocol other than Secure Channel is dropped, also
+    /// on the unsecured session that a `PBKDFParamRequest` opened.
+    #[test]
+    fn unencrypted_non_secure_channel_message_is_dropped() {
+        const SRC: u64 = 0x1234_5678;
+
+        let host = TestHost(Transport::new(None));
+        let runner = TransportRunner::new(&host, test_only_crypto());
+
+        let mut packet = plain_rx_packet(
+            SRC,
+            1,
+            PROTO_ID_SECURE_CHANNEL,
+            OpCode::PBKDFParamRequest as u8,
+        );
+        assert!(runner.decode_packet(&mut packet).is_ok());
+
+        let mut packet = plain_rx_packet(SRC, 2, PROTO_ID_INTERACTION_MODEL, 2);
+        assert_eq!(
+            runner.decode_packet(&mut packet).unwrap_err().code(),
+            ErrorCode::InvalidProto
+        );
+
+        // Secure Channel messages on the same session are still accepted
+        let mut packet = plain_rx_packet(SRC, 3, PROTO_ID_SECURE_CHANNEL, OpCode::PASEPake1 as u8);
+        assert!(runner.decode_packet(&mut packet).is_ok());
     }
 
     /// A node with nothing but its transport.

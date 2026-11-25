@@ -521,10 +521,8 @@ impl BtpInner {
             .session
             .is_ack_due(Instant::now(), self.ack_timeout_secs as _)
         {
-            let len = self.session.prep_tx_data(&[], &mut 0, buf)?;
-            assert!(len > 0);
-
-            return Ok(len);
+            // Nothing is sent when the peer's window is full
+            return self.session.prep_tx_data(&[], &mut 0, buf);
         }
 
         Ok(0)
@@ -775,6 +773,92 @@ mod test {
         expect_outgoing(&btp, &[5, 1, 4, 0, 0, 1, 2, 3]);
     }
 
+    /// A Handshake Request with a window size of 0 is rejected, as the peer could
+    /// not even receive the Handshake Response.
+    #[test]
+    fn test_handshake_window_size_0() {
+        let btp = Btp::new();
+
+        incoming(
+            &btp,
+            &[0x65, 0x6c, 0x54, 0x00, 0x00, 0x00, 0xc8, 0x00, 0x00],
+        );
+
+        assert!(!btp.is_session_established(PEER_ADDR));
+        expect_outgoing(&btp, &[]);
+    }
+
+    /// A peer that sends more packets than our receive window allows breaks the
+    /// protocol, so the session is closed.
+    #[test]
+    fn test_recv_window_overflow() {
+        let btp = nego_min_mtu();
+
+        // A window of 5 packets, and no ACKs in between
+        for seq in 0..5 {
+            incoming(&btp, &[5, seq, 1, 0, seq]);
+            assert!(btp.is_session_established(PEER_ADDR));
+        }
+
+        incoming(&btp, &[5, 5, 1, 0, 5]);
+        assert!(!btp.is_session_established(PEER_ADDR));
+    }
+
+    /// An ACK for a packet that was not sent breaks the protocol, so the session is closed.
+    #[test]
+    fn test_ack_for_unsent_packet() {
+        let btp = nego_min_mtu();
+
+        incoming(&btp, &[0x0d, 3, 0, 1, 0, 1]);
+        assert!(!btp.is_session_established(PEER_ADDR));
+    }
+
+    /// When an ACK is due but the peer's window is full, nothing is sent.
+    #[test]
+    fn test_ack_due_with_full_peer_window() {
+        let btp = nego_min_mtu();
+        let mut buf = [0; 512];
+
+        // A long message of ours, sent until the peer's window is full
+        send(&btp, &[0; 200]);
+        while btp.process_outgoing(None, &mut buf).unwrap() > 0 {}
+
+        // The peer sends segments of a long message of its own and never ACKs ours,
+        // until an ACK is due
+        incoming(&btp, &[&[0x01, 0, 0xe8, 0x03][..], &[0; 16]].concat());
+        for seq in 1..6 {
+            incoming(&btp, &[&[0x02, seq][..], &[0; 18]].concat());
+            while btp.process_outgoing(None, &mut buf).unwrap() > 0 {}
+        }
+
+        assert!(btp.is_session_established(PEER_ADDR));
+    }
+
+    /// A peer offers a window of 1, then sends a segment that does not acknowledge our
+    /// Handshake Response. An ACK is due, but the peer's window is full, so nothing is sent.
+    #[test]
+    fn test_ack_due_with_window_1() {
+        let btp = Btp::new();
+        let gatt_mtu = Some(247);
+
+        incoming_mtu(
+            &btp,
+            gatt_mtu,
+            &[0x65, 0x6c, 0x54, 0x00, 0x00, 0x00, 0xf7, 0x00, 0x01],
+        );
+        expect_outgoing_mtu(&btp, gatt_mtu, &[0x65, 0x6c, 0x05, 0xf4, 0x00, 0x01]);
+
+        // The first segment of a long message, without an ACK
+        incoming_mtu(
+            &btp,
+            gatt_mtu,
+            &[&[0x01, 0x00, 0xe2, 0x01][..], &[0; 240]].concat(),
+        );
+
+        expect_outgoing_mtu(&btp, gatt_mtu, &[]);
+        assert!(btp.is_session_established(PEER_ADDR));
+    }
+
     #[test]
     fn test_short_write() {
         let btp = nego_min_mtu();
@@ -929,6 +1013,50 @@ mod test {
         to.process_incoming(gatt_mtu, from_addr, &buf[..len])
             .unwrap();
         true
+    }
+
+    /// As the initiator, a Handshake Response with an MTU below the minimum is rejected.
+    #[test]
+    fn test_initiator_handshake_mtu_too_small() {
+        const RESPONDER_ADDR: BtAddr = BtAddr([0xbb; 6]);
+
+        let initiator = Btp::new();
+        initiator.set_initiator(true);
+
+        send_to(&initiator, RESPONDER_ADDR, &[1, 2, 3]);
+
+        let mut buf = [0u8; 512];
+        assert!(initiator.process_outgoing(None, &mut buf).unwrap() > 0);
+
+        // Version 4, MTU 0, window size 5
+        assert!(initiator
+            .process_incoming(None, RESPONDER_ADDR, &[0x65, 0x6c, 0x04, 0x00, 0x00, 0x05])
+            .is_err());
+        assert!(!initiator.is_session_established(RESPONDER_ADDR));
+    }
+
+    /// As the initiator, a second Handshake Response is rejected.
+    #[test]
+    fn test_initiator_second_handshake_resp() {
+        const RESPONDER_ADDR: BtAddr = BtAddr([0xbb; 6]);
+        const RESP: &[u8] = &[0x65, 0x6c, 0x04, 0x14, 0x00, 0x05];
+
+        let initiator = Btp::new();
+        initiator.set_initiator(true);
+
+        send_to(&initiator, RESPONDER_ADDR, &[1, 2, 3]);
+
+        let mut buf = [0u8; 512];
+        assert!(initiator.process_outgoing(None, &mut buf).unwrap() > 0);
+
+        initiator
+            .process_incoming(None, RESPONDER_ADDR, RESP)
+            .unwrap();
+        assert!(initiator.is_session_established(RESPONDER_ADDR));
+
+        assert!(initiator
+            .process_incoming(None, RESPONDER_ADDR, RESP)
+            .is_err());
     }
 
     /// End-to-end BTP handshake + first data packet between an **initiator**

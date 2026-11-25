@@ -752,12 +752,15 @@ pub(crate) const SYS_TESTS: &[&str] = &[
 ///
 /// These target the clusters introduced in Matter 1.5 (Chime, CameraAvStream,
 /// CameraAvSettings, ZoneManagement, PushAvStreamTransport, WebRTCProvider).
-/// Only the _2_1 attribute-read tests are listed here; add more as they pass.
+/// Mostly the _2_1 attribute-read tests; add more as they pass.
 pub(crate) const CAMERA_TESTS: &[&str] = &[
     "TC_CHIME_2_1",
     "TC_AVSM_2_1",
     "TC_AVSUM_2_1",
     "TC_ZONEMGMT_2_1",
+    // The zone and trigger commands. `TC_ZONEMGMT_2_4` needs the camera to detect motion.
+    "TC_ZONEMGMT_2_2",
+    "TC_ZONEMGMT_2_3",
     "TC_PAVST_2_1",
     // WebRTC provider attribute read
     "TC_WEBRTCP_2_1",

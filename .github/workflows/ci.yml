@@ -228,3 +228,95 @@ jobs:
           cargo miri test --lib -p rs-matter-bdx -p rs-matter-pairing
           cargo miri test --lib -p rs-matter-node --features groups
           cargo miri test --lib -p rs-matter-cert -- der_utils::
+
+  fuzz:
+    # Runs each fuzz target in `fuzz` for a minute, and for ten minutes in the nightly run,
+    # which also runs the targets that use the crypto backend with MbedTLS and OpenSSL.
+    # A crash fails the job, but the log leaves out the input and the panic, as they could
+    # point at a vulnerability; run the target locally to reproduce it.
+    runs-on: ubuntu-latest
+
+    env:
+      FUZZ_SECONDS: ${{ github.event_name == 'schedule' && 600 || 60 }}
+
+    steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Seed generator
+        # It shares the harness of the `node` target, so check that it still builds
+        run: cargo check --manifest-path fuzz/seedgen/Cargo.toml
+
+      # The nightly run goes on from the corpus of the previous ones. The other runs start
+      # from the seeds only, so that their time does not grow with the corpus.
+      - name: Restore corpus
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+
+      # The prebuilt cargo-fuzz is a musl binary, which builds the targets for musl unless
+      # told otherwise, and the toolchain has no musl target
+      - name: Fuzz
+        run: |
+          failed=0
+          for target in $(cargo fuzz list); do
+            # New inputs go to the first directory, so the seeds in `fuzz/seeds` stay as they are
+            corpus="fuzz/corpus/$target"
+            mkdir -p "$corpus"
+            seeds=""
+            if [ -d "fuzz/seeds/$target" ]; then
+              seeds="fuzz/seeds/$target"
+            fi
+            if cargo fuzz run --target x86_64-unknown-linux-gnu "$target" "$corpus" $seeds -- -max_total_time=$FUZZ_SECONDS -max_len=4096 -rss_limit_mb=1024 -timeout=10 > fuzz.log 2>&1; then
+              echo "$target: $(grep -E '^Done [0-9]+ runs' fuzz.log | tail -1)"
+            else
+              echo "::error::$target failed; run it locally to reproduce"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      # The targets that give data from peers to the crypto backend, with the backends
+      # other than RustCrypto, which run code of their own on it
+      - name: Fuzz - MbedTLS and OpenSSL
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        run: |
+          failed=0
+          for backend in mbedtls openssl; do
+            for target in node sc; do
+              corpus="fuzz/corpus/$target"
+              mkdir -p "$corpus"
+              seeds=""
+              if [ -d "fuzz/seeds/$target" ]; then
+                seeds="fuzz/seeds/$target"
+              fi
+              if cargo fuzz run --target x86_64-unknown-linux-gnu --features "$backend" "$target" "$corpus" $seeds -- -max_total_time=$FUZZ_SECONDS -max_len=4096 -rss_limit_mb=1024 -timeout=10 > fuzz.log 2>&1; then
+                echo "$target with $backend: $(grep -E '^Done [0-9]+ runs' fuzz.log | tail -1)"
+              else
+                echo "::error::$target with $backend failed; run it locally to reproduce"
+                failed=1
+              fi
+            done
+          done
+          exit $failed
+
+      # Also when a target failed, as its corpus has the inputs found before the crash
+      - name: Save corpus
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}

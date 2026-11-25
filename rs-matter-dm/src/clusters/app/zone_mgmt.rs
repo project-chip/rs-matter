@@ -69,11 +69,14 @@ pub use crate::dm::clusters::decl::zone_management::*;
 
 use super::super::decl::zone_management as decl;
 
-/// Maximum length, in bytes, of a zone `name` string (Matter spec cap).
-pub const MAX_ZONE_NAME_LEN: usize = 16;
+/// Maximum length, in bytes, of a zone `name` string.
+pub const MAX_ZONE_NAME_LEN: usize = 32;
 
-/// Maximum length, in bytes, of a zone `color` string (`#RRGGBB`).
-pub const MAX_ZONE_COLOR_LEN: usize = 7;
+/// Maximum length, in bytes, of a zone `color` string (`#RRGGBB` or `#RRGGBBAA`).
+pub const MAX_ZONE_COLOR_LEN: usize = 9;
+
+/// Maximum number of vertices of a zone.
+pub const MAX_ZONE_VERTICES: usize = 12;
 
 /// Errors a [`ZoneMgmtHooks`] implementation can surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -89,7 +92,7 @@ impl From<ZoneError> for Error {
     fn from(e: ZoneError) -> Self {
         match e {
             ZoneError::ResourceExhausted => ErrorCode::ResourceExhausted.into(),
-            ZoneError::DynamicConstraint => ErrorCode::ConstraintError.into(),
+            ZoneError::DynamicConstraint => ErrorCode::DynamicConstraintError.into(),
             ZoneError::NotFound => ErrorCode::NotFound.into(),
             ZoneError::Failure => ErrorCode::Failure.into(),
         }
@@ -529,21 +532,20 @@ where
         }
 
         let zone_use = s.r#use()?;
+        if zone_use == ZoneUseEnum::Focus && !self.has_feature(decl::Feature::FOCUS_ZONES.bits()) {
+            return Err(ErrorCode::ConstraintError.into());
+        }
 
-        let verts_arr = s.vertices()?;
         let mut vertices: Vec<(u16, u16), NV> = Vec::new();
-        for v in verts_arr.iter() {
-            let v = v?;
-            let x = v.x()?;
-            let y = v.y()?;
-            if x > self.config.two_d_cartesian_max.0 || y > self.config.two_d_cartesian_max.1 {
+        for (index, v) in s.vertices()?.iter().enumerate() {
+            if index == MAX_ZONE_VERTICES {
                 return Err(ErrorCode::ConstraintError.into());
             }
+            let v = v?;
             vertices
-                .push((x, y))
+                .push((v.x()?, v.y()?))
                 .map_err(|_| Error::from(ErrorCode::ResourceExhausted))?;
         }
-        // Spec: a polygon needs at least 3 vertices.
         if vertices.len() < 3 {
             return Err(ErrorCode::ConstraintError.into());
         }
@@ -551,7 +553,7 @@ where
         let color = match s.color()? {
             Some(c) => {
                 let mut h: HString<MAX_ZONE_COLOR_LEN> = HString::new();
-                if c.len() > MAX_ZONE_COLOR_LEN || h.push_str(c).is_err() {
+                if !matches!(c.len(), 7 | 9) || h.push_str(c).is_err() {
                     return Err(ErrorCode::ConstraintError.into());
                 }
                 Some(h)
@@ -560,6 +562,35 @@ where
         };
 
         Ok((name, zone_use, vertices, color))
+    }
+
+    /// Check the vertices of a zone being created, or of zone `zone_id` being updated,
+    /// against `TwoDCartesianMax` and the other zones.
+    fn check_vertices(
+        &self,
+        zone_use: ZoneUseEnum,
+        vertices: &[(u16, u16)],
+        zone_id: Option<u16>,
+    ) -> Result<(), Error> {
+        let (max_x, max_y) = self.config.two_d_cartesian_max;
+        if vertices.iter().any(|&(x, y)| x > max_x || y > max_y) {
+            return Err(ErrorCode::DynamicConstraintError.into());
+        }
+
+        let exists = self.state.lock(|cell| {
+            cell.borrow().zones.iter().any(|z| {
+                Some(z.zone_id) != zone_id && z.zone_use == zone_use && z.vertices == vertices
+            })
+        });
+        if exists {
+            return Err(ErrorCode::AlreadyExists.into());
+        }
+
+        if self_intersecting(vertices) {
+            return Err(ErrorCode::DynamicConstraintError.into());
+        }
+
+        Ok(())
     }
 }
 
@@ -725,6 +756,8 @@ where
             return Err(ErrorCode::ResourceExhausted.into());
         }
 
+        self.check_vertices(zone_use, &vertices, None)?;
+
         let zone = Zone {
             zone_id: self.alloc_zone_id(),
             zone_type: ZoneTypeEnum::TwoDCARTZone,
@@ -780,8 +813,10 @@ where
             return Err(ErrorCode::NotFound.into());
         };
         if prior.zone_source != ZoneSourceEnum::User {
-            return Err(ErrorCode::InvalidAction.into());
+            return Err(ErrorCode::ConstraintError.into());
         }
+
+        self.check_vertices(zone_use, &vertices, Some(id))?;
 
         let updated = Zone {
             zone_id: id,
@@ -829,7 +864,8 @@ where
             let s = cell.borrow();
             match s.zones.iter().find(|z| z.zone_id == id) {
                 None => Err(ErrorCode::NotFound),
-                Some(z) if z.zone_source != ZoneSourceEnum::User => Err(ErrorCode::InvalidAction),
+                Some(z) if z.zone_source != ZoneSourceEnum::User => Err(ErrorCode::ConstraintError),
+                _ if s.triggers.iter().any(|t| t.zone_id == id) => Err(ErrorCode::InvalidInState),
                 _ => Ok(()),
             }
         });
@@ -837,18 +873,10 @@ where
 
         self.hooks.zone_removed(id).await?;
 
-        let triggers_changed = self.state.lock(|cell| {
-            let mut s = cell.borrow_mut();
-            s.zones.retain(|z| z.zone_id != id);
-            let before = s.triggers.len();
-            s.triggers.retain(|t| t.zone_id != id);
-            s.triggers.len() != before
+        self.state.lock(|cell| {
+            cell.borrow_mut().zones.retain(|z| z.zone_id != id);
         });
         ctx.notify_own_attr_changed(AttributeId::Zones as _);
-        if triggers_changed {
-            self.forget_activity(id);
-            ctx.notify_own_attr_changed(AttributeId::Triggers as _);
-        }
         Ok(())
     }
 
@@ -865,15 +893,9 @@ where
         let blind_duration = payload.blind_duration()?;
         let sensitivity = payload.sensitivity()?;
 
-        let zone_exists = self
-            .state
-            .lock(|cell| cell.borrow().zones.iter().any(|z| z.zone_id == zone_id));
-        if !zone_exists {
-            return Err(ErrorCode::NotFound.into());
-        }
-
-        if max_duration < initial_duration
-            || (augmentation_duration > 0 && initial_duration >= max_duration)
+        if !(1..=u16::MAX as u32).contains(&initial_duration)
+            || augmentation_duration > initial_duration
+            || max_duration < initial_duration
         {
             return Err(ErrorCode::ConstraintError.into());
         }
@@ -881,6 +903,19 @@ where
             if s < 1 || s > self.config.sensitivity_max {
                 return Err(ErrorCode::ConstraintError.into());
             }
+        }
+
+        let zone_use = self.state.lock(|cell| {
+            cell.borrow()
+                .zones
+                .iter()
+                .find(|z| z.zone_id == zone_id)
+                .map(|z| z.zone_use)
+        });
+        match zone_use {
+            None => return Err(ErrorCode::NotFound.into()),
+            Some(ZoneUseEnum::Motion) => (),
+            Some(_) => return Err(ErrorCode::ConstraintError.into()),
         }
 
         let trigger = Trigger {
@@ -892,23 +927,29 @@ where
             sensitivity,
         };
 
-        let pushed = self.state.lock(|cell| {
+        let prev = self.state.lock(|cell| {
             let mut s = cell.borrow_mut();
             if let Some(t) = s.triggers.iter_mut().find(|t| t.zone_id == zone_id) {
-                *t = trigger;
-                true
+                Ok(Some(core::mem::replace(t, trigger)))
             } else {
-                s.triggers.push(trigger).is_ok()
+                s.triggers.push(trigger).map(|_| None)
             }
         });
-        if !pushed {
+        let Ok(prev) = prev else {
             return Err(ErrorCode::ResourceExhausted.into());
-        }
+        };
 
         if let Err(e) = self.hooks.trigger_set(&trigger).await {
             self.state.lock(|cell| {
                 let mut s = cell.borrow_mut();
-                s.triggers.retain(|t| t.zone_id != zone_id);
+                match prev {
+                    Some(prev) => {
+                        if let Some(t) = s.triggers.iter_mut().find(|t| t.zone_id == zone_id) {
+                            *t = prev;
+                        }
+                    }
+                    None => s.triggers.retain(|t| t.zone_id != zone_id),
+                }
             });
             return Err(e.into());
         }
@@ -945,6 +986,59 @@ where
 
 fn secs(secs: u32) -> Duration {
     Duration::from_secs(u64::from(secs))
+}
+
+/// Whether the polygon with these vertices touches or crosses itself, which includes
+/// a vertex given twice, and three vertices on one line.
+fn self_intersecting(vertices: &[(u16, u16)]) -> bool {
+    let n = vertices.len();
+
+    if (0..n).any(|i| vertices[i + 1..].contains(&vertices[i])) {
+        return true;
+    }
+
+    if n == 3 {
+        return orientation(vertices[0], vertices[1], vertices[2]) == 0;
+    }
+
+    // With more than three distinct vertices, two neighbouring edges can only overlap
+    // when one of them also meets an edge that is not its neighbour
+    let edge = |i: usize| (vertices[i], vertices[(i + 1) % n]);
+    (0..n).any(|i| {
+        (i + 2..n)
+            .filter(|&j| (j + 1) % n != i)
+            .any(|j| segments_intersect(edge(i), edge(j)))
+    })
+}
+
+/// Which side of the line from `p` to `q` point `r` is on: the sign of the cross product
+/// of `p -> q` and `p -> r`, 0 when the three points are on one line.
+fn orientation(p: (u16, u16), q: (u16, u16), r: (u16, u16)) -> i64 {
+    let d = |a: u16, b: u16| i64::from(a) - i64::from(b);
+
+    (d(q.0, p.0) * d(r.1, p.1) - d(q.1, p.1) * d(r.0, p.0)).signum()
+}
+
+/// Whether segments `p1 q1` and `p2 q2` have a point in common.
+fn segments_intersect(
+    (p1, q1): ((u16, u16), (u16, u16)),
+    (p2, q2): ((u16, u16), (u16, u16)),
+) -> bool {
+    // Whether `r`, on the line through `p` and `q`, is between them
+    let between = |p: (u16, u16), q: (u16, u16), r: (u16, u16)| {
+        (p.0.min(q.0)..=p.0.max(q.0)).contains(&r.0) && (p.1.min(q.1)..=p.1.max(q.1)).contains(&r.1)
+    };
+
+    let o1 = orientation(p1, q1, p2);
+    let o2 = orientation(p1, q1, q2);
+    let o3 = orientation(p2, q2, p1);
+    let o4 = orientation(p2, q2, q1);
+
+    o1 * o2 < 0 && o3 * o4 < 0
+        || o1 == 0 && between(p1, q1, p2)
+        || o2 == 0 && between(p1, q1, q2)
+        || o3 == 0 && between(p2, q2, p1)
+        || o4 == 0 && between(p2, q2, q1)
 }
 
 fn write_zone_info<P: TLVBuilderParent, const NV: usize>(
@@ -988,7 +1082,9 @@ fn write_trigger<P: TLVBuilderParent>(
 mod tests {
     use crate::utils::timers::Instant;
 
-    use super::{State, Trigger, ZoneEventStoppedReasonEnum, ZoneEventTriggeredReasonEnum};
+    use super::{
+        self_intersecting, State, Trigger, ZoneEventStoppedReasonEnum, ZoneEventTriggeredReasonEnum,
+    };
 
     const ZONE: u16 = 7;
     const MOTION: ZoneEventTriggeredReasonEnum = ZoneEventTriggeredReasonEnum::Motion;
@@ -1098,5 +1194,49 @@ mod tests {
         let changes = state.advance(at(0));
         assert!(changes.triggered.is_empty());
         assert_eq!(changes.next, None);
+    }
+
+    #[test]
+    fn simple_polygons_do_not_intersect_themselves() {
+        assert!(!self_intersecting(&[(0, 0), (4, 0), (0, 4)]));
+        assert!(!self_intersecting(&[(0, 0), (4, 0), (4, 4), (0, 4)]));
+        // Concave
+        assert!(!self_intersecting(&[
+            (0, 0),
+            (4, 0),
+            (4, 4),
+            (2, 1),
+            (0, 4)
+        ]));
+        // With three vertices on one line, which is allowed beyond a triangle
+        assert!(!self_intersecting(&[
+            (0, 0),
+            (2, 0),
+            (4, 0),
+            (4, 4),
+            (0, 4)
+        ]));
+        assert!(!self_intersecting(&[
+            (0, 0),
+            (u16::MAX, 0),
+            (u16::MAX, u16::MAX),
+            (0, u16::MAX)
+        ]));
+    }
+
+    #[test]
+    fn self_intersecting_polygons_are_found() {
+        // Three vertices on one line
+        assert!(self_intersecting(&[(0, 0), (2, 2), (4, 4)]));
+        // A vertex given twice
+        assert!(self_intersecting(&[(0, 0), (4, 0), (4, 4), (0, 0), (0, 4)]));
+        // A bow tie
+        assert!(self_intersecting(&[(0, 0), (4, 4), (4, 0), (0, 4)]));
+        // A star
+        assert!(self_intersecting(&[(2, 0), (3, 4), (0, 1), (4, 1), (1, 4)]));
+        // A vertex on an edge that is not its neighbour
+        assert!(self_intersecting(&[(0, 0), (4, 0), (4, 4), (2, 0)]));
+        // Edges that overlap
+        assert!(self_intersecting(&[(0, 0), (4, 0), (2, 0), (2, 4)]));
     }
 }

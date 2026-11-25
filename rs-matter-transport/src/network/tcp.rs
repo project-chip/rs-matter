@@ -771,6 +771,80 @@ mod tests {
         });
     }
 
+    /// A frame that is too large while a frame of ours is partly written: the rest of
+    /// that frame goes first, so that the peer can read the status report.
+    #[test]
+    fn message_too_large_report_follows_a_partly_written_frame() {
+        block_on(async {
+            let listener = MockListener::default();
+            let peer = listener.peer(13, &[]);
+            peer.lock().unwrap().write_budget = Some(3);
+
+            let buffers = TcpNetworkBuffers::<64>::new();
+            let net = TcpNetwork::new(listener, &buffers, &TcpConfig::default()).unwrap();
+            let addr = Address::Tcp(SocketAddr::from(([127, 0, 0, 1], 13)));
+
+            let runner = pin!(net.run());
+            let test = pin!(async {
+                while !net
+                    .buffers
+                    .with_state(|s| s.slots[0].connected_addr().is_some())
+                {
+                    Timer::after(Duration::from_millis(2)).await;
+                }
+
+                // The peer reads 3 bytes of the frame, and then nothing
+                NetworkSend::send_to(&mut &net, b"hello", addr)
+                    .await
+                    .unwrap();
+                while peer.lock().unwrap().output.len() < 3 {
+                    Timer::after(Duration::from_millis(2)).await;
+                }
+
+                // A payload larger than N = 64, then the peer reads again
+                {
+                    let mut st = peer.lock().unwrap();
+                    st.input.extend(65u32.to_le_bytes());
+                    st.read_notif.notify();
+                }
+                Timer::after(Duration::from_millis(20)).await;
+                {
+                    let mut st = peer.lock().unwrap();
+                    st.write_budget = None;
+                    st.write_notif.notify();
+                }
+
+                while !peer.lock().unwrap().closed {
+                    Timer::after(Duration::from_millis(5)).await;
+                }
+
+                let mut output = peer.lock().unwrap().output.clone();
+                assert_eq!(&output[..FRAME_HDR_LEN], &5u32.to_le_bytes());
+                assert_eq!(&output[FRAME_HDR_LEN..FRAME_HDR_LEN + 5], b"hello");
+
+                let report = &mut output[FRAME_HDR_LEN + 5..];
+                let len = u32::from_le_bytes(report[..FRAME_HDR_LEN].try_into().unwrap()) as usize;
+                assert_eq!(report.len(), FRAME_HDR_LEN + len);
+
+                let mut pb = ParseBuf::new(&mut report[FRAME_HDR_LEN..]);
+                let mut plain = PlainHdr::new();
+                plain.decode(&mut pb).unwrap();
+                let mut proto = ProtoHdr::new();
+                proto
+                    .decrypt_and_decode(crate::crypto::test_only_crypto(), None, 0, &plain, &mut pb)
+                    .unwrap();
+                assert_eq!(proto.proto_opcode, OpCode::StatusReport as u8);
+                let report = StatusReport::read(&mut pb).unwrap();
+                assert_eq!(report.general_code, GeneralCode::MessageTooLarge);
+            });
+
+            match select(runner, test).await {
+                Either::First(r) => panic!("runner exited unexpectedly: {:?}", r),
+                Either::Second(()) => {}
+            }
+        });
+    }
+
     #[test]
     fn multi_slot_concurrent_peers_send_and_receive() {
         block_on(async {

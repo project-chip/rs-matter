@@ -90,6 +90,7 @@ Also look at all [open issues](https://github.com/project-chip/rs-matter/issues)
   - Run locally during development: `cargo xtask itest`
   - Automated nightly CI execution
   - Iterative test enablement workflow for developers
+- **Fuzzing**: fuzz targets for the parsers, the transports and whole nodes, each run for a minute on every push and PR, and for ten minutes nightly; see [fuzz/README.md](fuzz/README.md)
 
 ## Nix support
 
@@ -458,6 +459,13 @@ cargo test -- --test-threads 1
 ```sh
 cargo xtask itest
 ```
+
+### Fuzz tests
+```sh
+cargo +nightly fuzz run node
+```
+
+[fuzz/README.md](fuzz/README.md) lists the targets and explains how to use their seeds.
 
 ## Test with `chip-tool`
 
