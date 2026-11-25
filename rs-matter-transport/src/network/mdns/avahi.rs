@@ -19,16 +19,17 @@
 //!
 //! Requires the Avahi daemon to be installed and running.
 
+use core::future::Future;
 use core::pin::pin;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use futures_lite::StreamExt;
+use futures_lite::{Stream, StreamExt};
 
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
-use zbus::Connection;
+use zbus::{Connection, Proxy};
 
 use crate::error::Error;
 use crate::network::mdns::{DottedName, MdnsRemoteService};
@@ -43,40 +44,28 @@ use crate::utils::zbus_proxies::avahi::service_browser::ServiceBrowserProxy;
 use crate::MdnsResponder;
 use crate::TransportHost;
 
-/// An Avahi browser object, freed through a [`BrowserGuard`].
-trait Browser {
-    async fn free(&self) -> zbus::Result<()>;
-}
-
-impl Browser for ServiceBrowserProxy<'_> {
-    async fn free(&self) -> zbus::Result<()> {
-        ServiceBrowserProxy::free(self).await
-    }
-}
-
-impl Browser for RecordBrowserProxy<'_> {
-    async fn free(&self) -> zbus::Result<()> {
-        RecordBrowserProxy::free(self).await
-    }
-}
-
-/// Frees an Avahi browser even if the future that owns it is cancelled
-/// (dropped) mid-loop - otherwise the browser leaks on the daemon.
+/// Frees an Avahi browser (a service or a record browser) even if the future
+/// that owns it is cancelled (dropped) mid-loop, or fails - otherwise the browser
+/// leaks on the daemon.
 ///
 /// The normal path calls [`BrowserGuard::free`], releasing the browser
-/// asynchronously and disarming the guard. Only a cancellation leaves it armed, in
-/// which case `Drop` frees it with a **blocking** call - safe here because zbus
-/// drives the D-Bus connection's I/O on its own task, independently of the future
-/// being torn down, so `block_on` can complete rather than deadlock. (The same
-/// `block_on`-in-`Drop` idiom is used for D-Bus cleanup elsewhere in the crate, e.g.
-/// the NetworkManager and wpa_supplicant controllers.)
-struct BrowserGuard<'b, B: Browser> {
-    browser: &'b B,
+/// asynchronously and disarming the guard. Only a cancellation or an error leaves
+/// it armed, in which case `Drop` frees it with a **blocking** call. That call
+/// does not wait for the reply: the other signal streams of the connection are
+/// not read while it blocks, so a reply could be held up behind them (see
+/// [`QueuingStream`]). (The same `block_on`-in-`Drop` idiom is used for D-Bus
+/// cleanup elsewhere in the crate, e.g. the NetworkManager and wpa_supplicant
+/// controllers.)
+///
+/// The signal streams of the browser must be dropped before it is freed, so a
+/// guard is created before them.
+struct BrowserGuard<'b> {
+    browser: &'b Proxy<'b>,
     armed: bool,
 }
 
-impl<'b, B: Browser> BrowserGuard<'b, B> {
-    fn new(browser: &'b B) -> Self {
+impl<'b> BrowserGuard<'b> {
+    fn new(browser: &'b Proxy<'b>) -> Self {
         Self {
             browser,
             armed: true,
@@ -87,17 +76,88 @@ impl<'b, B: Browser> BrowserGuard<'b, B> {
     /// blocking `Drop` fallback.
     async fn free(mut self) {
         self.armed = false;
-        if let Err(e) = self.browser.free().await {
+        if let Err(e) = self.browser.call_method("Free", &()).await {
             warn!("Failed to free Avahi browser: {:?}", e);
         }
     }
 }
 
-impl<B: Browser> Drop for BrowserGuard<'_, B> {
+impl Drop for BrowserGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
-            // Reached only if the future was cancelled before `free` was called.
-            let _ = futures_lite::future::block_on(self.browser.free());
+            // Reached only if the future was cancelled or failed before `free` was called.
+            let _ = futures_lite::future::block_on(self.browser.call_noreply("Free", &()));
+        }
+    }
+}
+
+/// A signal stream which keeps being read while other calls on its connection
+/// are awaited, queueing what arrives meanwhile.
+///
+/// zbus stops reading a connection while one of its signal streams holds 64
+/// unread messages, so a reply arriving after them is never read. A browser
+/// signals all the instances it knows at once, and these can be more.
+///
+/// Only the items `keep` accepts are queued or returned, and at most
+/// [`MAX_QUEUED_ITEMS`] of them are queued; more are dropped.
+struct QueuingStream<S: Stream, K> {
+    stream: S,
+    keep: K,
+    queued: VecDeque<S::Item>,
+    /// Whether an item has been dropped, so as to warn only once
+    dropped: bool,
+}
+
+impl<S, K> QueuingStream<S, K>
+where
+    S: Stream + Unpin,
+    K: FnMut(&S::Item) -> bool,
+{
+    fn new(stream: S, keep: K) -> Self {
+        Self {
+            stream,
+            keep,
+            queued: VecDeque::new(),
+            dropped: false,
+        }
+    }
+
+    /// The next item: a queued one, or else the next one to arrive.
+    async fn next(&mut self) -> Option<S::Item> {
+        if let Some(item) = self.queued.pop_front() {
+            return Some(item);
+        }
+
+        loop {
+            let item = self.stream.next().await?;
+
+            if (self.keep)(&item) {
+                break Some(item);
+            }
+        }
+    }
+
+    /// Await `fut`, queueing the items which arrive meanwhile.
+    async fn queue_during<F: Future>(&mut self, fut: F) -> F::Output {
+        let mut fut = pin!(fut);
+
+        loop {
+            match select(&mut fut, self.stream.next()).await {
+                Either::First(output) => break output,
+                Either::Second(Some(item)) => {
+                    if !(self.keep)(&item) {
+                        continue;
+                    }
+
+                    if self.queued.len() < MAX_QUEUED_ITEMS {
+                        self.queued.push_back(item);
+                    } else if !self.dropped {
+                        self.dropped = true;
+                        warn!("Too many Avahi browse results to queue: dropping those beyond {MAX_QUEUED_ITEMS}");
+                    }
+                }
+                Either::Second(None) => break fut.await,
+            }
         }
     }
 }
@@ -121,6 +181,9 @@ const HOST_ADDRS_TIMEOUT_MS: u64 = 500;
 /// Interval (ms) at which a running browse re-checks whether it is still in
 /// flight (first match consumed, or caller timed out / dropped).
 const BROWSE_POLL_INTERVAL_MS: u64 = 250;
+
+/// The most browse results a [`QueuingStream`] queues.
+const MAX_QUEUED_ITEMS: usize = 64;
 
 /// An mDNS implementation for Matter utilizing the Avahi daemon over DBus.
 pub struct AvahiMdns {
@@ -227,17 +290,22 @@ impl AvahiMdns {
                 .path(browser_path)?
                 .build()
                 .await?;
-            let mut item_new_stream = browser.receive_item_new().await?;
-            browser.start().await?;
 
-            // Frees the browser on cancellation too (see `BrowserGuard`).
-            let guard = BrowserGuard::new(&browser);
+            // Frees the browser on errors and cancellation too (see `BrowserGuard`).
+            let guard = BrowserGuard::new(browser.inner());
+
+            // Only the instance we're waiting for.
+            let mut items = QueuingStream::new(browser.receive_item_new().await?, |signal| {
+                signal
+                    .args()
+                    .is_ok_and(|args| args.name.eq_ignore_ascii_case(&target_label))
+            });
+            items.queue_during(browser.start()).await?;
 
             while node.transport().mdns_resolve_in_flight() {
-                let item = pin!(item_new_stream.next());
-                let tick = pin!(Timer::after(Duration::from_millis(BROWSE_POLL_INTERVAL_MS)));
+                let tick = Timer::after(Duration::from_millis(BROWSE_POLL_INTERVAL_MS));
 
-                let signal = match select(item, tick).await {
+                let signal = match select(items.next(), tick).await {
                     Either::First(Some(signal)) => signal,
                     Either::First(None) => break, // browser stream ended
                     Either::Second(_) => continue, // re-check in-flight
@@ -245,27 +313,25 @@ impl AvahiMdns {
 
                 let Ok(args) = signal.args() else { continue };
 
-                // Only the instance we're waiting for.
-                if !args.name.eq_ignore_ascii_case(&target_label) {
-                    continue;
-                }
-
                 // The instance exists now, so this resolve is near-instant.
-                let Some(mut resolved) = resolve_browsed(
-                    &avahi,
-                    args.interface,
-                    args.protocol,
-                    args.name,
-                    args.type_,
-                    args.domain,
-                )
-                .await
+                let Some(mut resolved) = items
+                    .queue_during(resolve_browsed(
+                        &avahi,
+                        args.interface,
+                        args.protocol,
+                        args.name,
+                        args.type_,
+                        args.domain,
+                    ))
+                    .await
                 else {
                     continue;
                 };
 
                 // All of the peer's addresses, so the transport can rank them.
-                resolved.add_cached_host_addrs(connection, &avahi).await;
+                items
+                    .queue_during(resolved.add_cached_host_addrs(connection, &avahi))
+                    .await;
 
                 debug!("Avahi resolved {}: {:?}", name_buf, resolved.ips);
 
@@ -286,6 +352,8 @@ impl AvahiMdns {
                 );
             }
 
+            // Unread items could hold up the reply to `Free`
+            drop(items);
             guard.free().await;
         }
     }
@@ -316,17 +384,17 @@ impl AvahiMdns {
                 .path(browser_path)?
                 .build()
                 .await?;
-            let mut item_new_stream = browser.receive_item_new().await?;
-            browser.start().await?;
 
-            // Frees the browser on cancellation too (see `BrowserGuard`).
-            let guard = BrowserGuard::new(&browser);
+            // Frees the browser on errors and cancellation too (see `BrowserGuard`).
+            let guard = BrowserGuard::new(browser.inner());
+
+            let mut items = QueuingStream::new(browser.receive_item_new().await?, |_| true);
+            items.queue_during(browser.start()).await?;
 
             while node.transport().mdns_browse_in_flight() {
-                let item = pin!(item_new_stream.next());
-                let tick = pin!(Timer::after(Duration::from_millis(BROWSE_POLL_INTERVAL_MS)));
+                let tick = Timer::after(Duration::from_millis(BROWSE_POLL_INTERVAL_MS));
 
-                let signal = match select(item, tick).await {
+                let signal = match select(items.next(), tick).await {
                     Either::First(Some(signal)) => signal,
                     Either::First(None) => break, // browser stream ended
                     Either::Second(_) => continue, // re-check in-flight
@@ -348,15 +416,16 @@ impl AvahiMdns {
 
                 // A browse matches on the TXT records; the addresses come from a
                 // later resolve.
-                let Some(resolved) = resolve_browsed(
-                    &avahi,
-                    args.interface,
-                    args.protocol,
-                    args.name,
-                    args.type_,
-                    args.domain,
-                )
-                .await
+                let Some(resolved) = items
+                    .queue_during(resolve_browsed(
+                        &avahi,
+                        args.interface,
+                        args.protocol,
+                        args.name,
+                        args.type_,
+                        args.domain,
+                    ))
+                    .await
                 else {
                     continue;
                 };
@@ -372,6 +441,8 @@ impl AvahiMdns {
                     });
             }
 
+            // Unread items could hold up the reply to `Free`
+            drop(items);
             guard.free().await;
         }
     }
@@ -561,13 +632,14 @@ impl ResolvedService {
             .path(browser_path)?
             .build()
             .await?;
+
+        // Frees the browser on errors and cancellation too (see `BrowserGuard`).
+        let guard = BrowserGuard::new(browser.inner());
+
         let mut item_new_stream = browser.receive_item_new().await?;
         let mut cache_exhausted_stream = browser.receive_cache_exhausted().await?;
         let mut failure_stream = browser.receive_failure().await?;
         browser.start().await?;
-
-        // Frees the browser on cancellation too (see `BrowserGuard`).
-        let guard = BrowserGuard::new(&browser);
 
         let mut timer = pin!(Timer::after(Duration::from_millis(HOST_ADDRS_TIMEOUT_MS)));
 
@@ -596,6 +668,8 @@ impl ResolvedService {
             }
         }
 
+        // Unread signals could hold up the reply to `Free`
+        drop((item_new_stream, cache_exhausted_stream, failure_stream));
         guard.free().await;
 
         Ok(())
