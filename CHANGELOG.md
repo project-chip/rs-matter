@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: with non-concurrent commissioning, `rs-matter-stack` goes back to BLE when the commissioning fails after the handover (the fail-safe expires), and a failed network connect after the handover no longer ends the stack (#686)
+  * New: `Options::comm_policy`, the `CommPolicy` of the run methods, e.g. to open a commissioning window once the last fabric is removed
+  * Breaking: `RunOptions` has a `CommPolicy` type, which `into_parts` returns
 * Fix: `invoke_cmd`, and the generated client methods for commands without a response, return the command's status as an error rather than `Ok` (#685)
 * Fix: messages get their counter when sent, not when queued, so they leave in counter order (a standalone ack overtook a slow Sigma2, failing CASE) (#684)
   * Fix: no standalone ack for a duplicate while our reply, which acknowledged it, waits to be retransmitted

@@ -27,6 +27,7 @@ use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
 use rs_matter_dm::clusters::eth_diag::EthDiag;
+use rs_matter_dm::clusters::gen_comm::CommPolicy;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::clusters::net_comm::{
     NetCtl, NetCtlStatus, NetworkCommissioningStatusEnum, NetworkType, Networks,
@@ -58,7 +59,7 @@ use crate::wireless::{
     ThreadTask, UntilBleCommWindow, WifiCoexDriver, WifiCoexTask, WifiDriver, WifiTask,
     WirelessNetCtl,
 };
-use crate::{alloc_init, pin_alloc, MatterStack, RunOptions, UserTask};
+use crate::{alloc_init, pin_alloc, MatterStack, RunOptions, StackCommPolicy, UserTask};
 
 /// A driver for Ethernet, Wifi or Thread, whichever it runs.
 ///
@@ -302,7 +303,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let btp = (net_type != NetworkType::Ethernet).then(|| alloc_init!(self.bump, Btp::init()));
 
@@ -317,6 +318,7 @@ where
                 handler,
                 kv,
                 &gen_diag,
+                &comm_policy,
                 user
             )
         );
@@ -369,7 +371,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let btp = (net_type != NetworkType::Ethernet).then(|| alloc_init!(self.bump, Btp::init()));
 
@@ -384,6 +386,7 @@ where
                 handler,
                 kv,
                 &gen_diag,
+                &comm_policy,
                 user
             )
         );
@@ -442,7 +445,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let (gen_diag, user) = options.into_parts();
+        let (gen_diag, comm_policy, user) = options.into_parts();
 
         let net_task = pin_alloc!(
             self.bump,
@@ -454,6 +457,7 @@ where
                 handler,
                 kv,
                 &gen_diag,
+                &comm_policy,
                 user
             )
         );
@@ -472,6 +476,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -484,6 +489,7 @@ where
         let task = MatterStackWirelessTask::<'_, _, AnyNetwork, _, _, _, _, _, _, AnyCtl<'t, W>> {
             stack: self,
             gen_diag,
+            comm_policy,
             networks,
             net_type,
             btp,
@@ -515,6 +521,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         mut user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -531,6 +538,7 @@ where
                     MatterStackWirelessTask::<'_, _, AnyNetwork, _, _, _, _, _, _, AnyCtl<'_, W>> {
                         stack: self,
                         gen_diag,
+                        comm_policy,
                         networks: &mut *networks,
                         net_type,
                         btp,
@@ -572,6 +580,7 @@ where
                         > {
                             stack: self,
                             gen_diag,
+                            comm_policy,
                             networks: &mut *networks,
                             net_type,
                             btp,
@@ -602,6 +611,7 @@ where
                     > {
                         stack: self,
                         gen_diag,
+                        comm_policy,
                         networks: &mut *networks,
                         net_type,
                         btp,
@@ -633,6 +643,7 @@ where
         handler: H,
         kv: K,
         gen_diag: &'t dyn GenDiag,
+        comm_policy: &'t dyn CommPolicy,
         user: U,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 't
     where
@@ -647,6 +658,7 @@ where
         let task = MatterStackWirelessTask::<'_, _, AnyNetwork, _, _, _, _, _, _, AnyCtl<'t, W>> {
             stack: self,
             gen_diag,
+            comm_policy,
             networks,
             net_type,
             btp: None,
@@ -734,12 +746,14 @@ where
         D: Mdns,
         G: GattPeripheral,
     {
+        let comm_policy = StackCommPolicy::new(self.comm_policy, true);
+
         // The Network Commissioning handler drives the maintenance `WirelessMgr`
         // with the operational `net_ctl`; `run_net_coex` only runs the BTP coex
         // transport.
         let combined = any_net_handler(
             &self.stack.matter,
-            &true,
+            &comm_policy,
             self.gen_diag,
             &netif,
             &InactiveDiag,
@@ -810,14 +824,21 @@ where
 
             let mut buf = [0u8; MAX_CREDS_SIZE];
 
-            connect_once(&mut *self.networks, net_ctl, &network_id, &mut buf).await?;
+            // Then the commissioning cannot complete: the fail-safe expires, and the radio
+            // goes back to BLE
+            if let Err(e) = connect_once(&mut *self.networks, net_ctl, &network_id, &mut buf).await
+            {
+                warn!("Deferred connect failed: {:?}", e);
+            }
         }
+
+        let comm_policy = StackCommPolicy::new(self.comm_policy, false);
 
         // The Network Commissioning handler drives the maintenance `WirelessMgr`
         // with the operational `net_ctl`.
         let combined = any_net_handler(
             &self.stack.matter,
-            &false,
+            &comm_policy,
             self.gen_diag,
             &netif,
             &InactiveDiag,
@@ -1062,9 +1083,10 @@ where
         let net_ctl =
             NetCtlWithStatusImpl::new(&self.stack.net_state, WirelessNetCtl::Operational(&ctl));
 
+        let comm_policy = StackCommPolicy::new(self.comm_policy, false);
         let combined = any_net_handler(
             &self.stack.matter,
-            &false,
+            &comm_policy,
             self.gen_diag,
             &netif,
             &eth_diag,
@@ -1134,12 +1156,14 @@ where
                 (&InactiveDiag, &net_ctl)
             };
 
+        let comm_policy = StackCommPolicy::new(self.comm_policy, false);
+
         // No netif during the BLE phase; the operational network clusters are chained
         // on top of the user's handler with the commissioning net-ctl, and re-chained
         // with the operational one once Wifi or Thread is up.
         let combined = any_net_handler(
             &self.stack.matter,
-            &false,
+            &comm_policy,
             self.gen_diag,
             &(),
             &InactiveDiag,

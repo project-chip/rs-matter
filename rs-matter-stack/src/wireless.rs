@@ -19,6 +19,7 @@ use core::marker::PhantomData;
 use core::pin::pin;
 
 use rs_matter_crypto::Crypto;
+use rs_matter_dm::clusters::gen_comm::CommPolicy;
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag};
 use rs_matter_dm::clusters::net_comm::{self, NetCtlError, NetworkType, WirelessCreds};
 use rs_matter_dm::clusters::wifi_diag::WirelessDiag;
@@ -660,21 +661,20 @@ where
         }
     }
 
-    /// Resolve once a commissioning window that has to be advertised on every transport
-    /// *appears* - i.e. once the radio is needed for BLE again.
+    /// Resolve once the radio is needed for BLE again: a commissioning window that has to be
+    /// advertised on every transport is open, and no commissioning is in progress.
     ///
-    /// A window that is already open on entry does not count. The non-concurrent BLE -> wireless
-    /// handover happens with the window still open - it is closed by `CommissioningComplete`,
-    /// which the commissioner sends over the operational network, after the handover - so
-    /// treating the current window as an event would bounce the radio straight back to BLE in
-    /// the middle of the commissioning it is there to finish. Hence: let the current window go
-    /// away first, and only then wait for the next one. When nothing is open on entry - every
-    /// case other than that handover - the first wait resolves on its first poll.
-    async fn wait_next_comm_window(&self) {
-        self.wait_comm_window(|state| !state.is_open_on_all_transports())
-            .await;
-        self.wait_comm_window(CommWindowState::is_open_on_all_transports)
-            .await;
+    /// The non-concurrent BLE -> wireless handover happens with the window still open and the
+    /// fail-safe armed, as the commissioning finishes over the operational network, where
+    /// `CommissioningComplete` disarms the fail-safe and closes the window. If the fail-safe
+    /// expires or is disarmed with the window still open instead, the commissioning failed, and
+    /// the device has to become commissionable over BLE again.
+    async fn wait_ble_comm_window(&self) {
+        self.wait_comm_window(|state| {
+            state.is_open_on_all_transports()
+                && !self.matter().with_state(|state| state.failsafe.is_armed())
+        })
+        .await;
     }
 
     /// Forget the outcome of the last `NetworkCommissioning` scan / connect.
@@ -754,6 +754,7 @@ where
 {
     pub(crate) stack: &'a MatterStack<'a, B, S, E>,
     pub(crate) gen_diag: &'a dyn GenDiag,
+    pub(crate) comm_policy: &'a dyn CommPolicy,
     pub(crate) networks: &'a mut S::Store,
     /// The network the task runs.
     pub(crate) net_type: NetworkType,
@@ -767,8 +768,8 @@ where
     pub(crate) _net_ctl: PhantomData<fn() -> Q>,
 }
 
-/// Runs an operational task until a commissioning window that has to be advertised
-/// over BLE opens, so that the radio can be handed back to BLE.
+/// Runs an operational task until a commissioning window has to be advertised over BLE,
+/// so that the radio can be handed back to BLE.
 pub(crate) struct UntilBleCommWindow<'a, const B: usize, S, E, X>
 where
     S: StackNetwork,

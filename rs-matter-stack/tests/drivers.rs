@@ -25,6 +25,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 
 use rs_matter_crypto::test_only_crypto;
+use rs_matter_dm::clusters::gen_comm::{CommPolicy, RegulatoryLocationTypeEnum};
 use rs_matter_dm::clusters::gen_diag::{GenDiag, InterfaceTypeEnum, NetifDiag, NetifInfo};
 use rs_matter_dm::clusters::net_comm::{NetworkType, Networks};
 use rs_matter_dm::endpoints::ROOT_ENDPOINT_ID;
@@ -36,6 +37,7 @@ use rs_matter_dm_core::persist::{KvBlobStore, MemKvBlobStore, NETWORKS_KEY};
 use rs_matter_dm_core::{Async, EmptyHandler, Node};
 use rs_matter_node::Matter;
 use rs_matter_node::MATTER_PORT;
+use rs_matter_node_core::session::SessionMode;
 use rs_matter_node_core::test_device::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter_stack::any::{AnyDriver, AnyNetDriver};
 use rs_matter_stack::ble::GattPeripheral;
@@ -665,12 +667,57 @@ impl GenDiag for NodeDiag<'_> {
     }
 }
 
+/// A `CommPolicy` that opens a commissioning window once the last fabric is removed.
+struct ReopenPolicy;
+
+impl CommPolicy for ReopenPolicy {
+    fn concurrent_connection_supported(&self) -> bool {
+        true
+    }
+
+    fn failsafe_expiry_len_secs(&self) -> u16 {
+        120
+    }
+
+    fn failsafe_max_cml_secs(&self) -> u16 {
+        900
+    }
+
+    fn location_cap(&self) -> RegulatoryLocationTypeEnum {
+        RegulatoryLocationTypeEnum::IndoorOutdoor
+    }
+
+    fn open_comm_window_on_last_fabric(&self) -> bool {
+        true
+    }
+}
+
 fn run_ethernet<C, U, N, O>(
     stack: &EthMatterStack<'_, BUMP_SIZE>,
     crypto: C,
     net_stack: U,
     netif: N,
     options: O,
+) -> Option<Result<(), Error>>
+where
+    C: rs_matter_crypto::Crypto,
+    U: NetStack,
+    N: NetifDiag + NetChangeNotif,
+    O: RunOptions,
+{
+    run_ethernet_for(stack, crypto, net_stack, netif, options, |_| {}, 300)
+}
+
+/// Like `run_ethernet`, but calls `prepare` on the started up stack before it runs, and runs
+/// it for `millis`.
+fn run_ethernet_for<C, U, N, O>(
+    stack: &EthMatterStack<'_, BUMP_SIZE>,
+    crypto: C,
+    net_stack: U,
+    netif: N,
+    options: O,
+    prepare: impl FnOnce(&EthMatterStack<'_, BUMP_SIZE>),
+    millis: u64,
 ) -> Option<Result<(), Error>>
 where
     C: rs_matter_crypto::Crypto,
@@ -698,6 +745,8 @@ where
 
     let kv = stack.matter().kv(store);
 
+    prepare(stack);
+
     futures_lite::future::block_on(run_for(
         stack.run_eth(
             PreexistingEthernet::new(net_stack, netif, &(), BuiltinMdns::new()),
@@ -706,7 +755,7 @@ where
             kv,
             options,
         ),
-        300,
+        millis,
     ))
 }
 
@@ -1251,7 +1300,7 @@ fn oper_keeps_the_network_when_the_device_opens_a_window() {
     on_big_stack(|| {
         let log = Log::default();
 
-        run_commissioned_thread(&log, true);
+        run_commissioned_thread(&log, true, |stack| open_window(stack, &log));
 
         // No handover to BLE, and the network is not restarted either
         assert_eq!(log.events(), vec!["thread up"]);
@@ -1263,15 +1312,80 @@ fn non_concurrent_hands_the_radio_back_when_the_device_opens_a_window() {
     on_big_stack(|| {
         let log = Log::default();
 
-        run_commissioned_thread(&log, false);
+        run_commissioned_thread(&log, false, |stack| open_window(stack, &log));
 
         assert_eq!(log.events(), vec!["thread up", "ble up", "gatt running"]);
     });
 }
 
+#[test]
+fn non_concurrent_hands_the_radio_back_when_the_commissioning_fails() {
+    on_big_stack(|| {
+        let log = Log::default();
+
+        run_commissioned_thread(&log, false, |stack| fail_commissioning(stack, &log));
+
+        assert_eq!(log.events(), vec!["thread up", "ble up", "gatt running"]);
+    });
+}
+
+/// Leave the commissioned stack as non-concurrent commissioning leaves it after the handover
+/// to Thread - the window still open, and the fail-safe armed - and let the fail-safe expire.
+async fn fail_commissioning(
+    stack: &ThreadMatterStack<'_, BUMP_SIZE>,
+    log: &Log,
+) -> Result<(), Error> {
+    Timer::after(Duration::from_millis(200)).await;
+
+    stack.matter().with_state(|state| {
+        state
+            .failsafe
+            .arm(1, 0, &SessionMode::Pase { fab_idx: 0 }, false)
+            .unwrap();
+    });
+    stack.matter().transport().notify_timeouts_changed();
+
+    stack
+        .open_basic_comm_window(test_only_crypto(), &())
+        .unwrap();
+
+    // The armed fail-safe keeps the radio on Thread
+    Timer::after(Duration::from_millis(200)).await;
+
+    assert_eq!(log.events(), vec!["thread up"]);
+
+    Timer::after(Duration::from_millis(1200)).await;
+
+    Ok(())
+}
+
+/// Open a commissioning window for the device itself, once the commissioned stack runs.
+async fn open_window(stack: &ThreadMatterStack<'_, BUMP_SIZE>, log: &Log) -> Result<(), Error> {
+    Timer::after(Duration::from_millis(200)).await;
+
+    assert_eq!(log.events(), vec!["thread up"]);
+
+    stack
+        .open_basic_comm_window(test_only_crypto(), &())
+        .unwrap();
+
+    Timer::after(Duration::from_millis(200)).await;
+
+    assert!(stack
+        .matter()
+        .comm_window_state()
+        .is_open_on_all_transports());
+
+    Ok(())
+}
+
 /// Run a commissioned Thread stack with `run_thread_oper` (or with `run_thread_no_coex`, if `oper` is `false`), and
-/// open a commissioning window for the device itself while it runs. Panics if the stack exits.
-fn run_commissioned_thread(log: &Log, oper: bool) {
+/// run `act` meanwhile. Panics if the stack exits before `act` is done.
+fn run_commissioned_thread<F, A>(log: &Log, oper: bool, act: A)
+where
+    A: FnOnce(&'static ThreadMatterStack<'static, BUMP_SIZE>) -> F,
+    F: Future<Output = Result<(), Error>>,
+{
     const NODE: Node = Node {
         endpoints: &[ThreadMatterStack::<0>::thread_root_endpoint()],
     };
@@ -1325,28 +1439,13 @@ fn run_commissioned_thread(log: &Log, oper: bool) {
         }
     };
 
-    let open = async {
-        Timer::after(Duration::from_millis(200)).await;
-
-        assert_eq!(log.events(), vec!["thread up"]);
-
-        stack.open_basic_comm_window(&crypto, &()).unwrap();
-
-        Timer::after(Duration::from_millis(200)).await;
-
-        assert!(stack
-            .matter()
-            .comm_window_state()
-            .is_open_on_all_transports());
-
-        Ok::<_, Error>(())
-    };
+    let act = act(stack);
 
     futures_lite::future::block_on(async {
         let mut run = core::pin::pin!(run);
-        let mut open = core::pin::pin!(open);
+        let mut act = core::pin::pin!(act);
 
-        match select(&mut run, &mut open).await {
+        match select(&mut run, &mut act).await {
             Either::First(result) => panic!("The stack exited: {result:?}"),
             Either::Second(result) => result.unwrap(),
         }
@@ -1706,6 +1805,75 @@ fn ethernet_takes_a_gen_diag_that_borrows_the_node() {
         );
 
         assert!(result.is_none(), "The stack exited: {result:?}");
+    });
+}
+
+#[test]
+fn ethernet_takes_a_comm_policy() {
+    on_big_stack(|| {
+        for reopen in [false, true] {
+            let log = Log::default();
+            let crypto = test_only_crypto();
+
+            let stack = leak::<EthMatterStack<BUMP_SIZE>>().init_with(EthMatterStack::init(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+            ));
+
+            // The only fabric is the one added under a fail-safe, which then expires
+            let prepare = |stack: &EthMatterStack<'_, BUMP_SIZE>| {
+                stack.matter().close_comm_window(&()).unwrap();
+
+                stack.matter().with_state(|state| {
+                    let fab_idx = state
+                        .fabrics
+                        .add_with_post_init(|_| Ok(()))
+                        .unwrap()
+                        .fab_idx();
+
+                    state
+                        .failsafe
+                        .arm(
+                            1,
+                            0,
+                            &SessionMode::Pase {
+                                fab_idx: fab_idx.get(),
+                            },
+                            false,
+                        )
+                        .unwrap();
+                });
+            };
+
+            let result = if reopen {
+                let options = Options::new().comm_policy(&ReopenPolicy);
+
+                run_ethernet_for(
+                    stack,
+                    &crypto,
+                    FakeNetStack(&log),
+                    &FakeNetif,
+                    options,
+                    prepare,
+                    1500,
+                )
+            } else {
+                run_ethernet_for(
+                    stack,
+                    &crypto,
+                    FakeNetStack(&log),
+                    &FakeNetif,
+                    (),
+                    prepare,
+                    1500,
+                )
+            };
+
+            assert!(result.is_none(), "The stack exited: {result:?}");
+            assert!(!stack.matter().has_fabrics());
+            assert_eq!(stack.matter().comm_window_state().is_open(), reopen);
+        }
     });
 }
 

@@ -40,6 +40,7 @@ use cfg_if::cfg_if;
 use rs_matter_crypto::{Crypto, Rng};
 use rs_matter_dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter_dm::clusters::dev_att::DeviceAttestation;
+use rs_matter_dm::clusters::gen_comm::{CommPolicy, RegulatoryLocationTypeEnum};
 use rs_matter_dm::clusters::gen_diag::{GenDiag, NetifDiag, NetifInfo};
 use rs_matter_dm::clusters::net_comm::{remove_networks, NetworkType, Networks};
 use rs_matter_dm::clusters::sw_diag::SwDiag;
@@ -1149,11 +1150,13 @@ impl UserTask for () {
 pub trait RunOptions: MaybeSend {
     /// The General Diagnostics implementation.
     type GenDiag: GenDiag;
+    /// The commissioning policy.
+    type CommPolicy: CommPolicy;
     /// The user task.
     type UserTask: UserTask;
 
     /// Split into the individual settings.
-    fn into_parts(self) -> (Self::GenDiag, Self::UserTask);
+    fn into_parts(self) -> (Self::GenDiag, Self::CommPolicy, Self::UserTask);
 }
 
 impl<T> RunOptions for T
@@ -1161,23 +1164,25 @@ where
     T: UserTask,
 {
     type GenDiag = &'static ();
+    type CommPolicy = bool;
     type UserTask = T;
 
-    fn into_parts(self) -> (Self::GenDiag, Self::UserTask) {
-        (&(), self)
+    fn into_parts(self) -> (Self::GenDiag, Self::CommPolicy, Self::UserTask) {
+        (&(), false, self)
     }
 }
 
 /// A builder of `RunOptions`.
 ///
-/// What is not set stays at its default: the test event triggers are disabled
-/// and there is no user task.
+/// What is not set stays at its default: the test event triggers are disabled,
+/// the commissioning policy is the one of `bool`, and there is no user task.
 ///
 /// ```ignore
 /// stack.run(driver, crypto, handler, kv, Options::new().gen_diag(&my_gen_diag));
 /// ```
-pub struct Options<G, U> {
+pub struct Options<G, U, P = bool> {
     gen_diag: G,
+    comm_policy: P,
     user_task: U,
 }
 
@@ -1192,45 +1197,106 @@ impl Options<&'static (), ()> {
     pub const fn new() -> Self {
         Self {
             gen_diag: &(),
+            comm_policy: false,
             user_task: (),
         }
     }
 }
 
-impl<G, U> Options<G, U> {
+impl<G, U, P> Options<G, U, P> {
     /// Set the General Diagnostics implementation.
-    pub fn gen_diag<T>(self, gen_diag: T) -> Options<T, U>
+    pub fn gen_diag<T>(self, gen_diag: T) -> Options<T, U, P>
     where
         T: GenDiag,
     {
         Options {
             gen_diag,
+            comm_policy: self.comm_policy,
+            user_task: self.user_task,
+        }
+    }
+
+    /// Set the commissioning policy.
+    ///
+    /// Its `concurrent_connection_supported` is not used: the run method decides it.
+    pub fn comm_policy<T>(self, comm_policy: T) -> Options<G, U, T>
+    where
+        T: CommPolicy,
+    {
+        Options {
+            gen_diag: self.gen_diag,
+            comm_policy,
             user_task: self.user_task,
         }
     }
 
     /// Set the user task.
-    pub fn user_task<T>(self, user_task: T) -> Options<G, T>
+    pub fn user_task<T>(self, user_task: T) -> Options<G, T, P>
     where
         T: UserTask,
     {
         Options {
             gen_diag: self.gen_diag,
+            comm_policy: self.comm_policy,
             user_task,
         }
     }
 }
 
-impl<G, U> RunOptions for Options<G, U>
+impl<G, U, P> RunOptions for Options<G, U, P>
 where
     G: GenDiag,
     U: UserTask,
+    P: CommPolicy,
 {
     type GenDiag = G;
+    type CommPolicy = P;
     type UserTask = U;
 
-    fn into_parts(self) -> (Self::GenDiag, Self::UserTask) {
-        (self.gen_diag, self.user_task)
+    fn into_parts(self) -> (Self::GenDiag, Self::CommPolicy, Self::UserTask) {
+        (self.gen_diag, self.comm_policy, self.user_task)
+    }
+}
+
+/// The commissioning policy of the user, with the concurrent connection support
+/// that the run method decides.
+pub(crate) struct StackCommPolicy<'a> {
+    policy: &'a dyn CommPolicy,
+    concurrent_connection: bool,
+}
+
+impl<'a> StackCommPolicy<'a> {
+    pub(crate) const fn new(policy: &'a dyn CommPolicy, concurrent_connection: bool) -> Self {
+        Self {
+            policy,
+            concurrent_connection,
+        }
+    }
+}
+
+impl CommPolicy for StackCommPolicy<'_> {
+    fn concurrent_connection_supported(&self) -> bool {
+        self.concurrent_connection
+    }
+
+    fn failsafe_expiry_len_secs(&self) -> u16 {
+        self.policy.failsafe_expiry_len_secs()
+    }
+
+    fn failsafe_max_cml_secs(&self) -> u16 {
+        self.policy.failsafe_max_cml_secs()
+    }
+
+    fn location_cap(&self) -> RegulatoryLocationTypeEnum {
+        self.policy.location_cap()
+    }
+
+    fn remove_networks_on_last_fabric(&self) -> bool {
+        self.policy.remove_networks_on_last_fabric()
+    }
+
+    fn open_comm_window_on_last_fabric(&self) -> bool {
+        self.policy.open_comm_window_on_last_fabric()
     }
 }
 
