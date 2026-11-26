@@ -56,6 +56,10 @@ const _: () = core::assert!(MAX_EXCHANGE_RX_BUF_SIZE == MAX_RX_BUF_SIZE);
 pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
     MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
 
+/// How long `Exchange::flush` waits once the messages are handed to the network,
+/// so that a network stack running on the same executor gets to transmit them.
+const FLUSH_DELAY_MS: u64 = 30;
+
 /// A protocol payload buffer, sized to hold a full exchange RX message
 /// ([`MAX_EXCHANGE_RX_BUF_SIZE`]).
 ///
@@ -341,6 +345,24 @@ impl ExchangeId {
 
             Ok(exch.mrp.is_ack_pending())
         })
+    }
+
+    /// Waits until the TX buffer no longer holds a message of this exchange, i.e. until
+    /// the TX loop has handed it to the network.
+    pub(crate) async fn wait_sent(&self, transport: &Transport) {
+        let _ = transport
+            .get_if_tx(|packet| {
+                packet.buf.is_empty()
+                    || !matches!(
+                        packet.tx_info.payload_state,
+                        TxPayloadState::NotEncoded {
+                            session_id,
+                            exchange_index: Some(exchange_index),
+                            ..
+                        } if session_id == self.session_id() && exchange_index == self.exchange_index()
+                    )
+            })
+            .await;
     }
 }
 
@@ -1450,6 +1472,21 @@ impl<'a> Exchange<'a> {
                 tx.complete::<MessageMeta>(0, 0, sc::OpCode::MRPStandAloneAck.into())?;
             }
         }
+
+        Ok(())
+    }
+
+    /// Wait until the messages sent on this exchange are handed to the network, and then
+    /// a little longer, so that a network stack running on the same executor gets to
+    /// transmit them.
+    ///
+    /// Call this after `acknowledge` and before a long computation that blocks the executor
+    /// (the PASE and CASE crypto on a small MCU), so that the peer does not retransmit its
+    /// message meanwhile.
+    pub async fn flush(&mut self) -> Result<(), Error> {
+        self.id.wait_sent(self.transport).await;
+
+        Timer::after(Duration::from_millis(FLUSH_DELAY_MS)).await;
 
         Ok(())
     }

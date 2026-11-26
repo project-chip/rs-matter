@@ -172,6 +172,9 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
     ) -> Result<bool, Error> {
         check_opcode(exchange, OpCode::CASESigma1)?;
 
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
+
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
         // Per Matter spec, `resumptionID` and `initiatorResumeMIC` must
@@ -319,6 +322,9 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
         mut session: ReservedSession<'_>,
     ) -> Result<(), Error> {
         expect_opcode(exchange, OpCode::CASESigma3).await?;
+
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
 
         let status = exchange.with_state(self.matter, |state| {
             let sess = exchange.id().session(state.sessions);

@@ -264,6 +264,10 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         salt: &[u8],
         iterations: u32,
     ) -> Result<(), Error> {
+        // Acknowledge the PBKDFParamResponse before the PBKDF2 below
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
+
         // Setup prover and generate pA
         let mut pa = EC_POINT_ZEROED;
         let password_bytes = password.to_le_bytes();
@@ -311,7 +315,11 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             return Err(ErrorCode::InvalidOpcode.into());
         }
 
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
+
         // Parse Pake2
+        let rx = exchange.rx()?;
         let pake2 = Pake2::from_tlv(&TLVElement::new(rx.payload()))?;
 
         // Extract pB and cB

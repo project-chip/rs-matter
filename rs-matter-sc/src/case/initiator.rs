@@ -327,6 +327,9 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             return Err(ErrorCode::InvalidOpcode.into());
         }
 
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
+
         // Step 5: Decrypt Sigma2 TBE and validate
         // `peer_resumption_id` (the responder's ResumptionID from TBEData2,
         // spec-mandated in full CASE) is only consumed to seed the resumption

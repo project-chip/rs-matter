@@ -286,6 +286,9 @@ impl<'a, M: ScHost, C: Crypto, N: AttrChangeNotifier> PaseResponder<'a, M, C, N>
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
         expect_opcode(exchange, OpCode::PASEPake1).await?;
 
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
+
         let req = get_root_node_struct(exchange.rx()?.payload())?;
         let pake1 = Pake1::from_tlv(&req)?;
         let a_pt: CanonEcPointRef<'_> = pake1.pa.0.try_into()?;

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: PASE and CASE acknowledge the peer's message before their crypto, so that the peer does not retransmit it while a slow MCU computes the reply (#688)
+  * New: `Exchange::flush`
 * Fix: with more than 64 instances of a service on the network, the Avahi mDNS backend stalled its D-Bus connection, and every later resolve and browse failed until a restart (#687)
   * Fix: an Avahi browser is freed also when setting it up fails
 * Fix: with non-concurrent commissioning, `rs-matter-stack` goes back to BLE when the commissioning fails after the handover (the fail-safe expires), and a failed network connect after the handover no longer ends the stack (#686)
