@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Fix: the Access Control cluster declares only the events it emits
   * Fix: the operational mDNS record carries the `DUMMY` TXT key only when it would otherwise be empty
   * Breaking: `DEFAULT_MAX_PATHS_PER_INVOKE` is 1 again: more needs the General Diagnostics `DMTEST` feature and chunked Invoke responses, which rs-matter does not have yet
+* Fix: Push AV Stream Transport and Scenes reject options and extension field sets with a string that is not valid UTF-8, rather than storing them and sending them back (#690)
 * Fix: PASE and CASE acknowledge the peer's message before their crypto, so that the peer does not retransmit it while a slow MCU computes the reply (#688)
   * New: `Exchange::flush`
 * New: fuzz targets in `fuzz/` for the parsers, the transports and whole nodes fed with messages, which CI runs for a minute each, and for ten minutes nightly (#689)

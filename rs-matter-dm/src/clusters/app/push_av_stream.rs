@@ -79,7 +79,7 @@ use crate::dm::{
     LifecycleOp, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVBuilderParent, TLVElement, TLVTag, ToTLV};
+use crate::tlv::{TLVBuilderParent, TLVElement, TLVSequence, TLVTag, ToTLV};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{MaybeSend, MaybeSendSync, Notification};
@@ -550,6 +550,11 @@ where
         let mut wb = WriteBuf::new(&mut buf);
         options.to_tlv(&TLVTag::Anonymous, &mut wb)?;
         let bytes = wb.as_slice();
+        // The options go back to the peers as they are, so all of their
+        // elements must read, e.g. their strings must be valid UTF-8
+        for tlv in TLVSequence(bytes).tlv_iter() {
+            tlv.map_err(|_| ErrorCode::InvalidCommand)?;
+        }
         let mut stored: Vec<u8, MAX_TRANSPORT_OPTIONS_BYTES> = Vec::new();
         stored
             .extend_from_slice(bytes)
@@ -1061,6 +1066,51 @@ mod tests {
                 .set_status(1, Some(1), TransportStatusEnum::Active)
                 .as_slice(),
             [1]
+        );
+    }
+
+    #[test]
+    fn options_with_invalid_utf8_are_not_stored() {
+        use crate::tlv::{TLVValueType, TLVWrite};
+
+        let handler = PushAvStreamHandler::<_, 4>::new(
+            Dataver::new(1),
+            1,
+            PushAvStreamConfig {
+                supported_formats: &[],
+            },
+            RecordingHooks {
+                deallocated: RefCell::new(Vec::new()),
+            },
+        );
+
+        // Transport options with a CMAF track name
+        let options = |track_name: &[u8]| {
+            let mut buf = [0; 32];
+            let mut wb = WriteBuf::new(&mut buf);
+            unwrap!(wb.start_struct(&TLVTag::Anonymous));
+            unwrap!(wb.start_struct(&TLVTag::Context(7)));
+            unwrap!(wb.start_struct(&TLVTag::Context(1)));
+            unwrap!(wb.raw_value(
+                &TLVTag::Context(4),
+                TLVValueType::Utf8l,
+                &[track_name.len() as u8]
+            ));
+            unwrap!(wb.write_raw_data(track_name.iter().copied()));
+            unwrap!(wb.end_container());
+            unwrap!(wb.end_container());
+            unwrap!(wb.end_container());
+
+            handler
+                .capture_options(&TransportOptionsStruct::new(TLVElement::new(wb.as_slice())))
+                .map(|_| ())
+                .map_err(|err| err.code())
+        };
+
+        assert_eq!(options(b"main"), Ok(()));
+        assert_eq!(
+            options(&[0x93, 0x9e, b'i', b'n']),
+            Err(ErrorCode::InvalidCommand)
         );
     }
 
