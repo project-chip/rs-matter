@@ -346,24 +346,6 @@ impl ExchangeId {
             Ok(exch.mrp.is_ack_pending())
         })
     }
-
-    /// Waits until the TX buffer no longer holds a message of this exchange, i.e. until
-    /// the TX loop has handed it to the network.
-    pub(crate) async fn wait_sent(&self, transport: &Transport) {
-        let _ = transport
-            .get_if_tx(|packet| {
-                packet.buf.is_empty()
-                    || !matches!(
-                        packet.tx_info.payload_state,
-                        TxPayloadState::NotEncoded {
-                            session_id,
-                            exchange_index: Some(exchange_index),
-                            ..
-                        } if session_id == self.session_id() && exchange_index == self.exchange_index()
-                    )
-            })
-            .await;
-    }
 }
 
 impl From<ExchangeId> for TransactionId {
@@ -1476,15 +1458,15 @@ impl<'a> Exchange<'a> {
         Ok(())
     }
 
-    /// Wait until the messages sent on this exchange are handed to the network, and then
-    /// a little longer, so that a network stack running on the same executor gets to
-    /// transmit them.
+    /// Wait until the TX buffer is free, so the messages sent on this exchange are handed
+    /// to the network, and then a little longer, so that a network stack running on the
+    /// same executor gets to transmit them.
     ///
     /// Call this after `acknowledge` and before a long computation that blocks the executor
     /// (the PASE and CASE crypto on a small MCU), so that the peer does not retransmit its
     /// message meanwhile.
     pub async fn flush(&mut self) -> Result<(), Error> {
-        self.id.wait_sent(self.transport).await;
+        self.id.init_send(self.transport).await?;
 
         Timer::after(Duration::from_millis(FLUSH_DELAY_MS)).await;
 

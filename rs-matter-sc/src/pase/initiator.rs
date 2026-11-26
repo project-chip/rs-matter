@@ -37,7 +37,9 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
 use crate::ScHost;
-use crate::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
+use crate::{
+    acknowledge_and_flush, complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport,
+};
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
@@ -265,8 +267,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         iterations: u32,
     ) -> Result<(), Error> {
         // Acknowledge the PBKDFParamResponse before the PBKDF2 below
-        exchange.acknowledge().await?;
-        exchange.flush().await?;
+        acknowledge_and_flush(exchange).await?;
 
         // Setup prover and generate pA
         let mut pa = EC_POINT_ZEROED;
@@ -315,8 +316,7 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             return Err(ErrorCode::InvalidOpcode.into());
         }
 
-        exchange.acknowledge().await?;
-        exchange.flush().await?;
+        acknowledge_and_flush(exchange).await?;
 
         // Parse Pake2
         let rx = exchange.rx()?;

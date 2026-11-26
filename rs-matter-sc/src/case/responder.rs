@@ -46,8 +46,8 @@ use crate::utils::init::{init, Init, InitMaybeUninit};
 use crate::utils::storage::ReadBuf;
 use crate::ScHost;
 use crate::{
-    check_opcode, complete_with_status, expect_opcode, sc_write, OpCode, SCStatusCodes,
-    SessionParameters,
+    acknowledge_and_flush, check_opcode, complete_with_status, expect_opcode, sc_write, OpCode,
+    SCStatusCodes, SessionParameters,
 };
 #[cfg(feature = "case-resumption")]
 use crate::{GeneralCode, StatusReport};
@@ -172,8 +172,7 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
     ) -> Result<bool, Error> {
         check_opcode(exchange, OpCode::CASESigma1)?;
 
-        exchange.acknowledge().await?;
-        exchange.flush().await?;
+        acknowledge_and_flush(exchange).await?;
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
@@ -323,8 +322,7 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
     ) -> Result<(), Error> {
         expect_opcode(exchange, OpCode::CASESigma3).await?;
 
-        exchange.acknowledge().await?;
-        exchange.flush().await?;
+        acknowledge_and_flush(exchange).await?;
 
         let status = exchange.with_state(self.matter, |state| {
             let sess = exchange.id().session(state.sessions);
