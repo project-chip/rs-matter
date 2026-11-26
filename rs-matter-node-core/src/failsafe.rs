@@ -53,7 +53,7 @@ bitflags! {
 pub struct ArmedCtx {
     armed_at: Instant,
     timeout_secs: u16,
-    /// When the context ends whatever the re-arms: set when it is created,
+    /// When the context ends regardless of re-arms: set when it is created,
     /// `MaxCumulativeFailsafeSeconds` later, and never moved
     cumulative_expires_at: Instant,
     fab_idx: u8,
