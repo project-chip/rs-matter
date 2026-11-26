@@ -53,8 +53,34 @@ bitflags! {
 pub struct ArmedCtx {
     armed_at: Instant,
     timeout_secs: u16,
+    /// When the context ends whatever the re-arms: set when it is created,
+    /// `MaxCumulativeFailsafeSeconds` later, and never moved
+    cumulative_expires_at: Instant,
     fab_idx: u8,
     flags: NocFlags,
+}
+
+impl ArmedCtx {
+    fn new(timeout_secs: u16, max_cumulative_secs: u16, fab_idx: u8, flags: NocFlags) -> Self {
+        let now = Instant::now();
+
+        Self {
+            armed_at: now,
+            timeout_secs,
+            cumulative_expires_at: now
+                .saturating_add(Duration::from_secs(max_cumulative_secs as u64)),
+            fab_idx,
+            flags,
+        }
+    }
+
+    /// When the context expires: at the end of the armed timeout, or of its
+    /// cumulative lifetime, whichever comes first.
+    fn expires_at(&self) -> Instant {
+        self.armed_at
+            .saturating_add(Duration::from_secs(self.timeout_secs as u64))
+            .min(self.cumulative_expires_at)
+    }
 }
 
 #[derive(PartialEq)]
@@ -84,6 +110,11 @@ impl From<IMStatusCode> for IMError {
 /// fail-safe (e.g. on PASE session establishment). Mirrors
 /// `CHIP_DEVICE_CONFIG_FAILSAFE_EXPIRY_LENGTH_SEC` from the reference SDK.
 pub const DEFAULT_FAILSAFE_EXPIRY_SECS: u16 = 60;
+
+/// Default `MaxCumulativeFailsafeSeconds`, the longest a fail-safe context
+/// lasts however often it is re-armed, until [`FailSafe::set_max_cumulative_secs`]
+/// sets the node's own.
+pub const DEFAULT_FAILSAFE_MAX_CUMULATIVE_SECS: u16 = 900;
 
 /// The ID of the Operational Credentials cluster.
 const OPERATIONAL_CREDENTIALS_CLUSTER_ID: ClusterId = 0x003E;
@@ -121,6 +152,7 @@ pub struct FailSafe {
     secret_key: CanonPkcSecretKey,
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
     breadcrumb: u64,
+    max_cumulative_secs: u16,
 }
 
 impl FailSafe {
@@ -131,6 +163,7 @@ impl FailSafe {
             secret_key: PKC_SECRET_KEY_ZEROED,
             root_ca: Vec::new(),
             breadcrumb: 0,
+            max_cumulative_secs: DEFAULT_FAILSAFE_MAX_CUMULATIVE_SECS,
         }
     }
 
@@ -139,8 +172,16 @@ impl FailSafe {
             state: State::Idle,
             secret_key <- CanonPkcSecretKey::init(),
             root_ca <- Vec::init(),
-            breadcrumb: 0
+            breadcrumb: 0,
+            max_cumulative_secs: DEFAULT_FAILSAFE_MAX_CUMULATIVE_SECS
         })
+    }
+
+    /// Set `MaxCumulativeFailsafeSeconds`, the longest a fail-safe context
+    /// lasts however often it is re-armed. Applies to the contexts created
+    /// from now on: an armed one keeps its lifetime.
+    pub fn set_max_cumulative_secs(&mut self, secs: u16) {
+        self.max_cumulative_secs = secs;
     }
 
     /// Check if the fail-safe timer has expired and if so disarms and restores the state of the fabric as well as
@@ -163,12 +204,7 @@ impl FailSafe {
         S: KvBlobStoreAccess,
     {
         if let State::Armed(ctx) = &self.state {
-            let now = Instant::now();
-            if now
-                >= ctx
-                    .armed_at
-                    .saturating_add(Duration::from_secs(ctx.timeout_secs as u64))
-            {
+            if Instant::now() >= ctx.expires_at() {
                 // Timeout path: no caller exchange to preserve, so wipe
                 // every PASE session along with the fabric rollback.
                 return self.expire(fabrics, remove_pase_sessions, kv, mdns_notif, notify_change);
@@ -283,12 +319,12 @@ impl FailSafe {
                 return Ok(());
             }
 
-            self.state = State::Armed(ArmedCtx {
-                armed_at: Instant::now(),
+            self.state = State::Armed(ArmedCtx::new(
                 timeout_secs,
-                fab_idx: session_mode.fab_idx(),
-                flags: NocFlags::empty(),
-            });
+                self.max_cumulative_secs,
+                session_mode.fab_idx(),
+                NocFlags::empty(),
+            ));
             self.breadcrumb = breadcrumb;
 
             return Ok(());
@@ -368,10 +404,7 @@ impl FailSafe {
     /// When the armed fail-safe expires, or `None` if it is not armed.
     pub fn expires_at(&self) -> Option<Instant> {
         match &self.state {
-            State::Armed(ctx) => Some(
-                ctx.armed_at
-                    .saturating_add(Duration::from_secs(ctx.timeout_secs as u64)),
-            ),
+            State::Armed(ctx) => Some(ctx.expires_at()),
             _ => None,
         }
     }
@@ -406,6 +439,18 @@ impl FailSafe {
         }
 
         (!self.root_ca.is_empty()).then_some(self.root_ca.as_slice())
+    }
+
+    /// Drop the trusted root certificate staged via `AddTrustedRootCertificate`,
+    /// if no `AddNOC` / `UpdateNOC` has bound it to a fabric yet.
+    ///
+    /// For fabric removal: the root is then not referenced by any operational
+    /// certificate, so it must go. The fail-safe stays armed, and another
+    /// `AddTrustedRootCertificate` in it is still refused.
+    pub fn drop_pending_root_ca(&mut self) {
+        if self.pending_root_ca().is_some() {
+            self.root_ca.clear();
+        }
     }
 
     pub fn is_armed_for(&self, caller_fab_idx: u8) -> bool {
@@ -734,9 +779,12 @@ impl FailSafe {
 
         let fab_idx = NonZeroU8::new(ctx.fab_idx)?;
 
-        let elapsed_secs = ctx.armed_at.elapsed().as_secs().min(u16::MAX as u64) as u16;
+        let secs_left = ctx
+            .expires_at()
+            .checked_duration_since(Instant::now())
+            .map_or(0, |left| left.as_secs().min(u16::MAX as u64) as u16);
 
-        Some((fab_idx, ctx.timeout_secs.saturating_sub(elapsed_secs)))
+        Some((fab_idx, secs_left))
     }
 
     /// Arm the fail-safe for a fabric resumed from a commissioning handover,
@@ -751,14 +799,12 @@ impl FailSafe {
             return Err(ErrorCode::Busy.into());
         }
 
-        self.state = State::Armed(ArmedCtx {
-            armed_at: Instant::now(),
+        self.state = State::Armed(ArmedCtx::new(
             timeout_secs,
-            fab_idx: fab_idx.get(),
-            flags: NocFlags::ADD_ROOT_CERT_RECVD
-                | NocFlags::ADD_CSR_REQ_RECVD
-                | NocFlags::ADD_NOC_RECVD,
-        });
+            self.max_cumulative_secs,
+            fab_idx.get(),
+            NocFlags::ADD_ROOT_CERT_RECVD | NocFlags::ADD_CSR_REQ_RECVD | NocFlags::ADD_NOC_RECVD,
+        ));
         self.breadcrumb = breadcrumb;
 
         Ok(())
@@ -1060,6 +1106,36 @@ mod tests {
         assert!(
             expires_at <= Instant::now() + Duration::from_secs(DEFAULT_FAILSAFE_EXPIRY_SECS as u64)
         );
+    }
+
+    /// A context ends at most `MaxCumulativeFailsafeSeconds` after it was
+    /// created: re-arming does not move that end, and a new limit only applies
+    /// to the contexts created after it.
+    #[test]
+    fn rearming_does_not_extend_the_cumulative_lifetime() {
+        use crate::utils::timers::{Duration, Instant};
+
+        let mut fs = FailSafe::new();
+        fs.set_max_cumulative_secs(10);
+
+        let before = Instant::now();
+        fs.arm(60, 0, &pase(0), false).unwrap();
+        let after = Instant::now();
+
+        let cumulative_end = fs.expires_at().unwrap();
+        assert!(cumulative_end >= before + Duration::from_secs(10));
+        assert!(cumulative_end <= after + Duration::from_secs(10));
+
+        fs.arm(60, 0, &pase(0), false).unwrap();
+        assert_eq!(fs.expires_at(), Some(cumulative_end));
+
+        fs.set_max_cumulative_secs(1000);
+        fs.arm(60, 0, &pase(0), false).unwrap();
+        assert_eq!(fs.expires_at(), Some(cumulative_end));
+
+        // A shorter armed timeout still ends the context first
+        fs.arm(1, 0, &pase(0), false).unwrap();
+        assert!(fs.expires_at().unwrap() < cumulative_end);
     }
 
     #[test]
@@ -1368,6 +1444,33 @@ mod tests {
             ErrorCode::ConstraintError
         );
         assert_eq!(fs.pending_root_ca(), Some(rcac.cert.as_slice()));
+    }
+
+    #[test]
+    fn drop_pending_root_ca_keeps_a_root_bound_by_add_noc() {
+        let crypto = test_only_crypto();
+        let rcac = mint_rcac(&crypto, 0xfab, 0x77);
+        let mut buf = [0u8; 1024];
+
+        // An unbound root is dropped, the fail-safe stays armed, and a second
+        // root is still refused
+        let mut fs = armed(&pase(0));
+        fs.add_trusted_root_cert(&crypto, now(), &pase(0), &rcac.cert, &mut buf)
+            .unwrap();
+        fs.drop_pending_root_ca();
+        assert!(fs.pending_root_ca().is_none());
+        assert!(fs.is_armed());
+        assert_eq!(
+            code(fs.add_trusted_root_cert(&crypto, now(), &pase(0), &rcac.cert, &mut buf)),
+            ErrorCode::ConstraintError
+        );
+
+        // A root that `AddNOC` bound to the pending fabric stays
+        let mut fabrics = Fabrics::new();
+        let mut fs = armed(&pase(0));
+        let (rcac, _) = add_noc_flow(&crypto, &mut fs, &mut fabrics, 0xfab, 0x1234);
+        fs.drop_pending_root_ca();
+        assert_eq!(fs.root_ca.as_slice(), rcac.cert.as_slice());
     }
 
     #[test]

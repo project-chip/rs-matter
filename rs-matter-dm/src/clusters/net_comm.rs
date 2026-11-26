@@ -20,9 +20,10 @@
 use core::fmt::{self, Debug};
 use core::future::{ready, Future};
 
-use crate::dm::clusters::gen_comm::{CommPolicy, GenCommHandler};
+use crate::dm::clusters::gen_comm::{self, CommPolicy, GenCommHandler};
 use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::clusters::{thread_diag, wifi_diag};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::networks::wireless::{WirelessMgr, MAX_CREDS_SIZE, MAX_WIRELESS_NETWORK_ID_LEN};
 use crate::dm::networks::NetChangeNotif;
 use crate::dm::{
@@ -746,11 +747,24 @@ impl<'a, N, T> NetCommHandler<'a, N, T> {
             return Ok(());
         };
 
-        ctx.transaction_id().with_state(self.matter, |state| {
+        let changed = ctx.transaction_id().with_state(self.matter, |state| {
+            let changed = state.failsafe.breadcrumb() != breadcrumb;
             state.failsafe.set_breadcrumb(breadcrumb);
 
-            Ok(())
-        })
+            Ok(changed)
+        })?;
+
+        // The attribute belongs to another cluster, so the change is not
+        // covered by this cluster's own change notification
+        if changed {
+            ctx.notify_attr_changed(
+                ROOT_ENDPOINT_ID,
+                gen_comm::FULL_CLUSTER.id,
+                gen_comm::AttributeId::Breadcrumb as _,
+            );
+        }
+
+        Ok(())
     }
 
     /// Whether the `Networks` attribute currently has any entry.
@@ -1158,49 +1172,43 @@ where
                 let mut array_builder = None;
                 let mut skipped = 0;
 
+                // The SSID field means nothing on Thread and is ignored
                 let (status, _, _) = NetworkCommissioningStatusEnum::map_ctl(
                     self.net_ctl
-                        .scan(
-                            request
-                                .ssid()?
-                                .as_ref()
-                                .and_then(|ssid| ssid.as_opt_ref())
-                                .map(|ssid| ssid.0),
-                            |network| {
-                                let mut abuilder = if let Some(builder) = builder.take() {
-                                    builder
-                                        .networking_status(NetworkCommissioningStatusEnum::Success)?
-                                        .debug_text(None)?
-                                        .wi_fi_scan_results()?
-                                        .none()
-                                        .thread_scan_results()?
-                                        .some()?
-                                } else {
-                                    unwrap!(array_builder.take())
-                                };
+                        .scan(None, |network| {
+                            let mut abuilder = if let Some(builder) = builder.take() {
+                                builder
+                                    .networking_status(NetworkCommissioningStatusEnum::Success)?
+                                    .debug_text(None)?
+                                    .wi_fi_scan_results()?
+                                    .none()
+                                    .thread_scan_results()?
+                                    .some()?
+                            } else {
+                                unwrap!(array_builder.take())
+                            };
 
-                                // Skip all results after the first one that does not fit,
-                                // as they are weaker
-                                if skipped > 0
-                                    || !push_scan_result(&mut abuilder, |parent| {
-                                        network.thread_read_into(
-                                            ThreadInterfaceScanResultStructBuilder::new(
-                                                parent,
-                                                &TLVTag::Anonymous,
-                                            )?,
-                                        )?;
+                            // Skip all results after the first one that does not fit,
+                            // as they are weaker
+                            if skipped > 0
+                                || !push_scan_result(&mut abuilder, |parent| {
+                                    network.thread_read_into(
+                                        ThreadInterfaceScanResultStructBuilder::new(
+                                            parent,
+                                            &TLVTag::Anonymous,
+                                        )?,
+                                    )?;
 
-                                        Ok(())
-                                    })?
-                                {
-                                    skipped += 1;
-                                }
+                                    Ok(())
+                                })?
+                            {
+                                skipped += 1;
+                            }
 
-                                array_builder = Some(abuilder);
+                            array_builder = Some(abuilder);
 
-                                Ok(())
-                            },
-                        )
+                            Ok(())
+                        })
                         .await
                         .map(|_| 0),
                 )?;
@@ -1211,6 +1219,7 @@ where
 
                 self.apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
+                // The results list is mandatory on Thread, even when empty
                 if let Some(builder) = builder {
                     builder
                         .networking_status(status)?
@@ -1218,7 +1227,8 @@ where
                         .wi_fi_scan_results()?
                         .none()
                         .thread_scan_results()?
-                        .none()
+                        .some()?
+                        .end()?
                         .end()
                 } else {
                     unwrap!(array_builder.take()).end()?.end()
@@ -1229,6 +1239,7 @@ where
                 let mut array_builder = None;
                 let mut skipped = 0;
 
+                // An empty SSID asks for an undirected scan, like a null one
                 let (status, _, _) = NetworkCommissioningStatusEnum::map_ctl(
                     self.net_ctl
                         .scan(
@@ -1236,7 +1247,8 @@ where
                                 .ssid()?
                                 .as_ref()
                                 .and_then(|ssid| ssid.as_opt_ref())
-                                .map(|ssid| ssid.0),
+                                .map(|ssid| ssid.0)
+                                .filter(|ssid| !ssid.is_empty()),
                             |network| {
                                 let mut abuilder = if let Some(builder) = builder.take() {
                                     builder
@@ -1280,12 +1292,14 @@ where
 
                 self.apply_breadcrumb(&ctx, status, request.breadcrumb()?)?;
 
+                // The results list is mandatory on Wi-Fi, even when empty
                 if let Some(builder) = builder {
                     builder
                         .networking_status(status)?
                         .debug_text(None)?
                         .wi_fi_scan_results()?
-                        .none()
+                        .some()?
+                        .end()?
                         .thread_scan_results()?
                         .none()
                         .end()

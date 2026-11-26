@@ -48,9 +48,11 @@ pub const DEFAULT_DATA_MODEL_REVISION: u16 = 21;
 
 /// The default maximum number of paths that can be included in an Invoke request
 ///
-/// Set to 5, which is enough to support typical batched invokes while
-/// keeping the in-memory CommandRef tracking buffer in `dm::invoke()` small.
-pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 5;
+/// Set to 1, the minimum. A node that accepts more has to support the
+/// General Diagnostics `DMTEST` feature, and the responses to a batch can
+/// then outgrow one message, which needs chunked Invoke responses. rs-matter
+/// has neither yet.
+pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 1;
 
 /// The default for [`BasicInfoConfig::min_subscription_max_interval_secs`].
 pub const DEFAULT_MIN_SUBSCRIPTION_MAX_INTERVAL_SECS: u16 = 40;

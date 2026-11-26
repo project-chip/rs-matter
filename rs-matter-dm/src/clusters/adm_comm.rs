@@ -29,6 +29,7 @@ use crate::sc::pase::spake2p::{
 };
 use crate::sc::pase::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
+use crate::utils::timers::Instant;
 use crate::{Matter, MatterState};
 
 pub use crate::dm::clusters::decl::administrator_commissioning::*;
@@ -50,6 +51,24 @@ const PAKE_VERIFIER_LEN: usize = 97;
 fn cluster_status_err(ctx: &impl InvokeContext, status: StatusCode) -> Error {
     ctx.cmd().set_cluster_status(NonZeroU8::new(status as u8));
     Error::new(ErrorCode::Failure)
+}
+
+/// Fail with `Busy` while the fail-safe is armed: another commissioner is
+/// then likely about to commission the node.
+///
+/// Looks at the expiry time, as an expired fail-safe stays armed until the
+/// next timeout check.
+fn check_failsafe_disarmed(ctx: &impl InvokeContext, state: &MatterState) -> Result<(), Error> {
+    let armed = state
+        .failsafe
+        .expires_at()
+        .is_some_and(|expires_at| Instant::now() < expires_at);
+
+    if armed {
+        Err(cluster_status_err(ctx, StatusCode::Busy))
+    } else {
+        Ok(())
+    }
 }
 
 /// The system implementation of a handler for the Administrative Commissioning Matter cluster.
@@ -193,6 +212,8 @@ impl ClusterHandler for AdminCommHandler<'_> {
         }
 
         ctx.transaction_id().with_state(self.matter, |state| {
+            check_failsafe_disarmed(&ctx, state)?;
+
             state
                 .pase
                 .check_comm_window_timeout(notify_mdns, notify_change)?;
@@ -227,6 +248,8 @@ impl ClusterHandler for AdminCommHandler<'_> {
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.transaction_id().with_state(self.matter, |state| {
+            check_failsafe_disarmed(&ctx, state)?;
+
             state
                 .pase
                 .check_comm_window_timeout(notify_mdns, notify_change)?;

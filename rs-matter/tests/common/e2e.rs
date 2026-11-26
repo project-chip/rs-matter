@@ -62,7 +62,7 @@ pub fn new_runner(cat_ids: NocCatIds) -> E2eRunner<impl Crypto> {
 }
 
 /// Create a new runner with default category IDs whose device-under-test
-/// serves the given `BasicInfoConfig` instead of `TEST_DEV_DET`.
+/// serves the given `BasicInfoConfig` instead of `E2E_DEV_DET`.
 ///
 /// For tests exercising configuration-derived behavior (e.g. the
 /// `BasicInfoConfig` factory defaults for `Location` / `DeviceLocation`).
@@ -77,6 +77,12 @@ pub fn new_default_runner_with_dev_det(
 
 // Set large enough that we can store more events than fit in an ethernet frame, so we can test "long reads"
 pub const E2E_EVENTS_BUF_SIZE: usize = 1024 * 4;
+
+/// `TEST_DEV_DET`, taking batched invokes, which the tests exercise.
+const E2E_DEV_DET: BasicInfoConfig<'static> = BasicInfoConfig {
+    max_paths_per_invoke: 5,
+    ..TEST_DEV_DET
+};
 
 /// A test runner for end-to-end tests.
 ///
@@ -111,11 +117,11 @@ impl<C: Crypto> E2eRunner<C> {
 
     /// Create a new runner with the given category IDs.
     pub fn new(crypto: C, cat_ids: NocCatIds) -> E2eRunner<C> {
-        Self::new_with_dev_det(crypto, cat_ids, &TEST_DEV_DET)
+        Self::new_with_dev_det(crypto, cat_ids, &E2E_DEV_DET)
     }
 
     /// Like [`Self::new`], but the device-under-test `Matter` instance
-    /// serves the given `BasicInfoConfig` instead of `TEST_DEV_DET`.
+    /// serves the given `BasicInfoConfig` instead of `E2E_DEV_DET`.
     pub fn new_with_dev_det(
         crypto: C,
         cat_ids: NocCatIds,

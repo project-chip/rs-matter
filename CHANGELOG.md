@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: deviations from the spec found with the Matter Test Harness (#690)
+  * Fix: a Network Commissioning command that sets the `Breadcrumb` reports the change of the General Commissioning attribute
+  * Fix: `OpenCommissioningWindow` and `OpenBasicCommissioningWindow` fail with `Busy` while the fail-safe is armed
+  * Fix: `ScanNetworks` ignores the SSID on Thread, takes an empty SSID on Wi-Fi as an undirected scan, and always sends its results list, even an empty one
+  * Fix: `RemoveFabric` drops a trusted root staged by `AddTrustedRootCertificate` that no operational certificate uses
+  * Fix: a fail-safe context ends `MaxCumulativeFailsafeSeconds` after it was created, however often it is re-armed. New: `FailSafe::set_max_cumulative_secs`
+  * Fix: the Access Control cluster declares only the events it emits
+  * Fix: the operational mDNS record carries the `DUMMY` TXT key only when it would otherwise be empty
+  * Breaking: `DEFAULT_MAX_PATHS_PER_INVOKE` is 1 again: more needs the General Diagnostics `DMTEST` feature and chunked Invoke responses, which rs-matter does not have yet
 * Fix: PASE and CASE acknowledge the peer's message before their crypto, so that the peer does not retransmit it while a slow MCU computes the reply (#688)
   * New: `Exchange::flush`
 * New: fuzz targets in `fuzz/` for the parsers, the transports and whole nodes fed with messages, which CI runs for a minute each, and for ten minutes nightly (#689)

@@ -23,6 +23,8 @@ use core::num::NonZeroU8;
 
 use rand_core::Rng;
 
+use rs_matter::cert::gen::VALID_FOREVER;
+use rs_matter::cert::MAX_CERT_TLV_AND_ASN1_LEN;
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::gen_comm::{self, CommPolicy, GenCommHandler};
 use rs_matter::dm::clusters::net_comm::{
@@ -37,8 +39,11 @@ use rs_matter::dm::{
 };
 use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
+use rs_matter::onboard::cac::RcacGenerator;
 use rs_matter::persist::{KvBlobStoreAccess, NETWORKS_KEY};
+use rs_matter::transport::session::SessionMode;
 use rs_matter::transport::MatterBuffers;
+use rs_matter::utils::epoch::UtcTime;
 use rs_matter::{Matter, MATTER_PORT};
 
 use crate::common::{init_env_logger, MemKvBlobStore};
@@ -132,6 +137,51 @@ fn an_unknown_fabric_is_not_removed() -> Result<(), Error> {
     // The fabric stays, and the networks with it
     assert!(matter.has_fabrics());
     assert_eq!(network_ids(&wifi)?, [b"Home".to_vec()]);
+
+    Ok(())
+}
+
+#[test]
+fn removing_a_fabric_drops_a_root_staged_in_the_failsafe() -> Result<(), Error> {
+    init_env_logger();
+
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let kv = matter.kv(MemKvBlobStore::default());
+
+    let mut wifi = commissioned(&matter, &kv, &false)?;
+
+    let first = add_fabric(&matter);
+    let second = add_fabric(&matter);
+
+    // The first fabric arms the fail-safe and stages a root
+    let crypto = test_only_crypto();
+    let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut rcac_gen = RcacGenerator::new(&mut rcac_buf);
+    let (_, rcac) = rcac_gen.generate(&crypto, 0xfab, VALID_FOREVER)?;
+
+    let case = SessionMode::Case {
+        fab_idx: first,
+        cat_ids: Default::default(),
+    };
+    let now = UtcTime::Reliable(VALID_FOREVER.not_before as u64 * 1_000_000);
+
+    matter.with_state(|state| {
+        let mut buf = [0u8; 1024];
+
+        state.failsafe.arm(60, 0, &case, false)?;
+        state
+            .failsafe
+            .add_trusted_root_cert(&crypto, now, &case, rcac, &mut buf)
+    })?;
+
+    // No operational certificate uses the staged root once the second fabric
+    // is removed, so it goes; the fail-safe stays armed
+    assert!(remove_fabric(&matter, &kv, &false, &mut wifi, second)?);
+
+    matter.with_state(|state| {
+        assert!(state.failsafe.pending_root_ca().is_none());
+        assert!(state.failsafe.is_armed());
+    });
 
     Ok(())
 }
