@@ -197,7 +197,10 @@ impl<'a> AclHandler<'a> {
 }
 
 impl ClusterHandler for AclHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_attrs(with!(required))
+        .with_cmds(with!())
+        .with_events(with!(EventId::AccessControlEntryChanged));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -472,6 +475,9 @@ impl ClusterHandler for AclHandler<'_> {
 pub const CLUSTER_AUX: Cluster<'static> = FULL_CLUSTER
     .with_attrs(with!(required; AttributeId::AuxiliaryACL))
     .with_cmds(with!())
+    .with_events(with!(
+        EventId::AccessControlEntryChanged | EventId::AuxiliaryAccessUpdated
+    ))
     .with_features(Feature::AUXILIARY.bits());
 
 /// Notify the data model that the `AuxiliaryACL` attribute changed, and emit

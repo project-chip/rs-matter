@@ -25,7 +25,7 @@ A target runs until it finds a crash or until it is stopped. The input that caus
 cargo +nightly fuzz run tlv fuzz/artifacts/tlv/crash-<hash>
 ```
 
-CI runs each target for a minute on each push and pull request, from its seeds. The nightly run gives each target ten minutes and goes on from the corpus of the previous nightly runs, which it keeps in the cache of GitHub Actions. It also runs `node` and `sc`, which give data from peers to the crypto backend, with MbedTLS and OpenSSL.
+CI runs each target for a minute on each push and pull request, from its seeds. The nightly run gives each target ten minutes and goes on from the corpus of the previous nightly runs, which it keeps in the cache of GitHub Actions. It also runs `node` and `sc`, which give data from peers to the crypto backend, with MbedTLS and OpenSSL. When a target fails, the job prints the panic and uploads the input that caused it as the `fuzz-artifacts` artifact of the run.
 
 The targets use the RustCrypto backend. The features `mbedtls` and `openssl` select one of the others:
 

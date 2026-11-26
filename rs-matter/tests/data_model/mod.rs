@@ -20,6 +20,7 @@ mod attribute_lists;
 mod attributes;
 mod aux_acl;
 mod commands;
+mod commissioning_window;
 mod events;
 mod fan_control;
 #[cfg(feature = "groups")]

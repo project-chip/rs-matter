@@ -149,14 +149,25 @@ fn local_service_internal<'a>(
 
             // Per Matter Core Spec, T is a bitmap:
             // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
+            let txt_t = tcp_capability.as_txt_value();
+
+            // Some mDNS responders do not accept empty TXT records
+            let txt_dummy = if [txt_sai, txt_sii, txt_sat, txt_t, txt_icd]
+                .iter()
+                .all(|value| value.is_empty())
+            {
+                "DUMMY"
+            } else {
+                ""
+            };
+
             let txt_kvs = [
                 ("SAI", txt_sai),
                 ("SII", txt_sii),
                 ("SAT", txt_sat),
-                ("T", tcp_capability.as_txt_value()),
+                ("T", txt_t),
                 ("ICD", txt_icd),
-                // Some mDNS responders do not accept empty TXT records
-                ("DUMMY", "DUMMY"),
+                ("DUMMY", txt_dummy),
             ]
             .into_iter()
             .filter(|(_, v)| !v.is_empty());
@@ -1445,6 +1456,45 @@ mod tests {
         assert_eq!(sat(commissionable(), Some(5000)), Some(5000));
         assert_eq!(sat(commissioned(), None), None);
         assert_eq!(sat(commissionable(), None), None);
+    }
+
+    /// The `DUMMY` filler only keeps an otherwise empty operational TXT record
+    /// from being empty.
+    #[test]
+    fn dummy_txt_key_only_fills_an_empty_record() {
+        use rs_matter_node_core::test_device::TEST_DEV_DET;
+
+        let mut buf = [0u8; 512];
+
+        let mut has_keys = |sai: Option<u32>, sii: Option<u32>, expected: &[&str]| {
+            let dev_det = BasicInfoConfig {
+                sai,
+                sii,
+                ..TEST_DEV_DET
+            };
+
+            let (service, _) = local_service_internal(
+                &MatterLocalService::Commissioned {
+                    compressed_fabric_id: 1,
+                    node_id: 2,
+                },
+                &dev_det,
+                5540,
+                None,
+                TcpCapability::None,
+                &mut buf,
+            )
+            .unwrap();
+
+            service
+                .txt_kvs
+                .clone()
+                .map(|(k, _)| k)
+                .eq(expected.iter().copied())
+        };
+
+        assert!(has_keys(Some(300), Some(5000), &["SAI", "SII"]));
+        assert!(has_keys(None, None, &["DUMMY"]));
     }
 
     #[test]

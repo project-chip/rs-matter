@@ -747,6 +747,10 @@ impl<'a> Matter<'a> {
                 return None;
             }
 
+            // Trusted roots that no operational certificate references go
+            // too, and a root staged in the fail-safe is one of them
+            state.failsafe.drop_pending_root_ca();
+
             // Only a session of the fabric is expired rather than removed
             let expire_sess_id = expire_sess_id.filter(|&id| {
                 state

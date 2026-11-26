@@ -193,6 +193,15 @@ impl<'a> GenCommHandler<'a> {
         HandlerAdaptor(self)
     }
 
+    /// Make the fail-safe end its contexts after the `MaxCumulativeFailsafeSeconds`
+    /// this handler reports.
+    fn apply_max_cumulative_failsafe(&self) {
+        let secs = self.commissioning_policy.failsafe_max_cml_secs();
+
+        self.matter
+            .with_state(|state| state.failsafe.set_max_cumulative_secs(secs));
+    }
+
     /// Execute the provided closure after checking that the failsafe is armed for the
     /// fabric of this session.
     ///
@@ -291,6 +300,11 @@ impl ClusterHandler for GenCommHandler<'_> {
     }
 
     fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        // Before any fail-safe is armed, including the one a PASE session arms
+        if matches!(op, LifecycleOp::Startup) {
+            self.apply_max_cumulative_failsafe();
+        }
+
         if matches!(op, LifecycleOp::FabricRemoval { .. })
             && self.commissioning_policy.open_comm_window_on_last_fabric()
             && !self.matter.has_fabrics()
@@ -432,6 +446,11 @@ impl ClusterHandler for GenCommHandler<'_> {
         } else {
             CommissioningErrorEnum::map(ctx.transaction_id().with_state(self.matter, |state| {
                 let sess = ctx.transaction_id().session(state.sessions);
+
+                // Also here, for a node whose handlers never saw `Startup`
+                state
+                    .failsafe
+                    .set_max_cumulative_secs(self.commissioning_policy.failsafe_max_cml_secs());
 
                 state.failsafe.arm(
                     expiry_length_seconds,

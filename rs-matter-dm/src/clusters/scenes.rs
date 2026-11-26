@@ -1071,6 +1071,12 @@ where
             }
         }
 
+        // The field sets go back to the peers as they are, so all of their
+        // elements must read, e.g. their strings must be valid UTF-8
+        for tlv in TLVSequence(raw).tlv_iter() {
+            tlv.map_err(|_| ErrorCode::InvalidCommand)?;
+        }
+
         // An oversized EFS payload is a per-scene capacity failure,
         // surfaced via `SC_INSUFFICIENT_SPACE` (not a transaction error).
         if raw.len() > M {
