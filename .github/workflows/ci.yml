@@ -232,8 +232,8 @@ jobs:
   fuzz:
     # Runs each fuzz target in `fuzz` for a minute, and for ten minutes in the nightly run,
     # which also runs the targets that use the crypto backend with MbedTLS and OpenSSL.
-    # A crash fails the job, but the log leaves out the input and the panic, as they could
-    # point at a vulnerability; run the target locally to reproduce it.
+    # A crash fails the job, which then prints the panic or the report of libFuzzer and
+    # uploads the inputs that crashed the targets as the `fuzz-artifacts` artifact.
     runs-on: ubuntu-latest
 
     env:
@@ -283,7 +283,11 @@ jobs:
             if cargo fuzz run --target x86_64-unknown-linux-gnu "$target" "$corpus" $seeds -- -max_total_time=$FUZZ_SECONDS -max_len=4096 -rss_limit_mb=1024 -timeout=10 > fuzz.log 2>&1; then
               echo "$target: $(grep -E '^Done [0-9]+ runs' fuzz.log | tail -1)"
             else
-              echo "::error::$target failed; run it locally to reproduce"
+              echo "::error::$target failed"
+              # From the panic or the report of libFuzzer on, without the stack trace, which has
+              # no symbols; without either, e.g. for a build error, the end of the log
+              report=$(awk '/panicked at|ERROR: |ALARM: / { found = 1 } found' fuzz.log | grep -vE '^ +#[0-9]+ 0x' | head -n 100)
+              echo "${report:-$(tail -n 40 fuzz.log)}"
               failed=1
             fi
           done
@@ -306,12 +310,23 @@ jobs:
               if cargo fuzz run --target x86_64-unknown-linux-gnu --features "$backend" "$target" "$corpus" $seeds -- -max_total_time=$FUZZ_SECONDS -max_len=4096 -rss_limit_mb=1024 -timeout=10 > fuzz.log 2>&1; then
                 echo "$target with $backend: $(grep -E '^Done [0-9]+ runs' fuzz.log | tail -1)"
               else
-                echo "::error::$target with $backend failed; run it locally to reproduce"
+                echo "::error::$target with $backend failed"
+                report=$(awk '/panicked at|ERROR: |ALARM: / { found = 1 } found' fuzz.log | grep -vE '^ +#[0-9]+ 0x' | head -n 100)
+                echo "${report:-$(tail -n 40 fuzz.log)}"
                 failed=1
               fi
             done
           done
           exit $failed
+
+      # `cargo +nightly fuzz run <target> <file>` reproduces a crash
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore
 
       # Also when a target failed, as its corpus has the inputs found before the crash
       - name: Save corpus
