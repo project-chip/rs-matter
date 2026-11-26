@@ -131,9 +131,10 @@ impl RxCtrState {
         // in either direction. Encrypted only allows in forward direction
         else if is_forward {
             self.max_ctr = msg_ctr;
-            if udiff < MSG_RX_STATE_BITMAP_LEN {
-                // The previous max_ctr is now the actual counter
-                self.ctr_bitmap <<= udiff;
+            if udiff <= MSG_RX_STATE_BITMAP_LEN {
+                // The previous max_ctr is now the actual counter. A shift by the
+                // whole window leaves no earlier counter in it.
+                self.ctr_bitmap = self.ctr_bitmap.checked_shl(udiff).unwrap_or(0);
                 self.insert(udiff - 1);
             } else {
                 self.ctr_bitmap = Self::bitmap_after_reset(with_rollover);
@@ -231,6 +232,13 @@ impl GroupCtrStore {
     }
 }
 
+#[cfg(feature = "groups")]
+impl Default for GroupCtrStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -309,6 +317,27 @@ mod tests {
 
     /// When a counter jumps past the window - forward, or back as from a rebooted peer -
     /// the counters in the new window are new.
+    /// After a jump of exactly the window size, the previous maximum is the oldest
+    /// counter in the window, and is still seen.
+    #[test]
+    fn jump_by_window_size_keeps_previous_max() {
+        const W: u32 = super::MSG_RX_STATE_BITMAP_LEN;
+
+        for (is_encrypted, with_rollover) in [
+            (ENCRYPTED, false),
+            (ENCRYPTED, true),
+            (NOT_ENCRYPTED, false),
+        ] {
+            let mut s = RxCtrState::new_unsynced();
+            assert_ndup(s.post_recv(100, is_encrypted, with_rollover));
+            assert_ndup(s.post_recv(100 + W, is_encrypted, with_rollover));
+            assert_dup(s.post_recv(100, is_encrypted, with_rollover));
+
+            // The counters between them were not received
+            assert_ndup(s.post_recv(101, is_encrypted, with_rollover));
+        }
+    }
+
     #[test]
     fn jump_clears_window() {
         for encrypted in [ENCRYPTED, NOT_ENCRYPTED] {

@@ -21,6 +21,12 @@ use crate::error::{TlvError, TlvErrorCode};
 
 use super::{pad, FromTLV, TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType, TLV};
 
+/// What `Display` and `Debug` print for an empty TLV element.
+const EMPTY_MARKER: &str = "<empty>";
+/// What `Display` and `Debug` print for malformed TLV data. They may fail only when the
+/// formatter fails.
+const MALFORMED_MARKER: &str = "<malformed>";
+
 /// A newtype for reading TLV-encoded data from Rust `&[u8]` slices.
 ///
 /// Semantically, a `TLVElement` is just a byte slice of TLV-encoded data/stream, and the methods provided by this therefore
@@ -682,7 +688,13 @@ impl<'a> TLVElement<'a> {
     fn fmt(&self, indent: usize, f: &mut fmt::Formatter) -> fmt::Result {
         pad(indent, f)?;
 
-        let tag = self.tag().map_err(|_| fmt::Error)?;
+        if self.is_empty() {
+            return f.write_str(EMPTY_MARKER);
+        }
+
+        let Ok(tag) = self.tag() else {
+            return f.write_str(MALFORMED_MARKER);
+        };
 
         tag.fmt(f)?;
 
@@ -690,21 +702,33 @@ impl<'a> TLVElement<'a> {
             write!(f, ": ")?;
         }
 
-        let value = self.value().map_err(|_| fmt::Error)?;
+        let Ok(value) = self.value() else {
+            return f.write_str(MALFORMED_MARKER);
+        };
 
         value.fmt(f)?;
 
         if value.value_type().is_container() {
+            let Ok(seq) = self.container() else {
+                return f.write_str(MALFORMED_MARKER);
+            };
+
             let mut empty = true;
 
-            for (index, elem) in self.container().map_err(|_| fmt::Error)?.iter().enumerate() {
+            for (index, elem) in seq.iter().enumerate() {
                 if index > 0 {
                     writeln!(f, ",")?;
                 } else {
                     writeln!(f)?;
                 }
 
-                elem.map_err(|_| fmt::Error)?.fmt(indent + 2, f)?;
+                match elem {
+                    Ok(elem) => elem.fmt(indent + 2, f)?,
+                    Err(_) => {
+                        pad(indent + 2, f)?;
+                        f.write_str(MALFORMED_MARKER)?;
+                    }
+                }
 
                 empty = false;
             }
@@ -1057,20 +1081,25 @@ impl<'a> TLVSequence<'a> {
 
         let size_len = control.value_type.variable_size_len();
 
-        let value_len_slice = self
-            .value_len_start(control.tag_type)?
+        let value_len_start = self.value_len_start(control.tag_type)?;
+        let value_len_slice = value_len_start
             .get(..size_len)
             .ok_or(TlvErrorCode::Malformed)?;
 
         let len = match size_len {
-            1 => u8::from_be_bytes(unwrap!(value_len_slice.try_into())) as usize,
-            2 => u16::from_le_bytes(unwrap!(value_len_slice.try_into())) as usize,
-            4 => u32::from_le_bytes(unwrap!(value_len_slice.try_into())) as usize,
-            8 => u64::from_le_bytes(unwrap!(value_len_slice.try_into())) as usize,
+            1 => u8::from_be_bytes(unwrap!(value_len_slice.try_into())) as u64,
+            2 => u16::from_le_bytes(unwrap!(value_len_slice.try_into())) as u64,
+            4 => u32::from_le_bytes(unwrap!(value_len_slice.try_into())) as u64,
+            8 => u64::from_le_bytes(unwrap!(value_len_slice.try_into())),
             _ => unreachable!(),
         };
 
-        Ok(len)
+        // The value must fit in the data after the length field. This also keeps
+        // the element lengths computed from it from overflowing.
+        Ok(usize::try_from(len)
+            .ok()
+            .filter(|len| *len <= value_len_start.len() - size_len)
+            .ok_or(TlvErrorCode::Malformed)?)
     }
 
     /// Return the length of the value field of the first TLV element in the sequence, regardless of the
@@ -1151,9 +1180,13 @@ impl<'a> TLVSequence<'a> {
                 writeln!(f, ",")?;
             }
 
-            let elem = elem.map_err(|_| fmt::Error)?;
-
-            elem.fmt(indent, f)?;
+            match elem {
+                Ok(elem) => elem.fmt(indent, f)?,
+                Err(_) => {
+                    pad(indent, f)?;
+                    f.write_str(MALFORMED_MARKER)?;
+                }
+            }
         }
 
         if !first {
@@ -1262,9 +1295,17 @@ impl<'a> Iterator for TLVSequenceIter<'a> {
     type Item = Result<TLVElement<'a>, TlvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0
+        let result = self
+            .0
             .current()
-            .and_then(|current| self.advance().map(|_| current))
+            .and_then(|current| self.advance().map(|_| current));
+
+        if result.is_err() {
+            // The sequence cannot be advanced past a malformed element, so end here
+            self.0 = TLVSequence::EMPTY;
+        }
+
+        result
             .map(|elem| (!elem.is_empty()).then_some(elem))
             .transpose()
     }
@@ -1292,8 +1333,10 @@ impl defmt::Format for TLVSequenceIter<'_> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use core::fmt::Write;
 
     use super::TLVElement;
+    use crate::error::TlvErrorCode;
     use crate::utils::storage::WriteBuf;
     use crate::{TLVArray, TLVList, TLVSequence, TLVStruct, TLVTag, TLVValue, TLVWrite, TLV};
 
@@ -2076,5 +2119,59 @@ mod tests {
         assert_eq!(u1.u8().unwrap(), 42);
 
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn string_length_past_the_end_is_malformed() {
+        // An anonymous UTF-8 string with an 8-byte length of 0xFFFF_FFFF_FFFF_FFFF
+        let data = &[0x0f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, b'a'];
+        assert_eq!(
+            TLVElement::new(data).utf8().unwrap_err().code(),
+            TlvErrorCode::Malformed
+        );
+
+        // A 4-byte length one byte longer than the data
+        let data = &[0x0e, 0x02, 0x00, 0x00, 0x00, b'a'];
+        assert_eq!(
+            TLVElement::new(data).utf8().unwrap_err().code(),
+            TlvErrorCode::Malformed
+        );
+
+        // The first string inside a struct
+        let data = &[
+            0x15, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, b'a', 0x18,
+        ];
+        assert_eq!(
+            TLVSequence(data).container_len().unwrap_err().code(),
+            TlvErrorCode::Malformed
+        );
+    }
+
+    #[test]
+    fn iteration_ends_after_a_malformed_element() {
+        // An array holding one malformed element (control byte 0xff)
+        let data = &[0x16, 0xff, 0x18];
+        let mut iter = TLVElement::new(data).array().unwrap().iter();
+
+        assert!(matches!(iter.next(), Some(Err(_))));
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn display_marks_empty_and_malformed_elements() {
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        write!(wb, "{}", TLVElement::new(&[])).unwrap();
+        assert_eq!(wb.as_slice(), b"<empty>");
+
+        wb.reset();
+        write!(wb, "{}", TLVElement::new(&[0xff])).unwrap();
+        assert_eq!(wb.as_slice(), b"<malformed>");
+
+        // An array holding a malformed element is malformed as a whole
+        wb.reset();
+        write!(wb, "{}", TLVElement::new(&[0x16, 0xff, 0x18])).unwrap();
+        assert_eq!(wb.as_slice(), b"<malformed>");
     }
 }

@@ -38,6 +38,7 @@ pub struct ASN1Writer<'a> {
 }
 
 const RESERVE_LEN_BYTES: usize = 3;
+
 impl<'a> ASN1Writer<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self {
@@ -198,18 +199,21 @@ impl CertConsumer for ASN1Writer<'_> {
     fn bitstr(&mut self, _tag: &str, truncate: bool, s: &[u8]) -> Result<(), Error> {
         // Note: ASN1 has multiple strings, this is BIT String
 
-        // Strip off the end zeroes
-        let mut last_byte = s.len() - 1;
-        let mut num_of_zero = 0;
-        if truncate {
-            while s[last_byte] == 0 {
-                last_byte -= 1;
-            }
-            // For the last valid byte, identifying the number of last bits
-            // that are 0s
-            num_of_zero = s[last_byte].trailing_zeros() as u8;
-        }
-        let s = &s[..(last_byte + 1)];
+        // With `truncate`, strip off the zero bytes at the end, and count the
+        // zero bits at the end of the last byte that is left. Nothing is left
+        // when all bits are 0.
+        let (s, num_of_zero) = if truncate {
+            let len = s
+                .iter()
+                .rposition(|byte| *byte != 0)
+                .map_or(0, |pos| pos + 1);
+            let s = &s[..len];
+
+            (s, s.last().map_or(0, |byte| byte.trailing_zeros() as u8))
+        } else {
+            (s, 0)
+        };
+
         self.append_tlv(0x03, s.len() + 1, |t| {
             t.buf[t.offset] = num_of_zero;
             let end_offset = t.offset + 1 + s.len();
@@ -308,5 +312,44 @@ impl CertConsumer for ASN1Writer<'_> {
             let end_offset = t.offset + data.len();
             t.buf[t.offset..end_offset].copy_from_slice(data);
         })
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::CertConsumer;
+
+    use super::ASN1Writer;
+
+    fn bitstr<'a>(buf: &'a mut [u8], truncate: bool, s: &[u8]) -> &'a [u8] {
+        let mut w = ASN1Writer::new(buf);
+        w.bitstr("", truncate, s).unwrap();
+        let len = w.as_slice().len();
+
+        &buf[..len]
+    }
+
+    #[test]
+    fn bitstr_strips_zeroes_at_the_end() {
+        let mut buf = [0; 16];
+
+        assert_eq!(
+            bitstr(&mut buf, true, &[0xa0, 0x00]),
+            &[0x03, 0x02, 0x05, 0xa0]
+        );
+        assert_eq!(
+            bitstr(&mut buf, false, &[0xa0, 0x00]),
+            &[0x03, 0x03, 0x00, 0xa0, 0x00]
+        );
+    }
+
+    #[test]
+    fn bitstr_of_zero_bits_is_empty() {
+        let mut buf = [0; 16];
+
+        assert_eq!(bitstr(&mut buf, true, &[0x00, 0x00]), &[0x03, 0x01, 0x00]);
+        assert_eq!(bitstr(&mut buf, true, &[]), &[0x03, 0x01, 0x00]);
+        assert_eq!(bitstr(&mut buf, false, &[]), &[0x03, 0x01, 0x00]);
     }
 }

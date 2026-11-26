@@ -30,6 +30,7 @@ use core::fmt;
 use core::marker::PhantomData;
 
 use crate::utils::init;
+use crate::TLVSequence;
 
 use super::{
     EitherIter, FromTLV, TLVElement, TLVSequenceIter, TLVTag, TLVWrite, TlvError, ToTLV, TLV,
@@ -72,12 +73,43 @@ pub struct TLVContainer<'a, T, C = AnyContainer> {
     _container_type: PhantomData<C>,
 }
 
+/// The kind of TLV container that a `TLVContainer` expects.
+pub trait ContainerKind {
+    /// Checks that the element is a container of this kind.
+    fn check(element: &TLVElement<'_>) -> Result<(), TlvError>;
+}
+
+impl ContainerKind for AnyContainer {
+    fn check(element: &TLVElement<'_>) -> Result<(), TlvError> {
+        element.container().map(|_| ())
+    }
+}
+
+impl ContainerKind for ArrayContainer {
+    fn check(element: &TLVElement<'_>) -> Result<(), TlvError> {
+        element.array().map(|_| ())
+    }
+}
+
+impl ContainerKind for ListContainer {
+    fn check(element: &TLVElement<'_>) -> Result<(), TlvError> {
+        element.list().map(|_| ())
+    }
+}
+
+impl ContainerKind for StructContainer {
+    fn check(element: &TLVElement<'_>) -> Result<(), TlvError> {
+        element.structure().map(|_| ())
+    }
+}
+
 impl<'a, T, C> TLVContainer<'a, T, C>
 where
     T: FromTLV<'a>,
 {
     /// Creates a new `TLVContainer` from a TLV element.
     /// The constructor does not check whether the passed slice is a valid TLV container.
+    /// If it is not, iterating over it yields no elements.
     pub const fn new_unchecked(element: TLVElement<'a>) -> Self {
         Self {
             element,
@@ -91,61 +123,22 @@ where
     }
 
     /// Returns an iterator over the elements of the container.
+    /// An empty element yields no elements.
     pub fn iter(&self) -> TLVContainerIter<'a, T> {
-        TLVContainerIter::new(unwrap!(self.element.container()).iter())
+        TLVContainerIter::new(self.element.container().unwrap_or(TLVSequence(&[])).iter())
     }
 }
 
-impl<'a, T> TLVContainer<'a, T, AnyContainer>
+impl<'a, T, C> TLVContainer<'a, T, C>
 where
     T: FromTLV<'a>,
+    C: ContainerKind,
 {
-    /// Creates a new `TLVContainer` from a TLV element that can be any container.
+    /// Creates a new `TLVContainer` from a TLV element that is either empty or
+    /// a container of kind `C`.
     pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
         if !element.is_empty() {
-            element.container()?;
-        }
-
-        Ok(Self::new_unchecked(element))
-    }
-}
-
-impl<'a, T> TLVContainer<'a, T, ArrayContainer>
-where
-    T: FromTLV<'a>,
-{
-    /// Creates a new `TLVContainer` from a TLV element that is expected to be of type array.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
-        if !element.is_empty() {
-            element.array()?;
-        }
-
-        Ok(Self::new_unchecked(element))
-    }
-}
-
-impl<'a, T> TLVContainer<'a, T, ListContainer>
-where
-    T: FromTLV<'a>,
-{
-    /// Creates a new `TLVContainer` from a TLV element that is expected to be of type list.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
-        if !element.is_empty() {
-            element.list()?;
-        }
-
-        Ok(Self::new_unchecked(element))
-    }
-}
-
-impl<'a, T> TLVContainer<'a, T, StructContainer>
-where
-    T: FromTLV<'a>,
-{
-    /// Creates a new `TLVContainer` from a TLV element that is expected to be of type struct.
-    pub fn new(element: TLVElement<'a>) -> Result<Self, TlvError> {
-        if !element.is_empty() {
-            element.structure()?;
+            C::check(&element)?;
         }
 
         Ok(Self::new_unchecked(element))
@@ -224,10 +217,10 @@ where
 impl<'a, T, C> FromTLV<'a> for TLVContainer<'a, T, C>
 where
     T: FromTLV<'a>,
-    C: 'a,
+    C: ContainerKind + 'a,
 {
     fn from_tlv(element: &TLVElement<'a>) -> Result<Self, TlvError> {
-        Ok(Self::new_unchecked(element.clone()))
+        Self::new(element.clone())
     }
 }
 
@@ -533,6 +526,29 @@ mod tests {
         // `new_unchecked` performs no validation and exposes the wrapped element as-is
         let arr = TLVArray::<u8>::new_unchecked(TLVElement::new(SCALAR));
         assert_eq!(arr.element(), &TLVElement::new(SCALAR));
+    }
+
+    #[test]
+    fn from_tlv_checks_container_type() {
+        assert!(TLVArray::<u8>::from_tlv(&TLVElement::new(ARRAY)).is_ok());
+        assert!(TLVArray::<u8>::from_tlv(&TLVElement::new(LIST)).is_err());
+        assert!(TLVArray::<u8>::from_tlv(&TLVElement::new(SCALAR)).is_err());
+        assert!(TLVList::<u8>::from_tlv(&TLVElement::new(ARRAY)).is_err());
+        assert!(TLVStruct::<u8>::from_tlv(&TLVElement::new(SCALAR)).is_err());
+        assert!(TLVContainer::<u8>::from_tlv(&TLVElement::new(STRUCT)).is_ok());
+        assert!(TLVContainer::<u8>::from_tlv(&TLVElement::new(SCALAR)).is_err());
+
+        // An empty element, as for a missing field, is accepted
+        assert!(TLVArray::<u8>::from_tlv(&TLVElement::new(&[])).is_ok());
+    }
+
+    #[test]
+    fn iter_of_empty_or_non_container_element_yields_nothing() {
+        let arr = TLVArray::<u8>::new(TLVElement::new(&[])).unwrap();
+        assert_eq!(arr.iter().count(), 0);
+
+        let arr = TLVArray::<u8>::new_unchecked(TLVElement::new(SCALAR));
+        assert_eq!(arr.iter().count(), 0);
     }
 
     #[test]

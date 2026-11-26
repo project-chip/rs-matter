@@ -332,7 +332,8 @@ impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<
             let send_too_large = self.run_peer(slot_idx, &mut socket, config).await;
 
             if send_too_large {
-                self.send_message_too_large(&mut socket, config).await;
+                self.send_message_too_large(slot_idx, &mut socket, config)
+                    .await;
             }
 
             close_socket(&mut socket, config).await;
@@ -522,12 +523,31 @@ impl<const N: usize, const SLOTS: usize, const TX_BUF: usize> TcpNetworkBuffers<
 
     async fn send_message_too_large<S: TcpNetworkSocket>(
         &self,
+        slot_idx: usize,
         socket: &mut S,
         config: &TcpConfig,
     ) {
+        let slot = &self.slots[slot_idx];
+
+        // No more messages for a connection that closes
+        self.with_state_mut(|s| s.slots[slot_idx].close_requested = true);
+
         if let Ok((buf, len)) = encode_message_too_large_frame() {
             let (_, mut tx_sock) = socket.split();
             let _ = with_timeout(config.send_timeout, async {
+                // The queued frames go first, as the first of them may be partly written
+                let mut chunk = [0u8; 64];
+                loop {
+                    let count = slot.with_tx(|tx| tx.copy_chunk(&mut chunk));
+                    if count == 0 {
+                        break;
+                    }
+                    match tx_sock.write(&chunk[..count]).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => slot.with_tx_mut(|tx| tx.advance(n)),
+                    }
+                }
+
                 let mut written = 0;
                 while written < len {
                     match tx_sock.write(&buf[written..len]).await {

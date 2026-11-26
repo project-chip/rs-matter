@@ -1,0 +1,139 @@
+[package]
+name = "rs-matter-fuzz"
+version = "0.0.0"
+edition = "2021"
+authors = ["Project CHIP Authors"]
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - fuzz targets"
+repository = "https://github.com/project-chip/rs-matter"
+readme = "README.md"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# Without the `os` features, which bring the time driver of `embassy-time` for `std`, as
+# the targets have their own clock
+rs-matter-utils = { path = "../rs-matter-utils", default-features = false, features = ["std", "log"] }
+embassy-time-driver = "0.2"
+env_logger = "0.11"
+rs-matter-tlv = { path = "../rs-matter-tlv" }
+rs-matter-cert = { path = "../rs-matter-cert" }
+rs-matter-pairing = { path = "../rs-matter-pairing" }
+rs-matter-im-core = { path = "../rs-matter-im-core" }
+rs-matter-bdx = { path = "../rs-matter-bdx" }
+rs-matter-transport = { path = "../rs-matter-transport", default-features = false, features = ["std", "log", "groups"] }
+rs-matter-sc = { path = "../rs-matter-sc", features = ["groups"] }
+rs-matter-crypto = { path = "../rs-matter-crypto" }
+rs-matter = { path = "../rs-matter", default-features = false, features = ["std", "rustcrypto", "log", "groups", "case-resumption"] }
+# The critical sections that the MbedTLS backend takes, which the `os` features would bring
+critical-section = { version = "1", features = ["std"], optional = true }
+
+[features]
+# The crypto backend of the targets is RustCrypto, or one of these, which rs-matter
+# prefers when enabled
+mbedtls = ["rs-matter/mbedtls", "dep:critical-section"]
+openssl = ["rs-matter/openssl"]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "tlv"
+path = "fuzz_targets/tlv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "headers"
+path = "fuzz_targets/headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "im"
+path = "fuzz_targets/im.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sc"
+path = "fuzz_targets/sc/main.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dedup"
+path = "fuzz_targets/dedup.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "node"
+path = "fuzz_targets/node/main.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "clusters"
+path = "fuzz_targets/clusters/main.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bdx"
+path = "fuzz_targets/bdx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "btp"
+path = "fuzz_targets/btp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tcp"
+path = "fuzz_targets/tcp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mdns"
+path = "fuzz_targets/mdns.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cert"
+path = "fuzz_targets/cert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "x509"
+path = "fuzz_targets/x509.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pairing_codes"
+path = "fuzz_targets/pairing_codes.rs"
+test = false
+doc = false
+bench = false

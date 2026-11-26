@@ -2922,11 +2922,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_emit_test_fabric_scoped_event_request<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
-        _request: TestEmitTestFabricScopedEventRequestRequest<'_>,
-        _response: TestEmitTestFabricScopedEventResponseBuilder<P>,
+        ctx: impl InvokeContext,
+        request: TestEmitTestFabricScopedEventRequestRequest<'_>,
+        response: TestEmitTestFabricScopedEventResponseBuilder<P>,
     ) -> Result<P, Error> {
-        todo!()
+        let event_no =
+            TestFabricScopedEvent::emit(&ctx, |tw| tw.fabric_index(Some(request.arg_1()?))?.end())?;
+
+        response.value(event_no)?.end()
     }
 
     fn handle_test_unknown_command(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
@@ -3036,6 +3039,6 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn handle_test_check_command_flags(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        todo!()
+        Ok(())
     }
 }

@@ -79,6 +79,12 @@ const OID_PUB_KEY_ECPUBKEY: [u8; 7] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01]
 const OID_EC_TYPE_PRIME256V1: [u8; 8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
 const OID_ECDSA_WITH_SHA256: [u8; 8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
 
+const OID_BASIC_CONSTRAINTS: [u8; 3] = [0x55, 0x1D, 0x13];
+const OID_KEY_USAGE: [u8; 3] = [0x55, 0x1D, 0x0F];
+const OID_EXT_KEY_USAGE: [u8; 3] = [0x55, 0x1D, 0x25];
+const OID_SUBJ_KEY_IDENTIFIER: [u8; 3] = [0x55, 0x1D, 0x0E];
+const OID_AUTH_KEY_ID: [u8; 3] = [0x55, 0x1D, 0x23];
+
 const MAX_DEPTH: usize = 10;
 
 #[derive(FromPrimitive)]
@@ -191,12 +197,6 @@ impl<'a> Extension<'a> {
     }
 
     fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
-        const OID_BASIC_CONSTRAINTS: [u8; 3] = [0x55, 0x1D, 0x13];
-        const OID_KEY_USAGE: [u8; 3] = [0x55, 0x1D, 0x0F];
-        const OID_EXT_KEY_USAGE: [u8; 3] = [0x55, 0x1D, 0x25];
-        const OID_SUBJ_KEY_IDENTIFIER: [u8; 3] = [0x55, 0x1D, 0x0E];
-        const OID_AUTH_KEY_ID: [u8; 3] = [0x55, 0x1D, 0x23];
-
         match self {
             Extension::BasicConstraints(t) => {
                 Self::encode_extension_start(
@@ -241,7 +241,9 @@ impl<'a> Extension<'a> {
                 // structures verbatim. They MUST be reproduced byte-for-byte
                 // inside the TBS extensions SEQUENCE so that the
                 // signature-over-TBS verification matches what the issuer
-                // actually signed.
+                // actually signed. As with CHIP, they must be well-formed
+                // extensions, so that the X.509 encoding is DER.
+                der_blob_has_critical_extension(t.0)?;
                 w.raw("Future Extensions", t.0)?;
             }
         }
@@ -299,7 +301,7 @@ impl<'a> Extension<'a> {
         w.start_seq("")?;
         for t in list {
             let t = t? as usize;
-            if t > 0 && t <= encoding.len() {
+            if t > 0 && t < encoding.len() {
                 w.oid(encoding[t].0, encoding[t].1)?;
             } else {
                 error!("Skipping encoding key usage out of bounds");
@@ -936,14 +938,17 @@ impl core::fmt::Display for CertRef<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut printer = CertPrinter::new(f);
 
-        self.encode(&mut printer).map_err(|_| core::fmt::Error)?;
+        // A malformed certificate is shown with a marker, as `Display` may fail only
+        // when the formatter does
+        if self.encode(&mut printer).is_err() {
+            return writeln!(f, "<malformed>");
+        }
 
         // Signature is not encoded by the Cert Decoder
-        writeln!(
-            f,
-            "Signature: {:x?}",
-            self.signature().map_err(|_| core::fmt::Error)?
-        )
+        match self.signature() {
+            Ok(signature) => writeln!(f, "Signature: {signature:x?}"),
+            Err(_) => writeln!(f, "Signature: <malformed>"),
+        }
     }
 }
 
@@ -962,33 +967,83 @@ enum MatterCertType {
 /// Walk a Matter TLV `future-extensions` blob — zero or more
 /// concatenated DER X.509 `Extension` SEQUENCEs (RFC 5280 §4.1:
 /// `SEQUENCE { OID, BOOLEAN OPTIONAL critical, OCTET STRING extnValue }`) —
-/// and return `true` on the first sub-extension whose `critical` flag is
-/// `TRUE`.
+/// and return `true` if the `critical` flag of any of them is `TRUE`.
+///
+/// Fails unless the whole blob is such extensions, none of them one that a
+/// Matter certificate has a field of its own for, as CHIP checks too.
 fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, Error> {
-    use der::asn1::{AnyRef, ObjectIdentifier, OctetStringRef};
-    use der::{Decode, Reader, SliceReader, Tag};
+    const KNOWN_OIDS: [&[u8]; 5] = [
+        &OID_BASIC_CONSTRAINTS,
+        &OID_KEY_USAGE,
+        &OID_EXT_KEY_USAGE,
+        &OID_SUBJ_KEY_IDENTIFIER,
+        &OID_AUTH_KEY_ID,
+    ];
 
-    let mut reader = SliceReader::new(bytes).map_err(|_| ErrorCode::InvalidData)?;
-    while !reader.is_finished() {
-        let any = AnyRef::decode(&mut reader).map_err(|_| ErrorCode::InvalidData)?;
-        let mut inner = SliceReader::new(any.value()).map_err(|_| ErrorCode::InvalidData)?;
+    // DER tags
+    const BOOLEAN: u8 = 0x01;
+    const OCTET_STRING: u8 = 0x04;
+    const OID: u8 = 0x06;
+    const SEQUENCE: u8 = 0x30;
 
-        // Skip the OID.
-        <ObjectIdentifier>::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
+    let mut critical = false;
+
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let Some((SEQUENCE, ext, next)) = der_element(rest) else {
+            Err(ErrorCode::InvalidData)?
+        };
+
+        let Some((OID, oid, mut ext)) = der_element(ext) else {
+            Err(ErrorCode::InvalidData)?
+        };
+        // An OID ends with a byte without its top bit
+        if oid.last().is_none_or(|byte| byte & 0x80 != 0) || KNOWN_OIDS.contains(&oid) {
+            Err(ErrorCode::InvalidData)?;
+        }
 
         // OPTIONAL critical BOOLEAN before the mandatory OCTET STRING
-        // `extnValue`.
-        if !inner.is_finished()
-            && Tag::peek(&inner).map_err(|_| ErrorCode::InvalidData)? == Tag::Boolean
-            && bool::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?
-        {
-            return Ok(true);
+        // `extnValue`, which DER encodes as 0x00 or 0xFF.
+        if let Some((BOOLEAN, value, after)) = der_element(ext) {
+            match value {
+                [0x00] => (),
+                [0xff] => critical = true,
+                _ => Err(ErrorCode::InvalidData)?,
+            }
+            ext = after;
         }
-        // Consume `extnValue` so we land on the next `Extension`
-        // SEQUENCE (or the end of the blob).
-        let _ = <&OctetStringRef>::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
+
+        let Some((OCTET_STRING, _, [])) = der_element(ext) else {
+            Err(ErrorCode::InvalidData)?
+        };
+
+        rest = next;
     }
-    Ok(false)
+
+    Ok(critical)
+}
+
+/// The DER element at the start of `der`: its tag, its content, and what follows it.
+/// `None` unless its length is in the shortest form, and within `der`.
+fn der_element(der: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    let (&tag, rest) = der.split_first()?;
+    let (&first, rest) = rest.split_first()?;
+
+    let (len, rest) = match first {
+        0..=0x7f => (first as usize, rest),
+        0x81 => {
+            let (&len, rest) = rest.split_first()?;
+            (len >= 0x80).then_some((len as usize, rest))?
+        }
+        0x82 => {
+            let (len, rest) = rest.split_first_chunk::<2>()?;
+            let len = u16::from_be_bytes(*len) as usize;
+            (len >= 0x100).then_some((len, rest))?
+        }
+        _ => return None,
+    };
+
+    (len <= rest.len()).then(|| (tag, &rest[..len], &rest[len..]))
 }
 
 pub struct CertVerifier<'a, C> {
@@ -1216,6 +1271,36 @@ mod tests {
     use super::CertRef;
 
     #[test]
+    fn cert_without_subject_is_an_error() {
+        use core::fmt::Write;
+
+        let cert = CertRef::new(TLVElement::new(&[0x15, 0x18]));
+        assert!(cert.get_node_id().is_err());
+        assert!(cert.get_fabric_id().is_err());
+
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+        assert!(write!(wb, "{cert}").is_ok());
+    }
+
+    #[test]
+    fn extended_key_usage_out_of_range_is_skipped() {
+        let mut buf = [0; 64];
+        let mut w = super::asn1_writer::ASN1Writer::new(&mut buf);
+
+        unwrap!(super::Extension::encode_extended_key_usage(
+            [Ok::<_, crate::tlv::TlvError>(2), Ok(7)].into_iter(),
+            &mut w
+        ));
+
+        // Only ClientAuth (2) is there
+        assert_eq!(
+            w.as_slice(),
+            &[0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02]
+        );
+    }
+
+    #[test]
     fn test_asn1_encode_success() {
         {
             let mut asn1_buf = [0u8; 1000];
@@ -1384,6 +1469,23 @@ mod tests {
         assert!(unwrap!(der_blob_has_critical_extension(
             &second_is_critical
         )));
+
+        // What is not such extensions is rejected, also after a critical one
+        assert!(der_blob_has_critical_extension(&[0xf4, 0xfc, 0x4a, 0x15]).is_err());
+        let mut critical_then_garbage = Vec::<u8, 64>::new();
+        unwrap!(critical_then_garbage.extend_from_slice(CRITICAL));
+        unwrap!(critical_then_garbage.extend_from_slice(&[0xf4, 0xfc]));
+        assert!(der_blob_has_critical_extension(&critical_then_garbage).is_err());
+        // A field after `extnValue`
+        assert!(der_blob_has_critical_extension(&[
+            0x30, 0x09, 0x06, 0x03, 0x55, 0x1D, 0x63, 0x04, 0x00, 0x05, 0x00,
+        ])
+        .is_err());
+        // An extension that a Matter certificate has a field of its own for
+        assert!(der_blob_has_critical_extension(&[
+            0x30, 0x07, 0x06, 0x03, 0x55, 0x1D, 0x13, 0x04, 0x00,
+        ])
+        .is_err());
     }
 
     /// Sanity-check the per-extension accessors that `CertVerifier`
