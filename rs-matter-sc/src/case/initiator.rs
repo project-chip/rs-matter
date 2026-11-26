@@ -40,8 +40,8 @@ use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::ReadBuf;
 use crate::ScHost;
 use crate::{
-    complete_with_status, GeneralCode, OpCode, SCStatusCodes, SessionParameters, StatusReport,
-    PROTO_ID_SECURE_CHANNEL,
+    acknowledge_and_flush, complete_with_status, GeneralCode, OpCode, SCStatusCodes,
+    SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
 };
 
 #[cfg(feature = "case-resumption")]
@@ -326,6 +326,8 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             );
             return Err(ErrorCode::InvalidOpcode.into());
         }
+
+        acknowledge_and_flush(&mut exchange).await?;
 
         // Step 5: Decrypt Sigma2 TBE and validate
         // `peer_resumption_id` (the responder's ResumptionID from TBEData2,

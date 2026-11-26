@@ -260,6 +260,13 @@ impl<'a, M: ScHost, C: Crypto, N: AttrChangeNotifier, H: AsyncScHandler>
     }
 }
 
+/// Acknowledge the received message and flush the acknowledgement, so that the peer
+/// does not retransmit it while a long computation blocks the executor.
+async fn acknowledge_and_flush(exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    exchange.acknowledge().await?;
+    exchange.flush().await
+}
+
 /// Check the opcode of the received message like [`check_opcode`], additionally
 /// reporting a mismatch to the peer with a `StatusReport(FAILURE, INVALID_PARAMETER)`
 /// before bailing out with an error.

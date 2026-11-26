@@ -34,6 +34,8 @@
 //! - a reliable message which the peer receives but never answers is still
 //!   acknowledged with a standalone ack, so the sender stops retransmitting
 //!   without ever receiving an application message;
+//! - a peer which acknowledges, calls `Exchange::flush` and then blocks the
+//!   executor (as slow PASE / CASE crypto does) gets no retransmission;
 //! - a reliable message that is never delivered fails at the sender with
 //!   `TxTimeout` after the maximum number of transmissions, instead of hanging.
 //!
@@ -104,6 +106,10 @@ const FAST_SAI_MS: u32 = 50;
 
 /// Upper bound for a whole test scenario.
 const SCENARIO_TIMEOUT_SECS: u64 = 60;
+
+/// How long `SlowHandler` blocks the executor: several of the client's
+/// retransmission intervals (`FAST_SAI_MS`).
+const SLOW_HANDLER_BLOCK_MS: u64 = 300;
 
 /// Fake peer address recorded in the pre-installed sessions.
 const SESSION_ADDR: Address =
@@ -1109,6 +1115,91 @@ fn test_standalone_ack_for_unanswered_message() {
             client_after.im_received - client_before.im_received,
             0,
             "no application message should have reached the client"
+        );
+    });
+}
+
+/// An exchange handler which acknowledges the request and flushes the ack, then
+/// blocks the executor (as slow crypto does) and only then answers.
+struct SlowHandler;
+
+impl ExchangeHandler for SlowHandler {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        exchange.recv_fetch().await?;
+        exchange.acknowledge().await?;
+        exchange.flush().await?;
+
+        std::thread::sleep(std::time::Duration::from_millis(SLOW_HANDLER_BLOCK_MS));
+
+        exchange
+            .send(
+                MessageMeta::new(
+                    PROTO_ID_INTERACTION_MODEL,
+                    OpCode::StatusResponse as u8,
+                    true,
+                ),
+                &[0x15, 0x18], // An empty TLV structure
+            )
+            .await
+    }
+}
+
+/// The flushed ack reaches the client before the device blocks
+/// the executor, so the client does not retransmit its request, although its
+/// retransmission timer expires long before the reply is sent.
+#[test]
+fn test_flushed_ack_prevents_retransmission() {
+    init_env_logger();
+
+    spawn_with_large_stack(|| {
+        let device = new_matter();
+        let client = new_matter();
+
+        install_session(&device, DEVICE_NODE_ID, CLIENT_NODE_ID);
+        install_session(&client, CLIENT_NODE_ID, DEVICE_NODE_ID);
+
+        let responder = Responder::new("slow", SlowHandler, &device, 0);
+
+        let device_stats = LinkStats::new(DEVICE_NODE_ID);
+        let client_stats = LinkStats::new(CLIENT_NODE_ID);
+
+        futures_lite::future::block_on(run_link(
+            &device,
+            &client,
+            (LossMode::Reliable, &device_stats),
+            (LossMode::Reliable, &client_stats),
+            responder.run::<4>(),
+            async {
+                let mut exchange = initiate_exchange(&client).await?;
+
+                exchange
+                    .send(
+                        MessageMeta::new(
+                            PROTO_ID_INTERACTION_MODEL,
+                            OpCode::ReadRequest as u8,
+                            true,
+                        ),
+                        &[0x15, 0x18], // An empty TLV structure
+                    )
+                    .await?;
+
+                let rx = exchange.recv().await?;
+                assert_eq!(rx.meta().proto_opcode, OpCode::StatusResponse as u8);
+
+                Ok(())
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(
+            client_stats.retransmissions.get(),
+            0,
+            "the flushed ack should have stopped the client's retransmissions"
+        );
+        assert_eq!(
+            device_stats.standalone_acks.get(),
+            1,
+            "the device should have acknowledged the request on its own"
         );
     });
 }

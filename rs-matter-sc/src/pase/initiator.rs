@@ -37,7 +37,9 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{PeerMrpParams, ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
 use crate::ScHost;
-use crate::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
+use crate::{
+    acknowledge_and_flush, complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport,
+};
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
@@ -264,6 +266,9 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
         salt: &[u8],
         iterations: u32,
     ) -> Result<(), Error> {
+        // Acknowledge the PBKDFParamResponse before the PBKDF2 below
+        acknowledge_and_flush(exchange).await?;
+
         // Setup prover and generate pA
         let mut pa = EC_POINT_ZEROED;
         let password_bytes = password.to_le_bytes();
@@ -311,7 +316,10 @@ impl<'a, M: ScHost, C: Crypto> PaseInitiator<'a, M, C> {
             return Err(ErrorCode::InvalidOpcode.into());
         }
 
+        acknowledge_and_flush(exchange).await?;
+
         // Parse Pake2
+        let rx = exchange.rx()?;
         let pake2 = Pake2::from_tlv(&TLVElement::new(rx.payload()))?;
 
         // Extract pB and cB

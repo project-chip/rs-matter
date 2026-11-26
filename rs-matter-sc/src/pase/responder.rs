@@ -35,7 +35,9 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::init::{init, Init};
 use crate::ScHost;
-use crate::{check_opcode, complete_with_status, expect_opcode, OpCode, SCStatusCodes};
+use crate::{
+    acknowledge_and_flush, check_opcode, complete_with_status, expect_opcode, OpCode, SCStatusCodes,
+};
 
 use super::{
     PBKDFParamReq, PBKDFParamResp, PBKDFParamRespParams, Pake1, Pake2, Pake3,
@@ -285,6 +287,8 @@ impl<'a, M: ScHost, C: Crypto, N: AttrChangeNotifier> PaseResponder<'a, M, C, N>
     /// dropped.
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
         expect_opcode(exchange, OpCode::PASEPake1).await?;
+
+        acknowledge_and_flush(exchange).await?;
 
         let req = get_root_node_struct(exchange.rx()?.payload())?;
         let pake1 = Pake1::from_tlv(&req)?;
