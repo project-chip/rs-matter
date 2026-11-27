@@ -514,10 +514,10 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     /// Get the public key corresponding to this secret key.
     fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error>;
 
-    /// Generate a Certificate Signing Request (CSR) using this secret key,
+    /// Generate a Certificate Signing Request (CSR) using this secret key.
     ///
     /// # Arguments
-    /// - `buf`: Buffer to write the CSR into.
+    /// - `buf`: Buffer to write the CSR into. Must be at least `CSR_MAX_LEN` bytes long.
     ///
     /// # Returns
     /// - On success, returns a slice containing the CSR, in DER format.

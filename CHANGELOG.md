@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-* All crypto backends now use a template based CSR logic that is crypto-independent.
+* All crypto backends now use a template based CSR logic that is crypto-independent (#693)
 * Breaking: the `rustcrypto` and `mbedtls` features no longer enable `alloc`, and `openssl` enables `std` instead. Enable `alloc` to keep the large CASE buffers on the heap (#693)
 * Fix: `rs-matter-stack` keeps 3 subscriptions per fabric by default, the minimum of the spec, rather than 3 in total (#691)
   * New: features `max-subscriptions-64` (`rs-matter-stack`) and `stack-max-subscriptions-64` (`rs-matter`)
