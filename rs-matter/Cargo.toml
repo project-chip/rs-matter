@@ -231,14 +231,15 @@ std = ["alloc", "rs-matter-utils/std", "rs-matter-tlv/std", "rs-matter-crypto/st
 # Enable backtrace capturing (useful for debugging).
 backtrace = ["rs-matter-utils/backtrace"]
 # Enable the alloc feature for targets that support it.
-# In general, `rs-matter` does not use heap, so this feature enables only a few convenience features.
+# In general, `rs-matter` does not use heap, so this feature enables only a few convenience features,
+# and puts the large CASE buffers on the heap rather than on the stack.
 alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc", "rs-matter-crypto/alloc", "rs-matter-cert/alloc", "rs-matter-pairing/alloc", "rs-matter-im-core/alloc", "rs-matter-dm-core/alloc", "rs-matter-dm-clusters/alloc", "rs-matter-node-core/alloc", "rs-matter-transport/alloc", "rs-matter-node/alloc", "rs-matter-sc/alloc", "rs-matter-bdx/alloc", "rs-matter-im/alloc", "rs-matter-dm/alloc", "rs-matter-respond/alloc", "rs-matter-onboard/alloc", "rs-matter-stack/alloc"]
 # Crypto backend: Rust Crypto.
-rustcrypto = ["alloc", "rs-matter-crypto/rustcrypto"]
+rustcrypto = ["rs-matter-crypto/rustcrypto"]
 # Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
-openssl = ["alloc", "rs-matter-crypto/openssl"]
+openssl = ["std", "rs-matter-crypto/openssl"]
 # Crypto backend: mbedTLS.
-mbedtls = ["alloc", "rs-matter-crypto/mbedtls"]
+mbedtls = ["rs-matter-crypto/mbedtls"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
 # This is a WIP feature and not yet fully supported.
 send-sync = ["rs-matter-utils/send-sync", "rs-matter-stack/send-sync"]

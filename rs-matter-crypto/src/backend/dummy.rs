@@ -265,10 +265,6 @@ impl<const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
     where
         Self: 's;
 
-    fn csr<'s>(&self, _buf: &'s mut [u8]) -> Result<&'s [u8], Error> {
-        unimplemented!()
-    }
-
     fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error> {
         unimplemented!()
     }

@@ -43,10 +43,12 @@ use crate::utils::sync::{MaybeSend, MaybeSendSync};
 pub use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
 pub use canon::*;
+pub use csr::CSR_MAX_LEN;
 pub use rand::*;
 
 pub mod backend;
 mod canon;
+mod csr;
 pub mod group_keys;
 mod rand;
 
@@ -520,7 +522,14 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     /// # Returns
     /// - On success, returns a slice containing the CSR, in DER format.
     /// - On failure, returns an `Error`.
-    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error>;
+    ///
+    /// The default writes the CSR from a template, with `pub_key` and `sign`.
+    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error>
+    where
+        Self: 'a,
+    {
+        csr::write(self, buf)
+    }
 
     /// Sign the given data using this secret key,
     ///
@@ -706,11 +715,13 @@ pub fn test_only_crypto() -> impl Crypto {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use crate::error::ErrorCode;
     use crate::{
         test_only_crypto, Aead, CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey,
         CanonPkcSecretKeyRef, CanonPkcSharedSecret, CanonPkcSignature, CanonPkcSignatureRef,
         Crypto, CryptoSensitive, CryptoSensitiveRef, Digest, Kdf, PbKdf, PublicKey, Rng, SecretKey,
-        SigningSecretKey, AEAD_TAG_LEN, HASH_LEN, PKC_CANON_PUBLIC_KEY_LEN, SHA1_HASH_LEN,
+        SigningSecretKey, AEAD_TAG_LEN, CSR_MAX_LEN, HASH_LEN, PKC_CANON_PUBLIC_KEY_LEN,
+        SHA1_HASH_LEN,
     };
 
     /// One-shot SHA-256 over `data` via the `Crypto` trait.
@@ -1445,6 +1456,20 @@ mod tests {
         bad[64] ^= 0x01;
 
         assert!(crypto.pub_key(CryptoSensitiveRef::new(&bad)).is_err());
+    }
+
+    /// A buffer shorter than the longest CSR.
+    #[test]
+    fn csr_into_small_buffer_fails() {
+        let crypto = test_only_crypto();
+        let key = unwrap!(crypto.secret_key(super::TEST_DAC_PRIVKEY));
+
+        let mut buf = [0u8; CSR_MAX_LEN - 1];
+        let result = key.csr(&mut buf);
+        assert_eq!(
+            result.err().map(|e| e.code()),
+            Some(ErrorCode::BufferTooSmall)
+        );
     }
 
     #[test]

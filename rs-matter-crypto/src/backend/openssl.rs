@@ -26,7 +26,6 @@
 
 use core::ops::Mul;
 
-use openssl::asn1::Asn1Type;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::cipher::CipherRef;
 use openssl::cipher_ctx::CipherCtx;
@@ -38,7 +37,6 @@ use openssl::md::{Md, MdRef};
 use openssl::nid::Nid;
 use openssl::pkey::{Id, PKey, Private, Public};
 use openssl::pkey_ctx::PkeyCtx;
-use openssl::x509::{X509NameBuilder, X509ReqBuilder};
 
 // We directly use the hmac crate here, there was a self-referential structure
 // problem while using OpenSSL's Signer
@@ -804,34 +802,6 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
         = ECPoint<'s, POINT_LEN, LEN>
     where
         Self: 's;
-
-    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error> {
-        let mut builder = openssl_check!(X509ReqBuilder::new())?;
-        openssl_check!(builder.set_version(0))?;
-
-        let pkey = openssl_check!(PKey::from_ec_key(self.ec_key()?))?;
-        openssl_check!(builder.set_pubkey(&pkey))?;
-
-        let mut name_builder = openssl_check!(X509NameBuilder::new())?;
-        openssl_check!(name_builder.append_entry_by_text_with_type(
-            "O",
-            "CSR",
-            Asn1Type::IA5STRING
-        ))?;
-        let subject_name = name_builder.build();
-        openssl_check!(builder.set_subject_name(&subject_name))?;
-
-        openssl_check!(builder.sign(&pkey, MessageDigest::sha256()))?;
-
-        let csr = openssl_check!(builder.build().to_der())?;
-        if csr.len() <= buf.len() {
-            buf[..csr.len()].copy_from_slice(csr.as_slice());
-
-            Ok(&buf[..csr.len()])
-        } else {
-            Err(ErrorCode::NoSpace.into())
-        }
-    }
 
     fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error> {
         let ctx = openssl_check!(BigNumContext::new())?;
