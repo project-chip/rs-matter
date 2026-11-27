@@ -36,11 +36,10 @@ crates() {
             | join(" ")'
 }
 
-# Succeeds if version `$2` of crate `$1` is in the crates.io index.
-# Fails if it is not, or if the index cannot be read; cargo then refuses
-# to publish a version that does exist.
+# Succeeds if version `$2` of crate `$1` is in the crates.io index, fails if
+# it is not. Stops the script if the index cannot be read.
 published() {
-    local name=${1,,} path
+    local name=${1,,} path index status
 
     case ${#name} in
         1) path=1/$name ;;
@@ -49,8 +48,20 @@ published() {
         *) path=${name:0:2}/${name:2:2}/$name ;;
     esac
 
-    curl -sf "https://index.crates.io/$path" \
-        | jq -e --arg version "$2" 'select(.vers == $version)' > /dev/null
+    # The last line is the HTTP status, `000` if there was no response
+    index=$(curl -s --retry 3 -w '\n%{http_code}' "https://index.crates.io/$path") || true
+    status=${index##*$'\n'}
+
+    case $status in
+        200) ;;
+        404) return 1 ;;
+        *)
+            echo "Cannot read the crates.io index entry of $name (HTTP $status)" >&2
+            exit 1
+            ;;
+    esac
+
+    jq -e --arg version "$2" 'select(.vers == $version)' <<< "${index%$'\n'*}" > /dev/null
 }
 
 log=$(mktemp)
