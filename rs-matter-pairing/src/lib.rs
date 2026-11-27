@@ -27,14 +27,14 @@
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
 use crate::crypto::{canon, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN};
-use crate::error::{Error, ErrorCode};
 use crate::utils::bitflags::bitflags;
 
 // The dependencies, under the names the code uses for them
 use rs_matter_crypto as crypto;
 use rs_matter_tlv as tlv;
 use rs_matter_utils as utils;
-use rs_matter_utils::error;
+
+pub use error::{PairingError, PairingErrorCode};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -43,6 +43,7 @@ extern crate alloc;
 pub(crate) mod fmt;
 
 pub mod code;
+pub mod error;
 pub mod qr;
 
 /// The length of the setup passcode, in bytes.
@@ -158,16 +159,17 @@ impl<'a> VerifierCommData<'a> {
         verifier: &'a [u8],
         salt: &'a [u8],
         iterations: u32,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PairingError> {
         if !(SPAKE2P_VERIFIER_SALT_MIN_LEN..=SPAKE2P_VERIFIER_SALT_LEN).contains(&salt.len())
             || !(SPAKE2P_ITERATIONS_MIN..=SPAKE2P_ITERATIONS_MAX).contains(&iterations)
         {
-            Err(ErrorCode::InvalidData)?;
+            Err(PairingErrorCode::InvalidInput)?;
         }
 
         Ok(Self {
             discriminator,
-            verifier: Spake2pVerifierStrRef::try_new(verifier)?,
+            verifier: Spake2pVerifierStrRef::try_new(verifier)
+                .map_err(|e| e.convert(PairingErrorCode::InvalidInput))?,
             salt,
             iterations,
         })

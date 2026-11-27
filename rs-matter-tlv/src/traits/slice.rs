@@ -57,7 +57,7 @@ where
 // where
 //     T: ToTLV + 'a,
 // {
-//     type Item = Result<TLV<'a>, Error>;
+//     type Item = Result<TLV<'a>, TlvError>;
 //     type IntoIter = impl Iterator<Item = Self::Item>;
 
 //     fn into_iter(self) -> Self::IntoIter {

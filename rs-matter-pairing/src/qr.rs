@@ -21,7 +21,7 @@ use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 
 use verhoeff::Verhoeff;
 
-use crate::error::ErrorCode;
+use crate::error::{PairingError, PairingErrorCode};
 use crate::tlv::{EitherIter, TLVElement, TLVTag, TlvError, TLV};
 use crate::utils::codec::base38;
 use crate::utils::storage::{String, WriteBuf};
@@ -237,18 +237,24 @@ where
     /// # Returns
     /// - On success, returns a tuple containing the QR code string and the remaining buffer
     /// - On failure, returns an error
-    pub fn as_str<'b>(&self, buf: &'b mut [u8]) -> Result<(&'b str, &'b mut [u8]), Error> {
+    pub fn as_str<'b>(&self, buf: &'b mut [u8]) -> Result<(&'b str, &'b mut [u8]), PairingError> {
         let str_len = self.emit_chars().count();
+
+        if buf.len() < str_len {
+            Err(PairingErrorCode::BufferTooSmall)?;
+        }
 
         let (str_buf, remaining_buf) = buf.split_at_mut(str_len);
 
         let mut wb = WriteBuf::new(str_buf);
         for ch in self.emit_chars() {
-            wb.le_u8(ch? as u8)?;
+            wb.le_u8(ch? as u8)
+                .map_err(|e| e.convert(PairingErrorCode::BufferTooSmall))?;
         }
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+        let str =
+            unwrap!(core::str::from_utf8(str_buf).map_err(|_| PairingErrorCode::InvalidInput));
 
         Ok((str, remaining_buf))
     }
@@ -280,7 +286,7 @@ where
     /// # Returns
     /// - On success, a tuple of the NDEF message and the remaining buffer
     /// - On failure, an error
-    pub fn as_ndef<'b>(&self, buf: &'b mut [u8]) -> Result<(&'b [u8], &'b mut [u8]), Error> {
+    pub fn as_ndef<'b>(&self, buf: &'b mut [u8]) -> Result<(&'b [u8], &'b mut [u8]), PairingError> {
         /// `0xD1`, `0x01`, payload length, `0x55`, `0x00`.
         const HEADER_LEN: usize = 5;
 
@@ -292,11 +298,11 @@ where
         // counts.
         let payload_len = uri_len + 1;
         if payload_len > u8::MAX as usize {
-            Err(ErrorCode::NoSpace)?;
+            Err(PairingErrorCode::InvalidInput)?;
         }
 
         if buf.len() < HEADER_LEN + uri_len {
-            Err(ErrorCode::BufferTooSmall)?;
+            Err(PairingErrorCode::BufferTooSmall)?;
         }
 
         let (ndef_buf, remaining_buf) = buf.split_at_mut(HEADER_LEN + uri_len);
@@ -306,21 +312,22 @@ where
 
         let mut wb = WriteBuf::new(uri_buf);
         for ch in self.emit_chars() {
-            wb.le_u8(ch? as u8)?;
+            wb.le_u8(ch? as u8)
+                .map_err(|e| e.convert(PairingErrorCode::BufferTooSmall))?;
         }
 
         Ok((ndef_buf, remaining_buf))
     }
 
     /// Emit the QR text of this payload as an iterator of characters
-    pub fn emit_chars(&self) -> impl Iterator<Item = Result<char, Error>> + '_ {
+    pub fn emit_chars(&self) -> impl Iterator<Item = Result<char, PairingError>> + '_ {
         struct PackedBitsIterator<I>(I);
 
         impl<I> Iterator for PackedBitsIterator<I>
         where
-            I: Iterator<Item = Result<bool, Error>>,
+            I: Iterator<Item = Result<bool, PairingError>>,
         {
-            type Item = Result<(u32, u8), Error>;
+            type Item = Result<(u32, u8), PairingError>;
 
             fn next(&mut self) -> Option<Self::Item> {
                 let mut chunk = 0;
@@ -364,7 +371,7 @@ where
             )
     }
 
-    fn emit_all_bits(&self) -> impl Iterator<Item = Result<bool, Error>> + '_ {
+    fn emit_all_bits(&self) -> impl Iterator<Item = Result<bool, PairingError>> + '_ {
         Self::emit_bits(self.version as _, VERSION_FIELD_LENGTH_IN_BITS)
             .chain(Self::emit_bits(
                 self.vid as _,
@@ -392,17 +399,20 @@ where
             ))
             .chain(Self::emit_bits(0, PADDING_FIELD_LENGTH_IN_BITS))
             .chain(self.emit_optional_tlv_data().flat_map(|bits| {
-                Self::emit_maybe_bits(bits.map_err(Into::into).map(|bits| (bits as _, 8)))
+                Self::emit_maybe_bits(
+                    bits.map_err(|e| e.convert(PairingErrorCode::InvalidInput).into())
+                        .map(|bits| (bits as _, 8)),
+                )
             }))
     }
 
-    fn emit_bits(input: u32, len: usize) -> impl Iterator<Item = Result<bool, Error>> {
+    fn emit_bits(input: u32, len: usize) -> impl Iterator<Item = Result<bool, PairingError>> {
         (0..len).map(move |i| Ok((input >> i) & 1 == 1))
     }
 
     fn emit_maybe_bits(
-        bits: Result<(u32, usize), Error>,
-    ) -> impl Iterator<Item = Result<bool, Error>> {
+        bits: Result<(u32, usize), PairingError>,
+    ) -> impl Iterator<Item = Result<bool, PairingError>> {
         match bits {
             Ok((input, len)) => EitherIter::First(Self::emit_bits(input, len)),
             Err(err) => EitherIter::Second(core::iter::once(Err(err))),
@@ -455,17 +465,19 @@ impl<'a> QrPayload<'a, &'a [u8]> {
     /// anonymous TLV structure), which is empty when the QR carries no optional data.
     ///
     /// # Errors
-    /// Returns [`ErrorCode::InvalidData`] if the string is not a well-formed `MT:`
+    /// Returns [`PairingErrorCode::InvalidInput`] if the string is not a well-formed `MT:`
     /// payload (missing prefix, invalid base38, too short, or an out-of-range field).
-    pub fn parse(qr: &str, buf: &'a mut [u8]) -> Result<Self, Error> {
+    pub fn parse(qr: &str, buf: &'a mut [u8]) -> Result<Self, PairingError> {
         // Strip the `MT:` prefix.
-        let body = qr.strip_prefix(QR_PREFIX).ok_or(ErrorCode::InvalidData)?;
+        let body = qr
+            .strip_prefix(QR_PREFIX)
+            .ok_or(PairingErrorCode::InvalidInput)?;
 
         // Base38-decode the body into `buf`.
         let mut len = 0;
         for byte in base38::decode(body) {
-            let byte = byte.map_err(|_| ErrorCode::InvalidData)?;
-            *buf.get_mut(len).ok_or(ErrorCode::BufferTooSmall)? = byte;
+            let byte = byte.map_err(|e| e.convert(PairingErrorCode::InvalidInput))?;
+            *buf.get_mut(len).ok_or(PairingErrorCode::BufferTooSmall)? = byte;
             len += 1;
         }
         let decoded = &buf[..len];
@@ -474,7 +486,7 @@ impl<'a> QrPayload<'a, &'a [u8]> {
         // (`TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES` bytes); anything beyond it is the
         // optional-TLV data.
         if decoded.len() < TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         let mut reader = BitReader::new(decoded);
@@ -605,11 +617,11 @@ impl<'a> QrPayload<'a, ()> {
     /// ignored, so both the compact and the "pretty" printed forms are accepted.
     ///
     /// # Errors
-    /// Returns [`ErrorCode::InvalidData`] if the code is not a well-formed v1 manual
-    /// pairing code: wrong length, a non-digit, a bad check digit, a first digit of
+    /// Returns [`PairingErrorCode::InvalidInput`] if the code is not a well-formed v1
+    /// manual pairing code: wrong length, a non-digit, a bad check digit, a first digit of
     /// 8 or 9 (which per spec indicates a future format version), a VID/PID-present
     /// flag inconsistent with the length, or an out-of-range digit group.
-    pub fn parse_pairing_code(code: &str) -> Result<Self, Error> {
+    pub fn parse_pairing_code(code: &str) -> Result<Self, PairingError> {
         /// Length of the manual pairing code without vendor/product IDs.
         const SHORT_CODE_LEN: usize = 11;
         /// Length of the manual pairing code with vendor/product IDs.
@@ -623,23 +635,24 @@ impl<'a> QrPayload<'a, ()> {
             }
 
             if !ch.is_ascii_digit() {
-                return Err(ErrorCode::InvalidData.into());
+                return Err(PairingErrorCode::InvalidInput.into());
             }
 
             digits
                 .push(ch)
-                .map_err(|_| Error::from(ErrorCode::InvalidData))?;
+                .map_err(|_| PairingErrorCode::InvalidInput)?;
         }
 
         let long_form = match digits.len() {
             SHORT_CODE_LEN => false,
             LONG_CODE_LEN => true,
-            _ => return Err(ErrorCode::InvalidData.into()),
+            _ => return Err(PairingErrorCode::InvalidInput.into()),
         };
 
         // The trailing check digit protects against typos and transpositions.
         if !digits.validate_verhoeff_check_digit() {
-            return Err(ErrorCode::InvalidData.into());
+            debug!("Wrong check digit in the manual pairing code");
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         // DIGIT[1] := (VID_PID_PRESENT << 2) | (DISCRIMINATOR >> 10)
@@ -648,13 +661,13 @@ impl<'a> QrPayload<'a, ()> {
         // payload version.
         let digit1 = Self::digits_at(&digits, 0, 1)?;
         if digit1 > 7 {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         let vid_pid_present = digit1 >> 2 == 1;
         // The flag and the code length must agree.
         if vid_pid_present != long_form {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         // The two most significant bits (11..10) of the discriminator.
@@ -663,7 +676,7 @@ impl<'a> QrPayload<'a, ()> {
         // DIGIT[2..6] := ((DISCRIMINATOR & 0x300) << 6) | (PASSCODE & 0x3FFF)
         let group = Self::digits_at(&digits, 1, 5)?;
         if group > 0xFFFF {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         // Bits 9..8 of the discriminator, and the low 14 bits of the passcode.
@@ -673,7 +686,7 @@ impl<'a> QrPayload<'a, ()> {
         // DIGIT[7..10] := (PASSCODE >> 14)
         let passcode_high = Self::digits_at(&digits, 6, 4)?;
         if passcode_high > 0x1FFF {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         let passcode = (passcode_high << 14) | passcode_low;
@@ -688,7 +701,7 @@ impl<'a> QrPayload<'a, ()> {
             let pid = Self::digits_at(&digits, 15, 5)?;
 
             if vid > 0xFFFF || pid > 0xFFFF {
-                return Err(ErrorCode::InvalidData.into());
+                return Err(PairingErrorCode::InvalidInput.into());
             }
 
             (vid as u16, pid as u16)
@@ -726,12 +739,12 @@ impl<'a> QrPayload<'a, ()> {
     }
 
     /// Parse `len` decimal digits starting at `offset`.
-    fn digits_at(digits: &str, offset: usize, len: usize) -> Result<u32, Error> {
+    fn digits_at(digits: &str, offset: usize, len: usize) -> Result<u32, PairingError> {
         digits
             .get(offset..offset + len)
-            .ok_or(ErrorCode::InvalidData)?
+            .ok_or(PairingErrorCode::InvalidInput)?
             .parse()
-            .map_err(|_| ErrorCode::InvalidData.into())
+            .map_err(|_| PairingErrorCode::InvalidInput.into())
     }
 
     /// The **short** (4-bit) discriminator - the upper 4 bits of the device's full
@@ -773,12 +786,12 @@ impl<'a> QrPayload<'a, ()> {
 
 impl CommFlowType {
     /// Decode a 2-bit commissioning-flow field.
-    fn from_bits(bits: u8) -> Result<Self, Error> {
+    fn from_bits(bits: u8) -> Result<Self, PairingError> {
         match bits {
             0 => Ok(Self::Standard),
             1 => Ok(Self::UserIntent),
             2 => Ok(Self::Custom),
-            _ => Err(ErrorCode::InvalidData.into()),
+            _ => Err(PairingErrorCode::InvalidInput.into()),
         }
     }
 }
@@ -797,11 +810,11 @@ impl<'a> BitReader<'a> {
     }
 
     /// Read `len` bits (0..=32) as a little-endian value, LSB-first.
-    fn read(&mut self, len: usize) -> Result<u32, Error> {
+    fn read(&mut self, len: usize) -> Result<u32, PairingError> {
         debug_assert!(len <= 32);
 
         if self.pos + len > self.data.len() * 8 {
-            return Err(ErrorCode::InvalidData.into());
+            return Err(PairingErrorCode::InvalidInput.into());
         }
 
         let mut value = 0u32;
@@ -847,7 +860,11 @@ impl<'a> Qr<'a> {
     /// # Returns
     /// - On success, returns the generated QR code
     /// - On failure, returns an error
-    pub fn compute(text: &str, tmp_buf: &mut [u8], out_buf: &'a mut [u8]) -> Result<Self, Error> {
+    pub fn compute(
+        text: &str,
+        tmp_buf: &mut [u8],
+        out_buf: &'a mut [u8],
+    ) -> Result<Self, PairingError> {
         let needed_version = Version::new(Self::version(text));
 
         let qr = QrCode::encode_text(
@@ -860,7 +877,7 @@ impl<'a> Qr<'a> {
             None,
             false,
         )
-        .map_err(|_| ErrorCode::BufferTooSmall)?;
+        .map_err(|_| PairingErrorCode::BufferTooSmall)?;
 
         Ok(Self(qr))
     }
@@ -892,7 +909,7 @@ impl<'a> Qr<'a> {
         border: u8,
         invert: bool,
         out_buf: &'b mut [u8],
-    ) -> Result<(&'b str, &'b mut [u8]), Error> {
+    ) -> Result<(&'b str, &'b mut [u8]), PairingError> {
         let mut offset = 0;
 
         for c in self.emit_chars(text_type, border, invert) {
@@ -900,7 +917,7 @@ impl<'a> Qr<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall.into());
+                return Err(PairingErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -910,7 +927,8 @@ impl<'a> Qr<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+        let str =
+            unwrap!(core::str::from_utf8(str_buf).map_err(|_| PairingErrorCode::InvalidInput));
 
         Ok((str, remaining_buf))
     }
@@ -936,7 +954,7 @@ impl<'a> Qr<'a> {
         nl: bool,
         y: i32,
         out_buf: &'b mut [u8],
-    ) -> Result<(&'b str, &'b mut [u8]), Error> {
+    ) -> Result<(&'b str, &'b mut [u8]), PairingError> {
         let mut offset = 0;
 
         for c in self.emit_line_chars(text_type, border, invert, nl, y) {
@@ -944,7 +962,7 @@ impl<'a> Qr<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall.into());
+                return Err(PairingErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -954,7 +972,8 @@ impl<'a> Qr<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+        let str =
+            unwrap!(core::str::from_utf8(str_buf).map_err(|_| PairingErrorCode::InvalidInput));
 
         Ok((str, remaining_buf))
     }
@@ -1119,7 +1138,7 @@ impl<'a> QrTextRenderer<'a> {
         border: u8,
         invert: bool,
         out_buf: &'b mut [u8],
-    ) -> Result<(&'b str, &'b mut [u8]), Error> {
+    ) -> Result<(&'b str, &'b mut [u8]), PairingError> {
         let mut offset = 0;
 
         for c in self.render_iter(border, invert) {
@@ -1127,7 +1146,7 @@ impl<'a> QrTextRenderer<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall.into());
+                return Err(PairingErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -1137,7 +1156,8 @@ impl<'a> QrTextRenderer<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+        let str =
+            unwrap!(core::str::from_utf8(str_buf).map_err(|_| PairingErrorCode::InvalidInput));
 
         Ok((str, remaining_buf))
     }
@@ -1161,7 +1181,7 @@ impl<'a> QrTextRenderer<'a> {
         nl: bool,
         y: i32,
         out_buf: &'b mut [u8],
-    ) -> Result<(&'b str, &'b mut [u8]), Error> {
+    ) -> Result<(&'b str, &'b mut [u8]), PairingError> {
         let mut offset = 0;
 
         for c in self.render_line_iter(border, invert, nl, y) {
@@ -1169,7 +1189,7 @@ impl<'a> QrTextRenderer<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall.into());
+                return Err(PairingErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -1179,7 +1199,8 @@ impl<'a> QrTextRenderer<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+        let str =
+            unwrap!(core::str::from_utf8(str_buf).map_err(|_| PairingErrorCode::InvalidInput));
 
         Ok((str, remaining_buf))
     }
@@ -1337,7 +1358,14 @@ mod tests {
         );
         let mut buf = [0; 1024];
         let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
-        assert_eq!(data_str, QR_CODE)
+        assert_eq!(data_str, QR_CODE);
+
+        // A buffer that is one byte too short
+        let result = qr_code_data.as_str(&mut buf[..QR_CODE.len() - 1]);
+        assert_eq!(
+            result.err().map(|e| e.code()),
+            Some(PairingErrorCode::BufferTooSmall)
+        );
     }
 
     /// `is_valid` accepts vendor ID 0 and everything up to the last test
@@ -1625,27 +1653,37 @@ mod tests {
 
     #[test]
     fn parse_pairing_code_rejects_bad_input() {
+        let code = |code| QrPayload::parse_pairing_code(code).err().map(|e| e.code());
+
         // Bad Verhoeff check digit (last digit of the valid code bumped).
-        assert!(QrPayload::parse_pairing_code("34970112333").is_err());
+        assert_eq!(code("34970112333"), Some(PairingErrorCode::InvalidInput));
         // Not a digit.
-        assert!(QrPayload::parse_pairing_code("3497011233X").is_err());
+        assert_eq!(code("3497011233X"), Some(PairingErrorCode::InvalidInput));
         // Wrong length (neither 11 nor 21).
-        assert!(QrPayload::parse_pairing_code("3497011233").is_err());
+        assert_eq!(code("3497011233"), Some(PairingErrorCode::InvalidInput));
         // A leading digit of 8/9 indicates a future payload version, not v1.
-        assert!(QrPayload::parse_pairing_code("94970112332").is_err());
+        assert_eq!(code("94970112333"), Some(PairingErrorCode::InvalidInput));
         // VID/PID-present flag set (leading digit >= 4) but only 11 digits.
-        assert!(QrPayload::parse_pairing_code("74970112332").is_err());
+        assert_eq!(code("74970112334"), Some(PairingErrorCode::InvalidInput));
     }
 
     #[test]
     fn parse_qr_rejects_bad_input() {
         let mut buf = [0; 128];
 
+        let mut code = |qr| QrPayload::parse(qr, &mut buf).err().map(|e| e.code());
+
         // Missing `MT:` prefix.
-        assert!(QrPayload::parse("YNJV7VSC00CMVH7SR00", &mut buf).is_err());
+        assert_eq!(
+            code("YNJV7VSC00CMVH7SR00"),
+            Some(PairingErrorCode::InvalidInput)
+        );
         // Invalid base38 character (`!`).
-        assert!(QrPayload::parse("MT:YNJV7VSC00CMVH7SR0!", &mut buf).is_err());
+        assert_eq!(
+            code("MT:YNJV7VSC00CMVH7SR0!"),
+            Some(PairingErrorCode::InvalidInput)
+        );
         // Too short to hold the fixed payload.
-        assert!(QrPayload::parse("MT:00", &mut buf).is_err());
+        assert_eq!(code("MT:00"), Some(PairingErrorCode::InvalidInput));
     }
 }

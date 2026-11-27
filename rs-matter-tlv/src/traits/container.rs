@@ -418,7 +418,7 @@ where
 // // }
 
 // impl<'a, T> FromTLV<'a> for TLVArray<'a, T> {
-//     fn from_tlv(t: TLVElement<'a>) -> Result<Self, Error> {
+//     fn from_tlv(t: TLVElement<'a>) -> Result<Self, TlvError> {
 //         TLVArray::new(t)
 //     }
 // }

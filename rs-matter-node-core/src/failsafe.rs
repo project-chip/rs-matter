@@ -890,7 +890,7 @@ impl FailSafe {
             verifier = verifier.add_cert(icac, buf)?;
         }
 
-        verifier.add_cert(root, buf)?.finalise(buf)
+        Ok(verifier.add_cert(root, buf)?.finalise(buf)?)
     }
 
     fn get_case_fab_idx(session_mode: &SessionMode) -> Result<NonZeroU8, Error> {

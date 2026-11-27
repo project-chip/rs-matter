@@ -21,7 +21,7 @@
 //! The request is fixed except for the public key and the signature, so it is
 //! written from a template, for all backends.
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{CryptoError, CryptoErrorCode};
 use crate::{
     CryptoSensitive, PublicKey, SigningSecretKey, PKC_CANON_PUBLIC_KEY_LEN, PKC_SIGNATURE_LEN,
 };
@@ -69,7 +69,7 @@ const MAX_DER_SIGNATURE_LEN: usize = 72;
 pub(crate) fn write<'a, 's, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize, K>(
     key: &K,
     buf: &'s mut [u8],
-) -> Result<&'s [u8], Error>
+) -> Result<&'s [u8], CryptoError>
 where
     K: SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN> + ?Sized + 'a,
 {
@@ -83,7 +83,7 @@ where
     // Checked before anything is written or signed, so that the outcome does not
     // depend on the length of the signature
     if buf.len() < CSR_MAX_LEN {
-        Err(ErrorCode::BufferTooSmall)?;
+        Err(CryptoErrorCode::BufferTooSmall)?;
     }
 
     let info_len = INFO_HEAD.len() + PUB_KEY_LEN + INFO_TAIL.len();

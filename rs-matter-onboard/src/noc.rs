@@ -120,7 +120,7 @@ impl<'a> NocGenerator<'a> {
                     return Err(Error::from(ErrorCode::InvalidData));
                 }
 
-                icac.get_ca_id()
+                Ok(icac.get_ca_id()?)
             })
             .transpose()?;
 
@@ -264,11 +264,11 @@ mod tests {
     ];
 
     fn node_id_from(noc: &[u8]) -> Result<u64, Error> {
-        CertRef::new(TLVElement::new(noc)).get_node_id()
+        Ok(CertRef::new(TLVElement::new(noc)).get_node_id()?)
     }
 
     fn fabric_id_from(noc: &[u8]) -> Result<u64, Error> {
-        CertRef::new(TLVElement::new(noc)).get_fabric_id()
+        Ok(CertRef::new(TLVElement::new(noc)).get_fabric_id()?)
     }
 
     #[test]

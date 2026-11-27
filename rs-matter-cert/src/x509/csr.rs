@@ -30,7 +30,7 @@ use der::{
 
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignature, Crypto, PublicKey};
 use crate::der_utils;
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 use crate::x509::AlgorithmIdentifier;
 use crate::x509::SubjectPublicKeyInfo;
 use crate::x509::OID_ECDSA_WITH_SHA256;
@@ -225,23 +225,23 @@ impl<'a> CsrRef<'a> {
     ///
     /// Validates that the outer structure is a SEQUENCE tag but does not
     /// parse the full CSR.
-    pub fn new(der: &'a [u8]) -> Result<Self, Error> {
-        let csr = CertificationRequest::from_der(der).map_err(|_| ErrorCode::InvalidData)?;
+    pub fn new(der: &'a [u8]) -> Result<Self, CertError> {
+        let csr = CertificationRequest::from_der(der).map_err(|_| CertErrorCode::InvalidFormat)?;
 
         // Also store the raw bytes of certificationRequestInfo for `crypto` crate verification
-        let mut reader = SliceReader::new(der).map_err(|_| ErrorCode::InvalidData)?;
+        let mut reader = SliceReader::new(der).map_err(|_| CertErrorCode::InvalidFormat)?;
 
         // Decode the outer SEQUENCE header (CertificationRequest)
-        Header::decode(&mut reader).map_err(|_| ErrorCode::InvalidData)?;
+        Header::decode(&mut reader).map_err(|_| CertErrorCode::InvalidFormat)?;
 
         // Now positioned at certificationRequestInfo
-        let start = usize::try_from(reader.position()).map_err(|_| ErrorCode::InvalidData)?;
+        let start = usize::try_from(reader.position()).map_err(|_| CertErrorCode::InvalidFormat)?;
 
         // Decode and skip certificationRequestInfo to find its end
-        let _info =
-            CertificationRequestInfo::decode(&mut reader).map_err(|_| ErrorCode::InvalidData)?;
+        let _info = CertificationRequestInfo::decode(&mut reader)
+            .map_err(|_| CertErrorCode::InvalidFormat)?;
 
-        let end = usize::try_from(reader.position()).map_err(|_| ErrorCode::InvalidData)?;
+        let end = usize::try_from(reader.position()).map_err(|_| CertErrorCode::InvalidFormat)?;
 
         Ok(Self {
             csr,
@@ -252,7 +252,7 @@ impl<'a> CsrRef<'a> {
     /// Get the raw certificationRequestInfo bytes (the TBS portion).
     ///
     /// This is the data that is signed.
-    fn certification_request_info_raw(&self) -> Result<&'a [u8], Error> {
+    fn certification_request_info_raw(&self) -> Result<&'a [u8], CertError> {
         Ok(self.cert_req_info)
     }
 
@@ -260,7 +260,7 @@ impl<'a> CsrRef<'a> {
     ///
     /// Returns a 65-byte array containing the uncompressed public key
     /// (0x04 || X || Y).
-    pub fn pubkey(&self) -> Result<CanonPkcPublicKeyRef<'_>, Error> {
+    pub fn pubkey(&self) -> Result<CanonPkcPublicKeyRef<'_>, CertError> {
         // Access the subject_public_key from the parsed structure
         let subject_pk = &self
             .csr
@@ -269,16 +269,16 @@ impl<'a> CsrRef<'a> {
             .subject_public_key;
 
         // as_bytes() returns the actual key bytes (already excludes unused bits count)
-        let key_bytes = subject_pk.as_bytes().ok_or(ErrorCode::InvalidData)?;
+        let key_bytes = subject_pk.as_bytes().ok_or(CertErrorCode::InvalidFormat)?;
 
         // Convert to fixed-size array
-        CanonPkcPublicKeyRef::try_new(key_bytes)
+        Ok(CanonPkcPublicKeyRef::try_new(key_bytes)?)
     }
 
     /// Extract the signature from the CSR.
     ///
     /// Returns the raw ECDSA signature bytes (r || s, 64 bytes).
-    fn signature(&self) -> Result<CanonPkcSignature, Error> {
+    fn signature(&self) -> Result<CanonPkcSignature, CertError> {
         Ok(der_utils::ecdsa_der_to_raw(self.csr.signature.raw_bytes())?.into())
     }
 
@@ -286,7 +286,7 @@ impl<'a> CsrRef<'a> {
     ///
     /// The CSR is signed by the private key corresponding to the public key
     /// contained within the CSR itself.
-    pub fn verify<C: Crypto>(&self, crypto: C) -> Result<(), Error> {
+    pub fn verify<C: Crypto>(&self, crypto: C) -> Result<(), CertError> {
         let pubkey = crypto.pub_key(self.pubkey()?)?;
 
         let tbs_data = self.certification_request_info_raw()?;
@@ -295,7 +295,7 @@ impl<'a> CsrRef<'a> {
         if pubkey.verify(tbs_data, signature.reference())? {
             Ok(())
         } else {
-            Err(ErrorCode::InvalidSignature.into())
+            Err(CertErrorCode::InvalidSignature.into())
         }
     }
 }

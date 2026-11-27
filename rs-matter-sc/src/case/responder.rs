@@ -385,6 +385,11 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
                     }
                 };
 
+                let Ok(signature) = CanonPkcSignatureRef::try_new(decrypted_req.signature.0) else {
+                    error!("Sigma3 signature has a wrong length");
+                    return Ok(SCStatusCodes::InvalidParameter);
+                };
+
                 let initiator_noc = CertRef::new(TLVElement::new(decrypted_req.initiator_noc.0));
                 let initiator_icac = decrypted_req
                     .initiator_icac
@@ -407,7 +412,7 @@ impl<'a, M: ScHost, C: Crypto> CaseResponder<'a, M, C> {
                     decrypted_req.initiator_noc.0,
                     decrypted_req.initiator_icac.map(|a| a.0),
                     &initiator_noc,
-                    CanonPkcSignatureRef::try_new(decrypted_req.signature.0)?,
+                    signature,
                     buf,
                 ) {
                     error!("Sigma3 Signature doesn't match: {}", e);

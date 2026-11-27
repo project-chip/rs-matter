@@ -269,7 +269,7 @@ impl Spake2P {
         response: &[u8],
     ) -> Result<(), Error> {
         context.update(response)?;
-        context.finish(&mut self.context_hash)
+        Ok(context.finish(&mut self.context_hash)?)
     }
 
     /// Compute the verifier of a passcode (`w0`, then `L`), as a device with
@@ -827,7 +827,7 @@ impl Spake2P {
         salt: &[u8],
         w0w1s: &mut Spake2pW,
     ) -> Result<(), Error> {
-        crypto.pbkdf()?.derive(pw, iter as usize, salt, w0w1s)
+        Ok(crypto.pbkdf()?.derive(pw, iter as usize, salt, w0w1s)?)
     }
 }
 

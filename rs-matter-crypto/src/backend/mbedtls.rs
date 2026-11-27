@@ -30,23 +30,26 @@
 //! this crypto backend. This is unlike the RustCrypto backend, where users are expected to provide their own variations
 //! of the crypto backend where certain primitives are replaced by hardware-accelerated implementations.
 
+/// Check the result of an MbedTLS call: an allocation failure is reported as
+/// `NoMemory`, an invalid key, point or scalar as `InvalidInput`, and any other
+/// error is a bug, so it panics.
 macro_rules! merr_check {
     ($expr:expr) => {{
         let result = $expr;
         match mbedtls_rs_sys::merr!(result) {
-            Ok(val) => Ok::<_, $crate::error::Error>(val),
-            Err(err) => panic!("{}", err),
+            Ok(val) => Ok::<_, $crate::error::CryptoError>(val),
+            Err(err) => Err(error_or_panic(err)),
         }
     }};
 }
 
 use core::ffi::{c_int, c_uchar, c_void};
 
-use mbedtls_rs_sys::merr;
+use mbedtls_rs_sys::{merr, MbedtlsError};
 
 use rand_core::{CryptoRng, Rng, TryCryptoRng, TryRng};
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{CryptoError, CryptoErrorCode};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::MaybeSend;
@@ -152,26 +155,26 @@ where
     where
         Self: 'a;
 
-    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+    fn rand(&self) -> Result<Self::Rand<'_>, CryptoError> {
         Ok(&self.rng)
     }
 
-    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, CryptoError> {
         Ok(&self.rng)
     }
 
-    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, CryptoError> {
         Ok(Sha256::new())
     }
 
-    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+    fn hash1(&self) -> Result<Self::Hash1<'_>, CryptoError> {
         Ok(Sha1::new())
     }
 
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
-    ) -> Result<Self::Hmac<'_>, Error> {
+    ) -> Result<Self::Hmac<'_>, CryptoError> {
         unsafe {
             Hmac::new(
                 mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
@@ -180,45 +183,69 @@ where
         }
     }
 
-    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, CryptoError> {
         Ok(Hkdf::new(
             mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
         ))
     }
 
-    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, CryptoError> {
         Ok(Pbkdf2Hmac::new(
             mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
         ))
     }
 
-    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, CryptoError> {
         Ok(unsafe { AeadCcm::new(mbedtls_rs_sys::mbedtls_cipher_id_t_MBEDTLS_CIPHER_ID_AES) })
     }
 
-    fn pub_key(&self, key: crate::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        key: crate::CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, CryptoError> {
         self.ec_point(key)
     }
 
-    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, CryptoError> {
         self.generate_ec_scalar()
     }
 
     fn secret_key(
         &self,
         key: crate::CanonPkcSecretKeyRef<'_>,
-    ) -> Result<Self::SecretKey<'_>, Error> {
-        self.ec_scalar(key)
+    ) -> Result<Self::SecretKey<'_>, CryptoError> {
+        let result = self.ec_scalar(key)?;
+
+        // A secret key must not be zero either
+        self.ec_group.access(|group| {
+            merr_check!(unsafe {
+                mbedtls_rs_sys::mbedtls_ecp_check_privkey(&group.raw, &result.mpi.raw)
+            })
+        })?;
+
+        Ok(result)
     }
 
-    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        self.ec_scalar(self.singleton_secret_key)
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, CryptoError> {
+        self.secret_key(self.singleton_secret_key)
     }
 
-    fn ec_scalar(&self, scalar: crate::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(
+        &self,
+        scalar: crate::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         let mut result = ECScalar::new(&self.ec_group, &self.rng);
         unsafe {
             result.set(scalar)?;
+        }
+
+        // The scalar must be below the group order
+        let valid = self.ec_group.access(|group| unsafe {
+            mbedtls_rs_sys::mbedtls_mpi_cmp_mpi(&result.mpi.raw, &group.raw.N) < 0
+        });
+
+        if !valid {
+            Err(CryptoErrorCode::InvalidInput)?;
         }
 
         Ok(result)
@@ -227,7 +254,7 @@ where
     fn ec_scalar_mod_p(
         &self,
         uint: crate::CanonUint320Ref<'_>,
-    ) -> Result<Self::EcScalar<'_>, Error> {
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         let mut result = ECScalar::new(&self.ec_group, &self.rng);
 
         let mut mpi = Mpi::new();
@@ -242,7 +269,7 @@ where
         Ok(result)
     }
 
-    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, CryptoError> {
         let mut result = ECScalar::new(&self.ec_group, &self.rng);
 
         self.ec_group.access(|group| {
@@ -259,7 +286,10 @@ where
         Ok(result)
     }
 
-    fn ec_point(&self, point: crate::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(
+        &self,
+        point: crate::CanonEcPointRef<'_>,
+    ) -> Result<Self::EcPoint<'_>, CryptoError> {
         let mut result = ECPoint::new(&self.ec_group, &self.rng);
         unsafe {
             result.set(point)?;
@@ -268,13 +298,13 @@ where
         // `mbedtls_ecp_point_read_binary` only parses the coordinates; the
         // point must be on the curve (and not the identity) to be usable
         if !crate::EcPoint::is_valid_pubkey(&result)? {
-            Err(ErrorCode::InvalidData)?;
+            Err(CryptoErrorCode::InvalidInput)?;
         }
 
         Ok(result)
     }
 
-    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, CryptoError> {
         let mut result = ECPoint::new(&self.ec_group, &self.rng);
 
         self.ec_group.access(|group| {
@@ -327,7 +357,7 @@ impl Clone for Sha256 {
 }
 
 impl crate::Digest<{ crate::HASH_LEN }> for Sha256 {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_sha256_update(&mut self.raw, data.as_ptr(), data.len())
         })?;
@@ -338,13 +368,13 @@ impl crate::Digest<{ crate::HASH_LEN }> for Sha256 {
     fn finish_current(
         &mut self,
         hash: &mut CryptoSensitive<{ crate::HASH_LEN }>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let copy = self.clone();
 
         copy.finish(hash)
     }
 
-    fn finish(mut self, out: &mut CryptoSensitive<{ crate::HASH_LEN }>) -> Result<(), Error> {
+    fn finish(mut self, out: &mut CryptoSensitive<{ crate::HASH_LEN }>) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_sha256_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         })?;
@@ -395,7 +425,7 @@ impl Clone for Sha1 {
 }
 
 impl crate::Digest<{ crate::SHA1_HASH_LEN }> for Sha1 {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_sha1_update(&mut self.raw, data.as_ptr(), data.len())
         })?;
@@ -406,13 +436,16 @@ impl crate::Digest<{ crate::SHA1_HASH_LEN }> for Sha1 {
     fn finish_current(
         &mut self,
         hash: &mut CryptoSensitive<{ crate::SHA1_HASH_LEN }>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let copy = self.clone();
 
         copy.finish(hash)
     }
 
-    fn finish(mut self, out: &mut CryptoSensitive<{ crate::SHA1_HASH_LEN }>) -> Result<(), Error> {
+    fn finish(
+        mut self,
+        out: &mut CryptoSensitive<{ crate::SHA1_HASH_LEN }>,
+    ) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_sha1_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         })?;
@@ -433,29 +466,31 @@ impl<const HASH_LEN: usize> Hmac<HASH_LEN> {
     /// # Safety
     /// The caller must ensure that the provided `md_type` corresponds to the `HASH_LEN`
     /// generic parameter.
-    unsafe fn new(md_type: mbedtls_rs_sys::mbedtls_md_type_t, key: &[u8]) -> Result<Self, Error> {
-        let mut raw = Default::default();
+    unsafe fn new(
+        md_type: mbedtls_rs_sys::mbedtls_md_type_t,
+        key: &[u8],
+    ) -> Result<Self, CryptoError> {
+        let mut this = Self {
+            raw: Default::default(),
+        };
 
         unsafe {
-            mbedtls_rs_sys::mbedtls_md_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_md_init(&mut this.raw);
         }
 
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_md_setup(
-                &mut raw,
+                &mut this.raw,
                 mbedtls_rs_sys::mbedtls_md_info_from_type(md_type),
                 1,
             )
         })?;
 
-        merr!(unsafe { mbedtls_rs_sys::mbedtls_md_hmac_starts(&mut raw, key.as_ptr(), key.len()) })
-            .map_err(|e| {
-                error!("Failed to start HMAC: {}", e);
+        merr_check!(unsafe {
+            mbedtls_rs_sys::mbedtls_md_hmac_starts(&mut this.raw, key.as_ptr(), key.len())
+        })?;
 
-                ErrorCode::InvalidData
-            })?;
-
-        Ok(Self { raw })
+        Ok(this)
     }
 }
 
@@ -485,7 +520,7 @@ impl<const HASH_LEN: usize> Clone for Hmac<HASH_LEN> {
 }
 
 impl<const HASH_LEN: usize> crate::Digest<HASH_LEN> for Hmac<HASH_LEN> {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_md_hmac_update(&mut self.raw, data.as_ptr(), data.len())
         })?;
@@ -493,13 +528,13 @@ impl<const HASH_LEN: usize> crate::Digest<HASH_LEN> for Hmac<HASH_LEN> {
         Ok(())
     }
 
-    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         let copy = self.clone();
 
         copy.finish(hash)
     }
 
-    fn finish(mut self, out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish(mut self, out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_md_hmac_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         })?;
@@ -528,8 +563,8 @@ impl crate::Kdf for Hkdf {
         ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
-        merr!(unsafe {
+    ) -> Result<(), CryptoError> {
+        merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_hkdf(
                 mbedtls_rs_sys::mbedtls_md_info_from_type(self.md_type),
                 salt.as_ptr(),
@@ -541,11 +576,6 @@ impl crate::Kdf for Hkdf {
                 key.access_mut().as_mut_ptr(),
                 KEY_LEN,
             )
-        })
-        .map_err(|e| {
-            error!("Failed to derive key with HKDF: {}", e);
-
-            ErrorCode::InvalidData
         })?;
 
         Ok(())
@@ -572,8 +602,8 @@ impl crate::PbKdf for Pbkdf2Hmac {
         iter: usize,
         salt: &[u8],
         out: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
-        merr!(unsafe {
+    ) -> Result<(), CryptoError> {
+        merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_pkcs5_pbkdf2_hmac_ext(
                 self.md_type,
                 password.access().as_ptr(),
@@ -584,11 +614,6 @@ impl crate::PbKdf for Pbkdf2Hmac {
                 KEY_LEN as _,
                 out.access_mut().as_mut_ptr(),
             )
-        })
-        .map_err(|e| {
-            error!("Failed to derive key with PBKDF2-HMAC: {}", e);
-
-            ErrorCode::InvalidData
         })?;
 
         Ok(())
@@ -624,8 +649,10 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
-    ) -> Result<&'a [u8], Error> {
-        assert!(data.len() >= data_len + TAG_LEN);
+    ) -> Result<&'a [u8], CryptoError> {
+        if data.len() < data_len + TAG_LEN {
+            Err(CryptoErrorCode::BufferTooSmall)?;
+        }
 
         let mut ctx = Default::default();
 
@@ -633,33 +660,36 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
             mbedtls_rs_sys::mbedtls_ccm_init(&mut ctx);
         }
 
-        merr_check!(unsafe {
+        let result = merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_ccm_setkey(
                 &mut ctx,
                 self.cipher_id,
                 key.access().as_ptr(),
                 (KEY_LEN * 8) as u32,
             )
-        })?;
-
-        merr_check!(unsafe {
-            mbedtls_rs_sys::mbedtls_ccm_encrypt_and_tag(
-                &mut ctx,
-                data_len,
-                nonce.access().as_ptr(),
-                NONCE_LEN,
-                aad.as_ptr(),
-                aad.len(),
-                data.as_ptr(),
-                data.as_mut_ptr(),
-                data.as_mut_ptr().add(data_len),
-                TAG_LEN,
-            )
-        })?;
+        })
+        .and_then(|_| {
+            merr_check!(unsafe {
+                mbedtls_rs_sys::mbedtls_ccm_encrypt_and_tag(
+                    &mut ctx,
+                    data_len,
+                    nonce.access().as_ptr(),
+                    NONCE_LEN,
+                    aad.as_ptr(),
+                    aad.len(),
+                    data.as_ptr(),
+                    data.as_mut_ptr(),
+                    data.as_mut_ptr().add(data_len),
+                    TAG_LEN,
+                )
+            })
+        });
 
         unsafe {
             mbedtls_rs_sys::mbedtls_ccm_free(&mut ctx);
         }
+
+        result?;
 
         Ok(&data[..data_len + TAG_LEN])
     }
@@ -670,10 +700,10 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         if data.len() < TAG_LEN {
             // Nothing to authenticate
-            Err(ErrorCode::InvalidData)?;
+            Err(CryptoErrorCode::InvalidInput)?;
         }
 
         let mut ctx = Default::default();
@@ -682,16 +712,15 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
             mbedtls_rs_sys::mbedtls_ccm_init(&mut ctx);
         }
 
-        merr_check!(unsafe {
+        let ret = merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_ccm_setkey(
                 &mut ctx,
                 self.cipher_id,
                 key.access().as_ptr(),
                 (KEY_LEN * 8) as u32,
             )
-        })?;
-
-        let ret = unsafe {
+        })
+        .map(|_| unsafe {
             mbedtls_rs_sys::mbedtls_ccm_auth_decrypt(
                 &mut ctx,
                 data.len() - TAG_LEN,
@@ -704,17 +733,18 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
                 data.as_mut_ptr().add(data.len() - TAG_LEN),
                 TAG_LEN,
             )
-        };
+        });
 
         unsafe {
             mbedtls_rs_sys::mbedtls_ccm_free(&mut ctx);
         }
 
-        // A failed auth tag is normal (replayed/corrupted/wrong-key received frame)
-        // -> return it. Any other code (e.g. MBEDTLS_ERR_CCM_BAD_INPUT) is a
-        // programming error and still panics via `merr_check!`.
+        let ret = ret?;
+
+        // A failed tag means a corrupted, replayed or foreign message; any other
+        // error is a bug, as `merr_check!` treats it
         if ret == mbedtls_rs_sys::MBEDTLS_ERR_CCM_AUTH_FAILED {
-            return Err(ErrorCode::InvalidData.into());
+            Err(CryptoErrorCode::InvalidInput)?;
         }
         merr_check!(ret)?;
 
@@ -741,7 +771,7 @@ impl Mpi {
     }
 
     /// Set the MPI from the given BE byte representation.
-    fn set(&mut self, uint: &[u8]) -> Result<(), Error> {
+    fn set(&mut self, uint: &[u8]) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_mpi_read_binary(&mut self.raw, uint.as_ptr(), uint.len())
         })?;
@@ -752,7 +782,7 @@ impl Mpi {
     /// Write the MPI to the given BE byte array.
     ///
     /// The method will panic if the provided buffer is not large enough.
-    fn write(&self, uint: &mut [u8]) -> Result<(), Error> {
+    fn write(&self, uint: &mut [u8]) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_mpi_write_binary(&self.raw, uint.as_mut_ptr(), uint.len())
         })?;
@@ -823,7 +853,10 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
     /// # Safety
     /// The caller must ensure that the provided `group_id` matches the
     /// `LEN` and `SCALAR_LEN` generic parameters.
-    unsafe fn set(&mut self, group_id: mbedtls_rs_sys::mbedtls_ecp_group_id) -> Result<(), Error> {
+    unsafe fn set(
+        &mut self,
+        group_id: mbedtls_rs_sys::mbedtls_ecp_group_id,
+    ) -> Result<(), CryptoError> {
         merr_check!(unsafe { mbedtls_rs_sys::mbedtls_ecp_group_load(&mut self.raw, group_id) })?;
 
         Ok(())
@@ -873,7 +906,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> ECPoint<'a, LEN, SCALAR_L
     }
 
     /// Set the EC point from the given byte representation.
-    unsafe fn set(&mut self, point: CryptoSensitiveRef<LEN>) -> Result<(), Error> {
+    unsafe fn set(&mut self, point: CryptoSensitiveRef<LEN>) -> Result<(), CryptoError> {
         self.group
             .access(|group| {
                 merr!(unsafe {
@@ -888,14 +921,14 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> ECPoint<'a, LEN, SCALAR_L
             .map_err(|e| {
                 error!("Failed to read EC point: {}", e);
 
-                ErrorCode::InvalidData
+                no_memory_or(e, CryptoErrorCode::InvalidInput)
             })?;
 
         Ok(())
     }
 
     /// Write the EC point to the given byte array in uncompressed format.
-    fn write(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         let mut olen = 0;
 
         self.group.access(|group| {
@@ -911,7 +944,10 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> ECPoint<'a, LEN, SCALAR_L
             })
         })?;
 
-        assert_eq!(olen, LEN);
+        // Only the point at infinity is shorter, and it has no canonical form
+        if olen != LEN {
+            Err(CryptoErrorCode::InvalidInput)?;
+        }
 
         Ok(())
     }
@@ -944,7 +980,7 @@ where
     where
         Self: 'a + 's;
 
-    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+    fn is_valid_pubkey(&self) -> Result<bool, CryptoError> {
         // `mbedtls_ecp_check_pubkey` performs the full RFC-9383 public-key
         // validation: the point is on the curve, its coordinates are in range,
         // and it is not the identity (zero) point. It returns `0` for a valid
@@ -968,7 +1004,7 @@ where
         }
     }
 
-    fn neg(&self) -> Result<Self, Error> {
+    fn neg(&self) -> Result<Self, CryptoError> {
         assert!(unsafe { mbedtls_rs_sys::mbedtls_mpi_cmp_int(&self.raw.private_Z, 1) } == 0);
 
         let mut result = ECPoint::new(self.group, self.rng);
@@ -1001,7 +1037,7 @@ where
         Ok(result)
     }
 
-    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, Error> {
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, CryptoError> {
         let mut result = ECPoint::new(self.group, self.rng);
 
         self.group.access(|group| {
@@ -1025,7 +1061,7 @@ where
         s1: &Self::Scalar<'a>,
         p2: &Self,
         s2: &Self::Scalar<'a>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, CryptoError> {
         let mut result = ECPoint::new(self.group, self.rng);
 
         self.group.access(|group| {
@@ -1044,7 +1080,7 @@ where
         Ok(result)
     }
 
-    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         self.write(point)
     }
 }
@@ -1056,7 +1092,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         &self,
         data: &[u8],
         signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, CryptoError> {
         let mut r = Mpi::new();
         let mut s = Mpi::new();
 
@@ -1087,7 +1123,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         Ok(result == 0)
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         self.write(key)
     }
 }
@@ -1116,12 +1152,12 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, R> ECScalar<'a, LEN, POINT_LE
     }
 
     /// Set the EC scalar from the given byte representation.
-    unsafe fn set(&mut self, scalar: CryptoSensitiveRef<LEN>) -> Result<(), Error> {
+    unsafe fn set(&mut self, scalar: CryptoSensitiveRef<LEN>) -> Result<(), CryptoError> {
         self.mpi.set(scalar.access())
     }
 
     /// Write the EC scalar to the given byte array.
-    fn write(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         self.mpi.write(scalar.access_mut())
     }
 }
@@ -1131,7 +1167,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, R> crate::EcScalar<'a, LEN>
 where
     for<'r> &'r R: CryptoRng,
 {
-    fn mul(&self, other: &Self) -> Result<Self, Error> {
+    fn mul(&self, other: &Self) -> Result<Self, CryptoError> {
         let mut result = ECScalar::new(self.group, self.rng);
 
         let mut mpi = Mpi::new();
@@ -1151,7 +1187,7 @@ where
         Ok(result)
     }
 
-    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         self.write(scalar)
     }
 }
@@ -1167,7 +1203,7 @@ where
     where
         Self: 's;
 
-    fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error> {
+    fn pub_key(&self) -> Result<Self::PublicKey<'a>, CryptoError> {
         let mut pub_key = ECPoint::new(self.group, self.rng);
 
         self.group.access(|group| {
@@ -1190,7 +1226,7 @@ where
         &self,
         data: &[u8],
         signature: &mut CryptoSensitive<SIGNATURE_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         use crate::Digest;
 
         let mut sha256 = Sha256::new();
@@ -1244,7 +1280,7 @@ where
         &self,
         peer_pub_key: &Self::PublicKey<'a>,
         shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let mut z = Mpi::new();
 
         self.group.access(|group| {
@@ -1263,7 +1299,7 @@ where
         z.write(shared_secret.access_mut())
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         self.write(key)
     }
 }
@@ -1300,7 +1336,7 @@ impl<'a, T: CryptoRng> MbedtlsDrbg<'a, T> {
     /// # Arguments
     /// - `entropy`: Reference to the entropy source.
     /// - `personality`: Optional personality string.
-    pub fn new(entropy: &'a mut T, personality: Option<&[u8]>) -> Result<Self, Error> {
+    pub fn new(entropy: &'a mut T, personality: Option<&[u8]>) -> Result<Self, CryptoError> {
         let mut raw = Default::default();
 
         unsafe {
@@ -1406,7 +1442,7 @@ impl<T> MbedtlsEntropy<T> {
         self,
         entropy_source: &mut E,
         threshold: usize,
-    ) -> Result<MbedtlsEntropy<(T, &mut E)>, Error> {
+    ) -> Result<MbedtlsEntropy<(T, &mut E)>, CryptoError> {
         self.internal_add(entropy_source, true, threshold)
     }
 
@@ -1425,7 +1461,7 @@ impl<T> MbedtlsEntropy<T> {
         self,
         entropy_source: &mut E,
         threshold: usize,
-    ) -> Result<MbedtlsEntropy<(T, &mut E)>, Error> {
+    ) -> Result<MbedtlsEntropy<(T, &mut E)>, CryptoError> {
         self.internal_add(entropy_source, false, threshold)
     }
 
@@ -1434,7 +1470,7 @@ impl<T> MbedtlsEntropy<T> {
         entropy_source: &mut E,
         strong: bool,
         threshold: usize,
-    ) -> Result<MbedtlsEntropy<(T, &mut E)>, Error> {
+    ) -> Result<MbedtlsEntropy<(T, &mut E)>, CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_entropy_add_source(
                 &mut unwrap!(self.raw),
@@ -1459,7 +1495,7 @@ impl<T> MbedtlsEntropy<T> {
     ///
     /// # Arguments
     /// - `data`: The seed data.
-    pub fn seed(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub fn seed(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_entropy_update_manual(
                 unwrap!(self.raw.as_mut()),
@@ -1543,4 +1579,120 @@ unsafe extern "C" fn mbedtls_platform_entropy_source<T: Rng>(
     }
 
     0
+}
+
+/// Map an MbedTLS error to `NoMemory` if it is an allocation failure and to
+/// `InvalidInput` if it is an invalid key, point or scalar, and panic otherwise:
+/// any other error is a bug in how the backend calls MbedTLS.
+#[cold]
+#[inline(never)]
+fn error_or_panic(err: MbedtlsError) -> CryptoError {
+    if is_alloc_failure(&err) {
+        error!("MbedTLS is out of memory: {}", err);
+
+        CryptoErrorCode::NoMemory.into()
+    } else if is_invalid_key(&err) {
+        error!("MbedTLS: invalid key, point or scalar: {}", err);
+
+        CryptoErrorCode::InvalidInput.into()
+    } else {
+        panic!("{}", err);
+    }
+}
+
+/// Map an MbedTLS error to `NoMemory` if it is an allocation failure, and to `code` otherwise.
+#[cold]
+#[inline(never)]
+fn no_memory_or(err: MbedtlsError, code: CryptoErrorCode) -> CryptoError {
+    if is_alloc_failure(&err) {
+        CryptoErrorCode::NoMemory.into()
+    } else {
+        code.into()
+    }
+}
+
+/// Whether an MbedTLS error is an allocation failure of any MbedTLS module.
+///
+/// The memory might be allocated by any module, also behind the pointers of a
+/// context that lives in place.
+fn is_alloc_failure(err: &MbedtlsError) -> bool {
+    let (high, low) = split(err);
+
+    matches!(
+        low,
+        mbedtls_rs_sys::MBEDTLS_ERR_MPI_ALLOC_FAILED
+            | mbedtls_rs_sys::MBEDTLS_ERR_ASN1_ALLOC_FAILED
+    ) || matches!(
+        high,
+        mbedtls_rs_sys::MBEDTLS_ERR_ECP_ALLOC_FAILED
+            | mbedtls_rs_sys::MBEDTLS_ERR_MD_ALLOC_FAILED
+            | mbedtls_rs_sys::MBEDTLS_ERR_CIPHER_ALLOC_FAILED
+            | mbedtls_rs_sys::MBEDTLS_ERR_PK_ALLOC_FAILED
+            | mbedtls_rs_sys::MBEDTLS_ERR_X509_ALLOC_FAILED
+    )
+}
+
+/// Whether an MbedTLS error says that a key, point or scalar is not valid.
+fn is_invalid_key(err: &MbedtlsError) -> bool {
+    split(err).0 == mbedtls_rs_sys::MBEDTLS_ERR_ECP_INVALID_KEY
+}
+
+/// Split an MbedTLS error into its high-level and low-level code.
+///
+/// A code is the negated sum of a high-level code (bits 7 to 14) and a
+/// low-level one (bits 0 to 6).
+fn split(err: &MbedtlsError) -> (i32, i32) {
+    let code = err.code_normalized().unwrap_or(0);
+
+    (-((code & !0x7f) as i32), -((code & 0x7f) as i32))
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use mbedtls_rs_sys::MbedtlsError;
+
+    use super::{is_alloc_failure, is_invalid_key};
+
+    #[test]
+    fn alloc_failures_are_detected() {
+        let alloc = |code| is_alloc_failure(&MbedtlsError::new(code));
+
+        // Low-level and high-level codes alone
+        assert!(alloc(mbedtls_rs_sys::MBEDTLS_ERR_MPI_ALLOC_FAILED));
+        assert!(alloc(mbedtls_rs_sys::MBEDTLS_ERR_PK_ALLOC_FAILED));
+
+        // An allocation failure in either part of a combined code
+        assert!(alloc(
+            mbedtls_rs_sys::MBEDTLS_ERR_X509_INVALID_FORMAT
+                + mbedtls_rs_sys::MBEDTLS_ERR_ASN1_ALLOC_FAILED
+        ));
+        assert!(alloc(
+            mbedtls_rs_sys::MBEDTLS_ERR_ECP_ALLOC_FAILED
+                + mbedtls_rs_sys::MBEDTLS_ERR_MPI_BAD_INPUT_DATA
+        ));
+
+        assert!(!alloc(mbedtls_rs_sys::MBEDTLS_ERR_CCM_AUTH_FAILED));
+        assert!(!alloc(mbedtls_rs_sys::MBEDTLS_ERR_ECP_INVALID_KEY));
+        assert!(!alloc(
+            mbedtls_rs_sys::MBEDTLS_ERR_X509_INVALID_FORMAT
+                + mbedtls_rs_sys::MBEDTLS_ERR_ASN1_OUT_OF_DATA
+        ));
+        assert!(!alloc(0));
+    }
+
+    #[test]
+    fn invalid_keys_are_detected() {
+        let invalid = |code| is_invalid_key(&MbedtlsError::new(code));
+
+        assert!(invalid(mbedtls_rs_sys::MBEDTLS_ERR_ECP_INVALID_KEY));
+        assert!(invalid(
+            mbedtls_rs_sys::MBEDTLS_ERR_ECP_INVALID_KEY
+                + mbedtls_rs_sys::MBEDTLS_ERR_MPI_BAD_INPUT_DATA
+        ));
+
+        assert!(!invalid(mbedtls_rs_sys::MBEDTLS_ERR_ECP_BAD_INPUT_DATA));
+        assert!(!invalid(mbedtls_rs_sys::MBEDTLS_ERR_ECP_ALLOC_FAILED));
+        assert!(!invalid(0));
+    }
 }

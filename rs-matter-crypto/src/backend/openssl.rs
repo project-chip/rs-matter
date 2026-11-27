@@ -45,14 +45,14 @@ use hmac::{Hmac, KeyInit, Mac};
 
 use rand_core::{TryCryptoRng, TryRng};
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{CryptoError, CryptoErrorCode};
 use crate::{CanonPkcSecretKeyRef, CanonUint320Ref, CryptoSensitive, CryptoSensitiveRef};
 
 macro_rules! openssl_check {
     ($expr:expr) => {{
         let result = $expr;
         match result {
-            Ok(val) => Ok::<_, Error>(val),
+            Ok(val) => Ok::<_, CryptoError>(val),
             Err(err) => {
                 #[cfg(not(feature = "defmt"))]
                 {
@@ -157,62 +157,84 @@ impl crate::Crypto for OpenSslCrypto<'_> {
     where
         Self: 'a;
 
-    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+    fn rand(&self) -> Result<Self::Rand<'_>, CryptoError> {
         Ok(Rand(()))
     }
 
-    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, CryptoError> {
         Ok(Rand(()))
     }
 
-    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, CryptoError> {
         unsafe { Hash::new(MessageDigest::sha256()) }
     }
 
-    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+    fn hash1(&self) -> Result<Self::Hash1<'_>, CryptoError> {
         unsafe { Hash1::new(MessageDigest::sha1()) }
     }
 
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
-    ) -> Result<Self::Hmac<'_>, Error> {
+    ) -> Result<Self::Hmac<'_>, CryptoError> {
         HmacSha256::new(key.access())
     }
 
-    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, CryptoError> {
         Ok(Hkdf::new(Md::sha256()))
     }
 
-    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, CryptoError> {
         Ok(Pbkdf2Hmac::new(MessageDigest::sha256()))
     }
 
-    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, CryptoError> {
         Ok(unsafe { Aead::new(openssl::cipher::Cipher::aes_128_ccm()) })
     }
 
-    fn pub_key(&self, key: crate::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        key: crate::CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, CryptoError> {
         self.ec_point(key)
     }
 
-    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, CryptoError> {
         self.generate_ec_scalar() // TODO: Should be non-zero
     }
 
     fn secret_key(
         &self,
         key: crate::CanonPkcSecretKeyRef<'_>,
-    ) -> Result<Self::SecretKey<'_>, Error> {
-        self.ec_scalar(key)
+    ) -> Result<Self::SecretKey<'_>, CryptoError> {
+        let result = self.ec_scalar(key)?;
+
+        // A secret key must not be zero either
+        if result.scalar.num_bits() == 0 {
+            Err(CryptoErrorCode::InvalidInput)?;
+        }
+
+        Ok(result)
     }
 
-    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        self.ec_scalar(self.singleton_secret_key)
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, CryptoError> {
+        self.secret_key(self.singleton_secret_key)
     }
 
-    fn ec_scalar(&self, scalar: crate::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(
+        &self,
+        scalar: crate::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         let scalar = openssl_check!(BigNum::from_slice(scalar.access()))?;
+
+        // The scalar must be below the group order
+        let mut ctx = openssl_check!(BigNumContext::new())?;
+        let mut order = openssl_check!(BigNum::new())?;
+        openssl_check!(self.ec_group.group.order(&mut order, &mut ctx))?;
+
+        if scalar.ucmp(&order) != core::cmp::Ordering::Less {
+            Err(CryptoErrorCode::InvalidInput)?;
+        }
 
         Ok(Self::EcScalar {
             group: &self.ec_group,
@@ -220,7 +242,10 @@ impl crate::Crypto for OpenSslCrypto<'_> {
         })
     }
 
-    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar_mod_p(
+        &self,
+        uint: CanonUint320Ref<'_>,
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         let mut ctx = openssl_check!(BigNumContext::new())?;
         let mut order = openssl_check!(BigNum::new())?;
 
@@ -238,7 +263,7 @@ impl crate::Crypto for OpenSslCrypto<'_> {
         })
     }
 
-    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, CryptoError> {
         let mut ctx = openssl_check!(BigNumContext::new())?;
         let mut order = openssl_check!(BigNum::new())?;
         openssl_check!(self.ec_group.group.order(&mut order, &mut ctx))?;
@@ -252,11 +277,14 @@ impl crate::Crypto for OpenSslCrypto<'_> {
         })
     }
 
-    fn ec_point(&self, point: crate::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(
+        &self,
+        point: crate::CanonEcPointRef<'_>,
+    ) -> Result<Self::EcPoint<'_>, CryptoError> {
         let mut ctx = openssl_check!(BigNumContext::new())?;
 
         let point = EcPoint::from_bytes(&self.ec_group.group, point.access(), &mut ctx)
-            .map_err(|e| map_err("Failed to parse EC point", e))?;
+            .map_err(|e| invalid_input("Failed to parse EC point", e))?;
 
         Ok(Self::EcPoint {
             group: &self.ec_group,
@@ -264,7 +292,7 @@ impl crate::Crypto for OpenSslCrypto<'_> {
         })
     }
 
-    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, CryptoError> {
         let point = openssl_check!(self
             .ec_group
             .group
@@ -315,23 +343,23 @@ impl<const HASH_LEN: usize> Hash<HASH_LEN> {
     /// # Safety
     /// This function is unsafe because the caller must ensure that the
     /// `md` parameter corresponds to the `HASH_LEN` generic parameter.
-    unsafe fn new(md: MessageDigest) -> Result<Self, Error> {
+    unsafe fn new(md: MessageDigest) -> Result<Self, CryptoError> {
         Ok(Self(openssl_check!(Hasher::new(md))?))
     }
 }
 
 impl<const HASH_LEN: usize> crate::Digest<HASH_LEN> for Hash<HASH_LEN> {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         openssl_check!(self.0.update(data))
     }
 
-    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         let copy = self.clone();
 
         copy.finish(hash)
     }
 
-    fn finish(mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish(mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         let digest = openssl_check!(self.0.finish())?;
         hash.access_mut().copy_from_slice(digest.as_ref());
 
@@ -352,23 +380,26 @@ impl<const SHA1_HASH_LEN: usize> Hash1<SHA1_HASH_LEN> {
     /// # Safety
     /// This function is unsafe because the caller must ensure that the
     /// `md` parameter corresponds to the `HASH_LEN` generic parameter.
-    unsafe fn new(md: MessageDigest) -> Result<Self, Error> {
+    unsafe fn new(md: MessageDigest) -> Result<Self, CryptoError> {
         Ok(Self(openssl_check!(Hasher::new(md))?))
     }
 }
 
 impl<const SHA1_HASH_LEN: usize> crate::Digest<SHA1_HASH_LEN> for Hash1<SHA1_HASH_LEN> {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         openssl_check!(self.0.update(data))
     }
 
-    fn finish_current(&mut self, hash: &mut CryptoSensitive<SHA1_HASH_LEN>) -> Result<(), Error> {
+    fn finish_current(
+        &mut self,
+        hash: &mut CryptoSensitive<SHA1_HASH_LEN>,
+    ) -> Result<(), CryptoError> {
         let copy = self.clone();
 
         copy.finish(hash)
     }
 
-    fn finish(mut self, hash: &mut CryptoSensitive<SHA1_HASH_LEN>) -> Result<(), Error> {
+    fn finish(mut self, hash: &mut CryptoSensitive<SHA1_HASH_LEN>) -> Result<(), CryptoError> {
         let digest = openssl_check!(self.0.finish())?;
         hash.access_mut().copy_from_slice(digest.as_ref());
 
@@ -382,19 +413,16 @@ pub struct HmacSha256(Hmac<sha2::Sha256>);
 
 impl HmacSha256 {
     /// Create a new HMAC-SHA256 instance
-    fn new(key: &[u8]) -> Result<Self, Error> {
-        Hmac::<sha2::Sha256>::new_from_slice(key)
-            .map(Self)
-            .map_err(|_| {
-                error!("HMAC initialization failed - invalid key length");
-
-                ErrorCode::InvalidData.into()
-            })
+    fn new(key: &[u8]) -> Result<Self, CryptoError> {
+        // HMAC accepts keys of any length
+        Ok(Self(
+            unwrap!(Hmac::<sha2::Sha256>::new_from_slice(key).ok()),
+        ))
     }
 }
 
 impl crate::Digest<{ crate::HASH_LEN }> for HmacSha256 {
-    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         Mac::update(&mut self.0, data);
 
         Ok(())
@@ -403,13 +431,13 @@ impl crate::Digest<{ crate::HASH_LEN }> for HmacSha256 {
     fn finish_current(
         &mut self,
         hash: &mut CryptoSensitive<{ crate::HASH_LEN }>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let copy = self.clone();
 
         copy.finish(hash)
     }
 
-    fn finish(self, hash: &mut CryptoSensitive<{ crate::HASH_LEN }>) -> Result<(), Error> {
+    fn finish(self, hash: &mut CryptoSensitive<{ crate::HASH_LEN }>) -> Result<(), CryptoError> {
         hash.access_mut()
             .copy_from_slice(self.0.finalize().into_bytes().as_slice());
 
@@ -434,7 +462,7 @@ impl crate::Kdf for Hkdf {
         ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let mut ctx = openssl_check!(PkeyCtx::new_id(Id::HKDF))?;
 
         openssl_check!(ctx.derive_init())?;
@@ -448,9 +476,7 @@ impl crate::Kdf for Hkdf {
 
         openssl_check!(ctx.add_hkdf_info(info))?;
 
-        let len = ctx
-            .derive(Some(key.access_mut()))
-            .map_err(|e| map_err("HKDF expansion failed", e))?;
+        let len = openssl_check!(ctx.derive(Some(key.access_mut())))?;
 
         assert_eq!(len, KEY_LEN);
 
@@ -475,9 +501,14 @@ impl crate::PbKdf for Pbkdf2Hmac {
         iter: usize,
         salt: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
-        openssl::pkcs5::pbkdf2_hmac(pass.access(), salt, iter, self.0, key.access_mut())
-            .map_err(|e| map_err("PBKDF2-HMAC derivation failed", e))
+    ) -> Result<(), CryptoError> {
+        openssl_check!(openssl::pkcs5::pbkdf2_hmac(
+            pass.access(),
+            salt,
+            iter,
+            self.0,
+            key.access_mut()
+        ))
     }
 }
 
@@ -512,11 +543,13 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         // Most of the initialization stuff adapted from here:
         // https://wiki.openssl.org/images/e/e1/Evp-ccm-encrypt.c
 
-        assert!(data_len + TAG_LEN <= data.len());
+        if data.len() < data_len + TAG_LEN {
+            Err(CryptoErrorCode::BufferTooSmall)?;
+        }
 
         let mut ctx = openssl_check!(CipherCtx::new())?;
 
@@ -544,13 +577,13 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         // Most of the initialization stuff adapted from here:
         // https://wiki.openssl.org/images/e/e1/Evp-ccm-encrypt.c
 
         if data.len() < TAG_LEN {
             // Nothing to authenticate
-            Err(ErrorCode::InvalidData)?;
+            Err(CryptoErrorCode::InvalidInput)?;
         }
 
         let (data, tag) = data.split_at_mut(data.len() - TAG_LEN);
@@ -569,16 +602,13 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
         openssl_check!(ctx.cipher_update(aad, None))?;
 
-        // CCM verifies the tag during the update/final step. All length/init
-        // programming errors are already ruled out above via `openssl_check!`,
-        // so a failure here means invalid/untrusted input (bad tag or
-        // ciphertext) -> return it rather than panic.
+        // CCM checks the tag here, so a failure means a bad tag or ciphertext
         let mut decrypted_data_len = ctx
             .cipher_update_inplace(data, data.len())
-            .map_err(|_| ErrorCode::InvalidData)?;
+            .map_err(|_| CryptoErrorCode::InvalidInput)?;
         decrypted_data_len += ctx
             .cipher_final(&mut data[decrypted_data_len..])
-            .map_err(|_| ErrorCode::InvalidData)?;
+            .map_err(|_| CryptoErrorCode::InvalidInput)?;
 
         Ok(&data[..decrypted_data_len])
     }
@@ -599,7 +629,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
     /// # Safety
     /// This function is unsafe because the caller must ensure that the
     /// `nid` parameter corresponds to the `LEN` and `SCALAR_LEN` generic parameters.
-    unsafe fn new(nid: Nid) -> Result<Self, Error> {
+    unsafe fn new(nid: Nid) -> Result<Self, CryptoError> {
         let group = openssl_check!(EcGroup::from_curve_name(nid))?;
 
         Ok(Self { group })
@@ -616,12 +646,12 @@ pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
 
 impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
     /// Compute the OpenSSL EC key corresponding to this point
-    fn ec_key(&self) -> Result<EcKey<Public>, Error> {
+    fn ec_key(&self) -> Result<EcKey<Public>, CryptoError> {
         openssl_check!(EcKey::from_public_key(&self.group.group, &self.point))
     }
 
     /// Write the point in canonical form
-    fn write(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         let mut ctx = openssl_check!(BigNumContext::new())?;
 
         let tmp = openssl_check!(self.point.to_bytes(
@@ -629,6 +659,11 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
             PointConversionForm::UNCOMPRESSED,
             &mut ctx,
         ))?;
+
+        // Only the point at infinity is shorter, and it has no canonical form
+        if tmp.len() != LEN {
+            Err(CryptoErrorCode::InvalidInput)?;
+        }
 
         point.access_mut().copy_from_slice(tmp.as_slice());
 
@@ -644,7 +679,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
     where
         Self: 'a + 's;
 
-    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+    fn is_valid_pubkey(&self) -> Result<bool, CryptoError> {
         // RFC-9383 public-key validation: on the curve and not the identity
         // (point at infinity). `is_on_curve` also rejects out-of-range
         // coordinates.
@@ -656,7 +691,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
         Ok(on_curve && !infinity)
     }
 
-    fn neg(&self) -> Result<Self, Error> {
+    fn neg(&self) -> Result<Self, CryptoError> {
         let mut result = openssl_check!(self.point.to_owned(&self.group.group))?;
 
         let ctx = openssl_check!(BigNumContext::new())?;
@@ -668,7 +703,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
         })
     }
 
-    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, Error> {
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, CryptoError> {
         let mut result = openssl_check!(EcPoint::new(&self.group.group))?;
 
         let ctx = openssl_check!(BigNumContext::new())?;
@@ -686,7 +721,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
         s1: &Self::Scalar<'a>,
         p2: &Self,
         s2: &Self::Scalar<'a>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, CryptoError> {
         let a = self.mul(s1)?;
         let b = p2.mul(s2)?;
 
@@ -702,7 +737,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
         })
     }
 
-    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         self.write(point)
     }
 }
@@ -714,7 +749,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         &self,
         data: &[u8],
         signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, CryptoError> {
         // First get the SHA256 of the message
         let mut hasher = openssl_check!(Hasher::new(MessageDigest::sha256()))?;
         openssl_check!(hasher.update(data))?;
@@ -726,10 +761,11 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
 
         let ec_key = openssl_check!(EcKey::from_public_key(&self.group.group, &self.point))?;
 
-        openssl_check!(sig.verify(&digest, &ec_key))
+        sig.verify(&digest, &ec_key)
+            .map_err(|e| invalid_input("Signature verification failed", e))
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         self.write(key)
     }
 }
@@ -744,7 +780,7 @@ pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize> {
 
 impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
     /// Compute the OpenSSL EC point corresponding to this scalar
-    fn ec_pub_key_point(&self) -> Result<EcPoint, Error> {
+    fn ec_pub_key_point(&self) -> Result<EcPoint, CryptoError> {
         let ctx = openssl_check!(BigNumContext::new())?;
 
         let mut point = openssl_check!(EcPoint::new(&self.group.group))?;
@@ -760,7 +796,7 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
     }
 
     /// Compute the OpenSSL EC key corresponding to this scalar
-    fn ec_key(&self) -> Result<EcKey<Private>, Error> {
+    fn ec_key(&self) -> Result<EcKey<Private>, CryptoError> {
         let point = self.ec_pub_key_point()?;
 
         openssl_check!(EcKey::from_private_components(
@@ -771,7 +807,7 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
     }
 
     /// Write the scalar in canonical form
-    fn write(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         scalar
             .access_mut()
             .copy_from_slice(openssl_check!(self.scalar.to_vec_padded(LEN as _))?.as_slice());
@@ -783,14 +819,14 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
 impl<'a, const LEN: usize, const POINT_LEN: usize> crate::EcScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
-    fn mul(&self, other: &Self) -> Result<Self, Error> {
+    fn mul(&self, other: &Self) -> Result<Self, CryptoError> {
         Ok(Self {
             group: self.group,
             scalar: self.scalar.mul(&other.scalar),
         })
     }
 
-    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         self.write(scalar)
     }
 }
@@ -803,7 +839,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
     where
         Self: 's;
 
-    fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error> {
+    fn pub_key(&self) -> Result<Self::PublicKey<'a>, CryptoError> {
         let ctx = openssl_check!(BigNumContext::new())?;
 
         let mut pub_key = Self::PublicKey {
@@ -825,7 +861,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
         &self,
         data: &[u8],
         signature: &mut CryptoSensitive<SIGNATURE_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         // First get the SHA256 of the message
         let mut hasher = openssl_check!(Hasher::new(MessageDigest::sha256()))?;
         openssl_check!(hasher.update(data))?;
@@ -859,7 +895,7 @@ impl<
         &self,
         peer_pub_key: &Self::PublicKey<'a>,
         shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         let our_priv_key = openssl_check!(PKey::from_ec_key(self.ec_key()?))?;
         let peer_pub_key = openssl_check!(PKey::from_ec_key(peer_pub_key.ec_key()?))?;
 
@@ -871,17 +907,18 @@ impl<
         Ok(())
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, key: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         self.write(key)
     }
 }
 
-fn map_err(msg: &str, _err: openssl::error::ErrorStack) -> Error {
+/// Log an OpenSSL error about an input that cannot be used, and report it as such.
+fn invalid_input(msg: &str, _err: openssl::error::ErrorStack) -> CryptoError {
     #[cfg(feature = "log")]
     error!("{}: {}", msg, _err);
 
     #[cfg(feature = "defmt")]
     error!("{}", msg);
 
-    ErrorCode::InvalidData.into()
+    CryptoErrorCode::InvalidInput.into()
 }

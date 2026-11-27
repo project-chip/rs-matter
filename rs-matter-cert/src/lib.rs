@@ -33,7 +33,6 @@ use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
 use crate::crypto::{Crypto, PublicKey};
-use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, TlvError, TlvErrorCode, ToTLV};
 use crate::utils::epoch::UtcTime;
 use crate::utils::epoch::MATTER_CERT_DOESNT_EXPIRE;
@@ -44,7 +43,6 @@ use crate::utils::storage::String;
 use rs_matter_crypto as crypto;
 use rs_matter_tlv as tlv;
 use rs_matter_utils as utils;
-use rs_matter_utils::error;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -55,9 +53,11 @@ pub(crate) mod fmt;
 use self::printer::CertPrinter;
 
 pub use self::asn1_writer::ASN1Writer;
+pub use self::error::{CertError, CertErrorCode};
 
 mod asn1_writer;
 pub mod der_utils;
+pub mod error;
 pub mod gen;
 mod printer;
 pub mod x509;
@@ -141,7 +141,7 @@ struct BasicConstraints {
 }
 
 impl BasicConstraints {
-    pub fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
+    pub fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), CertError> {
         w.start_seq("")?;
         if self.is_ca {
             // Encode CA only if true
@@ -182,7 +182,7 @@ impl<'a> Extension<'a> {
     fn encode_all(
         iter: impl Iterator<Item = Result<Self, TlvError>> + 'a,
         w: &mut dyn CertConsumer,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CertError> {
         w.start_ctx("X509v3 extensions:", 3)?;
         w.start_seq("")?;
 
@@ -196,7 +196,7 @@ impl<'a> Extension<'a> {
         Ok(())
     }
 
-    fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
+    fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), CertError> {
         match self {
             Extension::BasicConstraints(t) => {
                 Self::encode_extension_start(
@@ -256,7 +256,7 @@ impl<'a> Extension<'a> {
         critical: bool,
         oid: &[u8],
         w: &mut dyn CertConsumer,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CertError> {
         w.start_seq(tag)?;
         w.oid("", oid)?;
         if critical {
@@ -265,13 +265,13 @@ impl<'a> Extension<'a> {
         w.start_compound_ostr("value:")
     }
 
-    fn encode_extension_end(w: &mut dyn CertConsumer) -> Result<(), Error> {
+    fn encode_extension_end(w: &mut dyn CertConsumer) -> Result<(), CertError> {
         w.end_compound_ostr()?;
         w.end_seq()
     }
 
     #[allow(unused_assignments)]
-    fn encode_key_usage(key_usage: u16, w: &mut dyn CertConsumer) -> Result<(), Error> {
+    fn encode_key_usage(key_usage: u16, w: &mut dyn CertConsumer) -> Result<(), CertError> {
         let mut key_usage_str = [0u8; 2];
         Self::int_to_bitstring(key_usage, &mut key_usage_str);
         w.bitstr(&Self::get_print_str(key_usage), true, &key_usage_str)?;
@@ -281,7 +281,7 @@ impl<'a> Extension<'a> {
     fn encode_extended_key_usage(
         list: impl Iterator<Item = Result<u8, TlvError>>,
         w: &mut dyn CertConsumer,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CertError> {
         const OID_SERVER_AUTH: [u8; 8] = [0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
         const OID_CLIENT_AUTH: [u8; 8] = [0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02];
         const OID_CODE_SIGN: [u8; 8] = [0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
@@ -414,17 +414,17 @@ impl<'a> DN<'a> {
         Ok(DNTag::from_u8(ctx).ok_or(TlvErrorCode::InvalidValue)?)
     }
 
-    pub fn is_printable(&self) -> Result<bool, Error> {
-        let ctx = self.0.try_ctx()?.ok_or(ErrorCode::Invalid)?;
+    pub fn is_printable(&self) -> Result<bool, CertError> {
+        let ctx = self.0.try_ctx()?.ok_or(CertErrorCode::InvalidFormat)?;
 
         Ok(ctx >= 0x80)
     }
 
-    fn uint(&self) -> Result<u64, Error> {
+    fn uint(&self) -> Result<u64, CertError> {
         Ok(self.0.u64()?)
     }
 
-    fn value(&self) -> Result<DNValue<'a>, Error> {
+    fn value(&self) -> Result<DNValue<'a>, CertError> {
         if let Ok(value) = self.0.utf8() {
             if self.is_printable()? {
                 Ok(DNValue::PrintableStr(value))
@@ -440,7 +440,7 @@ impl<'a> DN<'a> {
         values: impl Iterator<Item = Result<Self, TlvError>> + 'a,
         tag: &str,
         w: &mut dyn CertConsumer,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CertError> {
         const OID_COMMON_NAME: [u8; 3] = [0x55_u8, 0x04, 0x03];
         const OID_SURNAME: [u8; 3] = [0x55_u8, 0x04, 0x04];
         const OID_SERIAL_NUMBER: [u8; 3] = [0x55_u8, 0x04, 0x05];
@@ -557,7 +557,7 @@ impl<'a> DN<'a> {
         w: &mut dyn CertConsumer,
         // Only applicable for integer values
         expected_len: Option<IntToStringLen>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CertError> {
         w.start_set("")?;
         w.start_seq("")?;
         w.oid(name, oid)?;
@@ -575,7 +575,7 @@ impl<'a> DN<'a> {
                 }
                 _ => {
                     error!("Invalid encoding");
-                    Err(ErrorCode::Invalid)?
+                    Err(CertErrorCode::InvalidFormat)?
                 }
             },
             DNValue::Utf8(v) => {
@@ -607,61 +607,61 @@ impl<'a> CertRef<'a> {
         Self(tlv)
     }
 
-    fn serial_no(&self) -> Result<&[u8], Error> {
+    fn serial_no(&self) -> Result<&[u8], CertError> {
         Ok(self.0.structure()?.find_ctx(1)?.str()?)
     }
 
-    fn sign_algo(&self) -> Result<u8, Error> {
+    fn sign_algo(&self) -> Result<u8, CertError> {
         Ok(self.0.structure()?.find_ctx(2)?.u8()?)
     }
 
-    fn issuer(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
+    fn issuer(&self) -> Result<TLVList<'a, DN<'a>>, CertError> {
         Ok(TLVList::new(self.0.structure()?.find_ctx(3)?)?)
     }
 
-    fn not_before(&self) -> Result<u32, Error> {
+    fn not_before(&self) -> Result<u32, CertError> {
         Ok(self.0.structure()?.find_ctx(4)?.u32()?)
     }
 
-    fn not_after(&self) -> Result<u32, Error> {
+    fn not_after(&self) -> Result<u32, CertError> {
         Ok(self.0.structure()?.find_ctx(5)?.u32()?)
     }
 
-    fn subject(&self) -> Result<TLVList<'a, DN<'a>>, Error> {
+    fn subject(&self) -> Result<TLVList<'a, DN<'a>>, CertError> {
         Ok(TLVList::new(self.0.structure()?.find_ctx(6)?)?)
     }
 
-    fn pubkey_algo(&self) -> Result<u8, Error> {
+    fn pubkey_algo(&self) -> Result<u8, CertError> {
         Ok(self.0.structure()?.find_ctx(7)?.u8()?)
     }
 
-    fn ec_curve_id(&self) -> Result<u8, Error> {
+    fn ec_curve_id(&self) -> Result<u8, CertError> {
         Ok(self.0.structure()?.find_ctx(8)?.u8()?)
     }
 
-    pub fn pubkey(&self) -> Result<&[u8], Error> {
+    pub fn pubkey(&self) -> Result<&[u8], CertError> {
         Ok(self.0.structure()?.find_ctx(9)?.str()?)
     }
 
-    fn extensions(&self) -> Result<TLVList<'a, Extension<'a>>, Error> {
+    fn extensions(&self) -> Result<TLVList<'a, Extension<'a>>, CertError> {
         Ok(TLVList::new(self.0.structure()?.find_ctx(10)?)?)
     }
 
-    fn signature(&self) -> Result<&[u8], Error> {
+    fn signature(&self) -> Result<&[u8], CertError> {
         Ok(self.0.structure()?.find_ctx(11)?.str()?)
     }
 
-    pub fn get_node_id(&self) -> Result<u64, Error> {
+    pub fn get_node_id(&self) -> Result<u64, CertError> {
         let dn = self
             .subject()?
             .iter()
             .do_try_find(|dn| Ok(dn.tag()? == DNTag::NodeId))?
-            .ok_or(ErrorCode::NoNodeId)?;
+            .ok_or(CertErrorCode::InvalidFormat)?;
 
         dn.uint()
     }
 
-    pub fn get_cat_ids(&self, output: &mut [u32]) -> Result<(), Error> {
+    pub fn get_cat_ids(&self, output: &mut [u32]) -> Result<(), CertError> {
         let mut offset = 0;
 
         self.subject()?.iter().try_for_each(|dn| {
@@ -669,7 +669,7 @@ impl<'a> CertRef<'a> {
 
             if dn.tag()? == DNTag::NocCat {
                 if offset == output.len() {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
 
                 output[offset] = dn.uint()? as u32;
@@ -680,12 +680,12 @@ impl<'a> CertRef<'a> {
         })
     }
 
-    pub fn get_fabric_id(&self) -> Result<u64, Error> {
+    pub fn get_fabric_id(&self) -> Result<u64, CertError> {
         let dn = self
             .subject()?
             .iter()
             .do_try_find(|dn| Ok(dn.tag()? == DNTag::FabricId))?
-            .ok_or(ErrorCode::NoFabricId)?;
+            .ok_or(CertErrorCode::InvalidFormat)?;
 
         dn.uint()
     }
@@ -695,7 +695,7 @@ impl<'a> CertRef<'a> {
     /// in their subject DN; ICACs always carry exactly one `IcaId`
     /// (spec). Returns the first matching value; errors out if
     /// neither tag is present.
-    pub fn get_ca_id(&self) -> Result<u64, Error> {
+    pub fn get_ca_id(&self) -> Result<u64, CertError> {
         let dn = self
             .subject()?
             .iter()
@@ -703,17 +703,17 @@ impl<'a> CertRef<'a> {
                 let tag = dn.tag()?;
                 Ok(tag == DNTag::RootCaId || tag == DNTag::IcaId)
             })?
-            .ok_or(ErrorCode::InvalidData)?;
+            .ok_or(CertErrorCode::InvalidFormat)?;
 
         dn.uint()
     }
 
-    fn get_subject_key_id(&self) -> Result<&[u8], Error> {
+    fn get_subject_key_id(&self) -> Result<&[u8], CertError> {
         let extension = self
             .extensions()?
             .iter()
             .do_try_find(|extension| Ok(matches!(extension, Extension::SubjectKeyId(_))))?
-            .ok_or(Error::new(ErrorCode::Invalid))?;
+            .ok_or(CertError::new(CertErrorCode::InvalidFormat))?;
 
         let Extension::SubjectKeyId(id) = extension else {
             unreachable!();
@@ -727,7 +727,7 @@ impl<'a> CertRef<'a> {
     /// Returned as `(is_ca, path_len_constraint)`. RCAC and ICAC SHALL set
     /// `is_ca = true`; NOC SHALL set `is_ca = false`. Only ICAC SHALL carry a
     /// `path_len_constraint` (value `0`) per Matter spec.
-    fn basic_constraints(&self) -> Result<Option<(bool, Option<u8>)>, Error> {
+    fn basic_constraints(&self) -> Result<Option<(bool, Option<u8>)>, CertError> {
         let ext = self
             .extensions()?
             .iter()
@@ -745,7 +745,7 @@ impl<'a> CertRef<'a> {
     /// Exposed for the `AddTrustedRootCertificate` flow, which the Matter spec
     /// requires to additionally reject an RCAC whose `pathLenConstraint` is
     /// greater than `1` (see CHIP's `ValidateChipRCAC`).
-    pub fn basic_constraints_path_len(&self) -> Result<Option<u8>, Error> {
+    pub fn basic_constraints_path_len(&self) -> Result<Option<u8>, CertError> {
         Ok(self.basic_constraints()?.and_then(|(_, p)| p))
     }
 
@@ -757,7 +757,7 @@ impl<'a> CertRef<'a> {
     /// spec), a verifier MUST reject the certificate if it encounters a
     /// critical extension it doesn't recognise. None of those sub-extensions
     /// are recognised by this verifier, so any critical flag is a rejection.
-    fn has_critical_future_extension(&self) -> Result<bool, Error> {
+    fn has_critical_future_extension(&self) -> Result<bool, CertError> {
         for ext in self.extensions()?.iter() {
             if let Extension::FutureExtensions(bytes) = ext? {
                 if der_blob_has_critical_extension(bytes.0)? {
@@ -770,7 +770,7 @@ impl<'a> CertRef<'a> {
 
     /// `KeyUsage` extension bits (Matter-TLV encoding — see
     /// [`crate::x509::key_usage_tlv`]), or `None` if absent.
-    fn key_usage(&self) -> Result<Option<u16>, Error> {
+    fn key_usage(&self) -> Result<Option<u16>, CertError> {
         let ext = self
             .extensions()?
             .iter()
@@ -788,7 +788,7 @@ impl<'a> CertRef<'a> {
     ///
     /// Returns `Ok(false)` if the extension is absent or any required purpose
     /// is missing.
-    fn ext_key_usage_has_all(&self, required: &[u8]) -> Result<bool, Error> {
+    fn ext_key_usage_has_all(&self, required: &[u8]) -> Result<bool, CertError> {
         let ext = self
             .extensions()?
             .iter()
@@ -821,7 +821,7 @@ impl<'a> CertRef<'a> {
     /// has a `Matter-Node-Id` RDN, an ICAC a `Matter-ICAC-Id`, and an RCAC a
     /// `Matter-RootCA-Id`. The three are mutually exclusive in a well-formed
     /// cert; we pick the first one we recognise.
-    fn cert_type(&self) -> Result<MatterCertType, Error> {
+    fn cert_type(&self) -> Result<MatterCertType, CertError> {
         for dn in self.subject()?.iter() {
             match dn?.tag()? {
                 DNTag::NodeId => return Ok(MatterCertType::Noc),
@@ -831,10 +831,10 @@ impl<'a> CertRef<'a> {
             }
         }
 
-        Err(ErrorCode::InvalidData.into())
+        Err(CertErrorCode::InvalidFormat.into())
     }
 
-    fn is_authority(&self, their: &CertRef) -> Result<bool, Error> {
+    fn is_authority(&self, their: &CertRef) -> Result<bool, CertError> {
         let their_subject = their.get_subject_key_id()?;
 
         let authority = self.extensions()?.iter().do_try_find(|extension| {
@@ -851,11 +851,11 @@ impl<'a> CertRef<'a> {
     /// Whether this certificate is self-signed (its `AuthorityKeyId` matches
     /// its `SubjectKeyId`). Matter-issued RCACs are always self-signed; an
     /// ICAC or NOC must not be (Matter Core spec).
-    pub fn is_self_signed(&self) -> Result<bool, Error> {
+    pub fn is_self_signed(&self) -> Result<bool, CertError> {
         self.is_authority(self)
     }
 
-    pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
+    pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, CertError> {
         let mut w = ASN1Writer::new(buf);
         self.encode(&mut w)?;
         Ok(w.as_slice().len())
@@ -879,7 +879,7 @@ impl<'a> CertRef<'a> {
         CertVerifier::new(self, crypto, utc_time)
     }
 
-    fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
+    fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), CertError> {
         w.start_seq("")?;
 
         w.start_ctx("Version:", 0)?;
@@ -889,9 +889,10 @@ impl<'a> CertRef<'a> {
         w.integer("Serial Num:", self.serial_no()?)?;
 
         w.start_seq("Signature Algorithm:")?;
-        let (str, oid) = match get_sign_algo(self.sign_algo()?).ok_or(ErrorCode::Invalid)? {
-            SignAlgoValue::ECDSAWithSHA256 => ("ECDSA with SHA256", OID_ECDSA_WITH_SHA256),
-        };
+        let (str, oid) =
+            match get_sign_algo(self.sign_algo()?).ok_or(CertErrorCode::InvalidFormat)? {
+                SignAlgoValue::ECDSAWithSHA256 => ("ECDSA with SHA256", OID_ECDSA_WITH_SHA256),
+            };
         w.oid(str, &oid)?;
         w.end_seq()?;
 
@@ -912,12 +913,13 @@ impl<'a> CertRef<'a> {
 
         w.start_seq("")?;
         w.start_seq("Public Key Algorithm")?;
-        let (str, pub_key) = match get_pubkey_algo(self.pubkey_algo()?).ok_or(ErrorCode::Invalid)? {
-            PubKeyAlgoValue::EcPubKey => ("ECPubKey", OID_PUB_KEY_ECPUBKEY),
-        };
+        let (str, pub_key) =
+            match get_pubkey_algo(self.pubkey_algo()?).ok_or(CertErrorCode::InvalidFormat)? {
+                PubKeyAlgoValue::EcPubKey => ("ECPubKey", OID_PUB_KEY_ECPUBKEY),
+            };
         w.oid(str, &pub_key)?;
         let (str, curve_id) =
-            match get_ec_curve_id(self.ec_curve_id()?).ok_or(ErrorCode::Invalid)? {
+            match get_ec_curve_id(self.ec_curve_id()?).ok_or(CertErrorCode::InvalidFormat)? {
                 EcCurveIdValue::Prime256V1 => ("Prime256v1", OID_EC_TYPE_PRIME256V1),
             };
         w.oid(str, &curve_id)?;
@@ -971,7 +973,7 @@ enum MatterCertType {
 ///
 /// Fails unless the whole blob is such extensions, none of them one that a
 /// Matter certificate has a field of its own for, as CHIP checks too.
-fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, Error> {
+fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, CertError> {
     const KNOWN_OIDS: [&[u8]; 5] = [
         &OID_BASIC_CONSTRAINTS,
         &OID_KEY_USAGE,
@@ -991,15 +993,15 @@ fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, Error> {
     let mut rest = bytes;
     while !rest.is_empty() {
         let Some((SEQUENCE, ext, next)) = der_element(rest) else {
-            Err(ErrorCode::InvalidData)?
+            Err(CertErrorCode::InvalidFormat)?
         };
 
         let Some((OID, oid, mut ext)) = der_element(ext) else {
-            Err(ErrorCode::InvalidData)?
+            Err(CertErrorCode::InvalidFormat)?
         };
         // An OID ends with a byte without its top bit
         if oid.last().is_none_or(|byte| byte & 0x80 != 0) || KNOWN_OIDS.contains(&oid) {
-            Err(ErrorCode::InvalidData)?;
+            Err(CertErrorCode::InvalidFormat)?;
         }
 
         // OPTIONAL critical BOOLEAN before the mandatory OCTET STRING
@@ -1008,13 +1010,13 @@ fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, Error> {
             match value {
                 [0x00] => (),
                 [0xff] => critical = true,
-                _ => Err(ErrorCode::InvalidData)?,
+                _ => Err(CertErrorCode::InvalidFormat)?,
             }
             ext = after;
         }
 
         let Some((OCTET_STRING, _, [])) = der_element(ext) else {
-            Err(ErrorCode::InvalidData)?
+            Err(CertErrorCode::InvalidFormat)?
         };
 
         rest = next;
@@ -1082,7 +1084,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
     ///   depth `0` is only valid as a standalone-root validation (e.g.
     ///   the `AddTrustedRootCertificate` flow), which still requires
     ///   the CA usage policy here.
-    fn verify_usage(&self) -> Result<(), Error> {
+    fn verify_usage(&self) -> Result<(), CertError> {
         use self::x509::key_usage_tlv;
 
         // Per RFC 5280 §4.2 / Matter Core spec, an unrecognised critical
@@ -1090,20 +1092,20 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
         // carried in a `future-extensions` blob is by definition not one
         // we process here, so any critical flag is fatal.
         if self.cert.has_critical_future_extension()? {
-            Err(ErrorCode::InvalidData)?;
+            Err(CertErrorCode::InvalidFormat)?;
         }
 
         let cert_type = self.cert.cert_type()?;
         let key_usage = self
             .cert
             .key_usage()?
-            .ok_or_else(|| Error::new(ErrorCode::InvalidData))?;
+            .ok_or_else(|| CertError::new(CertErrorCode::InvalidFormat))?;
 
         match cert_type {
             MatterCertType::Noc => {
                 // A NOC is only legal at depth 0 (chain leaf).
                 if self.depth != 0 {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
 
                 // `BasicConstraints.cA` SHALL be FALSE. The extension
@@ -1112,14 +1114,14 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
                 let (is_ca, _) = self
                     .cert
                     .basic_constraints()?
-                    .ok_or_else(|| Error::new(ErrorCode::InvalidData))?;
+                    .ok_or_else(|| CertError::new(CertErrorCode::InvalidFormat))?;
                 if is_ca {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
 
                 // `KeyUsage` MUST include `digitalSignature`.
                 if (key_usage & key_usage_tlv::DIGITAL_SIGNATURE) == 0 {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
 
                 // `ExtendedKeyUsage` MUST include both `serverAuth` (1)
@@ -1130,21 +1132,21 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
                     .cert
                     .ext_key_usage_has_all(&[SERVER_AUTH, CLIENT_AUTH])?
                 {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
             }
             MatterCertType::Icac | MatterCertType::Rcac => {
                 let (is_ca, path_len) = self
                     .cert
                     .basic_constraints()?
-                    .ok_or_else(|| Error::new(ErrorCode::InvalidData))?;
+                    .ok_or_else(|| CertError::new(CertErrorCode::InvalidFormat))?;
                 if !is_ca {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
 
                 // `KeyUsage` MUST include `keyCertSign`.
                 if (key_usage & key_usage_tlv::KEY_CERT_SIGN) == 0 {
-                    Err(ErrorCode::InvalidData)?;
+                    Err(CertErrorCode::InvalidFormat)?;
                 }
 
                 // RFC 5280 §4.2.1.9: `pathLenConstraint` gives the
@@ -1156,7 +1158,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
                 // trivially satisfied.
                 if let (Some(max_intermediates), depth) = (path_len, self.depth) {
                     if depth > 0 && depth - 1 > max_intermediates {
-                        Err(ErrorCode::InvalidData)?;
+                        Err(CertErrorCode::InvalidFormat)?;
                     }
                 }
             }
@@ -1169,12 +1171,12 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
         self,
         parent: &'p CertRef<'p>,
         buf: &mut [u8],
-    ) -> Result<CertVerifier<'p, C>, Error>
+    ) -> Result<CertVerifier<'p, C>, CertError>
     where
         'a: 'p,
     {
         if !self.cert.is_authority(parent)? {
-            Err(ErrorCode::InvalidAuthKey)?;
+            Err(CertErrorCode::WrongIssuer)?;
         }
 
         {
@@ -1187,7 +1189,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
                 .verify(asn1, self.cert.signature()?.try_into()?)?;
 
             if !result {
-                Err(ErrorCode::InvalidSignature)?;
+                Err(CertErrorCode::InvalidSignature)?;
             }
         }
 
@@ -1198,7 +1200,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
         let not_after = self.cert.not_after()?;
 
         if not_after > 0 && self.utc_time.any_secs() > not_after as u64 {
-            Err(ErrorCode::InvalidTime)?;
+            Err(CertErrorCode::OutsideValidityPeriod)?;
         }
 
         if let Some(secs) = self.utc_time.reliable_secs() {
@@ -1208,7 +1210,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
             // and we don't want to reject certs that were generated _after_
             // our clock lost sync
             if secs < not_before {
-                Err(ErrorCode::InvalidTime)?;
+                Err(CertErrorCode::OutsideValidityPeriod)?;
             }
         }
 
@@ -1224,7 +1226,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
         })
     }
 
-    pub fn finalise(self, buf: &mut [u8]) -> Result<(), Error> {
+    pub fn finalise(self, buf: &mut [u8]) -> Result<(), CertError> {
         let cert = self.cert;
         self.add_cert(cert, buf)?;
 
@@ -1233,37 +1235,37 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
 }
 
 pub trait CertConsumer {
-    fn start_seq(&mut self, tag: &str) -> Result<(), Error>;
-    fn end_seq(&mut self) -> Result<(), Error>;
-    fn integer(&mut self, tag: &str, i: &[u8]) -> Result<(), Error>;
-    fn printstr(&mut self, tag: &str, s: &str) -> Result<(), Error>;
-    fn utf8str(&mut self, tag: &str, s: &str) -> Result<(), Error>;
-    fn bitstr(&mut self, tag: &str, truncate: bool, s: &[u8]) -> Result<(), Error>;
-    fn ostr(&mut self, tag: &str, s: &[u8]) -> Result<(), Error>;
-    fn start_compound_ostr(&mut self, tag: &str) -> Result<(), Error>;
-    fn end_compound_ostr(&mut self) -> Result<(), Error>;
-    fn bool(&mut self, tag: &str, b: bool) -> Result<(), Error>;
-    fn start_set(&mut self, tag: &str) -> Result<(), Error>;
-    fn end_set(&mut self) -> Result<(), Error>;
-    fn ctx(&mut self, tag: &str, id: u8, val: &[u8]) -> Result<(), Error>;
-    fn start_ctx(&mut self, tag: &str, id: u8) -> Result<(), Error>;
-    fn end_ctx(&mut self) -> Result<(), Error>;
-    fn oid(&mut self, tag: &str, oid: &[u8]) -> Result<(), Error>;
-    fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), Error>;
+    fn start_seq(&mut self, tag: &str) -> Result<(), CertError>;
+    fn end_seq(&mut self) -> Result<(), CertError>;
+    fn integer(&mut self, tag: &str, i: &[u8]) -> Result<(), CertError>;
+    fn printstr(&mut self, tag: &str, s: &str) -> Result<(), CertError>;
+    fn utf8str(&mut self, tag: &str, s: &str) -> Result<(), CertError>;
+    fn bitstr(&mut self, tag: &str, truncate: bool, s: &[u8]) -> Result<(), CertError>;
+    fn ostr(&mut self, tag: &str, s: &[u8]) -> Result<(), CertError>;
+    fn start_compound_ostr(&mut self, tag: &str) -> Result<(), CertError>;
+    fn end_compound_ostr(&mut self) -> Result<(), CertError>;
+    fn bool(&mut self, tag: &str, b: bool) -> Result<(), CertError>;
+    fn start_set(&mut self, tag: &str) -> Result<(), CertError>;
+    fn end_set(&mut self) -> Result<(), CertError>;
+    fn ctx(&mut self, tag: &str, id: u8, val: &[u8]) -> Result<(), CertError>;
+    fn start_ctx(&mut self, tag: &str, id: u8) -> Result<(), CertError>;
+    fn end_ctx(&mut self) -> Result<(), CertError>;
+    fn oid(&mut self, tag: &str, oid: &[u8]) -> Result<(), CertError>;
+    fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), CertError>;
     /// Emit raw, pre-encoded DER bytes into the output stream verbatim.
     ///
     /// This is used to carry through TLV `future-extensions`, whose payload is
     /// already a fully DER-encoded X.509 Extension (or a sequence of them) and
     /// must be reproduced byte-for-byte for the TBS hash to match the signed
     /// data.
-    fn raw(&mut self, tag: &str, data: &[u8]) -> Result<(), Error>;
+    fn raw(&mut self, tag: &str, data: &[u8]) -> Result<(), CertError>;
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use crate::crypto::test_only_crypto;
-    use crate::error::ErrorCode;
+    use crate::error::CertErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
     use crate::utils::epoch::UtcTime;
     use crate::utils::storage::{Vec, WriteBuf};
@@ -1348,7 +1350,7 @@ mod tests {
         let time = UtcTime::Reliable(unwrap!(noc.not_before()) as u64 * 1_000_000);
         let a = noc.verify_chain_start(test_only_crypto(), time);
         assert_eq!(
-            Err(ErrorCode::InvalidAuthKey),
+            Err(CertErrorCode::WrongIssuer),
             unwrap!(a.add_cert(&icac, &mut buf))
                 .finalise(&mut buf)
                 .map_err(|e| e.code())
@@ -1362,7 +1364,7 @@ mod tests {
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
         let a = noc.verify_chain_start(test_only_crypto(), UtcTime::Reliable(0));
         assert_eq!(
-            Err(ErrorCode::InvalidAuthKey),
+            Err(CertErrorCode::WrongIssuer),
             a.add_cert(&icac, &mut buf)
                 .map(|_| ())
                 .map_err(|e| e.code())
@@ -1388,10 +1390,60 @@ mod tests {
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
         let a = noc.verify_chain_start(test_only_crypto(), UtcTime::Reliable(0));
         assert_eq!(
-            Err(ErrorCode::InvalidSignature),
+            Err(CertErrorCode::InvalidSignature),
             a.add_cert(&icac, &mut buf)
                 .map(|_| ())
                 .map_err(|e| e.code())
+        );
+    }
+
+    #[test]
+    fn test_cert_out_of_validity_period() {
+        let mut buf = [0; 1000];
+        let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
+        let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
+
+        let not_before = unwrap!(noc.not_before()) as u64;
+        let not_after = unwrap!(noc.not_after()) as u64;
+        assert!(not_after > 0);
+
+        for (secs, code) in [
+            (not_after + 1, CertErrorCode::OutsideValidityPeriod),
+            (not_before - 1, CertErrorCode::OutsideValidityPeriod),
+        ] {
+            let time = UtcTime::Reliable(secs * 1_000_000);
+            let a = noc.verify_chain_start(test_only_crypto(), time);
+            assert_eq!(
+                Err(code),
+                a.add_cert(&icac, &mut buf)
+                    .map(|_| ())
+                    .map_err(|e| e.code())
+            );
+        }
+    }
+
+    #[test]
+    fn test_cert_error_codes() {
+        let mut buf = [0; 1000];
+
+        // An empty structure lacks every field of a certificate
+        let empty = CertRef::new(TLVElement::new(&[0x15, 0x18]));
+        assert_eq!(
+            Err(CertErrorCode::InvalidFormat),
+            empty.as_asn1(&mut buf).map_err(|e| e.code())
+        );
+
+        let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
+        assert_eq!(
+            Err(CertErrorCode::BufferTooSmall),
+            noc.as_asn1(&mut buf[..16]).map_err(|e| e.code())
+        );
+
+        // A root certificate has no node ID
+        let rca = CertRef::new(TLVElement::new(RCA1_SUCCESS));
+        assert_eq!(
+            Err(CertErrorCode::InvalidFormat),
+            rca.get_node_id().map_err(|e| e.code())
         );
     }
 

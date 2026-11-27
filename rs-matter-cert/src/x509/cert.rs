@@ -25,7 +25,7 @@
 //! Identifier (SKID), Authority Key Identifier (AKID), public key, Matter Vendor ID,
 //! Matter Product ID, and validity periods.
 
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 use crate::x509::{
     key_usage_der, parse_hex_u16, time_to_unix_secs, AlgorithmIdentifier, AttributeTypeAndValue,
     AuthorityKeyIdentifier, BasicConstraints, KeyUsage, SubjectPublicKeyInfo, Validity,
@@ -800,8 +800,8 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     ///
     /// Validates that the certificate parses correctly and has the required
     /// extensions for the certificate type E.
-    pub fn new(data: &'a [u8]) -> Result<Self, Error> {
-        let cert = Certificate::from_der(data).map_err(|_| ErrorCode::InvalidData)?;
+    pub fn new(data: &'a [u8]) -> Result<Self, CertError> {
+        let cert = Certificate::from_der(data).map_err(|_| CertErrorCode::InvalidFormat)?;
 
         Ok(Self { cert })
     }
@@ -810,12 +810,12 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     ///
     /// The extnValue of the SubjectKeyIdentifier extension is an
     /// OCTET STRING containing the 20-byte key identifier.
-    pub fn subject_key_id(&self) -> Result<&'a [u8], Error> {
+    pub fn subject_key_id(&self) -> Result<&'a [u8], CertError> {
         self.cert
             .tbs_certificate
             .extensions
             .subject_key_id()
-            .ok_or(Error::from(ErrorCode::NotFound))
+            .ok_or(CertError::from(CertErrorCode::NotFound))
     }
 
     /// Extract the Authority Key Identifier extension value.
@@ -825,12 +825,12 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     ///
     /// Note: This will return NotFound for PAA certificates (which are self-signed
     /// and do not have an Authority Key Identifier).
-    pub fn authority_key_id(&self) -> Result<&'a [u8], Error> {
+    pub fn authority_key_id(&self) -> Result<&'a [u8], CertError> {
         self.cert
             .tbs_certificate
             .extensions
             .authority_key_id()
-            .ok_or(Error::from(ErrorCode::NotFound))
+            .ok_or(CertError::from(CertErrorCode::NotFound))
     }
 
     /// Extract the subject public key bytes.
@@ -838,7 +838,7 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     /// Returns the raw bytes of the BIT STRING value from SubjectPublicKeyInfo,
     /// excluding the unused-bits prefix byte. For P-256 this is the 65-byte
     /// uncompressed point (0x04 || X || Y).
-    pub fn public_key(&self) -> Result<&'a [u8], Error> {
+    pub fn public_key(&self) -> Result<&'a [u8], CertError> {
         let spki_bytes = &self
             .cert
             .tbs_certificate
@@ -851,33 +851,33 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
 
     /// Extract the Matter Vendor ID from the Subject DN.
     ///
-    /// Returns `ErrorCode::NotFound` if not present in the Subject DN.
-    pub fn vendor_id(&self) -> Result<u16, Error> {
+    /// Returns `CertErrorCode::NotFound` if not present in the Subject DN.
+    pub fn vendor_id(&self) -> Result<u16, CertError> {
         self.cert
             .tbs_certificate
             .subject
             .attrs
             .vendor_id
-            .ok_or(Error::from(ErrorCode::NotFound))
+            .ok_or(CertError::from(CertErrorCode::NotFound))
     }
 
     /// Extract the Matter Product ID from the Subject DN.
     ///
-    /// Returns `ErrorCode::NotFound` if not present in the Subject DN.
-    pub fn product_id(&self) -> Result<u16, Error> {
+    /// Returns `CertErrorCode::NotFound` if not present in the Subject DN.
+    pub fn product_id(&self) -> Result<u16, CertError> {
         self.cert
             .tbs_certificate
             .subject
             .attrs
             .product_id
-            .ok_or(Error::from(ErrorCode::NotFound))
+            .ok_or(CertError::from(CertErrorCode::NotFound))
     }
 
     /// Extract the NotBefore time as Unix epoch seconds.
     ///
     /// Parses UTCTime ("YYMMDDHHMMSSZ") or GeneralizedTime ("YYYYMMDDHHMMSSZ")
     /// from the validity field of the tbsCertificate.
-    pub fn not_before_unix(&self) -> Result<u64, Error> {
+    pub fn not_before_unix(&self) -> Result<u64, CertError> {
         time_to_unix_secs(&self.cert.tbs_certificate.validity.not_before)
     }
 
@@ -885,7 +885,7 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     ///
     /// Parses UTCTime or GeneralizedTime. For GeneralizedTime
     /// "99991231235959Z", returns `u64::MAX` to indicate no expiry.
-    pub fn not_after_unix(&self) -> Result<u64, Error> {
+    pub fn not_after_unix(&self) -> Result<u64, CertError> {
         time_to_unix_secs(&self.cert.tbs_certificate.validity.not_after)
     }
 
@@ -894,7 +894,7 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     /// Returns `true` if `not_before <= now_unix_secs <= not_after`.
     /// A `not_after` of `u64::MAX` (from "99991231235959Z") is always
     /// considered valid (no expiry).
-    pub fn is_valid_at(&self, now_unix_secs: u64) -> Result<bool, Error> {
+    pub fn is_valid_at(&self, now_unix_secs: u64) -> Result<bool, CertError> {
         let not_before = self.not_before_unix()?;
         let not_after = self.not_after_unix()?;
 
@@ -1131,7 +1131,7 @@ mod tests {
         let cert = PaiCert::new(PAI_DER).unwrap();
         assert_eq!(
             cert.product_id().map_err(|e| e.code()),
-            Err(ErrorCode::NotFound)
+            Err(CertErrorCode::NotFound)
         );
     }
 
@@ -1140,7 +1140,7 @@ mod tests {
         let cert = PaaCert::new(PAA_DER).unwrap();
         assert_eq!(
             cert.vendor_id().map_err(|e| e.code()),
-            Err(ErrorCode::NotFound)
+            Err(CertErrorCode::NotFound)
         );
     }
 
@@ -1149,7 +1149,7 @@ mod tests {
         let cert = PaaCert::new(PAA_DER).unwrap();
         assert_eq!(
             cert.product_id().map_err(|e| e.code()),
-            Err(ErrorCode::NotFound)
+            Err(CertErrorCode::NotFound)
         );
     }
 

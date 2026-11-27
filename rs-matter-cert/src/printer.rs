@@ -20,7 +20,7 @@ use core::fmt;
 use time::OffsetDateTime;
 
 use super::{CertConsumer, MAX_DEPTH};
-use crate::error::Error;
+use crate::error::CertError;
 use crate::utils::epoch::MATTER_EPOCH_SECS;
 
 pub struct CertPrinter<'a, 'b> {
@@ -48,83 +48,83 @@ const SPACE: [&str; MAX_DEPTH] = [
 ];
 
 impl CertConsumer for CertPrinter<'_, '_> {
-    fn start_seq(&mut self, tag: &str) -> Result<(), Error> {
+    fn start_seq(&mut self, tag: &str) -> Result<(), CertError> {
         if !tag.is_empty() {
             let _ = writeln!(self.f, "{} {}", SPACE[self.level], tag);
         }
         self.level += 1;
         Ok(())
     }
-    fn end_seq(&mut self) -> Result<(), Error> {
+    fn end_seq(&mut self) -> Result<(), CertError> {
         self.level -= 1;
         Ok(())
     }
-    fn integer(&mut self, tag: &str, i: &[u8]) -> Result<(), Error> {
+    fn integer(&mut self, tag: &str, i: &[u8]) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, i);
         Ok(())
     }
-    fn printstr(&mut self, tag: &str, s: &str) -> Result<(), Error> {
+    fn printstr(&mut self, tag: &str, s: &str) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, s);
         Ok(())
     }
-    fn utf8str(&mut self, tag: &str, s: &str) -> Result<(), Error> {
+    fn utf8str(&mut self, tag: &str, s: &str) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, s);
         Ok(())
     }
-    fn bitstr(&mut self, tag: &str, _truncate: bool, s: &[u8]) -> Result<(), Error> {
+    fn bitstr(&mut self, tag: &str, _truncate: bool, s: &[u8]) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, s);
         Ok(())
     }
-    fn ostr(&mut self, tag: &str, s: &[u8]) -> Result<(), Error> {
+    fn ostr(&mut self, tag: &str, s: &[u8]) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, s);
         Ok(())
     }
-    fn start_compound_ostr(&mut self, tag: &str) -> Result<(), Error> {
+    fn start_compound_ostr(&mut self, tag: &str) -> Result<(), CertError> {
         if !tag.is_empty() {
             let _ = writeln!(self.f, "{} {}", SPACE[self.level], tag);
         }
         self.level += 1;
         Ok(())
     }
-    fn end_compound_ostr(&mut self) -> Result<(), Error> {
+    fn end_compound_ostr(&mut self) -> Result<(), CertError> {
         self.level -= 1;
         Ok(())
     }
-    fn bool(&mut self, tag: &str, b: bool) -> Result<(), Error> {
+    fn bool(&mut self, tag: &str, b: bool) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {}", SPACE[self.level], tag, b);
         Ok(())
     }
-    fn start_set(&mut self, tag: &str) -> Result<(), Error> {
+    fn start_set(&mut self, tag: &str) -> Result<(), CertError> {
         if !tag.is_empty() {
             let _ = writeln!(self.f, "{} {}", SPACE[self.level], tag);
         }
         self.level += 1;
         Ok(())
     }
-    fn end_set(&mut self) -> Result<(), Error> {
+    fn end_set(&mut self) -> Result<(), CertError> {
         self.level -= 1;
         Ok(())
     }
-    fn ctx(&mut self, tag: &str, id: u8, val: &[u8]) -> Result<(), Error> {
+    fn ctx(&mut self, tag: &str, id: u8, val: &[u8]) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {}[{}]{:x?}", SPACE[self.level], tag, id, val);
         Ok(())
     }
-    fn start_ctx(&mut self, tag: &str, val: u8) -> Result<(), Error> {
+    fn start_ctx(&mut self, tag: &str, val: u8) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} [{}]", SPACE[self.level], tag, val);
         self.level += 1;
         Ok(())
     }
-    fn end_ctx(&mut self) -> Result<(), Error> {
+    fn end_ctx(&mut self) -> Result<(), CertError> {
         self.level -= 1;
         Ok(())
     }
-    fn oid(&mut self, tag: &str, _oid: &[u8]) -> Result<(), Error> {
+    fn oid(&mut self, tag: &str, _oid: &[u8]) -> Result<(), CertError> {
         if !tag.is_empty() {
             let _ = writeln!(self.f, "{} {}", SPACE[self.level], tag);
         }
         Ok(())
     }
-    fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), Error> {
+    fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), CertError> {
         let matter_epoch = MATTER_EPOCH_SECS + epoch;
 
         let dt = unwrap!(
@@ -135,7 +135,7 @@ impl CertConsumer for CertPrinter<'_, '_> {
         let _ = writeln!(self.f, "{} {} {:?}", SPACE[self.level], tag, dt);
         Ok(())
     }
-    fn raw(&mut self, tag: &str, data: &[u8]) -> Result<(), Error> {
+    fn raw(&mut self, tag: &str, data: &[u8]) -> Result<(), CertError> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, data);
         Ok(())
     }

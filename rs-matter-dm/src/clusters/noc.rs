@@ -453,11 +453,8 @@ impl ClusterHandler for NocHandler<'_> {
                 let mut wb = WriteBuf::new(buf);
 
                 wb.start_struct(&TLVTag::Anonymous)?;
-                wb.str_cb(&TLVTag::Context(1), |buf| {
-                    ctx.crypto()
-                        .secret_key(secret_key)?
-                        .csr(buf)
-                        .map(|slice| slice.len())
+                wb.str_cb(&TLVTag::Context(1), |buf| -> Result<_, Error> {
+                    Ok(ctx.crypto().secret_key(secret_key)?.csr(buf)?.len())
                 })?;
                 wb.str(&TLVTag::Context(2), request.csr_nonce()?.0)?;
                 wb.end_container()?;

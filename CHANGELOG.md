@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+* Breaking: `rs-matter-crypto` reports the crate-local `CryptoError` rather than the global `Error`, including in the `Crypto` traits. It converts to `Error`, so `?` into a `Result<_, Error>` still compiles (#682)
+  * The mbedtls backend reports an allocation failure as `CryptoErrorCode::NoMemory` rather than panicking, and the IM answers it with `RESOURCE_EXHAUSTED`
+  * The mbedtls and openssl backends report a buffer too small for an encrypted message as `CryptoErrorCode::BufferTooSmall` rather than panicking
+  * Fix: an invalid key, point or scalar is reported as `CryptoErrorCode::InvalidInput` rather than panicking. The mbedtls and openssl backends check scalars and secret keys on import, as RustCrypto does, and no backend panics when asked to write the point at infinity
+* Breaking: `rs-matter-pairing` and `rs-matter-cert` report the crate-local `PairingError` and `CertError` rather than the global `Error`. They convert to `Error`, so `?` into a `Result<_, Error>` still compiles (#682)
+  * Fix: `QrPayload::as_str` reports a buffer that is too small rather than panicking
+  * Breaking: `QrLuma::scan` returns an `Option`, and `FileAttestationTrustStore::from_directory` a `std::io::Error`
+* Breaking: the crate-local errors (`TlvError`, `CryptoError`, `PairingError`, `CertError`) are newtypes over `Error2`, defined with the new `error_type!` macro, so that a crate can convert the errors of the crates below it with `?`. They dereference to the `Error2` (#682)
+  * New: `Error2::convert`, which converts an error into one with another code and, with `alloc` and `backtrace`, keeps it as the source
+* Fix: a CASE responder answers a Sigma3 whose signature has a wrong length with `INVALID_PARAMETER`, rather than dropping the exchange (#682)
+
 ## [0.5.0] - 2026-11-27
 * Breaking: the `mbedtls` feature uses `mbedtls-rs-sys` 0.4
 * All crypto backends now use a template based CSR logic that is crypto-independent (#693)

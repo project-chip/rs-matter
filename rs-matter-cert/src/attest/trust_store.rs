@@ -27,7 +27,7 @@
 //!   from a directory of `.der` files at runtime (`std` only).
 
 use crate::crypto::{CanonPkcPublicKeyRef, Crypto, CryptoSensitive, Digest, SHA1_HASH_LEN};
-use crate::error::{Error, ErrorCode};
+use crate::error::{CertError, CertErrorCode};
 use crate::x509::cert::PaaCert;
 
 /// Matter certificate key identifier (SKID/AKID): 20-byte SHA-1 hash of the public key.
@@ -43,7 +43,7 @@ pub type KeyId = [u8; 20];
 pub fn compute_key_id<C: Crypto>(
     crypto: C,
     pubkey: CanonPkcPublicKeyRef<'_>,
-) -> Result<KeyId, Error> {
+) -> Result<KeyId, CertError> {
     let mut hasher = crypto.hash1()?;
     hasher.update(pubkey.access())?;
 
@@ -67,23 +67,23 @@ pub const MAX_PAA_CERT_DER_LEN: usize = 600;
 pub trait AttestationTrustStore {
     /// Look up a PAA certificate by its Subject Key Identifier.
     ///
-    /// Returns the DER-encoded PAA certificate, or `ErrorCode::NotFound`
+    /// Returns the DER-encoded PAA certificate, or `CertErrorCode::NotFound`
     /// if no PAA with the given SKID is present in the store.
-    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error>;
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], CertError>;
 }
 
 impl<T: AttestationTrustStore> AttestationTrustStore for &T {
-    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], CertError> {
         (**self).paa(skid)
     }
 }
 
 /// Extract and validate the Subject Key Identifier from a DER-encoded certificate.
-fn extract_skid(cert: &[u8]) -> Result<KeyId, Error> {
+fn extract_skid(cert: &[u8]) -> Result<KeyId, CertError> {
     PaaCert::new(cert)?
         .subject_key_id()?
         .try_into()
-        .map_err(|_| ErrorCode::InvalidData.into())
+        .map_err(|_| CertErrorCode::InvalidFormat.into())
 }
 
 /// `AttestationTrustStore` implementation for a slice of DER-encoded certificates.
@@ -95,7 +95,7 @@ fn extract_skid(cert: &[u8]) -> Result<KeyId, Error> {
 /// let paa = PAA_STORE.paa(&skid)?;
 /// ```
 impl AttestationTrustStore for &[&[u8]] {
-    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], CertError> {
         for cert in self.iter() {
             if let Ok(cert_skid) = extract_skid(cert) {
                 if cert_skid == *skid {
@@ -104,7 +104,7 @@ impl AttestationTrustStore for &[&[u8]] {
             }
         }
 
-        Err(ErrorCode::NotFound.into())
+        Err(CertErrorCode::NotFound.into())
     }
 }
 
@@ -114,7 +114,7 @@ pub use fileio::*;
 #[cfg(feature = "std")]
 pub mod fileio {
     use super::{extract_skid, AttestationTrustStore, KeyId, MAX_PAA_CERT_DER_LEN};
-    use crate::error::{Error, ErrorCode};
+    use crate::error::{CertError, CertErrorCode};
 
     /// A single PAA certificate entry for [`FileAttestationTrustStore`]:
     /// pre-extracted SKID + owned DER bytes.
@@ -152,11 +152,11 @@ pub mod fileio {
         /// - Are larger than [`MAX_PAA_CERT_DER_LEN`] bytes
         /// - Fail to parse (invalid DER or missing SKID extension)
         ///
-        /// Returns `ErrorCode::StdIoError` if the directory cannot be read.
-        pub fn from_directory(dir: &std::path::Path) -> Result<Self, Error> {
+        /// Fails only if the directory cannot be read.
+        pub fn from_directory(dir: &std::path::Path) -> Result<Self, std::io::Error> {
             let mut store = Self { certs: Vec::new() };
 
-            let entries = std::fs::read_dir(dir).map_err(|_| ErrorCode::StdIoError)?;
+            let entries = std::fs::read_dir(dir)?;
 
             for entry in entries {
                 let entry = match entry {
@@ -237,7 +237,7 @@ pub mod fileio {
             self.certs.len()
         }
 
-        fn push_cert_owned(&mut self, der: Vec<u8>) -> Result<(), Error> {
+        fn push_cert_owned(&mut self, der: Vec<u8>) -> Result<(), CertError> {
             let skid = extract_skid(&der)?;
             self.certs.push(OwnedPaaCertEntry { skid, der });
             Ok(())
@@ -245,14 +245,14 @@ pub mod fileio {
     }
 
     impl AttestationTrustStore for FileAttestationTrustStore {
-        fn paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
+        fn paa(&self, skid: &KeyId) -> Result<&[u8], CertError> {
             for entry in &self.certs {
                 if entry.skid == *skid {
                     return Ok(&entry.der);
                 }
             }
 
-            Err(ErrorCode::NotFound.into())
+            Err(CertErrorCode::NotFound.into())
         }
     }
 
@@ -377,7 +377,7 @@ pub mod fileio {
 mod tests {
     use super::*;
     use crate::attest::test_paa::*;
-    use crate::error::ErrorCode;
+    use crate::error::CertErrorCode;
 
     #[test]
     fn store_finds_known_skid() {
@@ -393,7 +393,7 @@ mod tests {
         let unknown_skid = [0xFF; 20];
         let result = store.paa(&unknown_skid);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code(), ErrorCode::NotFound);
+        assert_eq!(result.unwrap_err().code(), CertErrorCode::NotFound);
     }
 
     #[test]
@@ -413,6 +413,6 @@ mod tests {
         let store: &[&[u8]] = &[];
         let result = store.paa(&TEST_PAA_FFF1_SKID);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code(), ErrorCode::NotFound);
+        assert_eq!(result.unwrap_err().code(), CertErrorCode::NotFound);
     }
 }

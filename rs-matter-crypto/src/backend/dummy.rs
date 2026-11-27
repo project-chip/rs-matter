@@ -28,7 +28,7 @@ use core::convert::Infallible;
 
 use rand_core::{TryCryptoRng, TryRng};
 
-use crate::error::Error;
+use crate::error::CryptoError;
 use crate::{Crypto, CryptoSensitive, CryptoSensitiveRef};
 
 /// A dummy crypto backend that panics on any operation.
@@ -102,94 +102,103 @@ impl Crypto for DummyCrypto {
     where
         Self: 'a;
 
-    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+    fn rand(&self) -> Result<Self::Rand<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn hash1(&self) -> Result<Self::Hash<'_>, Error> {
+    fn hash1(&self) -> Result<Self::Hash<'_>, CryptoError> {
         unimplemented!()
     }
 
     fn hmac<const KEY_LEN: usize>(
         &self,
         _key: CryptoSensitiveRef<'_, KEY_LEN>,
-    ) -> Result<Self::Hmac<'_>, Error> {
+    ) -> Result<Self::Hmac<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn pub_key(&self, _key: crate::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        _key: crate::CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, CryptoError> {
         unimplemented!()
     }
 
     fn secret_key(
         &self,
         _key: crate::CanonPkcSecretKeyRef<'_>,
-    ) -> Result<Self::SecretKey<'_>, Error> {
+    ) -> Result<Self::SecretKey<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn ec_scalar(&self, _scalar: crate::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(
+        &self,
+        _scalar: crate::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         unimplemented!()
     }
 
     fn ec_scalar_mod_p(
         &self,
         _uint: crate::CanonUint320Ref<'_>,
-    ) -> Result<Self::EcScalar<'_>, Error> {
+    ) -> Result<Self::EcScalar<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn ec_point(&self, _point: crate::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(
+        &self,
+        _point: crate::CanonEcPointRef<'_>,
+    ) -> Result<Self::EcPoint<'_>, CryptoError> {
         unimplemented!()
     }
 
-    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, CryptoError> {
         unimplemented!()
     }
 }
 
 impl<const HASH_LEN: usize> crate::Digest<HASH_LEN> for DummyCrypto {
-    fn update(&mut self, _data: &[u8]) -> Result<(), Error> {
+    fn update(&mut self, _data: &[u8]) -> Result<(), CryptoError> {
         unimplemented!()
     }
 
-    fn finish_current(&mut self, _out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish_current(&mut self, _out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         unimplemented!()
     }
 
-    fn finish(self, _out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+    fn finish(self, _out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
@@ -201,7 +210,7 @@ impl crate::Kdf for DummyCrypto {
         _ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         _info: &[u8],
         _key: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
@@ -213,7 +222,7 @@ impl crate::PbKdf for DummyCrypto {
         _iter: usize,
         _salt: &[u8],
         _out: &mut CryptoSensitive<KEY_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
@@ -226,7 +235,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize> crate::Aead<KEY_LEN, NONCE_LE
         _aad: &[u8],
         _data: &'a mut [u8],
         _data_len: usize,
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         unimplemented!()
     }
 
@@ -236,7 +245,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize> crate::Aead<KEY_LEN, NONCE_LE
         _nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         _aad: &[u8],
         _data: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
+    ) -> Result<&'a [u8], CryptoError> {
         unimplemented!()
     }
 }
@@ -248,11 +257,11 @@ impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize> crate::PublicKey<'_, KEY_
         &self,
         _msg: &[u8],
         _signature: CryptoSensitiveRef<SIGNATURE_LEN>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, CryptoError> {
         unimplemented!()
     }
 
-    fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
@@ -265,7 +274,7 @@ impl<const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
     where
         Self: 's;
 
-    fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(&self) -> Result<Self::PublicKey<'_>, CryptoError> {
         unimplemented!()
     }
 
@@ -273,7 +282,7 @@ impl<const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
         &self,
         _data: &[u8],
         _signature: &mut CryptoSensitive<SIGNATURE_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
@@ -289,21 +298,21 @@ impl<
         &self,
         _peer_pub_key: &Self::PublicKey<'_>,
         _shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CryptoError> {
         unimplemented!()
     }
 
-    fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+    fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
 
 impl<const LEN: usize> crate::EcScalar<'_, LEN> for DummyCrypto {
-    fn mul(&self, _other: &Self) -> Result<Self, Error> {
+    fn mul(&self, _other: &Self) -> Result<Self, CryptoError> {
         unimplemented!()
     }
 
-    fn write_canon(&self, _scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, _scalar: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
@@ -313,15 +322,15 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
 {
     type Scalar<'s> = DummyCrypto;
 
-    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+    fn is_valid_pubkey(&self) -> Result<bool, CryptoError> {
         unimplemented!()
     }
 
-    fn neg(&self) -> Result<Self, Error> {
+    fn neg(&self) -> Result<Self, CryptoError> {
         unimplemented!()
     }
 
-    fn mul(&self, _scalar: &Self::Scalar<'a>) -> Result<Self, Error> {
+    fn mul(&self, _scalar: &Self::Scalar<'a>) -> Result<Self, CryptoError> {
         unimplemented!()
     }
 
@@ -330,11 +339,11 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::EcPoint<'a, LEN, SCAL
         _s1: &Self::Scalar<'a>,
         _p2: &Self,
         _s2: &Self::Scalar<'a>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, CryptoError> {
         unimplemented!()
     }
 
-    fn write_canon(&self, _point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+    fn write_canon(&self, _point: &mut CryptoSensitive<LEN>) -> Result<(), CryptoError> {
         unimplemented!()
     }
 }
