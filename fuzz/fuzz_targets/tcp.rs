@@ -84,6 +84,8 @@ const STEPS: u8 = 9;
 const QUIET_POLLS: usize = 32;
 /// The most polls for one step.
 const MAX_POLLS: usize = 4096;
+/// The most ways to match the received messages to connections that the target follows.
+const MAX_DELIVERIES: usize = 256;
 
 /// The opcode of a Secure Channel status report.
 const STATUS_REPORT: u8 = 0x40;
@@ -116,8 +118,6 @@ struct Conn {
     closed: bool,
     /// The node holds the connection.
     held: bool,
-    /// How many frames of `sent` the node has received, or skipped.
-    delivered: usize,
 }
 
 impl Conn {
@@ -133,7 +133,6 @@ impl Conn {
             close_hangs: false,
             closed: false,
             held: false,
-            delivered: 0,
         }
     }
 
@@ -145,9 +144,13 @@ impl Conn {
 }
 
 /// The peers, and what the node did with them.
-#[derive(Default)]
 struct World {
     conns: Vec<Conn>,
+    /// The ways in which the messages that the node received can come from the
+    /// connections: for each connection, how many of its frames the node has received
+    /// or skipped. A message carries only an address, and connections can share one.
+    /// Empty when there were too many ways to follow, which ends the check.
+    deliveries: Vec<Vec<usize>>,
     /// The connections that the node has not accepted yet.
     to_accept: VecDeque<usize>,
     accept_errors: usize,
@@ -163,6 +166,29 @@ struct World {
 }
 
 impl World {
+    fn new() -> Self {
+        Self {
+            conns: Vec::new(),
+            deliveries: vec![Vec::new()],
+            to_accept: VecDeque::new(),
+            accept_errors: 0,
+            keep_alive_errors: 0,
+            connects: VecDeque::new(),
+            messages: Vec::new(),
+            sends: 0,
+            progress: 0,
+        }
+    }
+
+    fn add(&mut self, conn: Conn) -> usize {
+        self.conns.push(conn);
+        for delivered in &mut self.deliveries {
+            delivered.push(0);
+        }
+
+        self.conns.len() - 1
+    }
+
     fn conn(&mut self, byte: u8) -> Option<&mut Conn> {
         let len = self.conns.len();
         (len > 0).then(|| &mut self.conns[byte as usize % len])
@@ -174,35 +200,46 @@ impl World {
 
     /// Checks a message that the node received from `addr`.
     fn received(&mut self, addr: SocketAddr, message: &[u8]) {
-        let conns = self
-            .conns
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.addr == addr)
-            .map(|(i, _)| i)
-            .collect::<Vec<_>>();
+        self.progress += 1;
 
-        for (pos, &i) in conns.iter().enumerate() {
-            let conn = &self.conns[i];
-            let frames = frames(&conn.sent);
-            let found = (conn.delivered..frames.len()).find(|&j| frames[j] == message);
+        if self.deliveries.is_empty() {
+            return;
+        }
 
-            if let Some(j) = found {
-                self.conns[i].delivered = j + 1;
-                // An older connection from the same port has nothing more to receive
-                for &older in &conns[..pos] {
-                    self.conns[older].delivered = usize::MAX;
+        let mut deliveries = Vec::new();
+
+        for (i, conn) in self.conns.iter().enumerate() {
+            if conn.addr != addr {
+                continue;
+            }
+
+            // The node can only have received the frames that it has read in full
+            let frames = frames(&conn.sent[..conn.read]);
+
+            for delivered in &self.deliveries {
+                if let Some(j) = (delivered[i]..frames.len()).find(|&j| frames[j] == message) {
+                    let mut delivered = delivered.clone();
+                    delivered[i] = j + 1;
+
+                    if !deliveries.contains(&delivered) {
+                        deliveries.push(delivered);
+                    }
                 }
-                self.progress += 1;
-                return;
             }
         }
 
-        panic!(
+        assert!(
+            !deliveries.is_empty(),
             "Received a message of {} bytes from {} that its peer did not send, or not then",
             message.len(),
             addr
         );
+
+        if deliveries.len() > MAX_DELIVERIES {
+            deliveries.clear();
+        }
+
+        self.deliveries = deliveries;
     }
 
     /// Checks what the node wrote on each connection.
@@ -339,11 +376,10 @@ impl<'a> TcpNetworkSockets for Sockets<'a> {
                 let mut world = world.borrow_mut();
                 let mut conn = Conn::new(addr);
                 conn.held = true;
-                world.conns.push(conn);
 
                 Socket {
                     world: self.0,
-                    idx: world.conns.len() - 1,
+                    idx: world.add(conn),
                 }
             })),
         }
@@ -536,7 +572,7 @@ fn take<'a, const L: usize>(input: &mut &'a [u8]) -> Option<&'a [u8; L]> {
 fn run(data: &[u8]) {
     clock::reset();
 
-    let world = Mutex::new(RefCell::new(World::default()));
+    let world = Mutex::new(RefCell::new(World::new()));
     let buffers = TcpNetworkBuffers::<N, SLOTS, TX_BUF>::new();
     let config = TcpConfig {
         idle_timeout: Some(Duration::from_secs(30)),
@@ -583,8 +619,7 @@ fn run(data: &[u8]) {
                 world.lock(|world| {
                     let mut world = world.borrow_mut();
                     if !world.conns.iter().any(|c| c.addr == addr && c.is_open()) {
-                        world.conns.push(Conn::new(addr));
-                        let idx = world.conns.len() - 1;
+                        let idx = world.add(Conn::new(addr));
                         world.to_accept.push_back(idx);
                     }
                 });
