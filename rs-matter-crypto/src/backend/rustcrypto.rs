@@ -36,7 +36,6 @@
 
 use core::convert::TryInto;
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
 use core::ops::{Add, Mul, Neg};
 
 use ccm::{Ccm, NonceSize, TagSize};
@@ -60,14 +59,7 @@ use rand_core::CryptoRng;
 
 use sec1::point::ModulusSize;
 
-use x509_cert::attr::{AttributeType, AttributeTypeAndValue};
-use x509_cert::der::{asn1::BitString, Any, Encode, Writer};
-use x509_cert::name::{Name, RdnSequence, RelativeDistinguishedName};
-use x509_cert::request::CertReq;
-use x509_cert::{AlgorithmIdentifier, SubjectPublicKeyInfo};
-
 use crate::error::{Error, ErrorCode};
-use crate::utils::init::InitMaybeUninit;
 use crate::utils::sync::MaybeSend;
 use crate::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
@@ -621,97 +613,6 @@ where
     where
         Self: 's;
 
-    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error> {
-        fn attr_type(value: &str) -> AttributeType {
-            unwrap!(
-                AttributeType::new(value),
-                "x509 AttributeType creation failed"
-            )
-        }
-
-        // `O=CSR` (organizationName, encoded as a UTF-8 string)
-        //
-        // Assembled by hand rather than via `Name::from_str("O=CSR")`: the latter resolves the
-        // attribute name through the `const-oid` OID name database, which the linker then has to
-        // keep - ~100KB of flash on embedded targets.
-        let mut rdn = RelativeDistinguishedName::default();
-        unwrap!(
-            rdn.insert(AttributeTypeAndValue {
-                // organizationName http://www.oid-info.com/get/2.5.4.10
-                oid: attr_type("2.5.4.10"),
-                value: unwrap!(
-                    Any::new(x509_cert::der::Tag::Utf8String, "CSR".as_bytes()),
-                    "x509 attribute value creation failed"
-                ),
-            }),
-            "x509 RDN creation failed"
-        );
-
-        let mut rdn_sequence = RdnSequence::default();
-        rdn_sequence.push(rdn);
-
-        let subject = Name::hazmat_from_rdn_sequence(rdn_sequence);
-
-        let mut public_key = MaybeUninit::uninit();
-        let public_key = public_key.init_with(CryptoSensitive::<PUB_KEY_LEN>::init()); // TODO MEDIUM BUFFER
-        crate::PublicKey::write_canon(&self.pub_key()?, public_key)?;
-
-        let info = x509_cert::request::CertReqInfo {
-            version: x509_cert::request::Version::V1,
-            subject,
-            public_key: SubjectPublicKeyInfo {
-                algorithm: AlgorithmIdentifier {
-                    // ecPublicKey(1) http://www.oid-info.com/get/1.2.840.10045.2.1
-                    oid: attr_type("1.2.840.10045.2.1"),
-                    parameters: Some(unwrap!(
-                        Any::new(
-                            x509_cert::der::Tag::ObjectIdentifier,
-                            // prime256v1 http://www.oid-info.com/get/1.2.840.10045.3.1.7
-                            attr_type("1.2.840.10045.3.1.7").as_bytes(),
-                        ),
-                        "x509 OID creation failed"
-                    )),
-                },
-                subject_public_key: unwrap!(
-                    BitString::from_bytes(public_key.access()),
-                    "x509 BitString creation failed"
-                ),
-            },
-            attributes: Default::default(),
-        };
-
-        let mut encoded_info = SliceBuffer::new(buf, 0);
-        info.encode(&mut encoded_info)
-            .map_err(|_| ErrorCode::BufferTooSmall)?;
-
-        // Can't use self.sign_msg as the signature has to be in DER format
-        let signing_key = SigningKey::<C>::from(&self.0);
-        let signature: Signature<C> =
-            ecdsa::signature::Signer::sign(&signing_key, encoded_info.as_ref());
-
-        let signature_der = signature.to_der();
-        let signature_der_bytes = signature_der.as_bytes();
-
-        let csr = CertReq {
-            info,
-            algorithm: AlgorithmIdentifier {
-                // ecdsa-with-SHA256(2) http://www.oid-info.com/get/1.2.840.10045.4.3.2
-                oid: attr_type("1.2.840.10045.4.3.2"),
-                parameters: None,
-            },
-            signature: unwrap!(
-                BitString::from_bytes(signature_der_bytes),
-                "x509 BitString creation failed"
-            ),
-        };
-
-        let csr_data = csr
-            .encode_to_slice(buf)
-            .map_err(|_| ErrorCode::BufferTooSmall)?;
-
-        Ok(csr_data)
-    }
-
     fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error> {
         Ok(ECPublicKey(self.0.public_key()))
     }
@@ -952,9 +853,6 @@ where
 }
 
 /// A helper buffer for the AEAD cipher implementing the `ccm::aead::Buffer` trait
-///
-/// The helper is also used in the X509 CSR generation to provide a buffer implementing
-/// the `x509_cert::der::Writer` trait.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct SliceBuffer<'a> {
@@ -1002,16 +900,40 @@ impl ccm::aead::Buffer for SliceBuffer<'_> {
     }
 }
 
-impl Writer for SliceBuffer<'_> {
-    fn write(&mut self, slice: &[u8]) -> x509_cert::der::Result<()> {
-        if self.len + slice.len() > self.slice.len() {
-            error!("Buffer overflow");
-            Err(x509_cert::der::ErrorKind::Failed)?;
-        }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use crate::{Crypto, SigningSecretKey, WeakTestOnlyRand, CSR_MAX_LEN, TEST_DAC_PRIVKEY};
 
-        self.slice[self.len..][..slice.len()].copy_from_slice(slice);
-        self.len += slice.len();
+    use super::RustCrypto;
 
-        Ok(())
+    /// The CSR of the test DAC key, as the `x509-cert` encoder produced it.
+    ///
+    /// The signature is deterministic (RFC 6979), so the whole CSR is.
+    const TEST_DAC_CSR: &str = "3081c83070020100300e310c300a060355040a0c0343535230593013\
+        06072a8648ce3d020106082a8648ce3d03010703420004463ac69342910a0e5588fc6ff56bb63e62eccecb\
+        148f7d4eb03ee552601415767d16a5c663f793e49123260b8297a7cd7e7cfc7b316b39d98e90d293777\
+        38e82a000300a06082a8648ce3d0403020348003045022100c14924f808d5a6ddd755e5f7b2312604845\
+        0220c7ae6abcd899669bd9df4c927022037bcc4fe88d187568831c976ece5020d0f44e0001cf12fd54c8f\
+        81f1cbde94bf";
+
+    #[test]
+    fn csr_is_unchanged() {
+        let crypto = RustCrypto::new(WeakTestOnlyRand::new_default(), TEST_DAC_PRIVKEY);
+        let key = unwrap!(crypto.secret_key(TEST_DAC_PRIVKEY));
+
+        let mut buf = [0u8; 256];
+        let csr = unwrap!(key.csr(&mut buf));
+
+        let hex: std::string::String = csr.iter().map(|b| std::format!("{b:02x}")).collect();
+        assert_eq!(hex, TEST_DAC_CSR);
+
+        // The buffer must fit the longest CSR, even though this one is shorter
+        assert!(csr.len() < CSR_MAX_LEN);
+        let mut buf = [0u8; CSR_MAX_LEN];
+        assert_eq!(unwrap!(key.csr(&mut buf)), csr);
+
+        let mut buf = std::vec![0u8; csr.len()];
+        assert!(key.csr(&mut buf).is_err());
     }
 }

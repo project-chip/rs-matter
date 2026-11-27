@@ -18,11 +18,11 @@ alloc = ["defmt?/alloc", "rs-matter-utils/alloc", "rs-matter-tlv/alloc"]
 # Multicast groups support.
 groups = []
 # Crypto backend: Rust Crypto.
-rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
+rustcrypto = ["digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256"]
 # Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
-openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
+openssl = ["std", "dep:openssl", "foreign-types", "hmac", "sha2"]
 # Crypto backend: mbedTLS.
-mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
+mbedtls = ["dep:mbedtls-rs-sys"]
 defmt = ["dep:defmt", "mbedtls-rs-sys?/defmt", "rs-matter-utils/defmt", "rs-matter-tlv/defmt"]
 log = ["dep:log", "rs-matter-utils/log", "rs-matter-tlv/log"]
 
@@ -58,7 +58,6 @@ sha1 = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 aes = { workspace = true, optional = true }
 p256 = { workspace = true, optional = true }
-x509-cert = { workspace = true, optional = true } # TODO: requires `alloc`
 
 [lints.rust]
 # `cargo llvm-cov` sets these when measuring coverage (the second one only on nightly)

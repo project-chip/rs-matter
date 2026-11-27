@@ -93,7 +93,7 @@ async-compat = { version = "0.2", default-features = false }
 async-io = { version = "2", default-features = false }
 bitflags = { version = "2.5", default-features = false }
 bluer = { version = "0.17", features = ["bluetoothd"] }
-ccm = { version = "0.6", default-features = false, features = ["alloc"] }
+ccm = { version = "0.6", default-features = false }
 cfg-if = "1"
 cipher = { version = "0.5", default-features = false }
 critical-section = "1.1"
@@ -147,7 +147,6 @@ tokio-stream = "0.1"
 uuid = "1"
 verhoeff = { version = "1", default-features = false }
 windows = "0.62"
-x509-cert = { version = "0.3", default-features = false, features = ["hazmat"] }
 zbus = "5.8"
 zeroconf = "0.18"
 
