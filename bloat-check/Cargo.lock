@@ -209,32 +209,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
 
 [[package]]
-name = "base64ct"
-version = "1.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
-
-[[package]]
-name = "bindgen"
-version = "0.71.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
-dependencies = [
- "bitflags 2.13.2",
- "cexpr",
- "clang-sys",
- "itertools 0.13.0",
- "log",
- "prettyplease",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash",
- "shlex 1.3.0",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -945,7 +919,6 @@ checksum = "a878c850e9e421b20262e9b41f9c860e4785fa07541c266b62ff9d1ef998a80a"
 dependencies = [
  "const-oid",
  "der_derive",
- "flagset",
  "zeroize",
 ]
 
@@ -1432,12 +1405,12 @@ dependencies = [
 
 [[package]]
 name = "embuild"
-version = "0.33.5"
+version = "0.33.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c41359cdde377dfd2e8aa34c09f9798a3ff9b6e4a9de81167c32d6b289521ed"
+checksum = "d3d38b7fdeae35a794042462bcde6996bb159a5ba5be78fa3cd8e6d7c85c1056"
 dependencies = [
  "anyhow",
- "bindgen 0.71.1",
+ "bindgen",
  "bitflags 1.3.2",
  "cmake",
  "filetime",
@@ -1620,9 +1593,9 @@ dependencies = [
 
 [[package]]
 name = "esp-idf-sys"
-version = "0.37.2"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8df62993f242eb05d9ddb63e503624fb22f24a11d6c680e85cf0169ee14421f"
+checksum = "dc72d57cd60c8734ecd3096fde21c27bd18387db7918763fc8c7ef68667ecf03"
 dependencies = [
  "anyhow",
  "build-time",
@@ -1635,6 +1608,7 @@ dependencies = [
  "regex",
  "serde",
  "strum 0.24.1",
+ "toml",
  "which",
 ]
 
@@ -1881,12 +1855,6 @@ name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
-
-[[package]]
-name = "flagset"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fnv"
@@ -2474,9 +2442,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libloading"
@@ -2557,12 +2525,12 @@ dependencies = [
 
 [[package]]
 name = "mbedtls-rs-sys"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed98c5fe08c82aaadba9d97983095d423f6f96286c31d0806a5f02f92c4e20f7"
+checksum = "5586017fce4c3567499b09f109eab0408578f0f36d24decf7d946450f5087c0e"
 dependencies = [
  "anyhow",
- "bindgen 0.72.1",
+ "bindgen",
  "cc",
  "cmake",
  "critical-section",
@@ -3147,7 +3115,7 @@ version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
- "toml_edit",
+ "toml_edit 0.25.15+spec-1.1.0",
 ]
 
 [[package]]
@@ -3390,7 +3358,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bitflags 2.13.2",
  "defmt 1.1.1",
@@ -3418,7 +3386,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-bdx"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3431,7 +3399,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-bloat-check"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -3457,7 +3425,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-cert"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "der",
@@ -3473,7 +3441,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-codegen"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "convert_case",
  "miette",
@@ -3491,7 +3459,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-crypto"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aes",
  "ccm",
@@ -3516,12 +3484,11 @@ dependencies = [
  "sha1",
  "sha2",
  "signature",
- "x509-cert",
 ]
 
 [[package]]
 name = "rs-matter-dm"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-channel",
  "bitflags 2.13.2",
@@ -3549,7 +3516,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-dm-clusters"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bitflags 2.13.2",
  "defmt 1.1.1",
@@ -3563,7 +3530,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-dm-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cfg-if",
  "defmt 1.1.1",
@@ -3579,7 +3546,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-im"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3595,7 +3562,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-im-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3609,7 +3576,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-macros"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -3619,7 +3586,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-node"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3638,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-node-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -3658,7 +3625,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-onboard"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3675,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-pairing"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3688,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-respond"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3703,7 +3670,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-sc"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3722,7 +3689,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-stack"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cfg-if",
  "defmt 1.1.1",
@@ -3743,7 +3710,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-tlv"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "defmt 1.1.1",
  "log",
@@ -3757,7 +3724,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-transport"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-channel",
  "bitflags 2.13.2",
@@ -3781,7 +3748,7 @@ dependencies = [
 
 [[package]]
 name = "rs-matter-utils"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bitflags 2.13.2",
  "critical-section",
@@ -3980,6 +3947,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_yaml"
 version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4123,16 +4099,6 @@ name = "somni-parser"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0f368519fc6c85fc1afdb769fb5a51123f6158013e143656e25a3485a0d401c"
-
-[[package]]
-name = "spki"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d9efca8738c78ee9484207732f728b1ef517bbb1833d6fc0879ca898a522f6f"
-dependencies = [
- "base64ct",
- "der",
-]
 
 [[package]]
 name = "stable_deref_trait"
@@ -4446,6 +4412,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime 0.6.11",
+ "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4456,14 +4443,28 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned",
+ "toml_datetime 0.6.11",
+ "toml_write",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_edit"
 version = "0.25.15+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
  "indexmap",
- "toml_datetime",
+ "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
- "winnow",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -4472,8 +4473,14 @@ version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
- "winnow",
+ "winnow 1.0.4",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tracing"
@@ -4863,6 +4870,15 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
@@ -4887,17 +4903,6 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
-
-[[package]]
-name = "x509-cert"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "105ef4642d9cb137ef83d623d0e4bf08b8adf69e9918ca904a174adb6d3d038b"
-dependencies = [
- "const-oid",
- "der",
- "spki",
-]
 
 [[package]]
 name = "xtensa-lx"
