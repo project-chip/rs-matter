@@ -29,7 +29,7 @@ members = [
 exclude = ["bloat-check", "xtask", "fuzz"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
@@ -63,27 +63,27 @@ opt-level = 2
 
 [workspace.dependencies]
 # The crates of this workspace
-rs-matter = { path = "rs-matter", version = "0.4.1" }
-rs-matter-utils = { path = "rs-matter-utils", version = "0.4.1", default-features = false }
-rs-matter-tlv = { path = "rs-matter-tlv", version = "0.4.1", default-features = false }
-rs-matter-crypto = { path = "rs-matter-crypto", version = "0.4.1", default-features = false }
-rs-matter-cert = { path = "rs-matter-cert", version = "0.4.1", default-features = false }
-rs-matter-pairing = { path = "rs-matter-pairing", version = "0.4.1", default-features = false }
-rs-matter-im-core = { path = "rs-matter-im-core", version = "0.4.1", default-features = false }
-rs-matter-dm-core = { path = "rs-matter-dm-core", version = "0.4.1", default-features = false }
-rs-matter-dm-clusters = { path = "rs-matter-dm-clusters", version = "0.4.1", default-features = false }
-rs-matter-node-core = { path = "rs-matter-node-core", version = "0.4.1", default-features = false }
-rs-matter-transport = { path = "rs-matter-transport", version = "0.4.1", default-features = false }
-rs-matter-sc = { path = "rs-matter-sc", version = "0.4.1", default-features = false }
-rs-matter-node = { path = "rs-matter-node", version = "0.4.1", default-features = false }
-rs-matter-bdx = { path = "rs-matter-bdx", version = "0.4.1", default-features = false }
-rs-matter-im = { path = "rs-matter-im", version = "0.4.1", default-features = false }
-rs-matter-dm = { path = "rs-matter-dm", version = "0.4.1", default-features = false }
-rs-matter-respond = { path = "rs-matter-respond", version = "0.4.1", default-features = false }
-rs-matter-onboard = { path = "rs-matter-onboard", version = "0.4.1", default-features = false }
-rs-matter-stack = { path = "rs-matter-stack", version = "0.4.1", default-features = false }
-rs-matter-macros = { path = "rs-matter-macros", version = "0.4.1" }
-rs-matter-codegen = { path = "rs-matter-codegen", version = "0.4.1" }
+rs-matter = { path = "rs-matter", version = "0.5.0" }
+rs-matter-utils = { path = "rs-matter-utils", version = "0.5.0", default-features = false }
+rs-matter-tlv = { path = "rs-matter-tlv", version = "0.5.0", default-features = false }
+rs-matter-crypto = { path = "rs-matter-crypto", version = "0.5.0", default-features = false }
+rs-matter-cert = { path = "rs-matter-cert", version = "0.5.0", default-features = false }
+rs-matter-pairing = { path = "rs-matter-pairing", version = "0.5.0", default-features = false }
+rs-matter-im-core = { path = "rs-matter-im-core", version = "0.5.0", default-features = false }
+rs-matter-dm-core = { path = "rs-matter-dm-core", version = "0.5.0", default-features = false }
+rs-matter-dm-clusters = { path = "rs-matter-dm-clusters", version = "0.5.0", default-features = false }
+rs-matter-node-core = { path = "rs-matter-node-core", version = "0.5.0", default-features = false }
+rs-matter-transport = { path = "rs-matter-transport", version = "0.5.0", default-features = false }
+rs-matter-sc = { path = "rs-matter-sc", version = "0.5.0", default-features = false }
+rs-matter-node = { path = "rs-matter-node", version = "0.5.0", default-features = false }
+rs-matter-bdx = { path = "rs-matter-bdx", version = "0.5.0", default-features = false }
+rs-matter-im = { path = "rs-matter-im", version = "0.5.0", default-features = false }
+rs-matter-dm = { path = "rs-matter-dm", version = "0.5.0", default-features = false }
+rs-matter-respond = { path = "rs-matter-respond", version = "0.5.0", default-features = false }
+rs-matter-onboard = { path = "rs-matter-onboard", version = "0.5.0", default-features = false }
+rs-matter-stack = { path = "rs-matter-stack", version = "0.5.0", default-features = false }
+rs-matter-macros = { path = "rs-matter-macros", version = "0.5.0" }
+rs-matter-codegen = { path = "rs-matter-codegen", version = "0.5.0" }
 
 # Used by the `rs-matter` crates
 aes = "0.9"
@@ -117,7 +117,7 @@ hmac = "0.13"
 if-addrs = "0.15"
 libc = "0.2"
 log = "0.4"
-mbedtls-rs-sys = { version = "0.3", default-features = false, features = ["matter"] }
+mbedtls-rs-sys = { version = "0.4", default-features = false, features = ["matter"] }
 nix = { version = "0.31", features = ["net"] }
 num = { version = "0.4", default-features = false }
 num-derive = "0.5"
