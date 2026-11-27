@@ -2,12 +2,10 @@ name: PublishTag
 
 # Pushes a single `v<version>` repository tag for an rs-matter release.
 #
-# `rs-matter`, `rs-matter-macros` and `rs-matter-codegen` share one workspace
-# version and are released in lock-step, so a release gets ONE project tag — not
-# a per-crate tag. The `PublishCrate` workflow publishes the three crates
-# individually (codegen -> macros -> rs-matter, re-runnable per crate if one
-# fails); run THIS workflow once, after all three have been published to
-# crates.io, to tag the release.
+# All rs-matter crates share one workspace version and are released together,
+# so a release gets ONE project tag, not a per-crate tag. `PublishCrates`
+# pushes it at the end of a release; this workflow tags a commit by hand, e.g.
+# when that step failed or for an older release.
 on:
   workflow_dispatch:
     inputs:
@@ -21,7 +19,7 @@ on:
         type: string
 
 env:
-  # The three crates share the workspace version; the main crate is the natural
+  # All crates share the workspace version; the main crate is the natural
   # source of the release version.
   CRATE_NAME: rs-matter
 
