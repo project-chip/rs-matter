@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+* Fix: `rs-matter-stack` keeps 3 subscriptions per fabric by default, the minimum of the spec, rather than 3 in total (#691)
+  * New: features `max-subscriptions-64` (`rs-matter-stack`) and `stack-max-subscriptions-64` (`rs-matter`)
+* Fix: Basic Information, General and Software Diagnostics, Thread and Wi-Fi Network Diagnostics, Time Synchronization and Power Source declare only the events they emit (#691)
+  * New: `sw_diag::Options::SOFTWARE_FAULT` (`sw_diag(software_fault)`), for an application that emits `SoftwareFault`
 * Fix: deviations from the spec found with the Matter Test Harness (#690)
   * Fix: a Network Commissioning command that sets the `Breadcrumb` reports the change of the General Commissioning attribute
   * Fix: `OpenCommissioningWindow` and `OpenBasicCommissioningWindow` fail with `Busy` while the fail-safe is armed

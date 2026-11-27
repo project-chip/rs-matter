@@ -24,7 +24,7 @@ use core::fmt::Debug;
 
 use bitflags::bitflags;
 
-use crate::dm::{Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext};
+use crate::dm::{Attribute, Cluster, Command, Dataver, Event, InvokeContext, Quality, ReadContext};
 use crate::error::Error;
 use crate::tlv::{Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::utils::sync::MaybeSendSync;
@@ -223,6 +223,7 @@ pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
         feature_map: features,
         with_attrs: wifi_diag_attrs::<OPTS>,
         with_cmds: wifi_diag_cmds::<OPTS>,
+        with_events: wifi_diag_events,
         ..FULL_CLUSTER
     }
 }
@@ -252,6 +253,11 @@ const fn wifi_diag_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bo
     };
 
     Options::from_bits_truncate(OPTS).contains(opt)
+}
+
+/// Network Commissioning emits `ConnectionStatus`; no other event is emitted
+const fn wifi_diag_events(event: &Event, _: u16, _: u32) -> bool {
+    event.id == EventId::ConnectionStatus as u32
 }
 
 const fn wifi_diag_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {

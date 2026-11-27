@@ -59,7 +59,7 @@
 
 use bitflags::bitflags;
 
-use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, Event, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 use crate::utils::sync::MaybeSendSync;
@@ -98,6 +98,9 @@ bitflags! {
         /// Wi-Fi MCU should leave this off so the cluster doesn't
         /// misadvertise non-existent threads.
         const THREAD = 0x4;
+        /// Declare the `SoftwareFault` event. Set only when the
+        /// application emits it; nothing in rs-matter does.
+        const SOFTWARE_FAULT = 0x8;
     }
 }
 
@@ -217,6 +220,10 @@ impl SwDiag for () {
     }
 }
 
+const fn software_fault_event(event: &Event, _: u16, _: u32) -> bool {
+    event.id == EventId::SoftwareFault as u32
+}
+
 /// Compute the `Cluster<'static>` metadata for a SwDiag handler
 /// whose advertised surface is described by `options`. See the
 /// [`Options`] flags for the per-bit detail.
@@ -234,6 +241,7 @@ pub const fn cluster(options: Options) -> Cluster<'static> {
         || options.bits() & Options::WATERMARKS.bits() != 0;
     let watermarks = options.bits() & Options::WATERMARKS.bits() != 0;
     let thread = options.bits() & Options::THREAD.bits() != 0;
+    let software_fault = options.bits() & Options::SOFTWARE_FAULT.bits() != 0;
 
     let matter_features = if watermarks {
         Feature::WATERMARKS.bits()
@@ -241,7 +249,13 @@ pub const fn cluster(options: Options) -> Cluster<'static> {
         0
     };
 
-    let cluster = FULL_CLUSTER.with_features(matter_features);
+    let cluster = FULL_CLUSTER
+        .with_features(matter_features)
+        .with_events(if software_fault {
+            software_fault_event
+        } else {
+            with!()
+        });
 
     match (heap, watermarks, thread) {
         (false, _, false) => cluster.with_attrs(with!(required)).with_cmds(with!()),

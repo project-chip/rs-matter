@@ -91,7 +91,10 @@ pub mod tcp;
 pub mod wireless;
 
 cfg_if! {
-    if #[cfg(feature = "max-subscriptions-32")] {
+    if #[cfg(feature = "max-subscriptions-64")] {
+        /// Max number of subscriptions
+        const MAX_SUBSCRIPTIONS: usize = 64;
+    } else if #[cfg(feature = "max-subscriptions-32")] {
         /// Max number of subscriptions
         const MAX_SUBSCRIPTIONS: usize = 32;
     } else if #[cfg(feature = "max-subscriptions-16")] {
@@ -122,8 +125,8 @@ cfg_if! {
         /// Max number of subscriptions
         const MAX_SUBSCRIPTIONS: usize = 1;
     } else {
-        /// Max number of subscriptions
-        const MAX_SUBSCRIPTIONS: usize = 3;
+        /// Max number of subscriptions: 3 per fabric, the minimum of the spec
+        const MAX_SUBSCRIPTIONS: usize = rs_matter_im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
     }
 }
 

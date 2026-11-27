@@ -117,7 +117,8 @@ pub(crate) fn random_setting(
 /// a device whose location is factory-provisioned.
 pub const CLUSTER_DEVICE_LOCATION: Cluster<'static> = FULL_CLUSTER
     .with_attrs(except!(AttributeId::Reachable))
-    .with_cmds(with!());
+    .with_cmds(with!())
+    .with_events(except!(EventId::ReachableChanged));
 
 impl ClusterHandler for BasicInfoHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
@@ -132,7 +133,9 @@ impl ClusterHandler for BasicInfoHandler<'_> {
         .with_attrs(except!(
             AttributeId::Reachable | AttributeId::DeviceLocation
         ))
-        .with_cmds(with!());
+        .with_cmds(with!())
+        // `ReachableChanged` goes with `Reachable`
+        .with_events(except!(EventId::ReachableChanged));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()

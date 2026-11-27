@@ -90,7 +90,8 @@ use crate::persist::NETWORKS_KEY;
 ///   [`crate::dm::clusters::sw_diag::Options`]: `heap` → `HEAP`,
 ///   `watermarks` → `WATERMARKS` (claims the Matter `WATERMARKS` feature and
 ///   implies `HEAP`), `thread` → `THREAD` (advertises `ThreadMetrics`; unrelated
-///   to the Thread network protocol).
+///   to the Thread network protocol), `software_fault` → `SOFTWARE_FAULT`
+///   (declares the `SoftwareFault` event, for an application that emits it).
 /// - `time_sync(time_zone | ntp_client | ntp_server | time_sync_client, …)` -
 ///   shape the Time Synchronization cluster. Tokens map 1:1 to
 ///   [`crate::dm::clusters::time_sync::Options`] and to the matching Matter
@@ -236,7 +237,7 @@ macro_rules! __acl_cluster {
 /// Internal helper: turn a comma-separated list of `sw_diag(...)` lowercase
 /// tokens into the corresponding [`crate::dm::clusters::sw_diag::Options`]
 /// bitset value. `heap` → `HEAP`, `watermarks` → `WATERMARKS`, `thread`
-/// → `THREAD`.
+/// → `THREAD`, `software_fault` → `SOFTWARE_FAULT`.
 #[allow(unused_macros)]
 #[doc(hidden)]
 #[macro_export]
@@ -262,6 +263,9 @@ macro_rules! __sw_diag_option_bit {
     };
     (thread) => {
         $crate::dm::clusters::sw_diag::Options::THREAD
+    };
+    (software_fault) => {
+        $crate::dm::clusters::sw_diag::Options::SOFTWARE_FAULT
     };
 }
 
