@@ -71,7 +71,9 @@ pub use crate::dm::clusters::decl::power_source::*;
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
     .with_features(Feature::WIRED.bits())
     .with_attrs(with!(required; AttributeId::WiredCurrentType))
-    .with_cmds(with!());
+    .with_cmds(with!())
+    // The fault change events are not emitted
+    .with_events(with!());
 
 /// The application-supplied description of one power source.
 ///

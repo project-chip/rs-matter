@@ -15,6 +15,8 @@ rust-version.workspace = true
 default = ["std", "log"]
 
 # Number of subscriptions.
+# Without one of these, 3 per fabric (15 with the default 5 fabrics), the minimum of the spec.
+max-subscriptions-64 = []
 max-subscriptions-32 = []
 max-subscriptions-16 = []
 max-subscriptions-8 = []
@@ -22,7 +24,6 @@ max-subscriptions-7 = []
 max-subscriptions-6 = []
 max-subscriptions-5 = []
 max-subscriptions-4 = []
-# Default number of subscriptions.
 max-subscriptions-3 = []
 max-subscriptions-2 = []
 max-subscriptions-1 = []

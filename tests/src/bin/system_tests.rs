@@ -713,6 +713,8 @@ const EP0_DEVICE_TYPES: &[DeviceType] = devices!(
 );
 
 /// The EP0 cluster set of the default [`NODE`]:
+/// - `SoftwareDiagnostics` declares `SoftwareFault`, which the test event
+///   trigger emits (`TC_DGSW_2_2`);
 /// - `TimeSynchronization` claims `TIME_SYNC_CLIENT` so the device advertises
 ///   `TrustedTimeSource` + `SetTrustedTimeSource` — exercised by
 ///   `TC_TIMESYNC_2_13`, consumed by [`time_sync::client::TimeSyncClient`];
@@ -726,6 +728,7 @@ const EP0_DEVICE_TYPES: &[DeviceType] = devices!(
 ///   `is_battery_powered()`-style probes.
 const EP0_CLUSTERS: &[Cluster<'static>] = clusters!(
     eth,
+    sw_diag(software_fault),
     time_sync(time_zone, time_sync_client);
     groups::GroupsHandler::CLUSTER,
     user_label::CLUSTER,
@@ -755,6 +758,7 @@ const EP0_CLUSTERS: &[Cluster<'static>] = clusters!(
 const EP0_CLUSTERS_GROUPCAST: &[Cluster<'static>] = clusters!(
     eth,
     acl(aux),
+    sw_diag(software_fault),
     time_sync(time_zone, time_sync_client);
     groups::GroupsHandler::CLUSTER,
     groupcast::GroupcastHandler::CLUSTER,

@@ -25,7 +25,8 @@ use core::fmt::Debug;
 use bitflags::bitflags;
 
 use crate::dm::{
-    ArrayAttributeRead, Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext,
+    ArrayAttributeRead, Attribute, Cluster, Command, Dataver, Event, InvokeContext, Quality,
+    ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
@@ -567,6 +568,7 @@ pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
         feature_map: features,
         with_attrs: thread_diag_attrs::<OPTS>,
         with_cmds: thread_diag_cmds::<OPTS>,
+        with_events: thread_diag_events,
         ..FULL_CLUSTER
     }
 }
@@ -597,6 +599,11 @@ const fn thread_diag_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> 
     };
 
     Options::from_bits_truncate(OPTS).contains(opt)
+}
+
+/// Network Commissioning emits `ConnectionStatus`; no other event is emitted
+const fn thread_diag_events(event: &Event, _: u16, _: u32) -> bool {
+    event.id == EventId::ConnectionStatus as u32
 }
 
 const fn thread_diag_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {

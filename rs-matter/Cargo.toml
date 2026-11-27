@@ -56,6 +56,8 @@ max-group-endpoints-per-fabric-2 = ["rs-matter-node-core/max-group-endpoints-per
 max-group-endpoints-per-fabric-1 = ["rs-matter-node-core/max-group-endpoints-per-fabric-1"]
 
 # Number of subscriptions of `rs-matter-stack`.
+# Without one of these, 3 per fabric (15 with the default 5 fabrics), the minimum of the spec.
+stack-max-subscriptions-64 = ["rs-matter-stack/max-subscriptions-64"]
 stack-max-subscriptions-32 = ["rs-matter-stack/max-subscriptions-32"]
 stack-max-subscriptions-16 = ["rs-matter-stack/max-subscriptions-16"]
 stack-max-subscriptions-8 = ["rs-matter-stack/max-subscriptions-8"]

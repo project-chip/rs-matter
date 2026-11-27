@@ -221,6 +221,9 @@ impl ClusterHandler for GenDiagHandler<'_> {
         // conformance), hence it has to be listed explicitly here.
         //
         // `TotalOperationalHours` and `BootReason` are kept by `Matter`.
+        //
+        // Of the events, only `BootReason` is emitted: the fault change events
+        // go with the `Active*Faults` lists, which are not kept.
         .with_attrs(with!(
             required;
             AttributeId::UpTime
@@ -228,7 +231,8 @@ impl ClusterHandler for GenDiagHandler<'_> {
                 | AttributeId::BootReason
                 | AttributeId::DeviceLoadStatus
         ))
-        .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot));
+        .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot))
+        .with_events(with!(EventId::BootReason));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()

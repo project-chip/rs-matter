@@ -57,7 +57,7 @@ use bitflags::bitflags;
 
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
-    ArrayAttributeRead, Attribute, Cluster, Command, Dataver, HandlerContext, InvokeContext,
+    ArrayAttributeRead, Attribute, Cluster, Command, Dataver, Event, HandlerContext, InvokeContext,
     LifecycleOp, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
@@ -977,6 +977,26 @@ const fn time_sync_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bo
     false
 }
 
+const fn time_sync_events<const OPTS: u8>(event: &Event, _: u16, _: u32) -> bool {
+    use EventId as E;
+
+    let opts = Options::from_bits_truncate(OPTS);
+
+    if event.id == E::TimeFailure as u32 {
+        return true;
+    }
+
+    if opts.contains(Options::TIME_ZONE)
+        && (event.id == E::DSTTableEmpty as u32
+            || event.id == E::DSTStatus as u32
+            || event.id == E::TimeZoneStatus as u32)
+    {
+        return true;
+    }
+
+    opts.contains(Options::TIME_SYNC_CLIENT) && event.id == E::MissingTrustedTimeSource as u32
+}
+
 const fn time_sync_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
     use CommandId as C;
 
@@ -1038,6 +1058,7 @@ pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
         feature_map: features,
         with_attrs: time_sync_attrs::<OPTS>,
         with_cmds: time_sync_cmds::<OPTS>,
+        with_events: time_sync_events::<OPTS>,
         ..FULL_CLUSTER
     }
 }
