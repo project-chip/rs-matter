@@ -1,0 +1,47 @@
+name: PublishCratesDryRun
+
+# Dry run of `PublishCrates`: packages and builds the crates exactly as
+# `PublishCrates` would, without uploading anything or pushing the tag.
+# Runs nightly too, so that a crate that no longer packages or builds on its
+# own shows up long before a release.
+on:
+  schedule:
+    - cron: "50 6 * * *"
+  workflow_dispatch:
+    inputs:
+      resume:
+        description: "Skip the crates whose version is already on crates.io (to check a resumed release)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  rust_toolchain: stable
+  CRATE_NAME: rs-matter
+
+jobs:
+  publishdryrun:
+    name: Publish Dry Run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup | Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.rust_toolchain }}
+          components: rust-src
+      - name: Build | Publish Dry Run
+        run: bash .github/scripts/publish-crates.sh --dry-run ${{ inputs.resume && '--resume' || '' }}
+      - name: Get the release tag
+        run: |
+          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
+          echo "release_tag=v$version" >> $GITHUB_ENV
+          echo "release tag: v$version"
+      - name: Tag the release (dry run)
+        run: |
+          echo "Would create tag: ${{env.release_tag}}"
+          echo "Would use message: Release ${{env.release_tag}}"
+          echo "Would tag commit: $(git rev-parse HEAD)"
