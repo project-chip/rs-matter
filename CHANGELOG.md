@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+* Fix: when the subscription table is full, a new subscription takes the place of the oldest one of a fabric with at least two more subscriptions than its own
+* Fix: a subscriber replacing its subscriptions over a new session aborts a report to it still in flight over the old one, which held back all other reports
+* Fix: without the `groups` feature, Group Key Management keeps one group key set besides the IPK and one group key map entry per fabric
+  * Fix: a whole GroupKeyMap write is limited by `MaxGroupsPerFabric`, not `MaxGroupKeysPerFabric`
+
 ## [0.5.0] - 2026-11-27
 * Breaking: the `mbedtls` feature uses `mbedtls-rs-sys` 0.4
 * All crypto backends now use a template based CSR logic that is crypto-independent (#693)

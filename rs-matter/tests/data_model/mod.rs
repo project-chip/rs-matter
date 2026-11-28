@@ -25,6 +25,7 @@ mod events;
 mod fan_control;
 #[cfg(feature = "groups")]
 mod groups;
+mod grp_key_mgmt;
 mod long_reads;
 mod provisional;
 mod subscribe;

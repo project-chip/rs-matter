@@ -60,7 +60,7 @@ use crate::tlv::{
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::MAX_TX_UDP_PAYLOAD_SIZE;
 use crate::utils::epoch::UtcTime;
-use crate::utils::futures::{select, select3, Coalesce};
+use crate::utils::futures::{select, select3, Coalesce, Either};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::ByteBuffers;
 use crate::utils::storage::WriteBuf;
@@ -869,12 +869,12 @@ where
             })?;
 
         if !req.keep_subs()? {
-            self.state
-                .subscriptions
-                .remove(&self.subscriptions_buffers, |sub| {
-                    (sub.ids().fab_idx == fab_idx && sub.ids().peer_node_id == peer_node_id)
-                        .then_some("new subscription request")
-                });
+            self.state.subscriptions.replace(
+                &self.subscriptions_buffers,
+                fab_idx,
+                peer_node_id,
+                exchange.id().session_id(),
+            );
         }
 
         let max_int_secs = self.max_int_secs(min_int_secs, max_int_ceil);
@@ -1376,9 +1376,24 @@ where
             return Err(ErrorCode::ResourceExhausted.into());
         };
 
-        let primed = self
-            .report_data(rctx, &mut tx, &mut exchange, None, send_if_empty)
-            .await?;
+        let session_id = exchange.id().session_id();
+
+        let report = self.report_data(rctx, &mut tx, &mut exchange, None, send_if_empty);
+        let replaced = self.state.subscriptions.wait_report_replaced(session_id);
+
+        let primed = match select(report, replaced).await {
+            Either::First(primed) => primed?,
+            Either::Second(()) => {
+                // Dropping the exchange stops its retransmissions, closing its session
+                // if one is pending
+                warn!(
+                    "Subscription {:?} replaced over another session; aborting its report",
+                    rctx.subscription().ids()
+                );
+
+                return Ok(false);
+            }
+        };
 
         exchange.acknowledge().await?;
 

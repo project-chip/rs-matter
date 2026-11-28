@@ -197,9 +197,7 @@ pub struct Transport {
     /// commissioning transport.
     comm_window_changed: MultiNotification,
     /// A notification that the groups have been modified.
-    /// Unused without the `groups` feature, but kept unconditionally so the
-    /// in-place `Transport` initializer needs no feature-specific variant.
-    #[cfg_attr(not(feature = "groups"), allow(dead_code))]
+    /// Nothing waits for it without the `groups` feature.
     groups_modified: Notification,
     /// A notification that the CASE session resumption cache has been
     /// mutated and should be re-persisted by the background persist
@@ -360,7 +358,6 @@ impl Transport {
 
     /// Notify that groups have changed (keys, key maps, or membership) and
     /// multicast registrations need updating.
-    #[cfg(feature = "groups")]
     pub fn notify_groups_changed(&self) {
         self.groups_modified.notify();
     }
