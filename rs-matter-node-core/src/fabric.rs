@@ -32,9 +32,7 @@ use crate::group_keys::KeySet;
 use crate::persist::{
     load_logged, KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START, NEXT_FABRIC_INDEX_KEY,
 };
-#[cfg(feature = "groups")]
-use crate::tlv::Skippable;
-use crate::tlv::{FromTLV, TLVElement, TlvError, TlvErrorCode, ToTLV};
+use crate::tlv::{FromTLV, Skippable, TLVElement, TlvError, TlvErrorCode, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{String, Vec};
 
@@ -44,13 +42,14 @@ const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 /// nullable fabric index fields.
 const MAX_FAB_IDX: u8 = u8::MAX - 1;
 
-/// All multicast-group fabric state: the group key sets, the group→keyset
-/// mapping, and the group table. Gated as one inline module so the whole block
-/// (consts, TLV structs and the `Groups` container) is compiled out with a
-/// single `#[cfg]` when the `groups` feature is off, and re-exported so the rest
-/// of `fabric` refers to these items unqualified.
-#[cfg(feature = "groups")]
+/// The group fabric state: the group key sets, the group→keyset mapping, and the
+/// group table.
+///
+/// The Group Key Management cluster of the root node manages the key sets and the
+/// mapping, so they are kept also without the `groups` feature, only fewer of them.
+/// The group table is only there with the `groups` feature.
 mod groups {
+    #[cfg(feature = "groups")]
     use core::str::FromStr;
 
     use cfg_if::cfg_if;
@@ -59,7 +58,9 @@ mod groups {
     use crate::group_keys::GroupKeySet;
     use crate::tlv::{FromTLV, ToTLV};
     use crate::utils::init::{init, Init, InitDefault};
-    use crate::utils::storage::{String, Vec};
+    #[cfg(feature = "groups")]
+    use crate::utils::storage::String;
+    use crate::utils::storage::Vec;
 
     cfg_if! {
         if #[cfg(feature = "max-group-keys-per-fabric-5")] {
@@ -74,9 +75,12 @@ mod groups {
         } else if #[cfg(feature = "max-group-keys-per-fabric-2")] {
             /// Max number of group key sets per fabric (excluding IPK at index 0).
             pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 2;
-        } else { // Matter requires a minimum of 3 group key sets per fabric
+        } else if #[cfg(feature = "groups")] { // Matter requires a minimum of 3 group key sets per fabric
             /// Max number of group key sets per fabric (excluding IPK at index 0).
             pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 3;
+        } else { // Matter requires only the IPK without groups, but the certification tests write one more
+            /// Max number of group key sets per fabric (excluding IPK at index 0).
+            pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 1;
         }
     }
 
@@ -108,9 +112,12 @@ mod groups {
         } else if #[cfg(feature = "max-groups-per-fabric-4")] {
             /// Max number of group key map entries per fabric.
             pub const MAX_GROUPS_PER_FABRIC: usize = 4;
-        } else { // Matter requires a minimum of 4 group table entries per fabric
+        } else if #[cfg(feature = "groups")] { // Matter requires a minimum of 4 group table entries per fabric
             /// Max number of group key map entries per fabric.
             pub const MAX_GROUPS_PER_FABRIC: usize = 4;
+        } else { // The certification tests write one group key map entry
+            /// Max number of group key map entries per fabric.
+            pub const MAX_GROUPS_PER_FABRIC: usize = 1;
         }
     }
 
@@ -137,6 +144,7 @@ mod groups {
     }
 
     /// A group table entry mapping a group ID to its endpoints and name.
+    #[cfg(feature = "groups")]
     #[derive(Debug, FromTLV, ToTLV)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct GroupEndpointMapping {
@@ -163,6 +171,7 @@ mod groups {
     /// The multicast address policy of a group.
     ///
     /// The values are the ones of the Groupcast cluster.
+    #[cfg(feature = "groups")]
     #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, FromTLV, ToTLV)]
     #[tlvargs(datatype = "u8")]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -176,6 +185,7 @@ mod groups {
         PerGroup = 1,
     }
 
+    #[cfg(feature = "groups")]
     impl GroupEndpointMapping {
         /// Whether the group has auxiliary ACL entries generated for its
         /// endpoints.
@@ -212,6 +222,7 @@ mod groups {
         /// Groups keyset mapping
         key_map: Vec<GroupKeyMapping, MAX_GROUPS_PER_FABRIC>,
         /// Group table (group ID → endpoints + name)
+        #[cfg(feature = "groups")]
         endpoint_mapping: Vec<GroupEndpointMapping, MAX_GROUPS_PER_FABRIC>,
     }
 
@@ -220,16 +231,27 @@ mod groups {
             Self {
                 key_sets: Vec::new(),
                 key_map: Vec::new(),
+                #[cfg(feature = "groups")]
                 endpoint_mapping: Vec::new(),
             }
         }
 
         pub fn init() -> impl Init<Self> {
-            init!(Self {
+            // `init!` does not accept `#[cfg]` on its fields
+            #[cfg(feature = "groups")]
+            let init = init!(Self {
                 key_sets <- Vec::init(),
                 key_map <- Vec::init(),
                 endpoint_mapping <- Vec::init(),
-            })
+            });
+
+            #[cfg(not(feature = "groups"))]
+            let init = init!(Self {
+                key_sets <- Vec::init(),
+                key_map <- Vec::init(),
+            });
+
+            init
         }
 
         /// Return an iterator over the group key sets of the fabric
@@ -309,6 +331,39 @@ mod groups {
             self.key_map.retain(|e| e.group_key_set_id != key_set_id);
         }
 
+        /// Look up the key set ID mapped to a group, if any.
+        pub fn key_map_get(&self, group_id: u16) -> Option<u16> {
+            self.key_map
+                .iter()
+                .find(|e| e.group_id == group_id)
+                .map(|e| e.group_key_set_id)
+        }
+
+        /// Map a group to a key set, replacing any previous mapping of that
+        /// group.
+        pub fn key_map_set_group(&mut self, group_id: u16, key_set_id: u16) -> Result<(), Error> {
+            if let Some(entry) = self.key_map.iter_mut().find(|e| e.group_id == group_id) {
+                entry.group_key_set_id = key_set_id;
+                return Ok(());
+            }
+
+            self.key_map
+                .push(GroupKeyMapping {
+                    group_id,
+                    group_key_set_id: key_set_id,
+                })
+                .map_err(|_| ErrorCode::ResourceExhausted.into())
+        }
+
+        /// Remove all key-set mappings of the given group.
+        pub fn key_map_remove_group(&mut self, group_id: u16) {
+            self.key_map.retain(|e| e.group_id != group_id);
+        }
+    }
+
+    /// The group table, only there with the `groups` feature
+    #[cfg(feature = "groups")]
+    impl Groups {
         /// Return an iterator over the group table entries
         pub fn iter(&self) -> impl Iterator<Item = &GroupEndpointMapping> {
             self.endpoint_mapping.iter()
@@ -497,35 +552,6 @@ mod groups {
         pub fn group_count(&self) -> usize {
             self.endpoint_mapping.len()
         }
-
-        /// Look up the key set ID mapped to a group, if any.
-        pub fn key_map_get(&self, group_id: u16) -> Option<u16> {
-            self.key_map
-                .iter()
-                .find(|e| e.group_id == group_id)
-                .map(|e| e.group_key_set_id)
-        }
-
-        /// Map a group to a key set, replacing any previous mapping of that
-        /// group.
-        pub fn key_map_set_group(&mut self, group_id: u16, key_set_id: u16) -> Result<(), Error> {
-            if let Some(entry) = self.key_map.iter_mut().find(|e| e.group_id == group_id) {
-                entry.group_key_set_id = key_set_id;
-                return Ok(());
-            }
-
-            self.key_map
-                .push(GroupKeyMapping {
-                    group_id,
-                    group_key_set_id: key_set_id,
-                })
-                .map_err(|_| ErrorCode::ResourceExhausted.into())
-        }
-
-        /// Remove all key-set mappings of the given group.
-        pub fn key_map_remove_group(&mut self, group_id: u16) {
-            self.key_map.retain(|e| e.group_id != group_id);
-        }
     }
 
     impl Default for Groups {
@@ -541,7 +567,6 @@ mod groups {
     }
 }
 
-#[cfg(feature = "groups")]
 pub use groups::*;
 
 /// Fabric type
@@ -588,7 +613,6 @@ pub struct Fabric {
     /// Access Control List
     acl: Vec<AclEntry, { acl::MAX_ACL_ENTRIES_PER_FABRIC }>,
     /// Fabric group information.
-    #[cfg(feature = "groups")]
     #[tagval(13)]
     groups: Skippable<Groups>,
     /// VID Verification Statement (Matter Core spec).
@@ -614,11 +638,7 @@ impl Fabric {
     /// The Fabric must be updated with the correct values before it can be
     /// used, via `Fabric::update`.
     fn init(fab_idx: NonZeroU8) -> impl Init<Self> {
-        // NOTE: the `init!` macro does not accept `#[cfg]` on its field entries,
-        // so the `groups` field (present only under the `groups` feature) forces
-        // two variants of the initializer that differ solely by that last field.
-        #[cfg(feature = "groups")]
-        let r = init!(Self {
+        init!(Self {
             fab_idx,
             node_id: 0,
             fabric_id: 0,
@@ -634,26 +654,7 @@ impl Fabric {
             acl <- Vec::init(),
             vid_verification_statement <- Vec::init(),
             groups <- Skippable::init_default(),
-        });
-
-        #[cfg(not(feature = "groups"))]
-        let r = init!(Self {
-            fab_idx,
-            node_id: 0,
-            fabric_id: 0,
-            vendor_id: 0,
-            compressed_fabric_id: 0,
-            secret_key <- CanonPkcSecretKey::init(),
-            root_ca <- Vec::init(),
-            icac_or_vvsc <- Vec::init(),
-            vvsc_set: false,
-            noc <- Vec::init(),
-            ipk <- KeySet::init(),
-            label: String::new(),
-            acl <- Vec::init(),
-            vid_verification_statement <- Vec::init(),
-        });
-        r
+        })
     }
 
     /// Update the fabric with the provided data so that it can operate.
@@ -857,14 +858,12 @@ impl Fabric {
 
     /// Return the fabric's groups, or an empty group state if this fabric was
     /// persisted before the `groups` field existed (see [`Fabric::groups`]).
-    #[cfg(feature = "groups")]
     pub fn groups(&self) -> &Groups {
         self.groups.value()
     }
 
     /// Return a mutable reference to the fabric's groups, materializing empty
     /// group state on first access if it was absent.
-    #[cfg(feature = "groups")]
     pub fn groups_mut(&mut self) -> &mut Groups {
         self.groups.value_mut()
     }
@@ -1856,12 +1855,12 @@ pub(crate) mod tests {
         assert_eq!(compressed, 0x87e1_b004_e235_a130);
     }
 
-    /// Lock the on-disk TLV tag layout of the fields whose position is sensitive
-    /// to the `groups` feature. A released `rs-matter` persists `groups` at
-    /// context tag 13 and `vid_verification_statement` at 14; gating `groups` in
-    /// or out must not move either. Serializing an (empty) `Fabric` and checking
-    /// the raw tags catches any future reorder that would silently corrupt
-    /// existing persisted fabrics.
+    /// Lock the on-disk TLV tag layout of the fields after `acl`. A released
+    /// `rs-matter` persists `groups` at context tag 13 and
+    /// `vid_verification_statement` at 14; a build without the `groups` feature
+    /// persisted no tag 13 before `groups` was kept in all builds. Serializing an
+    /// (empty) `Fabric` and checking the raw tags catches any future reorder that
+    /// would silently corrupt existing persisted fabrics.
     #[test]
     fn fabric_tlv_tag_layout_is_stable() {
         use crate::tlv::{TLVElement, TLVTag, ToTLV};
@@ -1893,17 +1892,9 @@ pub(crate) mod tests {
             "vid_verification_statement must stay at TLV tag 14"
         );
 
-        // With `groups` compiled in it must be at tag 13; compiled out, tag 13 is
-        // simply absent (and a reader defaults it).
-        #[cfg(feature = "groups")]
         assert!(
             !root.find_ctx(13).unwrap().is_empty(),
-            "groups must be at TLV tag 13 when compiled in"
-        );
-        #[cfg(not(feature = "groups"))]
-        assert!(
-            root.find_ctx(13).unwrap().is_empty(),
-            "no field should occupy tag 13 when groups is compiled out"
+            "groups must stay at TLV tag 13"
         );
     }
 
@@ -2778,7 +2769,6 @@ pub(crate) mod tests {
             b.vid_verification_statement()
         );
 
-        #[cfg(feature = "groups")]
         {
             let ga = a.groups();
             let gb = b.groups();
@@ -2821,31 +2811,34 @@ pub(crate) mod tests {
                 .collect();
             assert_eq!(km_a, km_b);
 
-            let ep_a: std::vec::Vec<_> = ga
-                .iter()
-                .map(|e| {
-                    (
-                        e.group_id,
-                        e.endpoints.to_vec(),
-                        e.group_name.clone(),
-                        e.has_aux_acl(),
-                        e.groupcast_managed(),
-                    )
-                })
-                .collect();
-            let ep_b: std::vec::Vec<_> = gb
-                .iter()
-                .map(|e| {
-                    (
-                        e.group_id,
-                        e.endpoints.to_vec(),
-                        e.group_name.clone(),
-                        e.has_aux_acl(),
-                        e.groupcast_managed(),
-                    )
-                })
-                .collect();
-            assert_eq!(ep_a, ep_b);
+            #[cfg(feature = "groups")]
+            {
+                let ep_a: std::vec::Vec<_> = ga
+                    .iter()
+                    .map(|e| {
+                        (
+                            e.group_id,
+                            e.endpoints.to_vec(),
+                            e.group_name.clone(),
+                            e.has_aux_acl(),
+                            e.groupcast_managed(),
+                        )
+                    })
+                    .collect();
+                let ep_b: std::vec::Vec<_> = gb
+                    .iter()
+                    .map(|e| {
+                        (
+                            e.group_id,
+                            e.endpoints.to_vec(),
+                            e.group_name.clone(),
+                            e.has_aux_acl(),
+                            e.groupcast_managed(),
+                        )
+                    })
+                    .collect();
+                assert_eq!(ep_a, ep_b);
+            }
         }
     }
 
@@ -2894,7 +2887,6 @@ pub(crate) mod tests {
                 .set_vid_verification(None, None, Some(&[0xcd; 30]))
                 .unwrap();
 
-            #[cfg(feature = "groups")]
             {
                 use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
 
@@ -2915,9 +2907,13 @@ pub(crate) mod tests {
                     .unwrap();
                 groups.key_set_add(key_set).unwrap();
                 groups.key_map_set_group(0x100, 0x11).unwrap();
-                groups.add(1, 0x100, "kitchen").unwrap();
-                groups.groupcast_join(0x101, &[2, 3], false, None).unwrap();
-                groups.set_has_aux_acl(0x101, true);
+
+                #[cfg(feature = "groups")]
+                {
+                    groups.add(1, 0x100, "kitchen").unwrap();
+                    groups.groupcast_join(0x101, &[2, 3], false, None).unwrap();
+                    groups.set_has_aux_acl(0x101, true);
+                }
             }
         }
 
@@ -3096,6 +3092,9 @@ pub(crate) mod tests {
                 .unwrap();
             assert_eq!(fabric.acl().len(), 2);
 
+            fabric.groups_mut().key_map_set_group(0x100, 0x11).unwrap();
+            assert_eq!(fabric.groups().key_map_iter().count(), 1);
+
             #[cfg(feature = "groups")]
             {
                 fabric.groups_mut().add(1, 0x100, "g").unwrap();
@@ -3111,13 +3110,10 @@ pub(crate) mod tests {
         let fabric = fabrics.get(fab_idx).unwrap();
         assert_eq!(fabric.acl().len(), 1);
         assert_eq!(fabric.label(), "");
-
         #[cfg(feature = "groups")]
-        {
-            assert_eq!(fabric.groups().group_count(), 0);
-            assert_eq!(fabric.groups().key_set_iter().count(), 0);
-            assert_eq!(fabric.groups().key_map_iter().count(), 0);
-        }
+        assert_eq!(fabric.groups().group_count(), 0);
+        assert_eq!(fabric.groups().key_set_iter().count(), 0);
+        assert_eq!(fabric.groups().key_map_iter().count(), 0);
     }
 
     #[cfg(feature = "groups")]

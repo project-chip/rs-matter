@@ -33,7 +33,6 @@ use rs_matter_bdx as bdx;
 use rs_matter_cert as cert;
 use rs_matter_cert::attest;
 use rs_matter_crypto as crypto;
-#[cfg(feature = "groups")]
 use rs_matter_crypto::group_keys;
 use rs_matter_dm_core::persist;
 use rs_matter_dm_core::{except, handler_chain_type, with};

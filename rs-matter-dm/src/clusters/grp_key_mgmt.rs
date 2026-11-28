@@ -17,27 +17,21 @@
 
 //! This module contains the implementation of the Group Key Management cluster and its handler.
 
-#[cfg(feature = "groups")]
 use core::num::NonZeroU8;
 
-#[cfg(feature = "groups")]
 use crate::acl::Accessor;
-#[cfg(feature = "groups")]
 use crate::crypto::AEAD_CANON_KEY_LEN;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-#[cfg(feature = "groups")]
 use crate::fabric::{
     FabricPersist, GroupKeyMapping, MAX_GROUPS_PER_FABRIC, MAX_GROUP_KEYS_PER_FABRIC,
 };
-#[cfg(feature = "groups")]
-use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
+use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet, GROUP_MAX_EPOCH_KEYS};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::{with, Matter};
-#[cfg(feature = "groups")]
 use rs_matter_node::Transaction as _;
 
 pub use crate::dm::clusters::decl::group_key_management::*;
@@ -47,8 +41,6 @@ pub use crate::dm::clusters::decl::group_key_management::*;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GrpKeyMgmtHandler<'a> {
     dataver: Dataver,
-    // Without multicast group support there are no group keys to manage
-    #[cfg_attr(not(feature = "groups"), allow(dead_code))]
     matter: &'a Matter<'a>,
 }
 
@@ -65,9 +57,13 @@ impl<'a> GrpKeyMgmtHandler<'a> {
     }
 }
 
-/// The full Group Key Management implementation, backing multicast group keys
-/// and the group→keyset map on top of the fabric's group state.
-#[cfg(feature = "groups")]
+/// The Group Key Management implementation, backing the group key sets and the
+/// group→keyset map on top of the fabric's group state.
+///
+/// Without the `groups` feature the node has no multicast groups, but the root node
+/// still has this cluster, and by default keeps one group key set besides the IPK
+/// and one group→keyset map entry per fabric (see [`MAX_GROUP_KEYS_PER_FABRIC`] and
+/// [`MAX_GROUPS_PER_FABRIC`]).
 impl ClusterHandler for GrpKeyMgmtHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
@@ -87,44 +83,48 @@ impl ClusterHandler for GrpKeyMgmtHandler<'_> {
         let attr = ctx.attr();
 
         ctx.transaction_id().with_state(self.matter, |state| {
-            let mut entries = state
+            let fabrics = state
                 .fabrics
                 .iter()
-                .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
-                .flat_map(|fabric| {
-                    fabric
-                        .groups()
-                        .key_map_iter()
-                        .map(move |entry| (fabric.fab_idx(), entry))
-                });
+                .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx);
 
             match builder {
                 ArrayAttributeRead::ReadAll(mut builder) => {
-                    for (fab_idx, entry) in entries {
-                        builder = builder
-                            .push()?
-                            .group_id(entry.group_id)?
-                            .group_key_set_id(entry.group_key_set_id)?
-                            .fabric_index(Some(fab_idx.get()))?
-                            .end()?;
+                    for fabric in fabrics {
+                        for entry in fabric.groups().key_map_iter() {
+                            builder = builder
+                                .push()?
+                                .group_id(entry.group_id)?
+                                .group_key_set_id(entry.group_key_set_id)?
+                                .fabric_index(Some(fabric.fab_idx().get()))?
+                                .end()?;
+                        }
                     }
                     builder.end()
                 }
                 ArrayAttributeRead::ReadOne(index, builder) => {
-                    let Some((fab_idx, entry)) = entries.nth(index as usize) else {
-                        return Err(ErrorCode::ConstraintError.into());
-                    };
-                    builder
-                        .group_id(entry.group_id)?
-                        .group_key_set_id(entry.group_key_set_id)?
-                        .fabric_index(Some(fab_idx.get()))?
-                        .end()
+                    let mut index = index as usize;
+
+                    for fabric in fabrics {
+                        if let Some(entry) = fabric.groups().key_map_iter().nth(index) {
+                            return builder
+                                .group_id(entry.group_id)?
+                                .group_key_set_id(entry.group_key_set_id)?
+                                .fabric_index(Some(fabric.fab_idx().get()))?
+                                .end();
+                        }
+
+                        index -= fabric.groups().key_map_iter().count();
+                    }
+
+                    Err(ErrorCode::ConstraintError.into())
                 }
                 ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
         })
     }
 
+    #[cfg(feature = "groups")]
     fn group_table<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
@@ -182,6 +182,23 @@ impl ClusterHandler for GrpKeyMgmtHandler<'_> {
         })
     }
 
+    /// Without the `groups` feature there is no group table
+    #[cfg(not(feature = "groups"))]
+    fn group_table<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            GroupInfoMapStructArrayBuilder<P>,
+            GroupInfoMapStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        match builder {
+            ArrayAttributeRead::ReadAll(builder) => builder.end(),
+            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
+    }
+
     fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(MAX_GROUPS_PER_FABRIC as _)
     }
@@ -209,7 +226,7 @@ impl ClusterHandler for GrpKeyMgmtHandler<'_> {
                     let mut count: usize = 0;
                     for entry in &list {
                         count += 1;
-                        if count > MAX_GROUP_KEYS_PER_FABRIC {
+                        if count > MAX_GROUPS_PER_FABRIC {
                             // A list over capacity answers FAILURE, as the CHIP SDK does
                             // and its `TestGroupKeyManagementCluster` expects. The same
                             // holds for the per-entry appends below, which is how chip-tool
@@ -442,77 +459,70 @@ impl ClusterHandler for GrpKeyMgmtHandler<'_> {
         let fab_idx = Accessor::for_operation(&ctx, self.matter)?.fab_idx()?;
         let group_key_set_id = request.group_key_set_id()?;
 
-        ctx.transaction_id().with_state(self.matter, |state| {
-            let fabric = state.fabrics.fabric(fab_idx)?;
+        let (group_key_security_policy, epoch_start_times) =
+            ctx.transaction_id().with_state(self.matter, |state| {
+                let fabric = state.fabrics.fabric(fab_idx)?;
 
-            // KeySet ID 0 is the IPK (Identity Protection Key); per Matter
-            // Core spec it is always present once the
-            // fabric has been added (`AddNOC`) and is reported here with
-            // its epoch keys redacted to null. The IPK isn't kept in the
-            // generic `key_sets` list — it lives on the fabric directly.
-            // Any other ID is looked up in the per-fabric `key_sets` map.
-            if group_key_set_id == 0 {
-                return response
-                    .group_key_set()?
-                    .group_key_set_id(0)?
-                    .group_key_security_policy(GroupKeySecurityPolicyEnum::TrustFirst)?
-                    .epoch_key_0(Nullable::<Octets<'_>>::none())?
-                    .epoch_start_time_0(Nullable::some(0))?
-                    .epoch_key_1(Nullable::<Octets<'_>>::none())?
-                    .epoch_start_time_1(Nullable::none())?
-                    .epoch_key_2(Nullable::<Octets<'_>>::none())?
-                    .epoch_start_time_2(Nullable::none())?
-                    // Present only in the Matter 1.6.0 data model, where it is
-                    // already marked deprecated (`D`); 1.6.1 drops it again.
-                    // `PerGroupID` is the historical behaviour: the group's ID
-                    // goes into the multicast address, as
-                    // `compute_group_multicast_addr` does.
-                    .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
-                    .end()?
-                    .end();
-            }
-
-            let entry = fabric
-                .groups()
-                .key_set_get(group_key_set_id)
-                .ok_or(ErrorCode::NotFound)?;
-
-            // The policy is stored as its `u8` discriminant; anything else means the
-            // persisted key set is corrupted
-            let group_key_security_policy = match entry.group_key_security_policy {
-                v if v == GroupKeySecurityPolicyEnum::TrustFirst as u8 => {
-                    GroupKeySecurityPolicyEnum::TrustFirst
+                // KeySet ID 0 is the IPK (Identity Protection Key); per Matter
+                // Core spec it is always present once the
+                // fabric has been added (`AddNOC`) and is reported here with
+                // its epoch keys redacted to null. The IPK isn't kept in the
+                // generic `key_sets` list — it lives on the fabric directly.
+                // Any other ID is looked up in the per-fabric `key_sets` map.
+                if group_key_set_id == 0 {
+                    return Ok((
+                        GroupKeySecurityPolicyEnum::TrustFirst,
+                        [Some(0), None, None],
+                    ));
                 }
-                v if v == GroupKeySecurityPolicyEnum::CacheAndSync as u8 => {
-                    GroupKeySecurityPolicyEnum::CacheAndSync
-                }
-                _ => Err(ErrorCode::InvalidState)?,
-            };
 
-            // Build response: epoch keys are always null, start times are preserved
-            response
-                .group_key_set()?
-                .group_key_set_id(group_key_set_id)?
-                .group_key_security_policy(group_key_security_policy)?
-                .epoch_key_0(Nullable::<Octets<'_>>::none())?
-                .epoch_start_time_0(Nullable::some(entry.epoch_keys[0].epoch_start_time))?
-                .epoch_key_1(Nullable::<Octets<'_>>::none())?
-                .epoch_start_time_1(if let Some(k) = entry.epoch_keys.get(1) {
-                    Nullable::some(k.epoch_start_time)
-                } else {
-                    Nullable::none()
-                })?
-                .epoch_key_2(Nullable::<Octets<'_>>::none())?
-                .epoch_start_time_2(if let Some(k) = entry.epoch_keys.get(2) {
-                    Nullable::some(k.epoch_start_time)
-                } else {
-                    Nullable::none()
-                })?
-                // 1.6.0-only, already deprecated there - see above.
-                .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
-                .end()?
-                .end()
-        })
+                let entry = fabric
+                    .groups()
+                    .key_set_get(group_key_set_id)
+                    .ok_or(ErrorCode::NotFound)?;
+
+                // The policy is stored as its `u8` discriminant; anything else means the
+                // persisted key set is corrupted
+                let group_key_security_policy = match entry.group_key_security_policy {
+                    v if v == GroupKeySecurityPolicyEnum::TrustFirst as u8 => {
+                        GroupKeySecurityPolicyEnum::TrustFirst
+                    }
+                    v if v == GroupKeySecurityPolicyEnum::CacheAndSync as u8 => {
+                        GroupKeySecurityPolicyEnum::CacheAndSync
+                    }
+                    _ => Err(ErrorCode::InvalidState)?,
+                };
+
+                let mut epoch_start_times = [None; GROUP_MAX_EPOCH_KEYS];
+                for (start_time, key) in epoch_start_times.iter_mut().zip(&entry.epoch_keys) {
+                    *start_time = Some(key.epoch_start_time);
+                }
+
+                Ok::<_, Error>((group_key_security_policy, epoch_start_times))
+            })?;
+
+        // The epoch keys are always null, the start times are preserved.
+        // One response for both the IPK and the other key sets, to keep the code small
+        let [start_time_0, start_time_1, start_time_2] = epoch_start_times.map(Nullable::new);
+
+        response
+            .group_key_set()?
+            .group_key_set_id(group_key_set_id)?
+            .group_key_security_policy(group_key_security_policy)?
+            .epoch_key_0(Nullable::<Octets<'_>>::none())?
+            .epoch_start_time_0(start_time_0)?
+            .epoch_key_1(Nullable::<Octets<'_>>::none())?
+            .epoch_start_time_1(start_time_1)?
+            .epoch_key_2(Nullable::<Octets<'_>>::none())?
+            .epoch_start_time_2(start_time_2)?
+            // Present only in the Matter 1.6.0 data model, where it is
+            // already marked deprecated (`D`); 1.6.1 drops it again.
+            // `PerGroupID` is the historical behaviour: the group's ID
+            // goes into the multicast address, as
+            // `compute_group_multicast_addr` does.
+            .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
+            .end()?
+            .end()
     }
 
     fn handle_key_set_remove(
@@ -572,134 +582,5 @@ impl ClusterHandler for GrpKeyMgmtHandler<'_> {
 
             ids.end()?.end()
         })
-    }
-}
-
-/// A spec-minimal Group Key Management implementation for builds without the
-/// `groups` feature. The Root Node device type mandates this cluster, so it is
-/// always present, but with no multicast support it stores no group keys or
-/// mappings: reads return empty, group-key writes/removes are accepted as
-/// no-ops, and `KeySetRead` reports not-found. The IPK (key set 0) is delivered
-/// out of band via `AddNOC`, so commissioning and operation are unaffected.
-#[cfg(not(feature = "groups"))]
-impl ClusterHandler for GrpKeyMgmtHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
-
-    fn dataver(&self) -> u32 {
-        self.dataver.get()
-    }
-
-    fn dataver_changed(&self) {
-        self.dataver.changed();
-    }
-
-    fn group_key_map<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl ReadContext,
-        builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
-    ) -> Result<P, Error> {
-        match builder {
-            ArrayAttributeRead::ReadAll(builder) => builder.end(),
-            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
-    }
-
-    fn group_table<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl ReadContext,
-        builder: ArrayAttributeRead<
-            GroupInfoMapStructArrayBuilder<P>,
-            GroupInfoMapStructBuilder<P>,
-        >,
-    ) -> Result<P, Error> {
-        match builder {
-            ArrayAttributeRead::ReadAll(builder) => builder.end(),
-            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
-    }
-
-    fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(1)
-    }
-
-    fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(1)
-    }
-
-    fn set_group_key_map(
-        &self,
-        _ctx: impl WriteContext,
-        _value: ArrayAttributeWrite<TLVArray<'_, GroupKeyMapStruct<'_>>, GroupKeyMapStruct<'_>>,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn handle_key_set_write(
-        &self,
-        _ctx: impl InvokeContext,
-        request: KeySetWriteRequest<'_>,
-    ) -> Result<(), Error> {
-        // Key set 0 (the IPK) is reserved and cannot be written via this cluster
-        // (it is delivered by `AddNOC`); reject it like the full handler. Group
-        // key sets are accepted as a no-op since there is no group storage.
-        if request.group_key_set()?.group_key_set_id()? == 0 {
-            return Err(ErrorCode::InvalidCommand.into());
-        }
-        Ok(())
-    }
-
-    fn handle_key_set_read<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl InvokeContext,
-        request: KeySetReadRequest<'_>,
-        response: KeySetReadResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Key set 0 is the IPK: always present once the fabric is added (via
-        // `AddNOC`, independent of multicast group support), reported with its
-        // epoch keys redacted to null. Any other key set is unknown here.
-        if request.group_key_set_id()? == 0 {
-            response
-                .group_key_set()?
-                .group_key_set_id(0)?
-                .group_key_security_policy(GroupKeySecurityPolicyEnum::TrustFirst)?
-                .epoch_key_0(Nullable::<Octets<'_>>::none())?
-                .epoch_start_time_0(Nullable::some(0))?
-                .epoch_key_1(Nullable::<Octets<'_>>::none())?
-                .epoch_start_time_1(Nullable::none())?
-                .epoch_key_2(Nullable::<Octets<'_>>::none())?
-                .epoch_start_time_2(Nullable::none())?
-                // 1.6.0-only, already deprecated there - see the `groups`
-                // handler above.
-                .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
-                .end()?
-                .end()
-        } else {
-            Err(ErrorCode::NotFound.into())
-        }
-    }
-
-    fn handle_key_set_remove(
-        &self,
-        _ctx: impl InvokeContext,
-        request: KeySetRemoveRequest<'_>,
-    ) -> Result<(), Error> {
-        // KeySetRemove of ID 0 (IPK) is not allowed. This is the only key set the
-        // minimal handler knows about; there is nothing else to remove.
-        if request.group_key_set_id()? == 0 {
-            return Err(ErrorCode::InvalidCommand.into());
-        }
-
-        Ok(())
-    }
-
-    fn handle_key_set_read_all_indices<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl InvokeContext,
-        response: KeySetReadAllIndicesResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // The IPK (key set 0) is always present, even without group support.
-        response.group_key_set_i_ds()?.push(&0u16)?.end()?.end()
     }
 }

@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::cmp::Reverse;
 use core::num::NonZeroU8;
 
 use crate::basic_info::SUBSCRIPTION_BUFFER_SIZE;
@@ -110,7 +111,9 @@ type SubscriptionsBuffersInner<'a, const N: usize> =
 /// A type for tracking subscriptions accepted by the data model.
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
-/// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
+/// When the table is full, an additional subscription takes the place of one of a fabric with more
+/// subscriptions (see [`SubscriptionsInner::evict`]), or else is rejected by the data model with a
+/// "resource exhausted" IM status message.
 pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
     state: Mutex<RefCell<SubscriptionsInner<N>>>,
     /// One buffer for the request of each subscription
@@ -118,6 +121,10 @@ pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
     pub(crate) notification: Notification,
     /// Signalled whenever a report could not be delivered to its subscriber.
     report_failed: Notification,
+    /// Signalled when the subscriber of the subscription being reported on in the
+    /// background replaces it (see [`Self::replace`]).
+    /// Single waiter: the reporter.
+    report_replaced: Notification,
 }
 
 impl<const N: usize> Subscriptions<N> {
@@ -129,6 +136,7 @@ impl<const N: usize> Subscriptions<N> {
             buffers: PooledBuffers::new(),
             notification: Notification::new(),
             report_failed: Notification::new(),
+            report_replaced: Notification::new(),
         }
     }
 
@@ -139,6 +147,7 @@ impl<const N: usize> Subscriptions<N> {
             buffers <- PooledBuffers::init(),
             notification <- Notification::init(),
             report_failed <- Notification::init(),
+            report_replaced <- Notification::init(),
         })
     }
 
@@ -314,7 +323,8 @@ impl<const N: usize> Subscriptions<N> {
 
     /// Add a new subscription with the given parameters, keeping a copy of its subscribe request `req`.
     /// Returns a context for the initial report if successful, or `None` if the subscription table is full
-    /// or if the request is too large to keep.
+    /// and no subscription gives way (see [`SubscriptionsInner::evict`]), or if the request is too large
+    /// to keep.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add<'a, 's>(
         &'a self,
@@ -356,19 +366,37 @@ impl<const N: usize> Subscriptions<N> {
         req: &[u8],
         buffers: &'s SubscriptionsBuffers<'a, N>,
     ) -> Option<ReportContext<'a, 's, N>> {
-        // The pool has a buffer for each slot of the table, so it is empty only
-        // when the table is full
-        let mut buffer = self.buffers.get_immediate()?;
-
-        if !copy_req(req, &mut buffer) {
+        let Some((head, tail)) = kept_req(req) else {
             warn!(
                 "Subscribe request of {} bytes is too large to keep",
                 req.len()
             );
             return None;
-        }
+        };
 
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
+            // The pool has a buffer for each slot of the table, so it is empty only
+            // when the table is full
+            let mut buffer = match self.buffers.get_immediate() {
+                Some(buffer) => buffer,
+                None => state.evict(fabric_idx, buffers)?,
+            };
+
+            buffer.clear();
+            // `kept_req` checked that they fit
+            unwrap!(buffer
+                .extend_from_slice(head)
+                .and_then(|_| buffer.extend_from_slice(tail))
+                .map_err(|_| ()));
+
+            if buffer.len() < req.len() {
+                info!(
+                    "Kept a subscribe request of {} bytes as {} bytes, without its data version filters",
+                    req.len(),
+                    buffer.len()
+                );
+            }
+
             let (sub, buf) = state.add(
                 id,
                 fabric_idx,
@@ -470,6 +498,65 @@ impl<const N: usize> Subscriptions<N> {
         }
 
         removed
+    }
+
+    /// Remove the subscriptions of the subscriber `peer_node_id` on fabric `fab_idx`, which
+    /// replaces them with a new one, requested over the session with ID `session_id`.
+    ///
+    /// A report to the subscriber in flight over another session is aborted (see
+    /// [`Self::wait_report_replaced`]): the subscriber now uses another session, so the
+    /// report may well go to a peer which is gone, and wait for all of its retransmissions,
+    /// holding back the reports of all other subscriptions. Over the same session, the
+    /// subscriber is evidently there, and aborting the report could close the session
+    /// the new request came over.
+    pub(crate) fn replace(
+        &self,
+        buffers: &SubscriptionsBuffers<'_, N>,
+        fab_idx: NonZeroU8,
+        peer_node_id: NodeId,
+        session_id: u32,
+    ) {
+        let replaced =
+            |sub: &Subscription| sub.ids.fab_idx == fab_idx && sub.ids.peer_node_id == peer_node_id;
+
+        self.remove(buffers, |sub| {
+            replaced(sub).then_some("new subscription request")
+        });
+
+        let in_flight = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            let in_flight = state.reporting.as_ref().is_some_and(replaced);
+            if in_flight {
+                state.reporting_replaced_on = Some(session_id);
+            }
+
+            in_flight
+        });
+
+        if in_flight {
+            self.report_replaced.notify();
+        }
+    }
+
+    /// Wait until the subscriber of the subscription being reported on in the background
+    /// replaces it over a session other than the one with ID `session_id`, which the
+    /// report goes over (see [`Self::replace`]).
+    pub(crate) async fn wait_report_replaced(&self, session_id: u32) {
+        loop {
+            let replaced = self.state.lock(|state| {
+                state
+                    .borrow()
+                    .reporting_replaced_on
+                    .is_some_and(|replaced_on| replaced_on != session_id)
+            });
+
+            if replaced {
+                break;
+            }
+
+            self.report_replaced.wait().await;
+        }
     }
 
     /// Begin a report for the subscription with the given parameters.
@@ -851,6 +938,9 @@ struct SubscriptionsInner<const N: usize> {
     /// subscription (and decrements `subscriptions_count`) regardless of the
     /// `keep` flag on the `ReportContext`.
     reporting_cancelled: Option<&'static str>,
+    /// Set by `Subscriptions::replace` when its subscriber replaced `reporting`,
+    /// to the ID of the session it did so over. Cleared by `report_complete`.
+    reporting_replaced_on: Option<u32>,
 }
 
 impl<const N: usize> SubscriptionsInner<N> {
@@ -864,6 +954,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             changed_attrs: ChangedAttrs::new(),
             reporting: None,
             reporting_cancelled: None,
+            reporting_replaced_on: None,
         }
     }
 
@@ -876,6 +967,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             changed_attrs <- ChangedAttrs::init(),
             reporting: None,
             reporting_cancelled: None,
+            reporting_replaced_on: None,
         })
     }
 
@@ -954,6 +1046,58 @@ impl<const N: usize> SubscriptionsInner<N> {
         Some((subscription, buffer))
     }
 
+    /// Remove a subscription to make room for one of fabric `fab_idx` in the full
+    /// table, and return its buffer.
+    ///
+    /// Every fabric is to support at least three subscriptions, so the oldest
+    /// subscription of the fabric with the most of them gives way - if that fabric
+    /// has at least two more than `fab_idx`. Otherwise it would only move the
+    /// shortage to that fabric, and the new subscription is rejected.
+    ///
+    /// The subscription being reported on in the background does not give way, as
+    /// its buffer is in use, but it counts for its fabric.
+    fn evict<'a>(
+        &mut self,
+        fab_idx: NonZeroU8,
+        buffers: &mut SubscriptionsBuffersInner<'a, N>,
+    ) -> Option<PooledBuffer<'a, SubscriptionBuffer, N>> {
+        let reporting = self
+            .reporting
+            .as_ref()
+            .filter(|_| self.reporting_cancelled.is_none());
+
+        let count = |fab_idx| {
+            Iterator::chain(self.subscriptions.iter(), reporting)
+                .filter(|sub| sub.ids.fab_idx == fab_idx)
+                .count()
+        };
+
+        let (index, most) = self
+            .subscriptions
+            .iter()
+            .enumerate()
+            .map(|(index, sub)| (index, count(sub.ids.fab_idx), sub.ids.id))
+            .max_by_key(|&(_, count, id)| (count, Reverse(id)))
+            .map(|(index, count, _)| (index, count))?;
+
+        if most < count(fab_idx) + 2 {
+            return None;
+        }
+
+        let sub = self.subscriptions.swap_remove(index);
+        let buffer = buffers.swap_remove(index);
+
+        self.subscriptions_count -= 1;
+
+        info!(
+            "Evicted subscription {:?} to make room for one of fabric {}",
+            sub.ids(),
+            fab_idx.get()
+        );
+
+        Some(buffer)
+    }
+
     /// Begin a report for the subscription with the given ID.
     ///
     /// Returns a small [`ReportContext`] capturing the subscription's current
@@ -978,6 +1122,7 @@ impl<const N: usize> SubscriptionsInner<N> {
         // slot via `report_complete`).
         debug_assert!(self.reporting.is_none());
         debug_assert!(self.reporting_cancelled.is_none());
+        debug_assert!(self.reporting_replaced_on.is_none());
 
         if let Some(index) =
             self.find_reportable(now, event_numbers_watermark, keep_alive, all, buffers)
@@ -1014,6 +1159,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             .is_some_and(|reporting| reporting.ids.id == sub.ids.id)
         {
             self.reporting = None;
+            self.reporting_replaced_on = None;
             self.reporting_cancelled.take()
         } else {
             None
@@ -2008,32 +2154,20 @@ pub(crate) fn subscription_max_int_secs(
         .max(min_int_floor.saturating_add(FLOOR_LEAD_SECS))
 }
 
-/// Copy the subscribe request `req` into `buffer`, without its data version filters
-/// if it does not fit otherwise.
+/// The two parts of the subscribe request `req` which a subscription keeps: all of
+/// it, or if that does not fit, all but its data version filters.
 ///
-/// Return `false` if it does not fit even then.
-fn copy_req(req: &[u8], buffer: &mut SubscriptionBuffer) -> bool {
-    buffer.clear();
-
-    if buffer.extend_from_slice(req).is_ok() {
-        return true;
+/// `None` if it does not fit even then.
+fn kept_req(req: &[u8]) -> Option<(&[u8], &[u8])> {
+    if req.len() <= SUBSCRIPTION_BUFFER_SIZE {
+        return Some((req, &[]));
     }
 
-    let Ok((head, tail)) = SubscribeReq::new(TLVElement::new(req)).split_dataver_filters() else {
-        return false;
-    };
+    let (head, tail) = SubscribeReq::new(TLVElement::new(req))
+        .split_dataver_filters()
+        .ok()?;
 
-    if buffer.extend_from_slice(head).is_err() || buffer.extend_from_slice(tail).is_err() {
-        return false;
-    }
-
-    info!(
-        "Kept a subscribe request of {} bytes as {} bytes, without its data version filters",
-        req.len(),
-        buffer.len()
-    );
-
-    true
+    (head.len() + tail.len() <= SUBSCRIPTION_BUFFER_SIZE).then_some((head, tail))
 }
 
 #[cfg(test)]
@@ -2743,6 +2877,90 @@ mod tests {
         assert!(subs
             .add(now, fab(1), 10, 1, 60, 0, &[], &subs_bufs)
             .is_none());
+    }
+
+    /// The IDs of the subscriptions in the table, of fabric `fab_idx`.
+    fn ids_of<const N: usize>(subs: &Subscriptions<N>, fab_idx: u8) -> std::vec::Vec<u32> {
+        let mut ids: std::vec::Vec<u32> = subs.state.lock(|state| {
+            state
+                .borrow()
+                .subscriptions
+                .iter()
+                .filter(|sub| sub.ids().fab_idx == fab(fab_idx))
+                .map(|sub| sub.ids().id)
+                .collect()
+        });
+        ids.sort();
+        ids
+    }
+
+    /// A full table makes room for a fabric with at least two subscriptions fewer
+    /// than another one, at the expense of the oldest subscription of that other one.
+    #[test]
+    fn add_evicts_from_a_fabric_with_two_more() {
+        let subs: Subscriptions<4> = Subscriptions::new();
+        let subs_bufs: SubscriptionsBuffers<4> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+
+        for (fab_idx, peer_node_id) in [(1, 10), (1, 11), (1, 12), (2, 20)] {
+            add_sub(&subs, &subs_bufs, now, fab_idx, peer_node_id, 1, 60).set_keep();
+        }
+
+        let mut rctx = add_sub(&subs, &subs_bufs, now, 2, 21, 1, 60);
+        assert_eq!(rctx.subscription().ids().id, 5);
+        rctx.set_keep();
+        drop(rctx);
+
+        assert_eq!(ids_of(&subs, 1), [2, 3]);
+        assert_eq!(ids_of(&subs, 2), [4, 5]);
+        subs.state
+            .lock(|state| assert_eq!(state.borrow().subscriptions_count, 4));
+
+        // Now no fabric has two more than the other one
+        assert!(subs
+            .add(now, fab(2), 22, 1, 60, 0, &[], &subs_bufs)
+            .is_none());
+        assert!(subs
+            .add(now, fab(1), 13, 1, 60, 0, &[], &subs_bufs)
+            .is_none());
+        assert_eq!(ids_of(&subs, 1), [2, 3]);
+        assert_eq!(ids_of(&subs, 2), [4, 5]);
+    }
+
+    /// The subscription being reported on in the background does not give way, but
+    /// counts for its fabric.
+    #[test]
+    fn add_does_not_evict_the_in_flight_subscription() {
+        let subs: Subscriptions<3> = Subscriptions::new();
+        let subs_bufs: SubscriptionsBuffers<3> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+
+        for peer_node_id in [10, 11] {
+            add_sub(&subs, &subs_bufs, now, 1, peer_node_id, 1, 60).set_keep();
+        }
+        add_sub(&subs, &subs_bufs, now, 2, 20, 1, 60).set_keep();
+
+        subs.notify_attr_changed(1, 2, 3);
+        let later = now + Duration::from_secs(2);
+
+        let mut in_flight = unwrap!(subs.report(later, 0, KeepAlive::Default, false, &subs_bufs));
+        assert_eq!(in_flight.subscription().ids().id, 1);
+
+        // Fabric 1 has two subscriptions, one of them in flight, and fabric 3 none
+        let mut rctx = add_sub(&subs, &subs_bufs, now, 3, 30, 1, 60);
+        rctx.set_keep();
+        drop(rctx);
+
+        assert_eq!(ids_of(&subs, 1), []);
+        assert_eq!(ids_of(&subs, 2), [3]);
+        assert_eq!(ids_of(&subs, 3), [4]);
+
+        in_flight.set_keep();
+        drop(in_flight);
+
+        assert_eq!(ids_of(&subs, 1), [1]);
     }
 
     #[test]
@@ -4303,6 +4521,61 @@ mod tests {
             assert!(s.reporting.is_none());
             assert!(s.reporting_cancelled.is_none());
         });
+    }
+
+    /// Whether `wait_report_replaced(session_id)` is ready.
+    fn report_replaced<const N: usize>(subs: &Subscriptions<N>, session_id: u32) -> bool {
+        futures_lite::future::block_on(futures_lite::future::poll_once(core::pin::pin!(
+            subs.wait_report_replaced(session_id)
+        )))
+        .is_some()
+    }
+
+    /// A subscriber replacing its subscription while a report to it is in flight
+    /// aborts that report only if it does so over another session than the report's.
+    #[test]
+    fn replace_aborts_the_in_flight_report_over_another_session() {
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let subs_bufs: SubscriptionsBuffers<2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        add_sub(&subs, &subs_bufs, now, 1, 100, 1, 60).set_keep();
+        add_sub(&subs, &subs_bufs, now, 1, 101, 1, 60).set_keep();
+
+        subs.notify_attr_changed(1, 2, 3);
+        let later = now + Duration::from_secs(2);
+
+        let mut rctx = unwrap!(subs.report(later, 0, KeepAlive::Default, false, &subs_bufs));
+        assert_eq!(rctx.subscription().ids().peer_node_id, 100);
+
+        // Another subscriber
+        subs.replace(&subs_bufs, fab(1), 101, 7);
+        assert!(!report_replaced(&subs, 5));
+        assert_eq!(ids_of(&subs, 1), []);
+
+        subs.replace(&subs_bufs, fab(1), 100, 7);
+        assert!(report_replaced(&subs, 5));
+        assert!(!report_replaced(&subs, 7));
+
+        rctx.set_keep();
+        drop(rctx);
+
+        subs.state.lock(|s| {
+            let s = s.borrow();
+            assert_eq!(s.subscriptions_count, 0);
+            assert!(s.reporting.is_none());
+            assert!(s.reporting_cancelled.is_none());
+            assert!(s.reporting_replaced_on.is_none());
+        });
+
+        // A report that completed before the reporter saw it was replaced does not
+        // abort the next one
+        add_sub(&subs, &subs_bufs, now, 1, 102, 1, 60).set_keep();
+        subs.notify_attr_changed(1, 2, 3);
+
+        let rctx = unwrap!(subs.report(later, 0, KeepAlive::Default, false, &subs_bufs));
+        assert!(!report_replaced(&subs, 5));
+        drop(rctx);
     }
 
     #[test]
